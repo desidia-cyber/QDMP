@@ -137,3 +137,108 @@ isolates mod-vs-game in one run.
 4. Watch for `======== API probe ========` in `qdcoop.log`. That block is the whole
    point of the next run: it answers the four write-side APIs (property layout, map
    stride, writer round-trip) that the analysis could not pin statically.
+
+---
+
+## Session 2 — 2026-11-07 (continued)
+
+### R9. BUG (fixed) — the hook installer never installed anything
+
+`gen_targets.py` emitted target names padded to 46 columns (`"%-46s"`). Every lookup was
+an exact match, so `"FEngineLoop::Tick"` never matched `"FEngineLoop::Tick" + 32 spaces`,
+and **no hook was ever installed** — while `InstallHook` logged nothing, so the mod
+looked like it was running hooks and simply doing nothing. This is the corpus's "a probe
+that runs fine and writes nothing has usually failed silently" in its purest form.
+
+Fixed: names are emitted unpadded, the installer logs each hook, and a missing target is
+`LOG_ERROR` rather than silence.
+
+```
+INFO hooked FEngineLoop::Tick @ 007753A0
+INFO hooked UGameplayStatics::SetGamePaused @ 028F3180
+INFO hooked StoreEnemySaveState @ 00E3BF10
+INFO hooks installed: 3 of 3 (ProcessEvent is opt-in)
+```
+
+### R10. BUG (fixed) — `0x011A0050` is `FindFunctionChecked`, and it is fatal
+
+Calling it with a name the class does not have aborts the game with a dialog:
+
+```
+LowLevelFatalError [File:Unknown] [Line: 1334]
+Failed to find function GetNamedSaveData in FS_SaveSlot_C
+```
+
+Two conclusions, and the second is the important one:
+
+1. It is an assertion, not a query. The mod no longer calls it.
+2. **`GetNamedSaveData` is not a function of `FS_SaveSlot_C` on this build.** The analysis
+   inferred that it was (SaveFunctions lists it among its exports, and the native
+   `0x00E2F6D0` path was assumed to run on the save object). The live engine disagrees,
+   and the class reports **0 UFUNCTIONs**:
+   `FS_SaveSlot_C has 0 UFUNCTIONs`.
+
+### R11. BUG (fixed) — UObject work on a worker thread blocked
+
+The bootstrap thread ran the substrate check, the save-layer init and the probe. It
+**blocked inside `SaveInit`** — the run that reached it stopped logging while the game
+kept running. That is the rule this project wrote down and then broke: *only UObject
+access goes on the game thread*. All of it now runs from the `Tick` hook.
+
+### R12. MEASURED — the object array is sparse and holds `UObject*`, not `FUObjectItem*`
+
+First eight slots, printed by the mod: `slot[0]` and `slot[1]` are live heap pointers,
+`slot[2]`..`slot[7]` are **zero**, and the deltas are not a constant stride. So the array
+holds object pointers and contains nulls.
+
+Consequence: the `gobjects_ok` liveness check in `RuntimeValidate` **passed by
+coincidence** — for a null-ish slot the index read back as 0 and the slot compared equal
+to itself. It is not evidence and must not be reported as such.
+
+### R13. BUG (fixed) — walking GObjects to find a UFunction terminates the game
+
+Cleanly: no Application Error record, no crash dump, no dialog — the process is simply
+gone. Wrapping each slot probe in `__try/__except` did not help, so this is not a memory
+violation a guard can contain.
+
+The scan is now **opt-in and off by default** (`[Rules] ObjectScan=0`). Nothing in the
+analysis needs it: reads go through the native getter at `0x00E2F6D0`, which takes a
+world context and a key and needs no `UFunction` at all.
+
+### R14. CORRECTION — "the game exits after 30-60 s" was an artefact
+
+Every earlier run appeared to die 30-60 s after launch. It does not. The game stayed
+alive for a **70-second poll inside a single invocation** and was gone immediately after
+that invocation ended: the process tree is torn down when the tool call finishes.
+
+So the exit was environmental, not a game bug — and it sent one round of debugging at the
+wrong target. The `FEngineLoop::Tick` return-type fix made in response is still correct
+in its own right (a detour that returns `void` for a `bool` function hands the engine a
+garbage result and must not be relied on), but it was **not** what was killing the game.
+
+**Consequence for the rig:** a session must be one long-running process that launches,
+drives and samples. `tools/live-session.ps1` does exactly that, and `tools/run-hidden.ps1`
+keeps the window off the desktop.
+
+### R15. First real read from the live game
+
+With the pump running and the scan disabled, the mirror reads the save through the native
+getter:
+
+```
+INFO flag CompletedChallenges = 0
+INFO flag probe: 1/13 known keys present
+```
+
+One key present is correct at that point: the instance is at the main menu, where the
+save object exists but holds no player progression. The eleven keys the analysis measured
+appear once a save is actually loaded.
+
+### R16. Infra fixed by running it
+
+- `install.ps1` used `$PSScriptRoot` in a parameter default, where it is empty:
+  "Cannot bind argument to parameter 'Path' because it is an empty string".
+- `shot.ps1` captures the SCREEN, which cannot work for an off-screen window, and defaults
+  to stealing focus. Replaced by `tools/capture-hidden.ps1` (`PrintWindow` with
+  `PW_RENDERFULLCONTENT`), which renders the window wherever it sits.
+- The process tree teardown above, which is why `tools/live-session.ps1` exists.

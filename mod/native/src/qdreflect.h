@@ -63,19 +63,71 @@ inline bool FNameFromAnsi(const char* s, QdName* out)
 // ---------------------------------------------------------------------------
 // UFunction lookup
 // ---------------------------------------------------------------------------
-// UObject::FindFunction (0x011A0050) = `obj->Class->FindFunctionByName(name, true)`.
-// Confirmed from its disassembly: rcx is reloaded from [obj+0x10] (the Class field,
-// analysis A2) and r8 is set to 1 (include super).
-typedef void* (*FnFindFunction)(void* obj, QdName name);
-
-inline void* FindFunction(void* obj, const char* fnName)
+// UObject::FindFunction (0x011A0050) is FindFunctionChecked.
+//
+// MEASURED THE HARD WAY: calling it with a name the class does not have aborts the
+// game with
+//     LowLevelFatalError [Line: 1334] Failed to find function <name> in <class>
+// which surfaces to the player as a crash dialog. It is not a query, it is an
+// assertion.
+//
+// So the mod does not use it. Instead it walks GObjects for a UFunction whose name
+// matches and whose Outer is the class in question -- the same linear scan that finds
+// the SaveFunctions CDO, using only FNameToString (proven correct on this build) and
+// the object graph. A miss returns null and the caller decides.
+inline void* FindFunctionSafe(void* owner, const char* fnName)
 {
-    if (!obj) return nullptr;
-    QdName n;
-    if (!FNameFromAnsi(fnName, &n)) return nullptr;
-    FnFindFunction fn = (FnFindFunction)Ptr<void*>(0x011A0050u);
-    if (!fn) return nullptr;
-    return fn(obj, n);
+    if (!owner || !fnName) return nullptr;
+    void* cls = ObjClass(owner);
+    if (!cls) return nullptr;
+    void** arr = ObjectsArray();
+    int n = ObjectCount();
+    if (!arr) return nullptr;
+    // Measured: this array is sparse and holds UObject* slots, and a slot can point at
+    // memory that is no longer mapped. SlotMatches contains the fault, so one bad slot
+    // costs one slot instead of the process.
+    for (int k = 0; k < n; ++k) {
+        void* m = nullptr;
+        SlotMatches(arr[k], fnName, "Function", cls, &m);
+        if (m) return m;
+    }
+    return nullptr;
+}
+
+// Kept as the name call sites use: the safe scan is the only lookup.
+inline void* FindFunction(void* obj, const char* fnName) { return FindFunctionSafe(obj, fnName); }
+
+// Log the reflected functions available on an object's class. Used when a lookup misses:
+// the useful next step is to see the real surface, not to guess a spelling.
+inline int LogFunctionsOf(void* owner, const char* label, int limit)
+{
+    if (!owner) return 0;
+    void* cls = ObjClass(owner);
+    void** arr = ObjectsArray();
+    int n = ObjectCount();
+    if (!arr || !cls) return 0;
+    int shown = 0;
+    int total = 0;
+    for (int i = 0; i < n; ++i) {
+        void* o = arr[i];
+        if (!o) continue;
+        bool readable = false;
+        __try {
+            readable = LooksLikeUObject(o) && ObjOuter(o) == cls &&
+                       ObjNameIs(ObjClass(o), "Function");
+        } __except (EXCEPTION_EXECUTE_HANDLER) { readable = false; }
+        if (!readable) continue;
+        ++total;
+        if (shown < limit) {
+            char nm[96];
+            if (FNameToString(ObjNameRaw(o), nm, sizeof(nm)) > 0) {
+                QDLOG(LOG_INFO, "    fn ", label, ".", nm);
+                ++shown;
+            }
+        }
+    }
+    QDLOG(LOG_INFO, "  ", label, " has ", dec(total), " UFUNCTIONs (showing ", dec(shown), ")");
+    return total;
 }
 
 // ---------------------------------------------------------------------------
@@ -117,9 +169,12 @@ inline bool WalkProperties(void* ustruct, const LayoutCandidates& c, LayoutResul
 {
     out->props = 0;
     out->parms_size = 0;
+    if (!LooksLikeUObject(ustruct)) return false;
     void* prop = *(void**)((const uint8_t*)ustruct + c.prop_link);
     int guard = 0;
     while (prop && out->props < kMaxProps && guard++ < kMaxProps * 2) {
+        // Before ANY field of the property is read: is it an object at all?
+        if (!LooksLikeUObject(prop)) return false;
         PropDesc& d = out->p[out->props];
         QdName nm = *(const QdName*)((const uint8_t*)prop + kObjName);
         int len = FNameToString(nm, d.name, kMaxPropName);

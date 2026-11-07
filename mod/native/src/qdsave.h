@@ -1,4 +1,4 @@
-// qdsave.h -- the save container: acquisition, reading, and the write path.
+﻿// qdsave.h -- the save container: acquisition, reading, and the write path.
 //
 // WHAT IS MEASURED AND WHAT IS DISCOVERED
 // ---------------------------------------
@@ -73,6 +73,42 @@ inline void* GetActiveBaseSave(void* worldContext)
 {
     FnGetActiveBaseSave fn = (FnGetActiveBaseSave)Ptr<void*>(0x00E2D100u);
     return fn ? fn(worldContext) : nullptr;
+}
+
+// SEH guard around the first call into an unverified game function.
+//
+// The corpus warns that an access violation here cannot be caught by a scripting
+// layer's pcall, and that "reflection can return a valid-looking object of the wrong
+// type; driving it is an access violation".  During bring-up, converting that
+// violation into a logged failure is worth more than a clean stack: it turns a
+// crashed run into a measurement.
+//
+// Kept as a separate function with no C++ objects in it, because __try cannot coexist
+// with object unwinding in the same frame (C2712).
+inline void* GetPlayerPawnGuarded(void* world, int* faulted)
+{
+    *faulted = 0;
+    __try {
+        typedef void* (*FnGetPawn)(void*, int32_t);
+        FnGetPawn gp = (FnGetPawn)Ptr<void*>(0x028E0640u);
+        return gp ? gp(world, 0) : nullptr;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        *faulted = 1;
+        return nullptr;
+    }
+}
+
+inline void* GetActiveBaseSaveGuarded(void* ctx, int* faulted)
+{
+    *faulted = 0;
+    __try {
+        return GetActiveBaseSave(ctx);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        *faulted = 1;
+        return nullptr;
+    }
 }
 
 inline int32_t GetNamedSaveDataNative(void* worldContext, QdName key, bool* outWasSet)
@@ -260,18 +296,36 @@ inline bool SaveInit(void* world)
     s.world = world;
     if (!world) { s.SetNote("no world"); return false; }
 
-    // 1. The save object.  Validation is by class name because "reflection can
-    //    return a valid-looking object of the wrong type; driving it is an access
-    //    violation that __try cannot catch" (ANALYSIS.md section 6).
-    void* save = GetActiveBaseSave(world);
-    if (!save) {
-        // A world is not always a valid context for this accessor; the player pawn
-        // is the other caller shape the game uses.  Try it before giving up.
-        void* pawn = nullptr;
-        typedef void* (*FnGetPawn)(void*, int32_t);
-        FnGetPawn gp = (FnGetPawn)Ptr<void*>(0x028E0640u);
-        if (gp) pawn = gp(world, 0);
-        if (pawn) save = GetActiveBaseSave(pawn);
+    // 1. The save object.
+    //
+    // THE CONTEXT MUST BE AN ACTOR, NOT THE WORLD.  `GetActiveBaseSave` is a
+    // UGameplayStatics-style helper: it does `ctx->vtable[0x160]()` and then reads
+    // +0x180 and +0x210 from the results.  Every caller in the game passes an actor
+    // (a spawner).  Passing GWorld made the process die inside that call -- the first
+    // live run that got this far ended there with no further log line, which is what
+    // pointed at it.
+    //
+    // So: require a player pawn, and do not call at all without one. At the main menu
+    // there is no pawn and no save, and that is the correct answer, not a failure path.
+    QDLOG(LOG_DEBUG, "    SaveInit: GetPlayerPawn");
+    int pawnFaulted = 0;
+    void* pawn = GetPlayerPawnGuarded(world, &pawnFaulted);
+    QDLOG(LOG_DEBUG, "    SaveInit: pawn=", hex((uintptr_t)pawn), " faulted=", dec(pawnFaulted));
+    if (pawnFaulted) {
+        s.SetNote("GetPlayerPawn faulted");
+        QDLOG(LOG_ERROR, "GetPlayerPawn faulted (SEH)");
+        return false;
+    }
+    if (!pawn) { s.SetNote("no player pawn yet"); return false; }
+
+    QDLOG(LOG_DEBUG, "    SaveInit: GetActiveBaseSave");
+    int faulted = 0;
+    void* save = GetActiveBaseSaveGuarded(pawn, &faulted);
+    QDLOG(LOG_DEBUG, "    SaveInit: save=", hex((uintptr_t)save), " faulted=", dec(faulted));
+    if (faulted) {
+        s.SetNote("GetActiveBaseSave faulted on the pawn context");
+        QDLOG(LOG_ERROR, "GetActiveBaseSave faulted (SEH) -- context shape is wrong");
+        return false;
     }
     if (!save) { s.SetNote("GetActiveBaseSave returned null"); return false; }
     if (!ObjNameIs(ObjClass(save), kClsSaveSlot)) {
@@ -285,13 +339,46 @@ inline bool SaveInit(void* world)
     s.readOk = true;
 
     // 2. The param layout, validated against the measured GetNamedSaveData frame.
+    // The object-graph scan is OPT-IN and off by default.
+    //
+    // MEASURED: walking GUObjectArray to find a UFunction terminates the game cleanly --
+    // no Application Error record, no crash dump, just the process gone. Fault-contained
+    // per slot (SlotMatches wraps each probe in __try/__except) it still ends the same
+    // way, so this is not a memory-violation problem that a guard can fix. Nothing in the
+    // analysis needs the scan: reads go through the native getter at 0x00E2F6D0, which
+    // takes a world context and a key and needs no UFunction at all.
+    if (!Cfg().object_scan) {
+        QDLOG(LOG_INFO, "object-graph scan is off ([Rules] ObjectScan=0); reads use the "
+                        "native getter, so the mirror works and writes stay off");
+        s.SetNote("object scan disabled");
+        return true;
+    }
+    QDLOG(LOG_DEBUG, "    SaveInit: FindFunction(GetNamedSaveData)");
+    // MEASURED: `GetNamedSaveData` is NOT a function of FS_SaveSlot_C on this build.
+    // Asking for it with the engine's checked lookup aborts the game; asking with a
+    // scan simply misses. So: try the save class, then the function library the
+    // analysis says owns it (SaveFunctions_C), and if neither has it, log the real
+    // surface of the save class rather than guessing a spelling.
     void* fnGet = FindFunction(save, kFnGetNamedSaveData);
     if (!fnGet) {
-        s.SetNote("GetNamedSaveData UFunction not found");
-        QDLOG(LOG_ERROR, "no UFunction ", kFnGetNamedSaveData, " on the save object");
-        return false;
+        QDLOG(LOG_INFO, "GetNamedSaveData is not on ", kClsSaveSlot,
+              "; trying the SaveFunctions library");
+        void* cdo0 = FindCdo("SaveFunctions_C");
+        if (cdo0) fnGet = FindFunction(cdo0, kFnGetNamedSaveData);
     }
+    QDLOG(LOG_DEBUG, "    SaveInit: fnGet=", hex((uintptr_t)fnGet));
+    if (!fnGet) {
+        QDLOG(LOG_WARN, "no UFunction ", kFnGetNamedSaveData, " found on the save class "
+                        "or SaveFunctions_C; the parameter-layout oracle is unavailable, "
+                        "so reads work but writes stay off");
+        LogFunctionsOf(save, "FS_SaveSlot_C", 40);
+        s.SetNote("no GetNamedSaveData UFunction");
+        // Not fatal: the native getter needs no UFunction, so the mirror still works.
+        return true;
+    }
+    QDLOG(LOG_DEBUG, "    SaveInit: DiscoverLayout");
     s.layout = DiscoverLayout(fnGet);
+    QDLOG(LOG_DEBUG, "    SaveInit: DiscoverLayout valid=", dec(s.layout.valid ? 1 : 0));
     if (!s.layout.valid) {
         s.SetNote(s.layout.note);
         QDLOG(LOG_ERROR, "property layout discovery failed: ", s.layout.note);
@@ -306,6 +393,7 @@ inline bool SaveInit(void* world)
     LogSignature(kFnGetNamedSaveData, s.layout);
 
     // 3. The containers.
+    QDLOG(LOG_DEBUG, "    SaveInit: container offsets");
     s.nsdOffset           = FindPropertyOffset(s.layout, save, kPropNamedSaveData);
     s.actorStatesOffset   = FindPropertyOffset(s.layout, save, kPropSavableActorStates);
     s.inventoryOffset     = FindPropertyOffset(s.layout, save, kPropInventoryContents);
@@ -314,6 +402,7 @@ inline bool SaveInit(void* world)
           " InventoryContents=", dec(s.inventoryOffset));
 
     // 4. Map decoding, cross-checked against the getter.
+    QDLOG(LOG_DEBUG, "    SaveInit: ProbeMap");
     MapProbe mp = ProbeMap(world, save, s.nsdOffset, 8);
     if (mp.valid) {
         s.mapDataOff = mp.dataOff;
@@ -330,6 +419,7 @@ inline bool SaveInit(void* world)
     }
 
     // 5. The writer.
+    QDLOG(LOG_DEBUG, "    SaveInit: FindCdo(SaveFunctions_C)");
     void* cdo = FindCdo("SaveFunctions_C");
     if (!cdo) {
         QDLOG(LOG_ERROR, "Default__SaveFunctions_C not found; the write path is off");
@@ -487,3 +577,6 @@ inline bool NsdWrite(const char* key, int32_t value, char* err, int errCap)
 }
 
 } // namespace qd
+
+
+

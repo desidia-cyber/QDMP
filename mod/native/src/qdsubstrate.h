@@ -258,6 +258,45 @@ inline void ObjDescribe(const void* o, char* out, int cap)
 }
 
 // ---------------------------------------------------------------------------
+// Slot safety
+// ---------------------------------------------------------------------------
+// A UObject begins with a vtable pointer that lives inside the game's own image. That
+// is a two-instruction test, and it is what makes walking the object array survivable:
+// the array is SPARSE and holds UObject* slots (measured: slots 0 and 1 are live heap
+// pointers, slots 2..7 are null), and a slot can hold a pointer that is no longer
+// mapped. Dereferencing one of those is an access violation in the middle of a scan.
+inline bool LooksLikeUObject(const void* p)
+{
+    if (p == nullptr) return false;
+    uintptr_t v = (uintptr_t)p;
+    if ((v & 7u) != 0) return false;
+    uintptr_t vt = *(const uintptr_t*)p;      // may itself fault; callers guard it
+    if (vt == 0) return false;
+    uintptr_t base = ImageBase();
+    return vt >= base && vt < base + (uintptr_t)QD_IMAGE_SIZE;
+}
+
+// A fault inside one slot must cost that slot, not the process. The guard lives in its
+// own function because __try cannot share a frame with C++ object unwinding (C2712).
+// Every scan in this mod goes through here.
+inline bool SlotMatches(void* o, const char* name, const char* className,
+                        void* outer, void** out)
+{
+    *out = nullptr;
+    __try {
+        if (!LooksLikeUObject(o)) return true;
+        if (!ObjNameIs(o, name)) return true;
+        if (outer != nullptr && ObjOuter(o) != outer) return true;
+        if (className != nullptr && !ObjNameIs(ObjClass(o), className)) return true;
+        *out = o;
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return true;   // unreadable slot: skip it, never die for it
+    }
+}
+
+// ---------------------------------------------------------------------------
 // GObjects
 // ---------------------------------------------------------------------------
 // Measured: GUObjectArray at 0x04A64250; the object array (FUObjectItem**) is at
@@ -305,11 +344,9 @@ inline void* FindObjectByNameAndClass(const char* name, const char* className)
     void** arr = ObjectsArray();
     if (!arr) return nullptr;
     for (int i = 0; i < n; ++i) {
-        void* o = arr[i];
-        if (!o) continue;
-        if (!ObjNameIs(o, name)) continue;
-        if (className == nullptr) return o;
-        if (ObjNameIs(ObjClass(o), className)) return o;
+        void* m = nullptr;
+        SlotMatches(arr[i], name, className, nullptr, &m);
+        if (m) return m;
     }
     return nullptr;
 }

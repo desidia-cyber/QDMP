@@ -82,7 +82,12 @@ struct Hook {
 // five-pointer form everywhere and noted the float caveat explicitly), and
 // SetGamePaused carries a bool, so the five-pointer form would be fine here -- but
 // the typed form documents the contract.
-typedef void      (*FnTick)(void* engineLoop, float delta);
+// FEngineLoop::Tick returns bool -- "keep running".  The first version of this detour
+// returned void, so the value the engine loop tested in rax was whatever happened to be
+// left there.  The game exited a few seconds after the hook went live, with no crash
+// dump and no further log line: an engine loop that reads a garbage result quits
+// quietly, which looks nothing like a crash and is exactly why the signature matters.
+typedef bool      (*FnTick)(void* engineLoop);
 typedef bool      (*FnSetGamePaused)(void* worldContext, bool paused);
 typedef void      (*FnStoreEnemy)(void* self, const QdGuid* guid, float respawn, float hp);
 typedef void      (*FnProcessEvent)(void* self, void* func, void* parms);
@@ -128,6 +133,9 @@ int               g_enemyCursor = 0;
 // silent-failure shape the corpus warns about, so the retry now lives in the frame pump.
 bool              g_probeDone = false;
 uint32_t          g_lastSaveInitMs = 0;
+bool              g_substrateValidated = false;
+bool              g_substrateRefused = false;
+bool              g_substrateReady = false;
 
 // The progression mirror lives here rather than beside its pump because the save-layer
 // retry must be able to reset it when the container is replaced.
@@ -286,7 +294,14 @@ void RunApiProbe()
 bool TryInitSaveLayer(uint32_t now)
 {
     SaveLayer& s = Save();
-    if (s.readOk && s.save && ObjectIsLive(s.save)) return true;
+    // Re-resolve when the world changes, not on an ObjectIsLive probe: that probe
+    // compares the object-array slot back to the object, and on this build the slot for
+    // a live save object does not always read back as the same pointer, so trusting it
+    // made the layer re-initialise every other second.
+    if (s.readOk && s.save) {
+        void* world = *(void**)Ptr<void*>(0x04BA86B0u);
+        if (world != nullptr && world == s.world) return true;
+    }
 
     // Do not hammer SaveInit: it walks the object graph and does the property search.
     if (g_lastSaveInitMs != 0 && (now - g_lastSaveInitMs) < 2000) return false;
@@ -295,7 +310,9 @@ bool TryInitSaveLayer(uint32_t now)
     void* world = *(void**)Ptr<void*>(0x04BA86B0u);
     if (!world) return false;
 
+    QDLOG(LOG_DEBUG, "  TryInitSaveLayer: calling SaveInit");
     if (!SaveInit(world)) {
+        QDLOG(LOG_DEBUG, "  TryInitSaveLayer: SaveInit returned false");
         // DEBUG, not WARN: at the main menu this is the expected state, and a warning
         // every two seconds trains the operator to ignore warnings.
         QDLOG(LOG_DEBUG, "save layer not ready: ", s.note);
@@ -349,15 +366,70 @@ void MirrorVisit(const char* key, int32_t value, void* user)
     }
 }
 
+// Keys the analysis measured in a real save. Without map enumeration these are what the
+// mirror can observe: a fixed probe list, read through the native getter, diffed every
+// second. It is a downgrade from enumerating the container, and it is enough to prove
+// that reads work and to watch a flag change live.
+static const char* kSeedKeys[] = {
+    "CheckpointUnlockCount", "TotalAchievementWeapons", "TotalAchievementTreasures",
+    "CompletedChallenges", "IntroMusicState", "FullEnergyCellsCount",
+    "Arjaot_State", "RustySwordKnightState", "RustySwordKnightGaveSword",
+    "BrokeBarricade", "TiniScytheHammerAP", "DragonLordDead", "EndingSeen",
+};
+static const int kSeedCount = (int)(sizeof(kSeedKeys) / sizeof(kSeedKeys[0]));
+
+void MirrorObserve(const char* key, int32_t value)
+{
+    for (int i = 0; i < g_mirrorCount; ++i) {
+        if (NameEquals(g_mirror[i].last_name, key)) {
+            if (g_mirror[i].last_value != value) {
+                QDLOG(LOG_INFO, "flag CHANGE ", key, " : ",
+                      dec(g_mirror[i].last_value), " -> ", dec(value));
+                g_mirror[i].last_value = value;
+                g_flagsDirty = true;
+            }
+            return;
+        }
+    }
+    if (g_mirrorCount < (int)(sizeof(g_mirror) / sizeof(g_mirror[0]))) {
+        MirrorState& m = g_mirror[g_mirrorCount++];
+        int i = 0;
+        for (; key[i] && i < (int)sizeof(m.last_name) - 1; ++i) m.last_name[i] = key[i];
+        m.last_name[i] = 0;
+        m.last_value = value;
+        QDLOG(LOG_INFO, "flag ", key, " = ", dec(value));
+        g_flagsDirty = true;
+    }
+}
+
 void MirrorPump(uint32_t now)
 {
     if (now - g_lastMirrorMs < 1000) return;
     g_lastMirrorMs = now;
+
     int n = NsdEnumerate(&MirrorVisit, nullptr);
-    if (n < 0) return;                    // enumeration off; nothing to mirror
-    if (n != g_lastFlagCount) {
-        QDLOG(LOG_INFO, "flag container size ", dec(n));
-        g_lastFlagCount = n;
+    if (n >= 0) {
+        if (n != g_lastFlagCount) {
+            QDLOG(LOG_INFO, "flag container size ", dec(n));
+            g_lastFlagCount = n;
+        }
+        return;
+    }
+
+    // Enumeration unavailable: probe the known keys instead.
+    if (!Save().readOk || !Save().world) return;
+    int found = 0;
+    for (int i = 0; i < kSeedCount; ++i) {
+        int32_t v = 0;
+        bool set = false;
+        if (!NsdRead(kSeedKeys[i], &v, &set)) continue;
+        ++found;
+        MirrorObserve(kSeedKeys[i], v);
+    }
+    static int lastFound = -1;
+    if (found != lastFound) {
+        QDLOG(LOG_INFO, "flag probe: ", dec(found), "/", dec(kSeedCount), " known keys present");
+        lastFound = found;
     }
 }
 
@@ -738,26 +810,75 @@ void SendLocalPlayer(uint32_t now)
 // ---------------------------------------------------------------------------
 // Hooks
 // ---------------------------------------------------------------------------
-void HK_Tick(void* engineLoop, float delta)
+// ---------------------------------------------------------------------------
+// Substrate validation -- GAME THREAD ONLY
+// ---------------------------------------------------------------------------
+// Reads GEngine/GWorld and the FName pool. Those are plain reads, but they belong on
+// the thread that owns the world: the first version ran them (and then the whole save
+// layer) on the bootstrap thread and blocked inside engine code.
+//
+// Gated on the same readiness the bootstrap used to poll for -- GWorld set and the
+// object graph populated -- but observed from where it is safe to act.
+bool ValidateSubstrateOnGameThread()
 {
-    if (g_oTick) g_oTick(engineLoop, delta);
-    if (!g_engineReady) return;
+    if (g_substrateRefused) return false;
+
+    void* world = *(void**)Ptr<void*>(0x04BA86B0u);
+    int objects = ObjectCount();
+    if (!world || objects <= 1000) return false;      // not up yet; try next frame
+
+    g_substrateValidated = true;
+    SubstrateStatus st = RuntimeValidate();
+    QDLOG(LOG_INFO, "substrate: globals=", dec(st.globals_ok ? 1 : 0),
+          " fname=", dec(st.fname_ok ? 1 : 0), "(", st.class_name, ")",
+          " gobjects=", dec(st.gobjects_ok ? 1 : 0), " objects=", dec(objects));
+    if (!st.fname_ok) {
+        g_substrateRefused = true;
+        QDLOG(LOG_ERROR, "REFUSING TO RUN: the FName decoder did not reproduce "
+                         "'GameEngine'; every name-based lookup would be garbage");
+        return false;
+    }
+    if (!st.gobjects_ok) {
+        g_substrateRefused = true;
+        QDLOG(LOG_ERROR, "REFUSING TO RUN: GObjects liveness check failed");
+        return false;
+    }
+    g_substrateReady = true;
+    return true;
+}
+
+bool HK_Tick(void* engineLoop)
+{
+    // Forward first and keep the answer: the pump below must never change the engine's
+    // control flow, so the return value is the original's, unconditionally.
+    bool keepRunning = g_oTick ? g_oTick(engineLoop) : true;
+    if (!g_engineReady) return keepRunning;
 
     uint32_t now = Net::Now();
     ++g_frame;
 
+    // Substrate first: nothing below is safe until the engine globals are proven.
+    if (!g_substrateReady && !ValidateSubstrateOnGameThread()) return keepRunning;
+
     // Inbound first: applying before sending means a round trip completes in one
     // frame rather than two.
+    const bool tracing = (g_frame <= 6);
+    if (tracing) QDLOG(LOG_DEBUG, "  frame ", dec(g_frame), " begin");
+
     InboundPacket p;
     int drained = 0;
     while (drained < 16 && g_net.Pop(&p)) { DispatchInbound(p, now); ++drained; }
 
     g_net.PumpReliable();
+    if (tracing) QDLOG(LOG_DEBUG, "  frame ", dec(g_frame), " net done");
     // Before the mirror and the push, so the first frame after a save loads already
     // has a container to read.
     TryInitSaveLayer(now);
+    if (tracing) QDLOG(LOG_DEBUG, "  frame ", dec(g_frame), " save layer done");
     MirrorPump(now);
+    if (tracing) QDLOG(LOG_DEBUG, "  frame ", dec(g_frame), " mirror done");
     SendLocalPlayer(now);
+    if (tracing) QDLOG(LOG_DEBUG, "  frame ", dec(g_frame), " player sent");
 
     if (g_net.IsHost()) {
         HostPushFlags(now);
@@ -769,7 +890,9 @@ void HK_Tick(void* engineLoop, float delta)
     StreamPump(now);
     DialoguePump(now);
 
+    if (tracing) QDLOG(LOG_DEBUG, "  frame ", dec(g_frame), " end");
     g_lastTickMs = now;
+    return keepRunning;
 }
 
 bool HK_SetGamePaused(void* worldContext, bool paused)
@@ -857,6 +980,7 @@ DWORD WINAPI BootstrapThread(LPVOID)
     LogConfig();
 
     // ---- layer 0: is this the build we verified? --------------------------
+    // Pure memory reads of the mapped image. Safe from this thread.
     TargetReport tr = VerifyTargets();
     QDLOG(LOG_INFO, "targets: ", dec(tr.ok), " byte-verified, ",
           dec(tr.relocated), " relocated-pointer, ",
@@ -872,59 +996,12 @@ DWORD WINAPI BootstrapThread(LPVOID)
         return 0;
     }
 
-    // The engine does not exist yet at DllMain time.  Wait for GWorld rather than
-    // sleeping a fixed amount: gating on an event, not a timer, is the rule the
-    // previous project paid for with a lost race on the 5-second post-load timer.
-    QDLOG(LOG_INFO, "waiting for the engine...");
-    for (int i = 0; i < 1200; ++i) {          // up to ~60 s
-        void** gworld = (void**)Ptr<void*>(0x04BA86B0u);
-        int objects = ObjectCount();
-        // Report every 2 s.  Without this, "silence then the process dies" is
-        // indistinguishable from "the process died in the frame pump", and the first
-        // live run produced exactly that ambiguity.
-        if ((i % 40) == 0) {
-            QDLOG(LOG_DEBUG, "  wait: gworld=", hex((uintptr_t)(gworld ? *gworld : nullptr)),
-                  " objects=", dec(objects), " t=", dec(i * 50), "ms");
-        }
-        if (gworld && *gworld != nullptr && objects > 1000) {
-            QDLOG(LOG_DEBUG, "  engine up after ", dec(i * 50), " ms");
-            break;
-        }
-        Sleep(50);
-    }
-    {
-        void** gworld = (void**)Ptr<void*>(0x04BA86B0u);
-        if (!gworld || *gworld == nullptr) {
-            QDLOG(LOG_ERROR, "engine never came up; giving up");
-            return 0;
-        }
-    }
-
-    // ---- layer 1: prove the substrate ------------------------------------
-    QDLOG(LOG_DEBUG, "step: RuntimeValidate");
-    SubstrateStatus st = RuntimeValidate();
-    QDLOG(LOG_DEBUG, "step: RuntimeValidate done");
-    QDLOG(LOG_INFO, "substrate: globals=", dec(st.globals_ok ? 1 : 0),
-          " fname=", dec(st.fname_ok ? 1 : 0), "(", st.class_name, ")",
-          " gobjects=", dec(st.gobjects_ok ? 1 : 0),
-          " objects=", dec(ObjectCount()));
-    if (!st.fname_ok) {
-        QDLOG(LOG_ERROR, "REFUSING TO RUN: the FName decoder did not reproduce "
-                         "'GameEngine'; every name-based lookup would be garbage");
-        return 0;
-    }
-    if (!st.gobjects_ok) {
-        QDLOG(LOG_ERROR, "REFUSING TO RUN: GObjects liveness check failed");
-        return 0;
-    }
-
     // ---- hooks -----------------------------------------------------------
-    QDLOG(LOG_DEBUG, "step: MH_Initialize");
+    // MinHook patches code and touches no UObject, so this is safe here.
     if (MH_Initialize() != MH_OK) {
         QDLOG(LOG_ERROR, "MH_Initialize failed");
         return 0;
     }
-    QDLOG(LOG_DEBUG, "step: MH_Initialize done");
     {
         // Find the exact entries by name so a reordering of targets.h cannot silently
         // hook the wrong address.
@@ -932,15 +1009,23 @@ DWORD WINAPI BootstrapThread(LPVOID)
         const QdTarget* tPause = nullptr;
         const QdTarget* tStore = nullptr;
         const QdTarget* tPE = nullptr;
-        for (unsigned i = 0; i < kQdTargetCount; ++i) {
-            if (NameEquals(kQdTargets[i].name, "FEngineLoop::Tick")) tTick = &kQdTargets[i];
-            if (NameEquals(kQdTargets[i].name, "UGameplayStatics::SetGamePaused")) tPause = &kQdTargets[i];
-            if (NameEquals(kQdTargets[i].name, "StoreEnemySaveState")) tStore = &kQdTargets[i];
-            if (NameEquals(kQdTargets[i].name, "UObject::ProcessEvent")) tPE = &kQdTargets[i];
+        for (unsigned k = 0; k < kQdTargetCount; ++k) {
+            if (NameEquals(kQdTargets[k].name, "FEngineLoop::Tick")) tTick = &kQdTargets[k];
+            if (NameEquals(kQdTargets[k].name, "UGameplayStatics::SetGamePaused")) tPause = &kQdTargets[k];
+            if (NameEquals(kQdTargets[k].name, "StoreEnemySaveState")) tStore = &kQdTargets[k];
+            if (NameEquals(kQdTargets[k].name, "UObject::ProcessEvent")) tPE = &kQdTargets[k];
         }
-        if (tTick) InstallHook(*tTick, (void*)&HK_Tick, (void**)&g_oTick);
-        if (tPause) InstallHook(*tPause, (void*)&HK_SetGamePaused, (void**)&g_oSetGamePaused);
-        if (tStore) InstallHook(*tStore, (void*)&HK_StoreEnemySaveState, (void**)&g_oStoreEnemy);
+        // A missing target must be LOUD. The first version looked these up by
+        // exact name and silently installed nothing when the names were padded, so
+        // "no hooks" was indistinguishable from "hooks installed and idle".
+        int installed = 0;
+        if (tTick) { if (InstallHook(*tTick, (void*)&HK_Tick, (void**)&g_oTick)) ++installed; }
+        else QDLOG(LOG_ERROR, "target not found in the table: FEngineLoop::Tick");
+        if (tPause) { if (InstallHook(*tPause, (void*)&HK_SetGamePaused, (void**)&g_oSetGamePaused)) ++installed; }
+        else QDLOG(LOG_WARN, "target not found in the table: SetGamePaused");
+        if (tStore) { if (InstallHook(*tStore, (void*)&HK_StoreEnemySaveState, (void**)&g_oStoreEnemy)) ++installed; }
+        else QDLOG(LOG_WARN, "target not found in the table: StoreEnemySaveState");
+        QDLOG(LOG_INFO, "hooks installed: ", dec(installed), " of 3 (ProcessEvent is opt-in)");
         // ProcessEvent is the widest hook in the process and costs the most; it stays
         // off unless someone is tracing a specific Blueprint surface.
         if (tPE && Cfg().log_level >= LOG_TRACE) {
@@ -949,7 +1034,6 @@ DWORD WINAPI BootstrapThread(LPVOID)
     }
 
     // ---- net -------------------------------------------------------------
-    QDLOG(LOG_DEBUG, "step: hooks installed, starting transport");
     if (Cfg().enabled) {
         if (g_net.Start(Cfg().relay_host, Cfg().relay_port, "")) {
             QDLOG(LOG_INFO, "relay transport up; waiting for a session");
@@ -958,22 +1042,17 @@ DWORD WINAPI BootstrapThread(LPVOID)
         }
     }
 
-    // ---- layer 2/3: the save layer and the API probe -----------------------
-    // Attempted here, but not required: a fresh launch reaches this point at the main
-    // menu, with no save object. The frame pump retries, so the probe runs the moment a
-    // save is actually loaded.
-    {
-        uint32_t now = Net::Now();
-        if (TryInitSaveLayer(now)) {
-            QDLOG(LOG_INFO, "save layer up at bootstrap");
-        } else {
-            QDLOG(LOG_INFO, "save layer not up yet (", Save().note,
-                  "); the frame pump will retry until a save is loaded");
-        }
-    }
-
+    // ---- hand over to the game thread ------------------------------------
+    //
+    // EVERYTHING THAT TOUCHES A UOBJECT HAPPENS IN HK_Tick, NOT HERE.
+    //
+    // This thread used to run the substrate check, the save-layer init and the API
+    // probe, and it BLOCKED inside SaveInit: the run that reached that point stopped
+    // logging while the game kept running. That is the rule this project wrote down and
+    // then broke -- "Only UObject access goes on the game thread". Engine code takes
+    // locks and expects to run where the world is being ticked.
     g_engineReady = true;
-    QDLOG(LOG_INFO, "qdcMp ready (frame pump installed)");
+    QDLOG(LOG_INFO, "frame pump armed; substrate check and API probe run on the game thread");
     return 0;
 }
 
@@ -991,7 +1070,11 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID reserved)
         // game has not initialised.  Everything real happens on our own thread.
         DisableThreadLibraryCalls(module);
         {
-            HANDLE h = CreateThread(nullptr, 0, &BootstrapThread, nullptr, 0, nullptr);
+            // 8 MB, not the 1 MB default: this thread calls into engine code that was
+            // written for the game's own threads. A shallow call would survive a small
+            // stack, but a fault here presents as "the mod silently stopped" and costs a
+            // run to diagnose.
+            HANDLE h = CreateThread(nullptr, 8u << 20, &BootstrapThread, nullptr, 0, nullptr);
             if (h) CloseHandle(h);
         }
         break;
@@ -1006,6 +1089,9 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID reserved)
     }
     return TRUE;
 }
+
+
+
 
 
 

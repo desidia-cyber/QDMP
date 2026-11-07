@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Generate mod/native/src/targets.h from the shipped Queen's Domain image.
 
 WHY A GENERATOR AND NOT A HAND-WRITTEN TABLE
@@ -235,7 +235,13 @@ def main():
     w("static const QdTarget kQdTargets[] = {")
     for name, rva, role, check, ptr, raw in rows:
         bs = ", ".join("0x%02X" % b for b in raw)
-        w('    { "%-46s", 0x%08Xu, "%-5s", %d, 0x%08Xu, { %s } },'
+        # Names are emitted UNPADDED. The first version padded them to 46 columns for
+        # source alignment, which made every exact-match lookup fail: the runtime
+        # searched for "FEngineLoop::Tick" and the table held
+        # "FEngineLoop::Tick" + 32 spaces. The hook installer then logged nothing,
+        # so the mod appeared to install hooks and simply never did. Cosmetic
+        # alignment is not worth a silent failure.
+        w('    { "%s", 0x%08Xu, "%s", %d, 0x%08Xu, { %s } },'
           % (name, rva, role, check, ptr, bs))
     w("};")
     w("")
@@ -274,3 +280,4 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+

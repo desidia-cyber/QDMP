@@ -39,6 +39,7 @@ struct Config {
     int  dialogue_sync;    // lock + first-answer-decides
     int  stream_union;     // level-streaming union guard
     int  suppress_pause;   // stop a menu pause from freezing the session
+    int  object_scan;      // walk GObjects to find UFunctions (OFF: it exits the game)
 
     // behaviour
     int  host_authoritative;   // 1 = only the host writes world facts
@@ -69,6 +70,7 @@ inline void ConfigDefaults()
     c.dialogue_sync    = 0;
     c.stream_union     = 0;
     c.suppress_pause   = 0;
+    c.object_scan      = 0;
 
     c.host_authoritative = 1;
     c.allow_plaintext_internet = 0;
@@ -201,6 +203,7 @@ inline int ConfigLoad()
         else if (detail::StrEq(k, "DialogueSync"))  c.dialogue_sync = detail::ParseInt(v, c.dialogue_sync);
         else if (detail::StrEq(k, "StreamUnion"))   c.stream_union = detail::ParseInt(v, c.stream_union);
         else if (detail::StrEq(k, "SuppressMenuPause")) c.suppress_pause = detail::ParseInt(v, c.suppress_pause);
+        else if (detail::StrEq(k, "ObjectScan"))   c.object_scan = detail::ParseInt(v, c.object_scan);
         else if (detail::StrEq(k, "HostAuthoritative")) c.host_authoritative = detail::ParseInt(v, c.host_authoritative);
         else if (detail::StrEq(k, "AllowPlaintextInternet")) c.allow_plaintext_internet = detail::ParseInt(v, c.allow_plaintext_internet);
         else if (detail::StrEq(k, "SpawnAttemptsMax")) c.spawn_attempts_max = detail::ParseInt(v, c.spawn_attempts_max);
