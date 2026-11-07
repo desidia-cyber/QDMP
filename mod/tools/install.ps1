@@ -19,7 +19,11 @@
 [CmdletBinding()]
 param(
     [string]$GameDir = 'G:\Freespace\Queens_Domain\QueensDomain\QueensDomain\Binaries\Win64',
-    [string]$ModDir  = (Join-Path $PSScriptRoot '..'),
+    # Resolved in the body, NOT as a parameter default: $PSScriptRoot is not reliably
+    # populated while parameter defaults are evaluated, so `Join-Path $PSScriptRoot '..'`
+    # here failed with "Cannot bind argument to parameter 'Path' because it is an empty
+    # string".  Found by actually running the installer.
+    [string]$ModDir  = '',
     [switch]$Uninstall,
     [switch]$Force
 )
@@ -28,6 +32,11 @@ $ErrorActionPreference = 'Stop'
 
 function Say($m) { Write-Host $m }
 function Fail($m) { Write-Host "REFUSED: $m" -ForegroundColor Red; exit 1 }
+
+if ([string]::IsNullOrWhiteSpace($ModDir)) {
+    if ([string]::IsNullOrWhiteSpace($PSScriptRoot)) { Fail "cannot determine the script directory; pass -ModDir" }
+    $ModDir = Split-Path -Parent $PSScriptRoot
+}
 
 $exe = Join-Path $GameDir 'QueensDomain-Win64-Shipping.exe'
 if (-not (Test-Path -LiteralPath $exe)) {

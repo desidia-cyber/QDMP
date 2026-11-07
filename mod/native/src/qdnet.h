@@ -1,4 +1,4 @@
-// qdnet.h -- UDP transport, session state, and the game-thread handoff.
+﻿// qdnet.h -- UDP transport, session state, and the game-thread handoff.
 //
 // SHAPE, AND WHY
 // --------------
@@ -280,17 +280,32 @@ private:
 
         uint8_t buf[wire::kMaxPacket];
         while (running_) {
+            // `fromLen` is IN/OUT: it must be reset to the buffer's capacity before
+            // every call.  Leaving it at 0 makes recvfrom fail with WSAEFAULT (10014),
+            // which the first live run produced ~500 times a second -- and the tight
+            // retry with no backoff filled the log at 800 KB in under a second and is
+            // the most likely reason the game then died.
+            fromLen_ = (int)sizeof(from_);
             int n = recvfrom(sock_, (char*)buf, sizeof(buf), 0,
                              (sockaddr*)&from_, &fromLen_);
             uint32_t now = Now();
             if (n > 0) {
                 Ingest(buf, n, now);
+                consecutiveErrors_ = 0;
             } else if (n == SOCKET_ERROR) {
                 int e = WSAGetLastError();
+                // Log the first occurrence and then at most once a second: an error
+                // path that can spin must not be able to become the workload.
+                ++consecutiveErrors_;
                 if (e != WSAEWOULDBLOCK && e != WSAETIMEDOUT && e != WSAECONNRESET) {
-                    QDLOG(LOG_WARN, "recvfrom err=", dec(e));
+                    if (consecutiveErrors_ == 1 || (now - lastErrorMs_) > 1000) {
+                        lastErrorMs_ = now;
+                        QDLOG(LOG_WARN, "recvfrom err=", dec(e),
+                              " (", dec(consecutiveErrors_), " consecutive)");
+                    }
                 }
-                Sleep(2);   // ~2 ms pacing; the receive timeout already bounds the wait
+                // Real errors back off; a would-block does not.
+                Sleep((e == WSAEWOULDBLOCK) ? 2 : 50);
             }
             if (role_ == ROLE_NONE && now - last_hello_ms_ > 1000) SendHello();
             // Keepalive at 1 Hz idle so the relay can tell a silent peer from a
@@ -440,6 +455,8 @@ private:
     int         remoteLen_;
     sockaddr_in from_;
     int         fromLen_ = 0;
+    uint32_t    lastErrorMs_ = 0;
+    uint32_t    consecutiveErrors_ = 0;
     char        level_[96];
 
     SRWLOCK     lock_ = SRWLOCK_INIT;
@@ -450,3 +467,4 @@ private:
 };
 
 } // namespace qd
+

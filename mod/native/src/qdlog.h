@@ -1,4 +1,4 @@
-// qdlog.h -- the co-op mod's log sink.
+﻿// qdlog.h -- the co-op mod's log sink.
 //
 // WHY THIS IS NOT printf
 // ----------------------
@@ -260,9 +260,14 @@ inline void Log(int level, Args... args)
     const char* pe = buf + sizeof(buf) - 2;
     char* p = detail::Prefix(buf, pe, level);
     p = LogBuild(p, pe, args...);
+    // The newline.  The first live run produced every log line concatenated with the
+    // next ("...D1E618:47:14.691 INFO ...") because this was missing: LogBuild
+    // NUL-terminates but does not add a line break.
+    if (p < pe) *p++ = '\n';
     detail::Emit(level, buf, (int)(p - buf));
 }
 
 } // namespace qd
 
 #define QDLOG(level, ...) ::qd::Log((level), __VA_ARGS__)
+

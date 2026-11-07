@@ -42,3 +42,6 @@ mod/tools/.dotprobe-*
 mod/tools/.qdsave-selftest-*
 mod/tools/probe-*
 mod/tools/probe2-*
+
+# --- live test instance (game user dirs, seeded saves, pid files) ---
+/_test/

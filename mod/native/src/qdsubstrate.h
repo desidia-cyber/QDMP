@@ -1,4 +1,4 @@
-// qdsubstrate.h -- the engine substrate: image base, verified targets, GObjects,
+﻿// qdsubstrate.h -- the engine substrate: image base, verified targets, GObjects,
 // FName, ProcessEvent.
 //
 // CONFIDENCE OF EVERY CONSTANT HERE
@@ -57,6 +57,7 @@ enum TargetState { TGT_OK = 0, TGT_RUNTIME = 1, TGT_MISMATCH = 2 };
 struct TargetReport {
     int      mismatches;
     int      runtime_only;
+    int      relocated;      // check=2 slots whose live pointer matches
     int      ok;
     // The first mismatch, so the refusal message can name it rather than say
     // "something is wrong".
@@ -65,14 +66,40 @@ struct TargetReport {
     int         first_mismatch_byte;
 };
 
-// Compare the recorded bytes for every check=1 target.  Deliberately does not
-// touch the game's own state: this runs from DllMain, before the engine exists.
+// Compare the recorded bytes for every check=1 target.
+//
+// check=2 targets hold a RELOCATED POINTER: the loader rewrites the slot at every base
+// relocation, so its in-memory bytes NEVER equal the file's.  Comparing bytes there
+// produced a false mismatch on the first live run -- on a correct build.  The guard
+// failed in the safe direction, but for the wrong reason, and a guard that fires on a
+// good build gets ignored.  The right check is "the live pointer lands on ptr_rva,
+// relative to the actual image base".
+//
+// Deliberately does not touch the game's own state: this runs from DllMain, before the
+// engine exists.
 inline TargetReport VerifyTargets()
 {
-    TargetReport r = {0, 0, 0, nullptr, 0, -1};
+    TargetReport r = {0, 0, 0, 0, nullptr, 0, -1};
     for (unsigned i = 0; i < kQdTargetCount; ++i) {
         const QdTarget& t = kQdTargets[i];
         if (t.check == 0) { ++r.runtime_only; continue; }
+
+        if (t.check == 2) {
+            uint64_t live = *(const volatile uint64_t*)Ptr<uint8_t>(t.rva);
+            uint64_t want = (uint64_t)ImageBase() + (uint64_t)t.ptr_rva;
+            if (live != want) {
+                ++r.mismatches;
+                if (r.first_mismatch_name == nullptr) {
+                    r.first_mismatch_name = t.name;
+                    r.first_mismatch_rva  = t.rva;
+                    r.first_mismatch_byte = -1;   // a pointer, not a byte
+                }
+            } else {
+                ++r.relocated;
+            }
+            continue;
+        }
+
         const uint8_t* p = (const uint8_t*)Ptr<uint8_t>(t.rva);
         for (int b = 0; b < QD_EXPECT_BYTES; ++b) {
             if (p[b] != t.expect[b]) {
@@ -108,9 +135,15 @@ struct QdName {
 static const uint32_t kFNamePoolRva   = 0x04A27F00u;
 static const uint32_t kFNameBlocksOff = 0x10;
 
-inline const uint8_t* FNameBlocksBase()
+// `Blocks` is an ARRAY OF POINTERS living at pool+0x10, not a pointer to a pointer.
+// The first version of this took one indirection too many -- `*(uint8_t**)(pool+0x10)`
+// reads Blocks[0], a block, and then indexed that block's bytes as if they were block
+// pointers.  For a low FName index (idx >> 16 == 0) that lands back on Blocks[0] and
+// appears to work, which is why it survived review; the first index in a high block
+// dereferences heap garbage and the process dies.
+inline const uint8_t* const* FNameBlocks()
 {
-    return *(const uint8_t**)((uintptr_t)Ptr<uint8_t>(kFNamePoolRva) + kFNameBlocksOff);
+    return (const uint8_t* const*)((uintptr_t)Ptr<uint8_t>(kFNamePoolRva) + kFNameBlocksOff);
 }
 
 // -> length written (excluding terminator), or -1 if the entry cannot be decoded.
@@ -118,11 +151,15 @@ inline int FNameToString(QdName n, char* out, int cap)
 {
     if (cap <= 0) return -1;
     out[0] = 0;
-    const uint8_t* blocks = FNameBlocksBase();
+    const uint8_t* const* blocks = FNameBlocks();
     if (blocks == nullptr) return -1;
 
     uint32_t idx = (uint32_t)n.comparison_index;
-    const uint8_t* block = *(const uint8_t**)(blocks + 8 * (size_t)(idx >> 16));
+    uint32_t blk = idx >> 16;
+    // 8192 blocks is FNameEntryAllocator::BlockCount in 4.27.  A bigger index is a
+    // corrupt FName, not a valid entry -- refuse rather than index off the array.
+    if (blk >= 8192u) return -1;
+    const uint8_t* block = blocks[blk];
     if (block == nullptr) return -1;
     const uint8_t* entry = block + 2u * (size_t)(idx & 0xFFFFu);
 
@@ -378,11 +415,17 @@ inline SubstrateStatus RuntimeValidate()
         for (int i = 0; i < n && i < (int)sizeof(s.class_name) - 1; ++i) s.class_name[i] = cls[i];
         s.class_name[n < (int)sizeof(s.class_name) ? n : (int)sizeof(s.class_name) - 1] = 0;
     }
-    // The independent expectation.
+    // The independent expectation: GEngine's class must be "GameEngine".
+    //
+    // The first version also required `n == 9` -- a hand-typed length for a
+    // ten-character name. The decoder resolved the name correctly and the check
+    // still failed, which is the "a right number applied at the wrong place" trap
+    // in miniature. The length is now only required to be positive; the string
+    // comparison is the real assertion.
     const char* want = "GameEngine";
     int i = 0;
     for (; want[i] && cls[i]; ++i) if (want[i] != cls[i]) break;
-    s.fname_ok = (want[i] == 0 && cls[i] == 0 && n == 9);
+    s.fname_ok = (want[i] == 0 && cls[i] == 0 && n > 0);
 
     // GObjects liveness: at least one object must pass the slot round-trip.
     int probe = ObjectCount();
@@ -394,3 +437,7 @@ inline SubstrateStatus RuntimeValidate()
 }
 
 } // namespace qd
+
+
+
+

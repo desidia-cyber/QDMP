@@ -1,4 +1,4 @@
-// proxy.cpp -- the QD co-op native module.
+﻿// proxy.cpp -- the QD co-op native module.
 //
 // WHAT THIS IS
 // ------------
@@ -120,8 +120,23 @@ uint32_t          g_lastPlayerPushMs = 0;
 uint32_t          g_lastEnemyPushMs = 0;
 int               g_enemyCursor = 0;
 
-// The probe runs once per level, and only once per process by default.
+// The probe runs once per process.  It is guarded separately from the save layer's own
+// readiness because the two become ready at different times: the engine exists long
+// before a save is loaded, and a fresh launch sits at the main menu with NO save object
+// at all.  The first version of this mod ran the probe inline at bootstrap and printed
+// "will retry on the next load" -- and nothing ever retried.  That is exactly the
+// silent-failure shape the corpus warns about, so the retry now lives in the frame pump.
 bool              g_probeDone = false;
+uint32_t          g_lastSaveInitMs = 0;
+
+// The progression mirror lives here rather than beside its pump because the save-layer
+// retry must be able to reset it when the container is replaced.
+struct MirrorState {
+    char    last_name[80];
+    int32_t last_value;
+};
+MirrorState       g_mirror[64];
+int               g_mirrorCount = 0;
 
 // Captured enemy persistence writes (host authority source).
 struct EnemyKill {
@@ -262,18 +277,52 @@ void RunApiProbe()
 }
 
 // ---------------------------------------------------------------------------
+// Save-layer readiness, retried from the frame pump
+// ---------------------------------------------------------------------------
+// Called every frame.  Cheap when the layer is already up: one liveness check on a
+// cached pointer.  Re-initialises when the save object dies or is replaced, which is
+// what a level load does -- and the corpus rule is explicit that a cached handle must
+// not be trusted across a map change.
+bool TryInitSaveLayer(uint32_t now)
+{
+    SaveLayer& s = Save();
+    if (s.readOk && s.save && ObjectIsLive(s.save)) return true;
+
+    // Do not hammer SaveInit: it walks the object graph and does the property search.
+    if (g_lastSaveInitMs != 0 && (now - g_lastSaveInitMs) < 2000) return false;
+    g_lastSaveInitMs = now;
+
+    void* world = *(void**)Ptr<void*>(0x04BA86B0u);
+    if (!world) return false;
+
+    if (!SaveInit(world)) {
+        // DEBUG, not WARN: at the main menu this is the expected state, and a warning
+        // every two seconds trains the operator to ignore warnings.
+        QDLOG(LOG_DEBUG, "save layer not ready: ", s.note);
+        return false;
+    }
+
+    if (!g_probeDone) {
+        RunApiProbe();
+        g_probeDone = true;
+    } else {
+        QDLOG(LOG_INFO, "save layer re-initialised (level change or new save)");
+        // Re-learn what changed: the mirror must report every key again, and the flag
+        // push must not think it already sent this container.
+        g_mirrorCount = 0;
+        g_lastFlagCount = -1;
+        g_flagsDirty = true;
+    }
+    return s.readOk;
+}
+
+// ---------------------------------------------------------------------------
 // LAYER 3 -- the read-only mirror
 // ---------------------------------------------------------------------------
 // Every container change is logged with its old and new value.  This is the
 // instrument that turns "the saves look equal" into "these 11 keys changed in this
 // order", and it is what a two-instance run is compared against.
-struct MirrorState {
-    char    last_name[80];
-    int32_t last_value;
-};
-
-MirrorState g_mirror[64];
-int         g_mirrorCount = 0;
+// (MirrorState / g_mirror are declared with the other globals, above.)
 
 void MirrorVisit(const char* key, int32_t value, void* user)
 {
@@ -704,6 +753,9 @@ void HK_Tick(void* engineLoop, float delta)
     while (drained < 16 && g_net.Pop(&p)) { DispatchInbound(p, now); ++drained; }
 
     g_net.PumpReliable();
+    // Before the mirror and the push, so the first frame after a save loads already
+    // has a container to read.
+    TryInitSaveLayer(now);
     MirrorPump(now);
     SendLocalPlayer(now);
 
@@ -806,7 +858,8 @@ DWORD WINAPI BootstrapThread(LPVOID)
 
     // ---- layer 0: is this the build we verified? --------------------------
     TargetReport tr = VerifyTargets();
-    QDLOG(LOG_INFO, "targets: ", dec(tr.ok), " verified, ",
+    QDLOG(LOG_INFO, "targets: ", dec(tr.ok), " byte-verified, ",
+          dec(tr.relocated), " relocated-pointer, ",
           dec(tr.runtime_only), " runtime-validated, ", dec(tr.mismatches), " mismatched");
     if (tr.mismatches > 0) {
         // Refuse rather than half-work: a wrong RVA is an access violation at best and
@@ -825,7 +878,18 @@ DWORD WINAPI BootstrapThread(LPVOID)
     QDLOG(LOG_INFO, "waiting for the engine...");
     for (int i = 0; i < 1200; ++i) {          // up to ~60 s
         void** gworld = (void**)Ptr<void*>(0x04BA86B0u);
-        if (gworld && *gworld != nullptr && ObjectCount() > 1000) break;
+        int objects = ObjectCount();
+        // Report every 2 s.  Without this, "silence then the process dies" is
+        // indistinguishable from "the process died in the frame pump", and the first
+        // live run produced exactly that ambiguity.
+        if ((i % 40) == 0) {
+            QDLOG(LOG_DEBUG, "  wait: gworld=", hex((uintptr_t)(gworld ? *gworld : nullptr)),
+                  " objects=", dec(objects), " t=", dec(i * 50), "ms");
+        }
+        if (gworld && *gworld != nullptr && objects > 1000) {
+            QDLOG(LOG_DEBUG, "  engine up after ", dec(i * 50), " ms");
+            break;
+        }
         Sleep(50);
     }
     {
@@ -837,7 +901,9 @@ DWORD WINAPI BootstrapThread(LPVOID)
     }
 
     // ---- layer 1: prove the substrate ------------------------------------
+    QDLOG(LOG_DEBUG, "step: RuntimeValidate");
     SubstrateStatus st = RuntimeValidate();
+    QDLOG(LOG_DEBUG, "step: RuntimeValidate done");
     QDLOG(LOG_INFO, "substrate: globals=", dec(st.globals_ok ? 1 : 0),
           " fname=", dec(st.fname_ok ? 1 : 0), "(", st.class_name, ")",
           " gobjects=", dec(st.gobjects_ok ? 1 : 0),
@@ -853,10 +919,12 @@ DWORD WINAPI BootstrapThread(LPVOID)
     }
 
     // ---- hooks -----------------------------------------------------------
+    QDLOG(LOG_DEBUG, "step: MH_Initialize");
     if (MH_Initialize() != MH_OK) {
         QDLOG(LOG_ERROR, "MH_Initialize failed");
         return 0;
     }
+    QDLOG(LOG_DEBUG, "step: MH_Initialize done");
     {
         // Find the exact entries by name so a reordering of targets.h cannot silently
         // hook the wrong address.
@@ -881,6 +949,7 @@ DWORD WINAPI BootstrapThread(LPVOID)
     }
 
     // ---- net -------------------------------------------------------------
+    QDLOG(LOG_DEBUG, "step: hooks installed, starting transport");
     if (Cfg().enabled) {
         if (g_net.Start(Cfg().relay_host, Cfg().relay_port, "")) {
             QDLOG(LOG_INFO, "relay transport up; waiting for a session");
@@ -889,14 +958,18 @@ DWORD WINAPI BootstrapThread(LPVOID)
         }
     }
 
-    // ---- layer 2: the API probe, once, on the first loaded level ----------
-    void* world = *(void**)Ptr<void*>(0x04BA86B0u);
-    if (SaveInit(world)) {
-        RunApiProbe();
-        g_probeDone = true;
-    } else {
-        QDLOG(LOG_WARN, "save layer not ready yet: ", Save().note,
-              " (will retry on the next load)");
+    // ---- layer 2/3: the save layer and the API probe -----------------------
+    // Attempted here, but not required: a fresh launch reaches this point at the main
+    // menu, with no save object. The frame pump retries, so the probe runs the moment a
+    // save is actually loaded.
+    {
+        uint32_t now = Net::Now();
+        if (TryInitSaveLayer(now)) {
+            QDLOG(LOG_INFO, "save layer up at bootstrap");
+        } else {
+            QDLOG(LOG_INFO, "save layer not up yet (", Save().note,
+                  "); the frame pump will retry until a save is loaded");
+        }
     }
 
     g_engineReady = true;
@@ -933,3 +1006,6 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID reserved)
     }
     return TRUE;
 }
+
+
+

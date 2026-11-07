@@ -128,6 +128,15 @@ def main():
         opt = e_lfanew + 24
         size_of_image = struct.unpack_from("<I", blob, opt + 56)[0]
 
+    # ImageBase, so a pointer-valued target can be recorded as an RVA rather than as
+    # raw bytes.  A .rdata slot that holds a VA is REWRITTEN BY THE LOADER at every
+    # base relocation, so comparing its in-memory bytes against the file's bytes can
+    # never match.  Measured on the first live run: the ProcessEvent vtable slot
+    # mismatched at byte 2, because that byte is part of the relocated address.
+    e_lfanew_ = struct.unpack_from("<I", blob, 0x3C)[0]
+    opt_ = e_lfanew_ + 24
+    image_base = struct.unpack_from("<Q", blob, opt_ + 24)[0]
+
     # Section virtual ranges, so a target beyond a section's raw data can be
     # classified as zero-initialised (check=0) instead of reported as unmapped.
     # Measured on this image: .data has vsz 0x516174 against raw 0x273C00, and
@@ -145,6 +154,15 @@ def main():
                 return "bss"
         return None
 
+    def as_relocated_pointer(raw):
+        """-> the RVA this slot points at, if its first 8 bytes are an in-image VA."""
+        if len(raw) < 8:
+            return None
+        v = int.from_bytes(raw[0:8], "little")
+        if image_base <= v < image_base + size_of_image:
+            return v - image_base
+        return None
+
     rows = []
     problems = []
     for name, rva, role in TARGETS:
@@ -152,25 +170,30 @@ def main():
         if where is None:
             problems.append("%s @ %08X: not inside any section's raw data "
                             "(or straddles the raw/virtual boundary)" % (name, rva))
-            rows.append((name, rva, role, 0, bytes(EXPECT)))
+            rows.append((name, rva, role, 0, 0, bytes(EXPECT)))
             continue
         if where == "bss":
-            rows.append((name, rva, role, 0, bytes(EXPECT)))
+            rows.append((name, rva, role, 0, 0, bytes(EXPECT)))
             continue
         off = where
         if off + EXPECT > len(blob):
             problems.append("%s @ %08X: past end of file" % (name, rva))
-            rows.append((name, rva, role, 0, bytes(EXPECT)))
+            rows.append((name, rva, role, 0, 0, bytes(EXPECT)))
             continue
         raw = blob[off:off + EXPECT]
         # A run of zeros means this is .bss or padding: nothing to compare.
         if raw.count(0) == EXPECT:
-            rows.append((name, rva, role, 0, raw))
+            rows.append((name, rva, role, 0, 0, raw))
+            continue
+        ptr = as_relocated_pointer(raw)
+        if ptr is not None:
+            rows.append((name, rva, role, 2, ptr, raw))
         else:
-            rows.append((name, rva, role, 1, raw))
+            rows.append((name, rva, role, 1, 0, raw))
 
     n_check = sum(1 for r in rows if r[3] == 1)
-    n_runtime = len(rows) - n_check
+    n_ptr = sum(1 for r in rows if r[3] == 2)
+    n_runtime = sum(1 for r in rows if r[3] == 0)
 
     lines = []
     w = lines.append
@@ -183,11 +206,16 @@ def main():
     w("// The expected bytes below were read out of that image, not typed, so a")
     w("// mismatch at runtime means this is a different build -- not a typo here.")
     w("//")
-    w("// `check` is 1 where the bytes below are compared at load, and 0 where they")
-    w("// cannot be: the target is a ZERO-INITIALISED global, so the file has no")
-    w("// bytes for it and the live value would differ from any recorded constant by")
-    w("// design.  A check=0 target is validated at runtime instead, and until it")
-    w("// has been, it must not be used -- see QdSubstrate::RuntimeValidate().")
+    w("// `check` is one of three, and the distinction is load-bearing:")
+    w("//   1 = compare the expect[] bytes at load.")
+    w("//   2 = the slot holds a RELOCATED POINTER.  The loader rewrites it at every")
+    w("//       base relocation, so its in-memory bytes never equal the file's.  The")
+    w("//       check is that the live pointer lands on ptr_rva, relative to the real")
+    w("//       image base.  (Measured: comparing file bytes here mismatched at byte")
+    w("//       2 on a correct build.)")
+    w("//   0 = ZERO-INITIALISED global (.bss), so the file has no bytes for it and the")
+    w("//       live value differs from any constant by design.  Validated at runtime")
+    w("//       instead; until it has been, it must not be used.")
     w("#pragma once")
     w("#include <stdint.h>")
     w("")
@@ -199,21 +227,23 @@ def main():
     w("    const char* name;")
     w("    uint32_t    rva;")
     w("    const char* role;")
-    w("    uint8_t     check;   // 1 = compare expect[] at load; 0 = runtime-validated only")
+    w("    uint8_t     check;      // 1 = bytes, 2 = relocated pointer, 0 = runtime only")
+    w("    uint32_t    ptr_rva;    // valid when check == 2")
     w("    uint8_t     expect[QD_EXPECT_BYTES];")
     w("};")
     w("")
     w("static const QdTarget kQdTargets[] = {")
-    for name, rva, role, check, raw in rows:
+    for name, rva, role, check, ptr, raw in rows:
         bs = ", ".join("0x%02X" % b for b in raw)
-        w('    { "%-46s", 0x%08Xu, "%-5s", %d, { %s } },'
-          % (name, rva, role, check, bs))
+        w('    { "%-46s", 0x%08Xu, "%-5s", %d, 0x%08Xu, { %s } },'
+          % (name, rva, role, check, ptr, bs))
     w("};")
     w("")
     w("static const unsigned kQdTargetCount =")
     w("    sizeof(kQdTargets) / sizeof(kQdTargets[0]);")
     w("")
-    w("// %d byte-verified, %d runtime-validated." % (n_check, n_runtime))
+    w("// %d byte-verified, %d relocated-pointer, %d runtime-validated."
+      % (n_check, n_ptr, n_runtime))
     w("")
     text = "\n".join(lines)
 
