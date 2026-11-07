@@ -1,0 +1,386 @@
+{
+  "report": "answers-2",
+  "generated": "2026-11-06",
+  "scope": "C7 inventory/equipment model, C10 level streaming, D2 dialogue data model, D9 boss arena state",
+  "corpus": {
+    "pak": "QueensDomain/QueensDomain/Content/Paks/QueensDomain-WindowsNoEditor.pak",
+    "pak_bytes": 1976294370,
+    "pak_version": 11,
+    "index_paths": 44092,
+    "uasset_files": 19162,
+    "umap_files": 51,
+    "payload_bytes_scanned": 1973612650,
+    "save_files_available": 7
+  },
+  "instruments": {
+    "pakread.py": "pak index, 44092 exact paths + per-entry payload range",
+    "blueprints.py": "package name/import/export tables",
+    "stream_volumes.py": "51 map export tables + paired .uexp actor blocks",
+    "inv_model.py": "4129 item .uasset + gvas.py save reader",
+    "dialogue_model.py": "73 dialogue .uasset + analysis/exe_strings_all.txt",
+    "boss_state.py": "all 1973612650 payload bytes + 51 map export tables + 7 saves"
+  },
+  "items": {
+    "C7": {
+      "title": "inventory / equipment / key-item model",
+      "status": "CLOSED",
+      "confidence": {
+        "catalogue_and_classes": "HIGH",
+        "enums": "HIGH",
+        "identity_key": "HIGH",
+        "save_value_semantics": "HIGH",
+        "equip_slot_id_arithmetic": "MEDIUM"
+      },
+      "measured": {
+        "items_uasset_total": 4129,
+        "items_uexp_total": 4129,
+        "items_ubulk_total": 366,
+        "items_directories": 306,
+        "families": {
+          "Weapons": {"uasset": 2506, "dirs": 141, "definitions": 134},
+          "KeyItems": {"uasset": 503, "dirs": 42, "definitions": 87},
+          "Treasure": {"uasset": 400, "dirs": 43, "definitions": 71},
+          "Consumables": {"uasset": 310, "dirs": 27, "definitions": 30},
+          "Accessories": {"uasset": 281, "dirs": 38, "definitions": 48},
+          "Upgrades": {"uasset": 123, "dirs": 12, "definitions": 12},
+          "Misc": {"uasset": 4, "dirs": 1, "definitions": 0},
+          "NullItem": {"uasset": 1, "dirs": 1, "definitions": 1},
+          "AssetNotMadeYet": {"uasset": 1, "dirs": 1, "definitions": 0}
+        },
+        "item_definitions_total": 383,
+        "definition_class": "FS_ItemData_C (BlueprintGeneratedClass, parent FS_Item)",
+        "stats_assets": {"FS_WeaponStats": 106, "FS_DaggerStats": 26},
+        "self_export_class_census": {
+          "Texture2D": 917,
+          "BlueprintGeneratedClass": 777,
+          "MaterialInstanceConstant": 485,
+          "FS_ItemData_C": 383,
+          "StaticMesh": 338,
+          "NiagaraSystem": 214,
+          "SoundCue": 188,
+          "SoundWave": 144,
+          "AnimMontage": 123,
+          "FS_WeaponStats": 106,
+          "Material": 103,
+          "AnimSequence": 101,
+          "SkeletalMesh": 32,
+          "Skeleton": 31,
+          "AnimBlueprintGeneratedClass": 27,
+          "FS_DaggerStats": 26,
+          "PhysicsAsset": 25,
+          "CurveFloat": 5,
+          "UserDefinedStruct": 4,
+          "WidgetBlueprintGeneratedClass": 3,
+          "MaterialParameterCollection": 1,
+          "ForceFeedbackEffect": 1,
+          "SoundAttenuation": 1,
+          "no_self_export": 94
+        },
+        "enums": {
+          "ItemCategory": {
+            "values": 9,
+            "mapping": ["Consumables", "Accessories", "Weapons", "Daggers", "GemsAndBatteries", "Keys", "Food", "Treasure", "All"],
+            "source": "Content/Blueprints/ItemSystem/ItemCategory.uasset + .uexp DisplayNameMap"
+          },
+          "ItemEquipSlotType": {
+            "values": 4,
+            "mapping": ["Accessory", "Dagger", "None", "Weapon"],
+            "source": "Content/Blueprints/SaveSystem/ItemEquipSlotType.uasset + .uexp"
+          }
+        },
+        "definition_fields": [
+          "Category", "ItemCategory", "EquipSlot", "ItemEquipSlotType", "Equippable", "Consumable", "Weapon",
+          "Unstackable", "ShowCountInInventory", "ShowInKeyMenu", "HideWhenEmpty", "SortOrder",
+          "KeyTag", "DataImportKey", "Item Description", "ItemIcon", "ThumbnailMask", "WhiteMask",
+          "Pickup BP", "Default Visual BP", "Drop BP / Fallback Visual BP",
+          "Pickup3DConfig", "Item3DConfig", "Inspect3DConfig", "Thumbnail3DConfig", "PickupPutAwayPos",
+          "BaseLocation", "BaseRotation", "BaseScale", "PickupSoundOverride", "InspectBPOverride"
+        ],
+        "save_properties": {
+          "InventoryContents": {"type": "Map<Object,int32>", "sample": "{/Game/Items/Weapons/RustedSword/RustySword_Item.RustySword_Item: 1}", "meaning": "stack count"},
+          "Equipment": {"type": "Map<Object,int32>", "sample": "{RustySword_Item: 2000}", "meaning": "equip slot id (not enum ordinal, not count)"},
+          "EquipmentSlots": {"type": "Map<int32,Object>", "sample": "{2000: RustySword_Item}", "meaning": "exact inverse of Equipment"},
+          "CurrentlySelectedWeapon": {"type": "Object", "sample": "RustySword_Item"},
+          "WeaponCharges": {"type": "Map<Object,float>", "entries": 106, "nonzero": 28},
+          "DaggerCharges": {"type": "Map<Object,float>", "entries": 26},
+          "declared_but_never_serialised": ["Inventory", "EquippedItems", "EquippedItemSlots"]
+        },
+        "identity_resolution": "/Game/Items/Weapons/RustedSword/RustySword_Item.RustySword_Item -> Items/Weapons/RustedSword/RustySword_Item.uasset class=FS_ItemData_C",
+        "definition_basenames_unique": true
+      },
+      "inference": [
+        "equip slot token = f(slot kind, index); observed 2000 for a weapon, consistent with a 1000*kind+index scheme, but only one equipped item exists in every available save"
+      ],
+      "mod_implication": "Sync (full item path, stack count) and (item path, slot token); keep Equipment and EquipmentSlots in lockstep; definitions never cross the wire because both machines ship the same pak.",
+      "evidence": [
+        "Content/Blueprints/ItemSystem/FS_ItemData.uasset",
+        "Content/Blueprints/ItemSystem/ItemCategory.uasset",
+        "Content/Blueprints/SaveSystem/ItemEquipSlotType.uasset",
+        "Content/Items/ (4129 .uasset)",
+        "analysis/save-backup-before-live/World0.sav",
+        "_live/saved/Saved/SaveGames/World0_Suspend_1.sav"
+      ]
+    },
+
+    "C10": {
+      "title": "level streaming: volumes, lists, unionability",
+      "status": "CLOSED",
+      "confidence": {
+        "class_census": "HIGH",
+        "volume_to_list_mapping": "HIGH",
+        "trigger_to_side_mapping": "HIGH",
+        "level_list_contents": "HIGH",
+        "two_player_union": "MEDIUM (structural inference, not observed live)"
+      },
+      "measured": {
+        "maps_scanned": 51,
+        "class_census": {
+          "FS_LevelManagerVolume": 6,
+          "LevelManagerTrigger_C": 49,
+          "LevelStreamingDynamic": 43,
+          "LevelStreamingAlwaysLoaded": 5,
+          "LevelStreamingPersistent": 0
+        },
+        "placement": {
+          "Ruins_Level_00": {"FS_LevelManagerVolume": 5, "LevelManagerTrigger_C": 48, "LevelStreamingDynamic": 42, "LevelStreamingAlwaysLoaded": 1},
+          "BirdsTestZone": {"FS_LevelManagerVolume": 1, "LevelStreamingDynamic": 1},
+          "740_SZ_Prison": {"LevelManagerTrigger_C": 1},
+          "title_screen": {"LevelStreamingAlwaysLoaded": 1},
+          "Intro_Level_00": {"LevelStreamingAlwaysLoaded": 1},
+          "VideoConfigMap": {"LevelStreamingAlwaysLoaded": 2}
+        },
+        "sublevel_packages_of_Ruins_Level_00": 42,
+        "level_list_assets": 22,
+        "level_lists_referenced_by_a_volume": 19,
+        "object_references_found": 78,
+        "trigger_tallies": {"total": 49, "both_sides": 23, "a_side_only": 21, "b_side_only": 5},
+        "reference_offsets": {"volume_LevelList": 25, "trigger_A_Side": 286, "trigger_B_Side": 315},
+        "union_arithmetic": {
+          "largest_single_list_levels": 16,
+          "GreenRuins_union_Library": {"distinct": 18, "common": 13},
+          "SZ_Depths_union_Mausoleum2_Deep": {"distinct": 18, "common": 5},
+          "union_of_all_19_lists_incl_dev": 38,
+          "union_persistent_world_only": 37
+        },
+        "volume_to_list": {
+          "Ruins_Level_00/AquaRuins_LevelVolume": "AquaRuins",
+          "Ruins_Level_00/FS_LevelManagerVolume": "GreenRuins_OuterIsles",
+          "Ruins_Level_00/FS_LevelManagerVolume2": "GreenRuins_OuterIsles_ExtraPri",
+          "Ruins_Level_00/FS_LevelManagerVolume3": "GreenRuins_NearLibrary",
+          "Ruins_Level_00/GreenRuinsLevelVolume": "GreenRuins",
+          "BirdsTestZone/FS_LevelManagerVolume": "zzz_birdTest_SL_ON"
+        },
+        "level_list_sizes": {
+          "AquaRuins": 15, "AutumnIsland": 5, "AutumnIslandCastle": 5, "DropTunnel": 6,
+          "EmptyLevelList": 0, "GreenRuins": 15, "GreenRuins_NearLibrary": 15,
+          "GreenRuins_OuterIsles": 16, "GreenRuins_OuterIsles_ExtraPri": 16, "Greenruins_SZ": 13,
+          "IntroCutscene": 2, "Library": 16, "Library_SZ": 10, "Mausoleum": 16,
+          "Mausoleum2_Deep": 12, "Mausoleum_SZ": 9, "Prison_SZ": 9, "ROS": 6,
+          "SZ_Depths": 11, "SipehaArena": 2, "StoneGarden": 8, "zzz_birdTest_SL_ON": 2
+        },
+        "stack_api_evidence": [
+          "AddLevelListToStack / RemoveLevelListFromStack (imported by LevelManagerTrigger_C and Checkpoint_C)",
+          "ClearTriggerLevelLists / SetFreezeLevelListUpdates / FlushLevelManagerActions",
+          "FS_SaveSlot: LevelListStack, TriggerLevelListStack, SafeLocLevelListStack",
+          "FS_LevelListStackEntry, FS_LevelManagerAction, EFS_WaitForLevelManagementMode",
+          "LevelManagerUpdate, LevelManagerDoneLoading, FS_LevelLoadSuspendState"
+        ]
+      },
+      "inference": [
+        "the resident set is the union of the lists on the stack, so two players' volumes can be unioned by adding both lists",
+        "a split party costs at most ~18 resident sublevels against a 42-sublevel universe"
+      ],
+      "mod_implication": "Send (generation, volumeId, listName, side) and rebuild each machine's stack as the union of the party's entries. Key the volume by the placed actor Guid, not the actor name. Gate un-gating on LevelManagerDoneLoading.",
+      "limitations": [
+        "map actor blocks do not parse end-to-end with the .uasset tag model; the three list properties were recovered via a validated structural signature (name at p-25, type at p-17), 78/78 unambiguous",
+        "runtime behaviour of two simultaneous triggers not measured; memory cost of an 18-sublevel union not measured"
+      ],
+      "evidence": [
+        "Content/RuinsLevel/Maps/Ruins_Level_00.umap (+ .uexp, 61282213 B)",
+        "Content/RuinsLevel/Maps/LevelLists/*.uasset (20)",
+        "Content/LD45/Maps/BirdTestZOne_Assets/zzz_birdTest_SL_ON.uasset",
+        "Content/Blueprints/Areas/Other/EmptyLevelList.uasset",
+        "Content/Blueprints/LevelManagerTrigger.uasset"
+      ]
+    },
+
+    "D2": {
+      "title": "dialogue data model (conditional branches)",
+      "status": "CLOSED",
+      "confidence": {
+        "asset_population": "HIGH",
+        "schema": "HIGH",
+        "enum_values": "HIGH",
+        "per_asset_keys": "HIGH",
+        "runtime_state_reading": "MEDIUM"
+      },
+      "measured": {
+        "dialogue_uassets": 73,
+        "FS_DialogueData_assets": 61,
+        "UFS_DialogueAction_blueprints": 2,
+        "ui_blueprints": 4,
+        "font_style_datatables": 4,
+        "other": 2,
+        "shared_schema_fields": [
+          "Greetings", "DialogueSequence", "OptionalDialogueToRunAfter",
+          "Conditions", "NamedSaveDataValueChanges",
+          "ActionToRun", "ActionToRunAtEnd",
+          "Entry", "OptionText", "AutoClose", "bHideName", "bSkipGreeting", "DevName",
+          "FS_DialogueSequence", "S_DialogueSequenceEntry", "S_DialogueOption", "S_SaveDataCondition"
+        ],
+        "enums": {
+          "EFS_DialogueConditionType": ["EDCT_Inventory", "EDCT_NamedSaveData"],
+          "EFS_DialogueConditionBehaviour": ["EDCB_HideAND", "EDCB_HideOR", "EDCB_ShowAND", "EDCB_ShowOR"],
+          "EFS_Comparator": ["EC_Equal", "EC_GreaterThan", "EC_GreaterThanOrEqual", "EC_LessThan", "EC_LessThanOrEqual", "EC_NotEqual"],
+          "EFS_NamedSaveDataChangeMode": ["ENSDCM_Add", "ENSDCM_Set"]
+        },
+        "enum_source": "analysis/exe_strings_all.txt (native UENUM entry strings)",
+        "per_asset_keys_examples": {
+          "Knight_Arjaot_Dialogue_00": ["Arjaot_State"],
+          "Merchant_Dialogue": ["ShopDoorOpened", "MerchantDidShopDoorComment"],
+          "GreenDragon_Spawner": ["DragonIsDead", "DragonLordDead"]
+        },
+        "sequence_label_examples": [
+          "Greet First Time", "Turn in exactly 4 necklaces",
+          "Sequence if talked to post first time while you have belt",
+          "repeat - quest finished", "not ready"
+        ],
+        "manager": {
+          "asset": "Content/UI/DialogueSystem/DialogueManager.uasset",
+          "bytes": 21492,
+          "names": 374,
+          "exports": 21,
+          "state": ["CurrentDialogue", "CurrentDialogueNPC", "CurrentDialogueSequence", "CurrentDialogueSequenceIndex", "RunningDialogue", "AvailableOptions", "FilteredOptions", "CurrentAvailableOptions", "ChangedNamedSaveDatas"],
+          "transitions": ["StartDialogue", "EndDialogue", "JumpToDialogue", "DialogueToJumpTo", "DialogueOptionChosen", "DialogueSequenceContinue", "DialogueSequenceEnded", "ShowDialogueSequenceEntry", "ShowDialogueOptions", "ReturnToOptions"],
+          "evaluation": ["EvaluateConditionSet", "FilterAvailableOptions", "GetNamedSaveData"],
+          "effects": ["RunAction", "SaveNamedData", "SequenceFinalActionEnded", "ActionFinished"],
+          "action_contract": ["RunActionWithinContext", "FinishAction"]
+        }
+      },
+      "inference": [
+        "a dialogue is a cursor (asset, sequenceIndex, entryIndex); options are derivable from already-synced NamedSaveData + inventory, so they need not be sent",
+        "remote-triggered actions must be applied quietly or they re-run on cursor application"
+      ],
+      "mod_implication": "Model dialogue as a lock with an owner. Sync the cursor + which player chose; recompute options locally; fence actions with begin/finish; do not truncate OptionalDialogueToRunAfter chains.",
+      "limitations": [
+        "runtime state reading is name-derived; no dialogue executed",
+        "does the conversation pause the world: not measured (D1, out of scope)"
+      ],
+      "evidence": [
+        "Content/NPCs/Knight/Knight_Arjaot/Knight_Arjaot_Dialogue_00.uasset",
+        "Content/NPCs/Merchant/Merchant_Dialogue.uasset",
+        "Content/UI/DialogueSystem/DialogueManager.uasset",
+        "Content/Enemies/Sipeha/Sipeha_BanishDialogueAction.uasset",
+        "analysis/exe_strings_all.txt"
+      ]
+    },
+
+    "D9": {
+      "title": "boss arena state",
+      "status": "CLOSED",
+      "confidence": {
+        "no_boss_container": "HIGH (whole-pak byte scan, named range)",
+        "placed_actors": "HIGH",
+        "gate_persistence": "HIGH",
+        "challenge_ids_and_icons": "HIGH",
+        "defeat_state_is_nsd": "MEDIUM-HIGH (write sites + Stat_AutoNSD, not observed in a save)"
+      },
+      "measured": {
+        "negative_scan": {
+          "instrument": "sequential byte scan over all payload bytes",
+          "bytes": 1973612650,
+          "mode": "exact ASCII substring, case sensitive",
+          "hits": {"BossStates": 0, "bossKilled": 0, "BossDefeated": 0, "BossState": 0, "BossManager": 0}
+        },
+        "defeat_keys": {
+          "DemonBossesKilled": {"hits": 5, "owners": ["Blueprints/Challenges/FS_ChallengeData.uasset", "Enemies/DemonBosses/DemonSpider/DemonSpider_BP.uasset", "Enemies/DemonBosses/DemonSpider/DemonSpider_Spawner.uasset", "LD45/Maps/BirdsTestZone.umap", "RuinsLevel/Maps/450_MAUS_darkmaze.umap"]},
+          "BridgeLordDead": {"hits": 3, "owners": ["FS_ChallengeData", "Enemies/JosamiLord/JosamiLord_BP.uasset", "Enemies/JosamiLord/JosamiLord_Spawner.uasset"]},
+          "DragonLordDead": {"hits": 3, "owners": ["FS_ChallengeData", "Enemies/Dragon/GreenDragon_Spawner.uasset", "RuinsLevel/Maps/780_SZ_Depths.umap"]},
+          "RedLordsDead": {"hits": 3, "owners": ["FS_ChallengeData", "Enemies/JosamiLord/BloodSisters/JosamiBloodLord_Sword_Spawner.uasset", "RuinsLevel/Maps/740_SZ_Prison.umap"]},
+          "ROSDragonDead": {"hits": 4, "owners": ["FS_ChallengeData", "Enemies/Dragon/Dragon_ROS/Dragon_Ros_BP.uasset", "Enemies/Dragon/Dragon_ROS/Dragon_Ros_Bestiary.uasset", "Enemies/Dragon/Dragon_ROS/ROSDragon_Spawner.uasset"]},
+          "GiantSwampFish_IsDead": {"hits": 3, "owners": ["FS_ChallengeData", "Enemies/Fisher_00/Fisher24/Fisher_02/GiantSwampFish/GiantFish_Enemy_BP.uasset", "Enemies/Fisher_00/Fisher24/Fisher_02/GiantSwampFish/GiantSwampFish_EmergeSpot.uasset"]},
+          "NecronimiconDefeated": {"hits": 3, "owners": ["FS_ChallengeData", "Enemies/Necronomicon/Necronomicon_BP.uasset", "Enemies/Necronomicon/Necronomicon_Boss_Spawner.uasset"]},
+          "EndingSeen": {"hits": 3, "owners": ["FS_ChallengeData", "Enemies/Queen/Queen_BP.uasset", "Enemies/Sipeha/Sipeha_NPC.uasset"]},
+          "NecroWall00Destroyed..04": {"hits_each": 2, "owners": ["FS_ChallengeData", "RuinsLevel/Maps/300_LIB.umap", "RuinsLevel/Maps/320_LIB_basement.umap"]}
+        },
+        "placed_boss_actors_total": 31,
+        "placed_boss_actors": {
+          "Boss_Deco_00_BP_C": 10,
+          "Boss_Env_PPC_C": 3,
+          "Lib_BossDoor_BP_C": 3,
+          "DemonBoss_FightController_C": 2,
+          "WebBossWall_BP_C": 2,
+          "GraveyardBoss_Gate_C": 2,
+          "Boner_ShrineBoss_Spawner_C": 1,
+          "AquaBossDoor_BP_C": 1,
+          "AquaBossExitDoor_C": 1,
+          "RibberBoss_Tiara_Pickup_C": 1,
+          "ChickenBossNecklace_Pickup_C": 1,
+          "Fishman_Boss_Crown_Pickup_C": 1,
+          "Necro_Boss_Door_C": 1,
+          "Necronomicon_Boss_Spawner_C": 1,
+          "DesBoss_Gate_C": 1
+        },
+        "gate_parents": {
+          "AquaBossDoor_BP": "SavableActor_C",
+          "WebBossWall_BP": "SavableActor_C",
+          "Lib_BossDoor_BP": "Door_Base_C",
+          "DesBoss_Gate": "Door_Base_C",
+          "GraveyardBoss_Gate": "Door_Base_C",
+          "Lib_TreasureGate_BP": "Door_Base_C",
+          "Necro_Boss_Door": "Necro_Deco_Base_C"
+        },
+        "encounter_controller": {
+          "asset": "Content/Enemies/DemonBosses/DemonBoss_FightController.uasset",
+          "class": "DemonBoss_FightController_C",
+          "parent": "Actor",
+          "fields": ["SourceGUID", "Finished", "Finished__DelegateSignature", "LavaPathSpline", "Spline", "ProjectWorldLocationOntoTrack", "ProjectPlayerPositionOnTrack", "GetTrackTargetLocation", "SpawnMagmaPuddle", "UpdateMagmaPuddles", "ManagedPuddles", "LavaDamage", "DamageAmount", "DamageTags", "TryApplyDamage"]
+        },
+        "challenge_ids": ["cha_Bosses_BridgeLord", "cha_Bosses_Demons", "cha_Bosses_DragonLord", "cha_Bosses_GiantFish", "cha_Bosses_Necro", "cha_Bosses_RedLords", "cha_Bosses_RoSDragon", "cha_Bosses_Whale"],
+        "boss_icon_assets": {"count": 8, "class": "Texture2D", "names": ["boss_bigfish", "boss_dragon", "boss_hellduo", "boss_jl", "boss_necro", "boss_redlords", "boss_ros", "boss_whaleking"]},
+        "boss_music_assets": 65,
+        "saves_checked": 7,
+        "saves_with_boss_keys": 0,
+        "sample_save_nsd_keys": 11
+      },
+      "inference": [
+        "the defeat keys land in NamedSaveData (same composition rule as C6), gated by EFS_ChallengeMode::Stat_AutoNSD",
+        "gate open state lands in SavableActorStates[actorGuid] for SavableActor-derived gates"
+      ],
+      "mod_implication": "Two lanes: boss defeat = host-only absolute NamedSaveData write; arena gates = host-only first-wins SavableActorStates bit keyed by actor Guid. Do not replicate the fight controller; only its Finished transition crosses the wire.",
+      "limitations": [
+        "no save in this workspace has progressed past the first area, so the defeat keys are never observed persisted",
+        "Finished -> flag write ordering and controller survival across reload are unmeasured"
+      ],
+      "evidence": [
+        "Content/Blueprints/Challenges/FS_ChallengeData.uasset",
+        "Content/Enemies/DemonBosses/DemonBoss_FightController.uasset",
+        "Content/RuinsLevel/Maps/450_MAUS_darkmaze.umap",
+        "Content/UI/HUD/HUD_Content/HUD_BossHPBar.uasset",
+        "Content/Music/3-Boss/"
+      ]
+    }
+  },
+
+  "corrections_to_earlier_docs": [
+    {
+      "doc": "analysis/pak/datatables.md",
+      "claim": "zero DataTable assets in the pak",
+      "correction": "9 UDataTable assets exist (UI text-style tables): UI/Text_Images/FS_RichTextImages and 8 under UI/UI_Style/FontStyles/ (DialogueRichText{,_Light}, BigDialogueRichText{,_Light}, DescriptionRichText{,_Light}, BindingSpecialText{,_Light}). They were missed by the DT_ / DataTables/ path filters. The substantive claim survives: RowHandle is still 0 hits and none is a game-data table (row structs are RichTextStyleRow / TextBlockStyle).",
+      "instrument": "top-level export class over all 19162 .uasset files"
+    },
+    {
+      "doc": "task brief / assumptions",
+      "claim": "boss_* are challenge keys",
+      "correction": "the 8 boss_* assets are Texture2D achievement icons; the challenge ids are cha_Bosses_*",
+      "instrument": "top-export class check per asset in Content/Blueprints/Challenges/"
+    }
+  ],
+
+  "probes": {
+    "analysis/pak/code/probes/inv_model.py": ["family census", "class census", "FS_ItemData schema", "two enums decoded", "per-family tables", "save path resolution", "identity/stack model"],
+    "analysis/pak/code/probes/stream_volumes.py": ["class census over 51 maps", "6 volume->list + 49 trigger->A/B", "22 level lists", "42 sublevels", "union/overlap arithmetic"],
+    "analysis/pak/code/probes/dialogue_model.py": ["73-asset population", "shared vs per-asset vocabulary", "four enums from exe", "one asset decoded", "manager vocabulary"],
+    "analysis/pak/code/probes/boss_state.py": ["whole-pak negative scan", "boss-key positive scan", "31 placed actors", "gate parents", "encounter controller", "challenge namespace", "save check"]
+  }
+}

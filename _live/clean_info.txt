@@ -1,0 +1,680 @@
+﻿ATTACH 24244
+READY [{"ready": true, "base": "0x7ff75d670000", "manager": "0x13050054d80"}]
+>>> info
+{
+ "world": "0x130513d31a0",
+ "manager": "0x13050054d80",
+ "player": "0x1304eec0040",
+ "playerLoc": {
+  "x": -42786.79296875,
+  "y": 59993.5078125,
+  "z": -35081.09765625
+ },
+ "stacks": {
+  "a": [
+   {
+    "addr": "0x130147514e0",
+    "name": "GreenRuins",
+    "prio": -1
+   },
+   {
+    "addr": "0x130349d2b00",
+    "name": "AutumnIsland",
+    "prio": 100
+   },
+   {
+    "addr": "0x130349da780",
+    "name": "AutumnIslandCastle",
+    "prio": 100
+   }
+  ],
+  "b": []
+ },
+ "levelCount": 50,
+ "levels": [
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x130359ee800",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x130359e1c00",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x130359e7600",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x130359e1d80",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x130359e7c00",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x130359e7a80",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x130359e3100",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x130359e7900",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x130359e8080",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x130359ec100",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x13031fffa00",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x13050315f80",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1304c79c580",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1304e1d8f80",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1304b3d9700",
+   "flags": 30,
+   "visible": true,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1304e1d9280",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1304a180d00",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x13034bcd600",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x13035327000",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1304e1d8e00",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1304c493d00",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1304c79b980",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1304c79a900",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1304ac7d000",
+   "flags": 30,
+   "visible": true,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1304e1d7c00",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1304ac75980",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1304c79bc80",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x130359ecd00",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x13050355800",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x130359e7780",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x13031ffcb80",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x130359e2680",
+   "flags": 30,
+   "visible": true,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x130359ebf80",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1304a18c700",
+   "flags": 30,
+   "visible": true,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1304c79aa80",
+   "flags": 30,
+   "visible": true,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x130359eda80",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x130300eee00",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1301ba9c400",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x13034bf1300",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x130300efd00",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x13034bcd900",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x130300e0880",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingAlwaysLoaded",
+   "name": "LevelStreamingAlwaysLoaded",
+   "addr": "0x1304e1dfe80",
+   "flags": 14,
+   "visible": true,
+   "loaded": false
+  },
+  {
+   "cls": "LevelStreamingAlwaysLoaded",
+   "name": "LevelStreamingAlwaysLoaded",
+   "addr": "0x130e2f05e00",
+   "flags": 10,
+   "visible": true,
+   "loaded": false
+  },
+  {
+   "cls": "LevelStreamingAlwaysLoaded",
+   "name": "LevelStreamingAlwaysLoaded",
+   "addr": "0x1300e709e80",
+   "flags": 10,
+   "visible": true,
+   "loaded": false
+  },
+  {
+   "cls": "LevelStreamingAlwaysLoaded",
+   "name": "LevelStreamingAlwaysLoaded",
+   "addr": "0x1300e709d00",
+   "flags": 10,
+   "visible": true,
+   "loaded": false
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x130d6aa2c80",
+   "flags": 150,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x130d6aa2e00",
+   "flags": 150,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingAlwaysLoaded",
+   "name": "LevelStreamingAlwaysLoaded",
+   "addr": "0x130df2c7180",
+   "flags": 10,
+   "visible": true,
+   "loaded": false
+  },
+  {
+   "cls": "LevelStreamingAlwaysLoaded",
+   "name": "LevelStreamingAlwaysLoaded",
+   "addr": "0x130df2c5500",
+   "flags": 10,
+   "visible": true,
+   "loaded": false
+  }
+ ],
+ "ulevelCount": 48,
+ "ulevels": [
+  {
+   "name": "Default__Level",
+   "addr": "0x1301834cfe0",
+   "nameIdx": 2326183
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130500a7940",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130309ca280",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fbbeb5c0",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fbbe5b00",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fc2c5840",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fc2c5580",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fc2c52c0",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fc2c4d40",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fc2c4a80",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fc2c47c0",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fc2c4500",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fc2c4240",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fc2c3f80",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fc2c3cc0",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fc2c3a00",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fc2c3740",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fc2c3480",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fc2c31c0",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fc2c2f00",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fc2c2c40",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fc2cb040",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fc2cad80",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fc2caac0",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fc2ca800",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fc2ca280",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fc2c9d00",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fc2c9a40",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fc2c9780",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fc2c94c0",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fc2c9200",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fc2c8f40",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fc2c8c80",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fc2c89c0",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fc2c8700",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fc2c8440",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fc2c8180",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fc2c7940",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fc2c7680",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fc2c73c0",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fc2c7100",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fc2c6b80",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fc2c68c0",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fc2c6600",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130fc2c6340",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130cbe4b880",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130c8082980",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x130ca058180",
+   "nameIdx": 474
+  }
+ ],
+ "storeEvents": 0
+}

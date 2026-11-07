@@ -1,0 +1,599 @@
+
+============================================================================================
+PART 1 - image identity / tools
+============================================================================================
+sections:
+   .text      RVA 00001000  vsz 0373962B  raw 00000600  rsz 03739800
+   .rdata     RVA 0373B000  vsz 00FB5DC2  raw 03739E00  rsz 00FB5E00
+   .data      RVA 046F1000  vsz 00516174  raw 046EFC00  rsz 00273C00
+   .pdata     RVA 04C08000  vsz 002C74B0  raw 04963800  rsz 002C7600
+   .msvcjmc   RVA 04ED0000  vsz 00000008  raw 04C2AE00  rsz 00000200
+   _RDATA     RVA 04ED1000  vsz 00027210  raw 04C2B000  rsz 00027400
+   .rsrc      RVA 04EF9000  vsz 0001B1D8  raw 04C52400  rsz 0001B200
+   .reloc     RVA 04F15000  vsz 0012D624  raw 04C6D600  rsz 0012D800
+ImageBase  0x140000000
+SizeOfImage 0x5043000
+exe size   81374720 bytes
+functions (.pdata) 242788
+pair tables 725   names 7483
+Blueprint-VM dispatcher 0x0119D280 (reject this as an 'exec thunk')
+
+============================================================================================
+PART 2 - B6  bReplicates / bReplicateMovement
+============================================================================================
+[2.1] pair 'SetReplicates':
+      table 03F0DA28 exec 02D53150 name 03F08988
+      table 03F0E8C0 exec 02D58FE0 name 03F08988
+      real exec 02D58FE0 -> last direct call FUN_02664640
+---- SetReplicates exec thunk FUN_02D58FE0  [02D58FE0..02D59067] ----
+02D58FE0  mov      qword ptr [rsp + 8], rbx                      
+02D58FE5  mov      qword ptr [rsp + 0x18], rsi                   
+02D58FEA  push     rdi                                           
+02D58FEB  sub      rsp, 0x20                                     
+02D58FEF  xor      edi, edi                                      
+02D58FF1  mov      rbx, rdx                                      
+02D58FF4  mov      dword ptr [rsp + 0x38], edi                   
+02D58FF8  mov      rsi, rcx                                      
+02D58FFB  call     0x1188d60                                        -> FUN_01188D60
+02D59000  mov      rcx, rbx                                      
+02D59003  cmp      qword ptr [rbx + 0x20], rdi                   
+02D59007  je       0x2d59019                                     
+02D59009  mov      rdx, qword ptr [rbx + 0x18]                   
+02D5900D  lea      r8, [rsp + 0x38]                              
+02D59012  call     0x11b1870                                        -> FUN_011B1870
+02D59017  jmp      0x2d59035                                        -> FUN_02D59035
+02D59019  mov      r8, qword ptr [rbx + 0x80]                    
+02D59020  lea      rdx, [rsp + 0x38]                             
+02D59025  mov      rax, qword ptr [r8 + 0x20]                    
+02D59029  mov      qword ptr [rbx + 0x80], rax                   
+02D59030  call     0x11b18a0                                        -> FUN_011B18A0
+02D59035  mov      rax, qword ptr [rbx + 0x20]                   
+02D59039  mov      rcx, rsi                                      
+02D5903C  test     rax, rax                                      
+02D5903F  setne    dil                                           
+02D59043  add      rdi, rax                                      
+02D59046  cmp      dword ptr [rsp + 0x38], 0                     
+02D5904B  mov      qword ptr [rbx + 0x20], rdi                   
+02D5904F  setne    dl                                            
+02D59052  call     0x2664640                                        -> FUN_02664640
+02D59057  mov      rbx, qword ptr [rsp + 0x30]                   
+02D5905C  mov      rsi, qword ptr [rsp + 0x40]                   
+02D59061  add      rsp, 0x20                                     
+02D59065  pop      rdi                                           
+02D59066  ret                                                    
+
+---- AActor::SetReplicates impl FUN_02664640  [02664640..02664680] ----
+02664640  push     rbx                                           
+02664642  sub      rsp, 0x20                                     
+02664646  cmp      byte ptr [rcx + 0xf0], 3                      
+0266464D  mov      rbx, rcx                                      
+02664650  jne      0x26646ab                                     
+02664652  movzx    eax, byte ptr [rcx + 0x5b]                    
+02664656  mov      qword ptr [rsp + 0x30], rdi                   
+0266465B  test     al, 2                                         
+0266465D  jne      0x2664669                                     
+0266465F  cmp      dl, 1                                         
+02664662  jne      0x2664669                                     
+02664664  movzx    edi, dl                                       
+02664667  jmp      0x266466c                                        -> FUN_0266466C
+02664669  xor      dil, dil                                      
+0266466C  and      al, 0xfd                                      
+0266466E  mov      byte ptr [rcx + 0x5f], dl                     
+02664671  add      dl, dl                                        
+02664673  or       al, dl                                        
+02664675  mov      byte ptr [rcx + 0x5b], al                     
+02664678  test     al, 0x40                                      
+0266467A  je       0x26646a6                                     
+0266467C  test     al, 2                                         
+0266467E  je       0x26646a6                                     
+
+      PROOF bReplicates: 0266466C  and al, 0xfd
+                        02664675  mov byte ptr [rcx + 0x5b], al
+      => bReplicates = bit 1 (mask 0x02) of byte at AActor + 0x5B
+         (0xfd = ~0x02; the 'or al, dl<<1' sets the same bit)
+
+[2.2] pair 'SetReplicateMovement':
+      table 03F0DA28 exec 02D53120 name 03F08970
+      table 03F0E8C0 exec 02D58F50 name 03F08970
+      real exec 02D58F50
+---- SetReplicateMovement exec thunk FUN_02D58F50  [02D58F50..02D58FDB] ----
+02D58F50  mov      qword ptr [rsp + 0x10], rbx                   
+02D58F55  mov      qword ptr [rsp + 0x18], rsi                   
+02D58F5A  push     rdi                                           
+02D58F5B  sub      rsp, 0x20                                     
+02D58F5F  xor      edi, edi                                      
+02D58F61  mov      rbx, rdx                                      
+02D58F64  mov      dword ptr [rsp + 0x30], edi                   
+02D58F68  mov      rsi, rcx                                      
+02D58F6B  call     0x1188d60                                        -> FUN_01188D60
+02D58F70  mov      rcx, rbx                                      
+02D58F73  cmp      qword ptr [rbx + 0x20], rdi                   
+02D58F77  je       0x2d58f89                                     
+02D58F79  mov      rdx, qword ptr [rbx + 0x18]                   
+02D58F7D  lea      r8, [rsp + 0x30]                              
+02D58F82  call     0x11b1870                                        -> FUN_011B1870
+02D58F87  jmp      0x2d58fa5                                        -> FUN_02D58FA5
+02D58F89  mov      r8, qword ptr [rbx + 0x80]                    
+02D58F90  lea      rdx, [rsp + 0x30]                             
+02D58F95  mov      rax, qword ptr [r8 + 0x20]                    
+02D58F99  mov      qword ptr [rbx + 0x80], rax                   
+02D58FA0  call     0x11b18a0                                        -> FUN_011B18A0
+02D58FA5  mov      rax, qword ptr [rbx + 0x20]                   
+02D58FA9  mov      rcx, rsi                                      
+02D58FAC  test     rax, rax                                      
+02D58FAF  setne    dil                                           
+02D58FB3  add      rdi, rax                                      
+02D58FB6  cmp      dword ptr [rsp + 0x30], 0                     
+02D58FBB  mov      qword ptr [rbx + 0x20], rdi                   
+02D58FBF  mov      rax, qword ptr [rsi]                          
+02D58FC2  setne    dl                                            
+02D58FC5  call     qword ptr [rax + 0x298]                       
+02D58FCB  mov      rbx, qword ptr [rsp + 0x38]                   
+02D58FD0  mov      rsi, qword ptr [rsp + 0x40]                   
+02D58FD5  add      rsp, 0x20                                     
+02D58FD9  pop      rdi                                           
+02D58FDA  ret                                                    
+
+      PROOF virtual dispatch: 02D58FC5  call qword ptr [rax + 0x298]
+      slot = 0x298 / 8 = 83
+      vtable 0x03EB6240 slot 83 (0x298) = FUN_02664630
+---- AActor::SetReplicatingMovement (slot 83 body) FUN_02664630  [02664630..02664670] ----
+02664630  and      byte ptr [rcx + 0x58], 0xef                   
+02664634  shl      dl, 4                                         
+02664637  or       byte ptr [rcx + 0x58], dl                     
+0266463A  ret                                                    
+0266463B  int3                                                   
+0266463C  int3                                                   
+0266463D  int3                                                   
+0266463E  int3                                                   
+0266463F  int3                                                   
+02664640  push     rbx                                           
+02664642  sub      rsp, 0x20                                     
+02664646  cmp      byte ptr [rcx + 0xf0], 3                      
+0266464D  mov      rbx, rcx                                      
+02664650  jne      0x26646ab                                     
+02664652  movzx    eax, byte ptr [rcx + 0x5b]                    
+02664656  mov      qword ptr [rsp + 0x30], rdi                   
+0266465B  test     al, 2                                         
+0266465D  jne      0x2664669                                     
+0266465F  cmp      dl, 1                                         
+02664662  jne      0x2664669                                     
+02664664  movzx    edi, dl                                       
+02664667  jmp      0x266466c                                        -> FUN_0266466C
+02664669  xor      dil, dil                                      
+0266466C  and      al, 0xfd                                      
+
+      PROOF bReplicateMovement: 02664630 and byte ptr [rcx + 0x58], 0xef
+                                 02664634 shl dl, 4
+                                 02664637 or byte ptr [rcx + 0x58], dl
+      => bReplicateMovement = bit 4 (mask 0x10) of byte at AActor + 0x58
+
+[2.3] Z_Construct_UClass_* for FS_PlayerCharacter
+      wide string 'FS_PlayerCharacter' @ 0395BB92
+      registration function FUN_00E5E0B0
+---- Z_Construct_UClass_AFS_PlayerCharacter FUN_00E5E0B0  [00E5E0B0..00E5E162] ----
+00E5E0B0  mov      r11, rsp                                      
+00E5E0B3  sub      rsp, 0x88                                     
+00E5E0BA  mov      rax, qword ptr [rip + 0x3b2be7f]                 [04989F40]
+00E5E0C1  test     rax, rax                                      
+00E5E0C4  jne      0xe5e15a                                      
+00E5E0CA  xor      ecx, ecx                                      
+00E5E0CC  lea      rax, [rip - 0x6d6fa3]                            [00787130]
+00E5E0D3  mov      qword ptr [r11 - 0x10], rcx                   
+00E5E0D7  lea      r9, [rip + 0x2222]                               [00E60300]
+00E5E0DE  mov      byte ptr [rsp + 0x70], cl                     
+00E5E0E2  lea      r8, [rip + 0x3b2be57]                            [04989F40]
+00E5E0E9  mov      qword ptr [r11 - 0x20], rax                   
+00E5E0ED  lea      rdx, [rip + 0x2afda9e]                           [0395BB92]
+00E5E0F4  lea      rax, [rip - 0xcb6b]                              [00E51590]
+00E5E0FB  mov      qword ptr [r11 - 0x28], rax                   
+00E5E0FF  lea      rax, [rip + 0x17eaffa]                           [02649100]
+00E5E106  mov      qword ptr [r11 - 0x30], rax                   
+00E5E10A  lea      rax, [rip - 0x6e9901]                            [00774810]
+00E5E111  mov      qword ptr [r11 - 0x38], rax                   
+00E5E115  lea      rax, [rip + 0xab4]                               [00E5EBD0]
+00E5E11C  mov      qword ptr [r11 - 0x40], rax                   
+00E5E120  lea      rax, [rip + 0x290c501]                           [0376A628]
+00E5E127  mov      qword ptr [r11 - 0x48], rax                   
+00E5E12B  mov      qword ptr [r11 - 0x50], rcx                   
+00E5E12F  lea      rcx, [rip + 0x2adafc2]                           [039390F8]
+00E5E136  mov      dword ptr [rsp + 0x30], 0x10000004            
+00E5E13E  mov      dword ptr [rsp + 0x28], 0x10                  
+00E5E146  mov      dword ptr [rsp + 0x20], 0x520                 
+00E5E14E  call     0x1041040                                        -> FUN_01041040
+00E5E153  mov      rax, qword ptr [rip + 0x3b2bde6]                 [04989F40]
+00E5E15A  add      rsp, 0x88                                     
+00E5E161  ret                                                    
+
+      ClassConstructor=0x00E5EBD0  sizeof=0x520  SuperFn=0x00E51590
+---- ClassConstructor stub FUN_00E5EBD0  [00E5EBD0..00E5EBE0] ----
+00E5EBD0  mov      rcx, qword ptr [rcx]                          
+00E5EBD3  test     rcx, rcx                                      
+00E5EBD6  jne      0xe1e4c0                                      
+00E5EBDC  ret                                                    
+00E5EBDD  int3                                                   
+00E5EBDE  int3                                                   
+00E5EBDF  int3                                                   
+
+      stub target = FUN_00E1E4C0
+---- AFS_PlayerCharacter::AFS_PlayerCharacter FUN_00E1E4C0  [00E1E4C0..00E1E54F] ----
+00E1E4C0  push     rbx                                           
+00E1E4C2  sub      rsp, 0x20                                     
+00E1E4C6  mov      rbx, rcx                                      
+00E1E4C9  call     0x11a0ce0                                        -> FUN_011A0CE0
+00E1E4CE  mov      rdx, rax                                      
+00E1E4D1  mov      rcx, rbx                                      
+00E1E4D4  call     0x2747940                                        -> FUN_02747940
+00E1E4D9  lea      rax, [rip + 0x2b15918]                           [03933DF8]
+00E1E4E0  mov      qword ptr [rbx], rax                          
+00E1E4E3  lea      rax, [rip + 0x2b16196]                           [03934680]
+00E1E4EA  mov      qword ptr [rbx + 0x220], rax                  
+00E1E4F1  xor      eax, eax                                      
+00E1E4F3  or       byte ptr [rbx + 0x32], 2                      
+00E1E4F7  mov      qword ptr [rbx + 0x4c0], rax                  
+00E1E4FE  mov      qword ptr [rbx + 0x4c8], rax                  
+00E1E505  mov      qword ptr [rbx + 0x4e0], rax                  
+00E1E50C  mov      dword ptr [rbx + 0x4e8], eax                  
+00E1E512  mov      dword ptr [rbx + 0x4f4], eax                  
+00E1E518  mov      qword ptr [rbx + 0x500], rax                  
+00E1E51F  mov      dword ptr [rbx + 0x508], eax                  
+00E1E525  mov      qword ptr [rbx + 0x510], rax                  
+00E1E52C  mov      dword ptr [rbx + 0x518], eax                  
+00E1E532  mov      rax, rbx                                      
+00E1E535  mov      dword ptr [rbx + 0x4ec], 0x80                 
+00E1E53F  mov      dword ptr [rbx + 0x4f0], 0xffffffff           
+00E1E549  add      rsp, 0x20                                     
+00E1E54D  pop      rbx                                           
+00E1E54E  ret                                                    
+
+      constructor chain (ctor -> base ctor):
+         FUN_00E1E4C0 -> FUN_02747940
+         FUN_02747940 -> FUN_02AD9010
+         FUN_02AD9010 -> FUN_026452D0
+         FUN_026452D0 -> FUN_011964B0
+         FUN_011964B0 -> FUN_011516A0
+         FUN_011516A0 -> FUN_00F2F1F0
+      (FS_PlayerCharacter -> ACharacter -> APawn -> AActor)
+      ACharacter::ACharacter  = FUN_02747940
+      APawn::APawn            = FUN_02AD9010
+---- APawn::APawn (sets the two flags) FUN_02AD9010  [02AD9010..02AD91A6] ----
+02AD9010  mov      qword ptr [rsp + 8], rbx                      
+02AD9015  mov      qword ptr [rsp + 0x10], rsi                   
+02AD901A  push     rdi                                           
+02AD901B  sub      rsp, 0x40                                     
+02AD901F  mov      rbx, rcx                                      
+02AD9022  call     0x26452d0                                        -> FUN_026452D0
+02AD9027  or       byte ptr [rbx + 0x32], 2                      
+02AD902B  lea      rax, [rip + 0x13dd20e]                           [03EB6240]
+02AD9032  mov      qword ptr [rbx], rax                          
+02AD9035  xor      esi, esi                                      
+02AD9037  mov      qword ptr [rbx + 0x238], rsi                  
+02AD903E  lea      rax, [rip + 0x13dd963]                           [03EB69A8]
+02AD9045  mov      qword ptr [rbx + 0x220], rax                  
+02AD904C  mov      eax, dword ptr [rbx + 8]                      
+02AD904F  shr      eax, 4                                        
+02AD9052  mov      byte ptr [rbx + 0x30], sil                    
+02AD9056  mov      byte ptr [rbx + 0x231], 1                     
+02AD905D  test     al, 1                                         
+02AD905F  je       0x2ad90ef                                     
+02AD9065  call     0x2e70220                                        -> FUN_02E70220
+02AD906A  cmp      qword ptr [rbx + 0x10], rax                   
+02AD906E  jne      0x2ad90ef                                     
+02AD9070  call     0x2dac2d0                                        -> FUN_02DAC2D0
+02AD9075  mov      rdi, rax                                      
+02AD9078  mov      rcx, qword ptr [rax + 0x118]                  
+02AD907F  test     rcx, rcx                                      
+02AD9082  jne      0x2ad9097                                     
+02AD9084  mov      rdx, qword ptr [rax]                          
+02AD9087  mov      rcx, rax                                      
+02AD908A  call     qword ptr [rdx + 0x3a0]                       
+02AD9090  mov      rcx, qword ptr [rdi + 0x118]                  
+02AD9097  add      rcx, 0x1d0                                    
+02AD909E  lea      rdx, [rsp + 0x30]                             
+02AD90A3  call     0x11b1c00                                        -> FUN_011B1C00
+02AD90A8  cmp      dword ptr [rax + 8], esi                      
+02AD90AB  je       0x2ad90b2                                     
+02AD90AD  mov      rdi, qword ptr [rax]                          
+02AD90B0  jmp      0x2ad90b9                                        -> FUN_02AD90B9
+02AD90B2  lea      rdi, [rip + 0xc91487]                            [0376A540]
+02AD90B9  call     0x2d9bc30                                        -> FUN_02D9BC30
+02AD90BE  xor      r9d, r9d                                      
+02AD90C1  mov      qword ptr [rsp + 0x28], rsi                   
+02AD90C6  mov      r8, rdi                                       
+02AD90C9  mov      dword ptr [rsp + 0x20], esi                   
+02AD90CD  xor      edx, edx                                      
+02AD90CF  mov      rcx, rax                                      
+02AD90D2  call     0x11b0530                                        -> FUN_011B0530
+02AD90D7  mov      rcx, qword ptr [rsp + 0x30]                   
+02AD90DC  mov      qword ptr [rbx + 0x238], rax                  
+02AD90E3  test     rcx, rcx                                      
+02AD90E6  je       0x2ad9124                                     
+02AD90E8  call     0xeae0b0                                         -> FUN_00EAE0B0
+02AD90ED  jmp      0x2ad9124                                        -> FUN_02AD9124
+02AD90EF  call     0x2e70220                                        -> FUN_02E70220
+02AD90F4  mov      rdi, rax                                      
+02AD90F7  mov      rax, qword ptr [rax + 0x118]                  
+02AD90FE  test     rax, rax                                      
+02AD9101  jne      0x2ad9116                                     
+02AD9103  mov      rdx, qword ptr [rdi]                          
+02AD9106  mov      rcx, rdi                                      
+02AD9109  call     qword ptr [rdx + 0x3a0]                       
+02AD910F  mov      rax, qword ptr [rdi + 0x118]                  
+02AD9116  mov      rax, qword ptr [rax + 0x238]                  
+02AD911D  mov      qword ptr [rbx + 0x238], rax                  
+02AD9124  mov      dl, 1                                         
+02AD9126  mov      rcx, rbx                                      
+02AD9129  call     0x2663b30                                        -> FUN_02663B30
+02AD912E  or       byte ptr [rbx + 0x5b], 2                      
+02AD9132  mov      dl, 1                                         
+02AD9134  mov      rcx, rbx                                      
+02AD9137  mov      byte ptr [rbx + 0x5f], 1                      
+02AD913B  mov      dword ptr [rbx + 0x110], 0x40400000           
+02AD9145  mov      dword ptr [rbx + 0x108], 0x42c80000           
+02AD914F  call     0x2664630                                        -> FUN_02664630
+02AD9154  and      dword ptr [rbx + 0x228], 0xffffffd8           
+02AD915B  mov      rcx, rbx                                      
+02AD915E  or       dword ptr [rbx + 0x228], 0x10                 
+02AD9165  or       byte ptr [rbx + 0x5a], 0x14                   
+02AD9169  mov      dword ptr [rbx + 0x22c], 0x42800000           
+02AD9173  mov      dword ptr [rbx + 0x260], 0x412fd70a           
+02AD917D  mov      dword ptr [rbx + 0x248], esi                  
+02AD9183  mov      byte ptr [rbx + 0xf2], 3                      
+02AD918A  call     0x13fa5d0                                        -> FUN_013FA5D0
+02AD918F  mov      rsi, qword ptr [rsp + 0x58]                   
+02AD9194  mov      byte ptr [rax + 0x31], 2                      
+02AD9198  mov      rax, rbx                                      
+02AD919B  mov      rbx, qword ptr [rsp + 0x50]                   
+02AD91A0  add      rsp, 0x40                                     
+02AD91A4  pop      rdi                                           
+02AD91A5  ret                                                    
+
+      PROOF APawn sets bReplicates=1     02AD912E  or byte ptr [rbx + 0x5b], 2
+      PROOF APawn sets RemoteRole=1      02AD9137  mov byte ptr [rbx + 0x5f], 1
+      PROOF APawn calls SetReplicatingMovement(1) 02AD914F call 0x2664630
+      => AFS_PlayerCharacter CDO: bReplicates=1, RemoteRole=ROLE_SimulatedProxy,
+         bReplicateMovement=1 (set by APawn ctor; neither ACharacter nor
+         AFS_PlayerCharacter ctor clears them).
+      ACharacter         touches +0x58/+0x5B at: NONE
+      AFS_PlayerCharacter touches +0x58/+0x5B at: NONE
+
+============================================================================================
+PART 3 - B7  the game's own spawn/construction path
+============================================================================================
+[3.1] package name '/Script/QueensDomain' @ 039390F8
+      Z_Construct functions referencing it: 206
+      parsed class registrations (name+size+ctor): 78
+      registered native-function tables: 20
+
+[3.2] /Script/QueensDomain UFUNCTIONs matching Spawn|Construct|Create|Possess|Merge
+      CheckSpawnerMaxDist                class=BlueprintUtils                 exec=00E46EC0
+      CheckSpawnerVis                    class=BlueprintUtils                 exec=00E46F90
+      DoSpawnerUpdate                    class=FS_EnemyUtils                  exec=00E521B0
+      TOTAL: 3
+
+[3.3] candidate classes
+      FS_StationarySkeletalMeshActor: Z_Construct=00E5E600 sizeof=0x2A8 ctor=00E5EBF0 RegisterNativeFunc=007746E0
+        -> RegisterNativeFunc is the empty stub 0x007746E0: YES (no UFUNCTIONs of its own)
+---- FS_StationarySkeletalMeshActor ClassConstructor stub FUN_00E5EBF0  [00E5EBF0..00E5EC00] ----
+00E5EBF0  mov      rcx, qword ptr [rcx]                          
+00E5EBF3  test     rcx, rcx                                      
+00E5EBF6  jne      0xe1e670                                      
+00E5EBFC  ret                                                    
+00E5EBFD  int3                                                   
+00E5EBFE  int3                                                   
+00E5EBFF  int3                                                   
+
+        ctor stub -> real ctor FUN_00E1E670
+---- FS_StationarySkeletalMeshActor real ctor FUN_00E1E670  [00E1E670..00E1E72D] ----
+00E1E670  push     rbx                                           
+00E1E672  sub      rsp, 0x20                                     
+00E1E676  mov      rbx, rcx                                      
+00E1E679  call     0x11a0ce0                                        -> FUN_011A0CE0
+00E1E67E  mov      rdx, rax                                      
+00E1E681  mov      rcx, rbx                                      
+00E1E684  call     0x26d98f0                                        -> FUN_026D98F0
+00E1E689  and      byte ptr [rbx + 0x32], 0xfd                   
+00E1E68D  lea      rax, [rip + 0x2b0d91c]                           [0392BFB0]
+00E1E694  mov      qword ptr [rbx], rax                          
+00E1E697  xor      edx, edx                                      
+00E1E699  lea      rax, [rip + 0x2b0df68]                           [0392C608]
+00E1E6A0  mov      qword ptr [rbx + 0x220], rax                  
+00E1E6A7  mov      rax, qword ptr [rbx + 0x230]                  
+00E1E6AE  and      byte ptr [rax + 0x89], 0xf7                   
+00E1E6B5  mov      rax, qword ptr [rbx + 0x230]                  
+00E1E6BC  or       byte ptr [rax + 0x8c1], 0x40                  
+00E1E6C3  mov      rax, qword ptr [rbx + 0x230]                  
+00E1E6CA  and      byte ptr [rax + 0x3a], 0xfb                   
+00E1E6CE  mov      rax, qword ptr [rbx + 0x230]                  
+00E1E6D5  and      byte ptr [rax + 0x213], 0x7f                  
+00E1E6DC  mov      rax, qword ptr [rbx + 0x230]                  
+00E1E6E3  and      byte ptr [rax + 0x213], 0xfe                  
+00E1E6EA  mov      rax, qword ptr [rbx + 0x230]                  
+00E1E6F1  or       byte ptr [rax + 0x8c1], 0x20                  
+00E1E6F8  mov      rax, qword ptr [rbx + 0x230]                  
+00E1E6FF  and      byte ptr [rax + 0x607], 0xfd                  
+00E1E706  mov      rax, qword ptr [rbx + 0x230]                  
+00E1E70D  mov      byte ptr [rax + 0x604], 3                     
+00E1E714  mov      rcx, qword ptr [rbx + 0x230]                  
+00E1E71B  mov      rax, qword ptr [rcx]                          
+00E1E71E  call     qword ptr [rax + 0x358]                       
+00E1E724  mov      rax, rbx                                      
+00E1E727  add      rsp, 0x20                                     
+00E1E72B  pop      rbx                                           
+00E1E72C  ret                                                    
+
+      FS_ConfigurableStaticMeshComponent: Z_Construct=00E4A020 sizeof=0x4E0 ctor=00E4BAD0 RegisterNativeFunc=007746E0
+        -> RegisterNativeFunc is the empty stub 0x007746E0: YES (no UFUNCTIONs of its own)
+---- FS_ConfigurableStaticMeshComponent ClassConstructor stub FUN_00E4BAD0  [00E4BAD0..00E4BAE0] ----
+00E4BAD0  mov      rcx, qword ptr [rcx]                          
+00E4BAD3  test     rcx, rcx                                      
+00E4BAD6  jne      0xe1eff0                                      
+00E4BADC  ret                                                    
+00E4BADD  int3                                                   
+00E4BADE  int3                                                   
+00E4BADF  int3                                                   
+
+        ctor stub -> real ctor FUN_00E1EFF0
+---- FS_ConfigurableStaticMeshComponent real ctor FUN_00E1EFF0  [00E1EFF0..00E1F039] ----
+00E1EFF0  push     rbx                                           
+00E1EFF2  sub      rsp, 0x20                                     
+00E1EFF6  mov      rbx, rcx                                      
+00E1EFF9  call     0x11a0ce0                                        -> FUN_011A0CE0
+00E1EFFE  mov      rdx, rax                                      
+00E1F001  mov      rcx, rbx                                      
+00E1F004  call     0x2804f80                                        -> FUN_02804F80
+00E1F009  or       byte ptr [rbx + 0x3a], 2                      
+00E1F00D  lea      rax, [rip + 0x2b0e3cc]                           [0392D3E0]
+00E1F014  mov      qword ptr [rbx], rax                          
+00E1F017  lea      rax, [rip + 0x2b0ece2]                           [0392DD00]
+00E1F01E  mov      qword ptr [rbx + 0x28], rax                   
+00E1F022  lea      rax, [rip + 0x2b0ed07]                           [0392DD30]
+00E1F029  mov      qword ptr [rbx + 0x1f8], rax                  
+00E1F030  mov      rax, rbx                                      
+00E1F033  add      rsp, 0x20                                     
+00E1F037  pop      rbx                                           
+00E1F038  ret                                                    
+
+
+[3.4] engine character-spawn chain
+      AGameModeBase::RestartPlayer exec                    FUN_02DC2E50
+      AGameModeBase::SpawnDefaultPawnFor exec              FUN_02DC4800
+      AGameModeBase::SpawnDefaultPawnAtTransform exec      FUN_02DC46E0
+      UGameplayStatics::BeginDeferredActorSpawnFromClass   FUN_028D3C90
+      UWorld::SpawnActor (entry)                           FUN_029AD950
+      UGameplayStatics::FinishSpawningActor                FUN_028DCD50
+      AActor::FinishSpawning                               FUN_02651580
+      call edges (from calls.bin):
+         FUN_00BC4230 @00BC42EE -> UWorld::SpawnActor
+         FUN_01F3F755 @01F3F795 -> UWorld::SpawnActor
+         FUN_028D3C90 @028D3DA3 -> UWorld::SpawnActor
+         FUN_028F5160 @028F51BC -> UWorld::SpawnActor
+         FUN_029AE4B0 @029AE542 -> UWorld::SpawnActor
+         FUN_029AEBF6 @029AEC04 -> UWorld::SpawnActor
+         FUN_02B25EBD @02B25EF8 -> UWorld::SpawnActor
+         FUN_02F79180 @02F79282 -> UWorld::SpawnActor
+         FUN_03100640 @03100710 -> UWorld::SpawnActor
+         FUN_031007B0 @03100870 -> UWorld::SpawnActor
+         FUN_031008F0 @031009B1 -> UWorld::SpawnActor
+         FUN_00D27547 @00D2764A -> AActor::FinishSpawning
+         FUN_00D28D68 @00D28EB0 -> AActor::FinishSpawning
+         FUN_025F2534 @025F2637 -> AActor::FinishSpawning
+         FUN_025F7B30 @025F86A7 -> AActor::FinishSpawning
+         FUN_0265EC02 @0265ECC0 -> AActor::FinishSpawning
+         FUN_027BD6BD @027BD981 -> AActor::FinishSpawning
+         FUN_028DCD50 @028DCD64 -> AActor::FinishSpawning
+         FUN_028F65A0 @028F66AE -> AActor::FinishSpawning
+         FUN_02F797E0 @02F7985D -> AActor::FinishSpawning
+         FUN_0310C2F3 @0310C3BF -> AActor::FinishSpawning
+         FUN_0310C420 @0310C496 -> AActor::FinishSpawning
+         FUN_0310C4C0 @0310C578 -> AActor::FinishSpawning
+      virtual hand-offs inside the GameMode exec thunks:
+         RestartPlayer              exec 02DC2E50 -> vtable slot 0x790 at 02DC2EC3
+         SpawnDefaultPawnFor        exec 02DC4800 -> vtable slot 0x650 at 02DC48B8
+         SpawnDefaultPawnAtTransform exec 02DC46E0 -> vtable slot 0x648 at 02DC47D9
+      => the game module exposes no native spawner; the BP GameMode reaches
+         the same concrete primitives through virtual dispatch / ProcessEvent.
+
+============================================================================================
+PART 4 - B8  does the full body render anywhere?
+============================================================================================
+[4.1] SetOwnerNoSee / SetOnlyOwnerSee semantics
+      SetOnlyOwnerSee  real exec 02E8F7D0 -> impl FUN_027D8310
+---- SetOnlyOwnerSee impl FUN_027D8310  [027D8310..027D8350] ----
+027D8310  movzx    r8d, byte ptr [rcx + 0x212]                   
+027D8318  movzx    eax, r8b                                      
+027D831C  shr      al, 6                                         
+027D831F  and      al, 1                                         
+027D8321  cmp      al, dl                                        
+027D8323  je       0x27d833b                                     
+027D8325  and      r8b, 0xbf                                     
+027D8329  shl      dl, 6                                         
+027D832C  or       r8b, dl                                       
+027D832F  mov      byte ptr [rcx + 0x212], r8b                   
+027D8336  jmp      0x2781260                                        -> FUN_02781260
+027D833B  ret                                                    
+027D833C  int3                                                   
+027D833D  int3                                                   
+
+      PROOF: 027D831C shr al, 6 / 027D8325 and r8b, 0xbf  => bit 6 (mask 0x40) of +0x212
+      SetOwnerNoSee    real exec 02E8F860 -> impl FUN_027D8340
+---- SetOwnerNoSee impl FUN_027D8340  [027D8340..027D8380] ----
+027D8340  movzx    r8d, byte ptr [rcx + 0x212]                   
+027D8348  movzx    eax, r8b                                      
+027D834C  shr      al, 5                                         
+027D834F  and      al, 1                                         
+027D8351  cmp      al, dl                                        
+027D8353  je       0x27d836b                                     
+027D8355  and      r8b, 0xdf                                     
+027D8359  shl      dl, 5                                         
+027D835C  or       r8b, dl                                       
+027D835F  mov      byte ptr [rcx + 0x212], r8b                   
+027D8366  jmp      0x2781260                                        -> FUN_02781260
+027D836B  ret                                                    
+027D836C  int3                                                   
+027D836D  int3                                                   
+
+      PROOF: 027D834C shr al, 5 / 027D8355 and r8b, 0xdf  => bit 5 (mask 0x20) of +0x212
+      => bOwnerNoSee = bit 5 (0x20) of UPrimitiveComponent+0x212
+         bOnlyOwnerSee = bit 6 (0x40) of UPrimitiveComponent+0x212
+
+[4.2] native callers of the two setters (calls.bin)
+      SetOwnerNoSee    impl 027D8340 callers=1 ['02E8F8D2/FUN_02E8F860']
+      SetOnlyOwnerSee  impl 027D8310 callers=1 ['02E8F842/FUN_02E8F7D0']
+
+[4.3] direct bit writers in .text (byte ops at +0x212 / +0x213)
+      scanning .text once (this is the slow step) ...
+      validated byte accesses at +0x212/+0x213 : 74
+      clear bOwnerNoSee  (and +0x212,0xDF)      : 1 ['02747C6D']
+      set   bOwnerNoSee  (or  +0x212,0x20)      : 2 ['0285A27F', '02E89EC0']
+      set   bOnlyOwnerSee(or  +0x212,0x40)      : 2 ['02A49365', '02E89ED0']
+        02747C6D  and byte ptr [rax + 0x212], 0xdf   (in FUN_02747940)
+      => the only clear-bit5 site is the ACharacter ctor on the CAPSULE;
+         no code clears bOwnerNoSee on the full-body mesh.
+
+[4.4] asset side
+      SetOwnerNoSee      appears in 0 asset(s) []
+      SetOnlyOwnerSee    appears in 0 asset(s) []
+      bOwnerNoSee        appears in 0 asset(s) []
+      bOnlyOwnerSee      appears in 0 asset(s) []
+
+[4.5] what the player BPs actually assign
+      FS_PlayerChar.uasset                                       names=4556  body-mesh refs=[] arms-refs=['/Game/Player/Assets/Anims/Attacks/FlyingSword/Montages/Player_FPArms_FS_UltraMove_Montage', '/Game/Player/Assets/Anims/Core/Player_FPArms_B33Death_Montage']
+      FS_Full_PlayerChar.uasset                                  names=211   body-mesh refs=[] arms-refs=[]
+      => the player BP hierarchy assigns Player_FPArms_Arms to the 'Arms'
+         component and never assigns a mesh to CharacterMesh0.
+         The full body mesh is therefore absent in gameplay.
+
+[4.6] cutscene actors that DO render the body
+      Intro_Level_00.umap                                                    {'DefaultLevelSequenceInstanceData': 1, 'FS_SequenceCharacter_C': 8, 'LevelSequenceActor': 1, 'LevelSequenceBurnInOptions': 1, 'SkeletalMeshActor': 1, 'SkeletalMeshComponent': 13}
+          Player_FullChar_2026_coolPose        present
+          Player_FullChar_2026_IntroAnimation  -
+          FS_SequenceCharacter                 present
+          CutsceneSkeletalMeshActor            -
+          LevelSequenceActor                   present
+      Ending1Cutscene.uasset                                                 {'LevelSequence': 1, 'PrinceCutsceneMesh_C': 1, 'QueenCutsceneMesh_C': 1, 'SkeletalMeshComponent': 2}
+          Player_FullChar_2026_coolPose        -
+          Player_FullChar_2026_IntroAnimation  present
+          FS_SequenceCharacter                 -
+          CutsceneSkeletalMeshActor            -
+          LevelSequenceActor                   -
+      CutsceneSkeletalMeshActor.uasset                                       {'SkeletalMeshComponent': 1}
+          Player_FullChar_2026_coolPose        -
+          Player_FullChar_2026_IntroAnimation  -
+          FS_SequenceCharacter                 -
+          CutsceneSkeletalMeshActor            present
+          LevelSequenceActor                   -
+
+============================================================================================
+SUMMARY (values quoted in analysis/12-puppet-answers.md)
+============================================================================================
+B6  bReplicates        = bit1 (0x02) of AActor+0x5B   [0x02664640]
+B6  bReplicateMovement = bit4 (0x10) of AActor+0x58   [0x02664630 = vtable slot 0x298]
+B6  APawn ctor 0x02AD9010 sets both to 1 (RemoteRole=1 too)
+B6  AFS_PlayerCharacter ctor 0x00E1E4C0, ACharacter 0x02747940: no override reset
+B7  /Script/QueensDomain: 206 package-name xrefs, 78 class regs, 20 native tables
+B7  exactly 3 Spawn* UFUNCTIONs in those tables; 0 Construct/Create/Possess/Merge
+B7  spawn primitives: 0x028D3C90 -> 0x029AD950 ; 0x028DCD50 -> 0x02651580
+B8  bOwnerNoSee = bit5/0x20, bOnlyOwnerSee = bit6/0x40 of +0x212
+B8  no native caller clears bOwnerNoSee on a mesh; no asset references the names
+B8  body renders only on cutscene actors (FS_SequenceCharacter_C / CutsceneSkeletalMeshActor_C)

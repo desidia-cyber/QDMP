@@ -1,0 +1,256 @@
+﻿execSetGamePaused                  02DC3580  [02DC3580..02DC3649) 201 bytes
+    02DC3580  mov       qword ptr [rsp + 8], rbx                
+    02DC3585  mov       qword ptr [rsp + 0x20], rsi             
+    02DC358A  push      rdi                                     
+    02DC358B  sub       rsp, 0x20                               
+    02DC358F  xor       edi, edi                                
+    02DC3591  mov       rsi, r8                                 
+    02DC3594  mov       qword ptr [rsp + 0x40], rdi             
+    02DC3599  mov       rbx, rdx                                
+    02DC359C  call      0x1189a70                                  -> 01189A70
+    02DC35A1  mov       rcx, rbx                                
+    02DC35A4  cmp       qword ptr [rbx + 0x20], rdi             
+    02DC35A8  je        0x2dc35ba                               
+    02DC35AA  mov       rdx, qword ptr [rbx + 0x18]             
+    02DC35AE  lea       r8, [rsp + 0x40]                        
+    02DC35B3  call      0x11b1870                                  -> 011B1870
+    02DC35B8  jmp       0x2dc35d6                                  -> 02DC35D6
+    02DC35BA  mov       r8, qword ptr [rbx + 0x80]              
+    02DC35C1  lea       rdx, [rsp + 0x40]                       
+    02DC35C6  mov       rax, qword ptr [r8 + 0x20]              
+    02DC35CA  mov       qword ptr [rbx + 0x80], rax             
+    02DC35D1  call      0x11b18a0                                  -> 011B18A0
+    02DC35D6  mov       dword ptr [rsp + 0x38], edi             
+    02DC35DA  call      0x1188d60                                  -> 01188D60
+    02DC35DF  mov       rcx, rbx                                
+    02DC35E2  cmp       qword ptr [rbx + 0x20], rdi             
+    02DC35E6  je        0x2dc35f8                               
+    02DC35E8  mov       rdx, qword ptr [rbx + 0x18]             
+    02DC35EC  lea       r8, [rsp + 0x38]                        
+    02DC35F1  call      0x11b1870                                  -> 011B1870
+    02DC35F6  jmp       0x2dc3614                                  -> 02DC3614
+    02DC35F8  mov       r8, qword ptr [rbx + 0x80]              
+    02DC35FF  lea       rdx, [rsp + 0x38]                       
+    02DC3604  mov       rax, qword ptr [r8 + 0x20]              
+    02DC3608  mov       qword ptr [rbx + 0x80], rax             
+    02DC360F  call      0x11b18a0                                  -> 011B18A0
+    02DC3614  cmp       dword ptr [rsp + 0x38], edi             
+    02DC3618  mov       rax, qword ptr [rbx + 0x20]             
+    02DC361C  mov       rcx, qword ptr [rsp + 0x40]             
+    02DC3621  setne     dl                                      
+    02DC3624  test      rax, rax                                
+    02DC3627  setne     dil                                     
+    02DC362B  add       rdi, rax                                
+    02DC362E  mov       qword ptr [rbx + 0x20], rdi             
+    02DC3632  call      0x28f3180                                  -> 028F3180
+    02DC3637  mov       rbx, qword ptr [rsp + 0x30]             
+    02DC363C  mov       byte ptr [rsi], al                      
+    02DC363E  mov       rsi, qword ptr [rsp + 0x48]             
+    02DC3643  add       rsp, 0x20                               
+    02DC3647  pop       rdi                                     
+    02DC3648  ret                                               
+
+execIsGamePaused                   02DC07B0  [02DC07B0..02DC0834) 132 bytes
+    02DC07B0  mov       qword ptr [rsp + 8], rbx                
+    02DC07B5  mov       qword ptr [rsp + 0x18], rsi             
+    02DC07BA  push      rdi                                     
+    02DC07BB  sub       rsp, 0x20                               
+    02DC07BF  xor       edi, edi                                
+    02DC07C1  mov       rsi, r8                                 
+    02DC07C4  mov       qword ptr [rsp + 0x38], rdi             
+    02DC07C9  mov       rbx, rdx                                
+    02DC07CC  call      0x1189a70                                  -> 01189A70
+    02DC07D1  mov       rcx, rbx                                
+    02DC07D4  cmp       qword ptr [rbx + 0x20], rdi             
+    02DC07D8  je        0x2dc07ea                               
+    02DC07DA  mov       rdx, qword ptr [rbx + 0x18]             
+    02DC07DE  lea       r8, [rsp + 0x38]                        
+    02DC07E3  call      0x11b1870                                  -> 011B1870
+    02DC07E8  jmp       0x2dc0806                                  -> 02DC0806
+    02DC07EA  mov       r8, qword ptr [rbx + 0x80]              
+    02DC07F1  lea       rdx, [rsp + 0x38]                       
+    02DC07F6  mov       rax, qword ptr [r8 + 0x20]              
+    02DC07FA  mov       qword ptr [rbx + 0x80], rax             
+    02DC0801  call      0x11b18a0                                  -> 011B18A0
+    02DC0806  mov       rax, qword ptr [rbx + 0x20]             
+    02DC080A  mov       rcx, qword ptr [rsp + 0x38]             
+    02DC080F  test      rax, rax                                
+    02DC0812  setne     dil                                     
+    02DC0816  add       rdi, rax                                
+    02DC0819  mov       qword ptr [rbx + 0x20], rdi             
+    02DC081D  call      0x28e8db0                                  -> 028E8DB0
+    02DC0822  mov       rbx, qword ptr [rsp + 0x30]             
+    02DC0827  mov       byte ptr [rsi], al                      
+    02DC0829  mov       rsi, qword ptr [rsp + 0x40]             
+    02DC082E  add       rsp, 0x20                               
+    02DC0832  pop       rdi                                     
+    02DC0833  ret                                               
+
+execSetGlobalTimeDilation          02DC39F0  [02DC39F0..02DC3AAE) 190 bytes
+    02DC39F0  mov       qword ptr [rsp + 8], rbx                
+    02DC39F5  push      rdi                                     
+    02DC39F6  sub       rsp, 0x20                               
+    02DC39FA  xor       edi, edi                                
+    02DC39FC  mov       rbx, rdx                                
+    02DC39FF  mov       qword ptr [rsp + 0x48], rdi             
+    02DC3A04  call      0x1189a70                                  -> 01189A70
+    02DC3A09  mov       rcx, rbx                                
+    02DC3A0C  cmp       qword ptr [rbx + 0x20], rdi             
+    02DC3A10  je        0x2dc3a22                               
+    02DC3A12  mov       rdx, qword ptr [rbx + 0x18]             
+    02DC3A16  lea       r8, [rsp + 0x48]                        
+    02DC3A1B  call      0x11b1870                                  -> 011B1870
+    02DC3A20  jmp       0x2dc3a3e                                  -> 02DC3A3E
+    02DC3A22  mov       r8, qword ptr [rbx + 0x80]              
+    02DC3A29  lea       rdx, [rsp + 0x48]                       
+    02DC3A2E  mov       rax, qword ptr [r8 + 0x20]              
+    02DC3A32  mov       qword ptr [rbx + 0x80], rax             
+    02DC3A39  call      0x11b18a0                                  -> 011B18A0
+    02DC3A3E  xorps     xmm0, xmm0                              
+    02DC3A41  movss     dword ptr [rsp + 0x38], xmm0            
+    02DC3A47  call      0x11890d0                                  -> 011890D0
+    02DC3A4C  mov       rcx, rbx                                
+    02DC3A4F  cmp       qword ptr [rbx + 0x20], rdi             
+    02DC3A53  je        0x2dc3a65                               
+    02DC3A55  mov       rdx, qword ptr [rbx + 0x18]             
+    02DC3A59  lea       r8, [rsp + 0x38]                        
+    02DC3A5E  call      0x11b1870                                  -> 011B1870
+    02DC3A63  jmp       0x2dc3a81                                  -> 02DC3A81
+    02DC3A65  mov       r8, qword ptr [rbx + 0x80]              
+    02DC3A6C  lea       rdx, [rsp + 0x38]                       
+    02DC3A71  mov       rax, qword ptr [r8 + 0x20]              
+    02DC3A75  mov       qword ptr [rbx + 0x80], rax             
+    02DC3A7C  call      0x11b18a0                                  -> 011B18A0
+    02DC3A81  mov       rax, qword ptr [rbx + 0x20]             
+    02DC3A85  movss     xmm1, dword ptr [rsp + 0x38]            
+    02DC3A8B  test      rax, rax                                
+    02DC3A8E  mov       rcx, qword ptr [rsp + 0x48]             
+    02DC3A93  setne     dil                                     
+    02DC3A97  add       rdi, rax                                
+    02DC3A9A  mov       qword ptr [rbx + 0x20], rdi             
+    02DC3A9E  call      0x28f3410                                  -> 028F3410
+    02DC3AA3  mov       rbx, qword ptr [rsp + 0x30]             
+    02DC3AA8  add       rsp, 0x20                               
+    02DC3AAC  pop       rdi                                     
+    02DC3AAD  ret                                               
+
+execSetActorTickEnabled            02D58C10  [02D58C10..02D58C97) 135 bytes
+    02D58C10  mov       qword ptr [rsp + 8], rbx                
+    02D58C15  mov       qword ptr [rsp + 0x18], rsi             
+    02D58C1A  push      rdi                                     
+    02D58C1B  sub       rsp, 0x20                               
+    02D58C1F  xor       edi, edi                                
+    02D58C21  mov       rbx, rdx                                
+    02D58C24  mov       dword ptr [rsp + 0x38], edi             
+    02D58C28  mov       rsi, rcx                                
+    02D58C2B  call      0x1188d60                                  -> 01188D60
+    02D58C30  mov       rcx, rbx                                
+    02D58C33  cmp       qword ptr [rbx + 0x20], rdi             
+    02D58C37  je        0x2d58c49                               
+    02D58C39  mov       rdx, qword ptr [rbx + 0x18]             
+    02D58C3D  lea       r8, [rsp + 0x38]                        
+    02D58C42  call      0x11b1870                                  -> 011B1870
+    02D58C47  jmp       0x2d58c65                                  -> 02D58C65
+    02D58C49  mov       r8, qword ptr [rbx + 0x80]              
+    02D58C50  lea       rdx, [rsp + 0x38]                       
+    02D58C55  mov       rax, qword ptr [r8 + 0x20]              
+    02D58C59  mov       qword ptr [rbx + 0x80], rax             
+    02D58C60  call      0x11b18a0                                  -> 011B18A0
+    02D58C65  mov       rax, qword ptr [rbx + 0x20]             
+    02D58C69  mov       rcx, rsi                                
+    02D58C6C  test      rax, rax                                
+    02D58C6F  setne     dil                                     
+    02D58C73  add       rdi, rax                                
+    02D58C76  cmp       dword ptr [rsp + 0x38], 0               
+    02D58C7B  mov       qword ptr [rbx + 0x20], rdi             
+    02D58C7F  setne     dl                                      
+    02D58C82  call      0x26636f0                                  -> 026636F0
+    02D58C87  mov       rbx, qword ptr [rsp + 0x30]             
+    02D58C8C  mov       rsi, qword ptr [rsp + 0x40]             
+    02D58C91  add       rsp, 0x20                               
+    02D58C95  pop       rdi                                     
+    02D58C96  ret                                               
+
+execGetActorTimeDilation           02D54EA0  [02D54EA0..02D54ECD) 45 bytes
+    02D54EA0  push      rbx                                     
+    02D54EA2  sub       rsp, 0x20                               
+    02D54EA6  mov       rax, qword ptr [rdx + 0x20]             
+    02D54EAA  xor       r9d, r9d                                
+    02D54EAD  test      rax, rax                                
+    02D54EB0  mov       rbx, r8                                 
+    02D54EB3  setne     r9b                                     
+    02D54EB7  add       r9, rax                                 
+    02D54EBA  mov       qword ptr [rdx + 0x20], r9              
+    02D54EBE  call      0x2652e30                                  -> 02652E30
+    02D54EC3  movss     dword ptr [rbx], xmm0                   
+    02D54EC7  add       rsp, 0x20                               
+    02D54ECB  pop       rbx                                     
+    02D54ECC  ret                                               
+
+execSetComponentTickEnabled        02D5C8B0  [02D5C8B0..02D5C93B) 139 bytes
+    02D5C8B0  mov       qword ptr [rsp + 0x10], rbx             
+    02D5C8B5  mov       qword ptr [rsp + 0x18], rsi             
+    02D5C8BA  push      rdi                                     
+    02D5C8BB  sub       rsp, 0x20                               
+    02D5C8BF  xor       edi, edi                                
+    02D5C8C1  mov       rbx, rdx                                
+    02D5C8C4  mov       dword ptr [rsp + 0x30], edi             
+    02D5C8C8  mov       rsi, rcx                                
+    02D5C8CB  call      0x1188d60                                  -> 01188D60
+    02D5C8D0  mov       rcx, rbx                                
+    02D5C8D3  cmp       qword ptr [rbx + 0x20], rdi             
+    02D5C8D7  je        0x2d5c8e9                               
+    02D5C8D9  mov       rdx, qword ptr [rbx + 0x18]             
+    02D5C8DD  lea       r8, [rsp + 0x30]                        
+    02D5C8E2  call      0x11b1870                                  -> 011B1870
+    02D5C8E7  jmp       0x2d5c905                                  -> 02D5C905
+    02D5C8E9  mov       r8, qword ptr [rbx + 0x80]              
+    02D5C8F0  lea       rdx, [rsp + 0x30]                       
+    02D5C8F5  mov       rax, qword ptr [r8 + 0x20]              
+    02D5C8F9  mov       qword ptr [rbx + 0x80], rax             
+    02D5C900  call      0x11b18a0                                  -> 011B18A0
+    02D5C905  mov       rax, qword ptr [rbx + 0x20]             
+    02D5C909  mov       rcx, rsi                                
+    02D5C90C  test      rax, rax                                
+    02D5C90F  setne     dil                                     
+    02D5C913  add       rdi, rax                                
+    02D5C916  cmp       dword ptr [rsp + 0x30], 0               
+    02D5C91B  mov       qword ptr [rbx + 0x20], rdi             
+    02D5C91F  mov       rax, qword ptr [rsi]                    
+    02D5C922  setne     dl                                      
+    02D5C925  call      qword ptr [rax + 0x358]                 
+    02D5C92B  mov       rbx, qword ptr [rsp + 0x38]             
+    02D5C930  mov       rsi, qword ptr [rsp + 0x40]             
+    02D5C935  add       rsp, 0x20                               
+    02D5C939  pop       rdi                                     
+    02D5C93A  ret                                               
+
+==============================================================================
+UWorld::GetWorldSettings?          02D37250  [02D37250..02D37276) 38 bytes
+    02D37250  mov       qword ptr [rsp + 0x10], rbp             
+    02D37255  mov       qword ptr [rsp + 0x18], rsi             
+    02D3725A  push      rdi                                     
+    02D3725B  sub       rsp, 0x20                               
+    02D3725F  mov       rdi, rcx                                
+    02D37262  movzx     esi, r8b                                
+    02D37266  mov       rcx, qword ptr [rcx + 0x30]             
+    02D3726A  movzx     ebp, dl                                 
+    02D3726D  test      rcx, rcx                                
+    02D37270  je        0x2d372e2                               
+    02D37272  movzx     edx, r8b                                
+
+UWorld::InternalGetNetMode         02D39CF0  [02D39CF0..02D39D25) 53 bytes
+    02D39CF0  push      rbx                                     
+    02D39CF2  sub       rsp, 0x90                               
+    02D39CF9  mov       rbx, rcx                                
+    02D39CFC  mov       rcx, qword ptr [rcx + 0x38]             
+    02D39D00  test      rcx, rcx                                
+    02D39D03  je        0x2d39d12                               
+    02D39D05  add       rsp, 0x90                               
+    02D39D0C  pop       rbx                                     
+    02D39D0D  jmp       0x2a2e980                                  -> 02A2E980
+    02D39D12  mov       rcx, qword ptr [rbx + 0xe0]             
+    02D39D19  test      rcx, rcx                                
+    02D39D1C  jne       0x2d39d05                               
+    02D39D1E  mov       rcx, qword ptr [rip + 0x1e6b063]        
+

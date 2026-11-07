@@ -1,0 +1,234 @@
+﻿UGameplayStatics::SetGamePaused            028F3180  [028F3180..028F3211)  145 bytes
+    028F3180  push      rbx
+    028F3182  sub       rsp, 0x30
+    028F3186  movzx     ebx, dl
+    028F3189  mov       r8d, 1
+    028F318F  mov       rdx, rcx
+    028F3192  mov       rcx, qword ptr [rip + 0x22b1bef]
+    028F3199  call      0x2cdedf0
+    028F319E  test      rax, rax
+    028F31A1  je        0x28f3209
+    028F31A3  mov       rax, qword ptr [rax + 0x180]
+    028F31AA  test      rax, rax
+    028F31AD  je        0x28f3209
+    028F31AF  mov       rcx, qword ptr [rax + 0x38]
+    028F31B3  xor       r8d, r8d
+    028F31B6  movsxd    rax, dword ptr [rax + 0x40]
+    028F31BA  lea       rdx, [rcx + rax*8]
+    028F31BE  cmp       rcx, rdx
+    028F31C1  je        0x28f31dd
+    028F31C3  mov       rax, qword ptr [rcx]
+    028F31C6  test      rax, rax
+    028F31C9  je        0x28f31d4
+    028F31CB  mov       r9, qword ptr [rax + 0x30]
+    028F31CF  test      r9, r9
+    028F31D2  jne       0x28f31e5
+    028F31D4  add       rcx, 8
+    028F31D8  cmp       rcx, rdx
+    028F31DB  jne       0x28f31c3
+    028F31DD  mov       r9, r8
+    028F31E0  test      r8, r8
+    028F31E3  je        0x28f3209
+    028F31E5  mov       rax, qword ptr [r9]
+    028F31E8  movzx     edx, bl
+    028F31EB  mov       qword ptr [rsp + 0x20], r8
+    028F31F0  mov       rcx, r9
+    028F31F3  mov       dword ptr [rsp + 0x28], r8d
+    028F31F8  lea       r8, [rsp + 0x20]
+    028F31FD  call      qword ptr [rax + 0xa88]
+    028F3203  add       rsp, 0x30
+    028F3207  pop       rbx
+    028F3208  ret       
+    028F3209  xor       al, al
+    028F320B  add       rsp, 0x30
+    028F320F  pop       rbx
+    028F3210  ret       
+
+UGameplayStatics::IsGamePaused             028E8DB0  [028E8DB0..028E8DDF)  47 bytes
+    028E8DB0  sub       rsp, 0x28
+    028E8DB4  mov       rdx, rcx
+    028E8DB7  mov       r8d, 1
+    028E8DBD  mov       rcx, qword ptr [rip + 0x22bbfc4]
+    028E8DC4  call      0x2cdedf0
+    028E8DC9  test      rax, rax
+    028E8DCC  je        0x28e8dda
+    028E8DCE  mov       rcx, rax
+    028E8DD1  add       rsp, 0x28
+    028E8DD5  jmp       0x29a43c0
+    028E8DDA  add       rsp, 0x28
+    028E8DDE  ret       
+
+UGameplayStatics::SetGlobalTimeDilation    028F3410  [028F3410..028F3461)  81 bytes
+    028F3410  sub       rsp, 0x38
+    028F3414  mov       rdx, rcx
+    028F3417  movaps    xmmword ptr [rsp + 0x20], xmm6
+    028F341C  mov       rcx, qword ptr [rip + 0x22b1965]
+    028F3423  mov       r8d, 1
+    028F3429  movaps    xmm6, xmm1
+    028F342C  call      0x2cdedf0
+    028F3431  test      rax, rax
+    028F3434  je        0x28f3457
+    028F3436  mov       r8b, 1
+    028F3439  xor       edx, edx
+    028F343B  mov       rcx, rax
+    028F343E  call      0x2d37250
+    028F3443  test      rax, rax
+    028F3446  je        0x28f3457
+    028F3448  mov       rdx, qword ptr [rax]
+    028F344B  movaps    xmm1, xmm6
+    028F344E  mov       rcx, rax
+    028F3451  call      qword ptr [rdx + 0x658]
+    028F3457  movaps    xmm6, xmmword ptr [rsp + 0x20]
+    028F345C  add       rsp, 0x38
+    028F3460  ret       
+
+UGameplayStatics::GetGlobalTimeDilation    028DF810  [028DF810..028DF855)  69 bytes
+    028DF810  sub       rsp, 0x28
+    028DF814  mov       rdx, rcx
+    028DF817  mov       r8d, 1
+    028DF81D  mov       rcx, qword ptr [rip + 0x22c5564]
+    028DF824  call      0x2cdedf0
+    028DF829  test      rax, rax
+    028DF82C  je        0x28df848
+    028DF82E  mov       r8b, 1
+    028DF831  xor       edx, edx
+    028DF833  mov       rcx, rax
+    028DF836  call      0x2d37250
+    028DF83B  movss     xmm0, dword ptr [rax + 0x2e8]
+    028DF843  add       rsp, 0x28
+    028DF847  ret       
+    028DF848  movss     xmm0, dword ptr [rip + 0xe8d690]
+    028DF850  add       rsp, 0x28
+    028DF854  ret       
+
+UGameplayStatics::GetWorldDeltaSeconds     028E1CE0  [028E1CE0..028E1D13)  51 bytes
+    028E1CE0  sub       rsp, 0x28
+    028E1CE4  mov       rdx, rcx
+    028E1CE7  mov       r8d, 1
+    028E1CED  mov       rcx, qword ptr [rip + 0x22c3094]
+    028E1CF4  call      0x2cdedf0
+    028E1CF9  test      rax, rax
+    028E1CFC  je        0x28e1d0b
+    028E1CFE  movss     xmm0, dword ptr [rax + 0x5b0]
+    028E1D06  add       rsp, 0x28
+    028E1D0A  ret       
+    028E1D0B  xorps     xmm0, xmm0
+    028E1D0E  add       rsp, 0x28
+    028E1D12  ret       
+
+UGameplayStatics::GetUnpausedTimeSeconds   028E1AF0  [028E1AF0..028E1B23)  51 bytes
+    028E1AF0  sub       rsp, 0x28
+    028E1AF4  mov       rdx, rcx
+    028E1AF7  mov       r8d, 1
+    028E1AFD  mov       rcx, qword ptr [rip + 0x22c3284]
+    028E1B04  call      0x2cdedf0
+    028E1B09  test      rax, rax
+    028E1B0C  je        0x28e1b1b
+    028E1B0E  movss     xmm0, dword ptr [rax + 0x5a4]
+    028E1B16  add       rsp, 0x28
+    028E1B1A  ret       
+    028E1B1B  xorps     xmm0, xmm0
+    028E1B1E  add       rsp, 0x28
+    028E1B22  ret       
+
+UGameplayStatics::GetRealTimeSeconds       028E0850  [028E0850..028E0883)  51 bytes
+    028E0850  sub       rsp, 0x28
+    028E0854  mov       rdx, rcx
+    028E0857  mov       r8d, 1
+    028E085D  mov       rcx, qword ptr [rip + 0x22c4524]
+    028E0864  call      0x2cdedf0
+    028E0869  test      rax, rax
+    028E086C  je        0x28e087b
+    028E086E  movss     xmm0, dword ptr [rax + 0x5a8]
+    028E0876  add       rsp, 0x28
+    028E087A  ret       
+    028E087B  xorps     xmm0, xmm0
+    028E087E  add       rsp, 0x28
+    028E0882  ret       
+
+AActor::GetActorTimeDilation               02652E30  [02652E30..02652E72)  66 bytes
+    02652E30  push      rbx
+    02652E32  sub       rsp, 0x20
+    02652E36  mov       rax, qword ptr [rcx]
+    02652E39  mov       rbx, rcx
+    02652E3C  call      qword ptr [rax + 0x160]
+    02652E42  test      rax, rax
+    02652E45  je        0x2652e59
+    02652E47  mov       r8b, 1
+    02652E4A  xor       edx, edx
+    02652E4C  mov       rcx, rax
+    02652E4F  call      0x2d37250
+    02652E54  mov       rcx, rax
+    02652E57  jmp       0x2652e5b
+    02652E59  xor       ecx, ecx
+    02652E5B  mov       rax, qword ptr [rcx]
+    02652E5E  call      qword ptr [rax + 0x648]
+    02652E64  mulss     xmm0, dword ptr [rbx + 0x98]
+    02652E6C  add       rsp, 0x20
+    02652E70  pop       rbx
+    02652E71  ret       
+
+AActor::SetActorTickEnabled                026636F0  [026636F0..0266372C)  60 bytes
+    026636F0  mov       qword ptr [rsp + 8], rbx
+    026636F5  push      rdi
+    026636F6  sub       rsp, 0x20
+    026636FA  test      byte ptr [rcx + 0x32], 2
+    026636FE  movzx     edi, dl
+    02663701  mov       rbx, rcx
+    02663704  je        0x2663721
+    02663706  mov       edx, 0x30
+    0266370B  call      0x11a4790
+    02663710  test      al, al
+    02663712  jne       0x2663721
+    02663714  lea       rcx, [rbx + 0x28]
+    02663718  movzx     edx, dil
+    0266371C  call      0x2cc8c50
+    02663721  mov       rbx, qword ptr [rsp + 0x30]
+    02663726  add       rsp, 0x20
+    0266372A  pop       rdi
+    0266372B  ret       
+
+==============================================================================
+tail target from IsGamePaused: 0x29A43C0
+UWorld::IsPaused (hypothesis)              029A43C0  [029A43C0..029A444A)  138 bytes
+    029A43C0  push      rbx
+    029A43C2  sub       rsp, 0x20
+    029A43C6  xor       r8d, r8d
+    029A43C9  xor       edx, edx
+    029A43CB  mov       rbx, rcx
+    029A43CE  call      0x2d37250
+    029A43D3  test      rax, rax
+    029A43D6  je        0x29a43fc
+    029A43D8  cmp       qword ptr [rax + 0x370], 0
+    029A43E0  je        0x29a43fc
+    029A43E2  cmp       byte ptr [rbx + 0x620], 0
+    029A43E9  jne       0x29a43fc
+    029A43EB  movss     xmm0, dword ptr [rbx + 0x5b4]
+    029A43F3  comiss    xmm0, dword ptr [rbx + 0x5a0]
+    029A43FA  jbe       0x29a4442
+    029A43FC  test      byte ptr [rbx + 0x10c], 0x40
+    029A4403  je        0x29a4412
+    029A4405  mov       rcx, rbx
+    029A4408  call      0x2d39cf0
+    029A440D  cmp       eax, 3
+    029A4410  je        0x29a4442
+    029A4412  mov       rcx, qword ptr [rip + 0x220096f]
+    029A4419  mov       rdx, rbx
+    029A441C  call      0x2cf04a0
+    029A4421  test      al, al
+    029A4423  jne       0x29a4442
+    029A4425  mov       rcx, rbx
+    029A4428  call      0x2d39f10
+    029A442D  test      al, al
+    029A442F  je        0x29a443a
+    029A4431  cmp       byte ptr [rbx + 0x10d], 0
+    029A4438  jl        0x29a4442
+    029A443A  xor       al, al
+    029A443C  add       rsp, 0x20
+    029A4440  pop       rbx
+    029A4441  ret       
+    029A4442  mov       al, 1
+    029A4444  add       rsp, 0x20
+    029A4448  pop       rbx
+    029A4449  ret       
+

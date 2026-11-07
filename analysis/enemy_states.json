@@ -1,0 +1,2486 @@
+[
+ {
+  "guid": "3b5db8ee49d50d4c8b52befb669a28cf",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "43fc7b514f057445a0058f80331a1f62",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "a87be705499bcb4f99d5bcc856620c55",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "9dfefa98b2baf74090759e5e7d8f94d0",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "154bb223b0059742b1f111c4bef49f14",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "c624b71dfdf28c44b78c740fd754c3a5",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "744182a9e416ea49b69215e5c4d329b4",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "6729a394d0227d4fb3d80f877186130e",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "f9fab1f93cf9a646ae223e70c3bfb596",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "8caf29c6aa8c9247a9e630f8aeca9e14",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "52102a569058194aa7bd4370b5b2ee68",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "31da0e16fb4de44c97f8e5da505583cb",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "864fadfdd1d6f24285478ceb60b44892",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "62dfd224b0b5e341a2d391ad6b289f0d",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "9aab751896ce7a4181df8984f9163cfd",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "21a5e5238ac78345a68b49dfa79cc1bc",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "37207ea6f1ff1442995ddf59b2bc055e",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "1fa7447abad58046a84c241af949c931",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "3c948b51117ff54abdbc50e383575b02",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "d0b6addea0ae594594baa57bef9a0fd9",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "9625b9a9bcd6f5489e8d869d95b2c9eb",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "6f8eb3643f0e9d4fa8fdb9e84bcfbe65",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "fcb5e73dc4e7824dbd9877d176be87dc",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "d783f4552ab9d24a92f4839453dbf33f",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "caa075d937476c4cb784c279ab75cbb0",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "8b280c7ebcb18f4990cc4050034769bc",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "ac6a893f01da024784f7cdd10eca9cc2",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "4414a4cb5f456145967fe9adb5158788",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "480fcbb1916d72498d70dc92f919fb41",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "817b5bfb0ab0544bb56cde093f95ab00",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "21757f23bfbf674b9f044d83efaf2148",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "1bea40aa8c33804281c9b91722ca1bc5",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "28e57f46d655514e90bfd6968623ce02",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "d7151fbcefadc240850c5c70ae3c8526",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "9e6ea189279db246a7480073919f54b6",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "0cf76019937fb64cbfaf65cd687031d2",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "f31175bf7a727c4687b40ff3ed49a43c",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "bf6b4ad24febd245890e43a7a61fcf5d",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "ffabe628b6350c409ce442d42d80177f",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "a42e1a3ed910644db0809fc071f6baa6",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "2b6fa77213ae5f42ae575007822f7b14",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "c55ebac8a808974f8d5901bfc4b60928",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "ab976f2250f4e544892c116ab0aaa70b",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "a4fb0d5417f9f64885985aa01d4d3fc5",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "4638a02810399c49ba05613acafeb4f4",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "255bda0ab70ae44eb7d2f68744e5cebe",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "0498f5d5ffc09b45b3eaf5248ebca425",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "7bb3e35a251b724fb5a355bdc2b18a95",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "4e21f0ff4dfbc44ba27afd3755f2fb06",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "fb89eb0f129fa0468e71cb17e6afc8ab",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "a747669e9eefeb4db48d8983cb1d934e",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "1ef5fc1998b340458f4551772965cb3e",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "64a3a12e0caeee4e8aeda2c304e8bd5a",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "49803012df26b749b3c0e2ec80f8dd42",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "15ed1641d39c9f4e8bb86b3015902aae",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "6e322d24cba07948bcb6330631b9e96f",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "f2b3ca5414e081499cc72211182b794b",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "f89672dc4820744492680aad0c077ec4",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "4e096e8bf878d84c8dacecbd1b1d86f3",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "b1da61bd990f88478a57a460cc8428d8",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "2e9c5427a98bc24fabbc5434af916aff",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "485d00b5751f164e939d68dae8fc709b",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "299542b3227f62428aaf92133ac71128",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "87637c62415f784bbcb1f87b55f1adec",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "21bcfd031c836044979d58c9028f4125",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "9b35b5e690aed24889bb9f879ac3751a",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "f3590c1050539f44bd97d2830395684b",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "8605760dd815dc4d9d4c286f69f6261c",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "fd08deed56b2f94ba08b427bbc93d2ef",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "03be76ee3b6dcd459f6e3f277835dc5f",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "1cd5e9a8af2a2746b431f178811a86bb",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "037d0a6bf83e5c43b38b68541df4a77c",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "d25bce241cfb4c4fbee3a69eaed32689",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "f05c128b1d3b0648b8bb7fe6d27816f6",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "ed70768572963f42b4831eaf62fea9b5",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "34c20777445f2d4194b7763e47f4b44e",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "4bf86073ae5b8f4381780943d7b1b602",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "ede7d9642b4cab4aaedaf49c6da35a5a",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "25c1923678bcc945aa706008be5c580f",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "663f4e9cfc6e5943977840a61431f974",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "e4c268518ed17640bed91be21bbba51b",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "8e449152b0c7a44abd1e1f7f283de102",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "ab03349afd9a6d42b95f1e9b2f244aaa",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "ac0cacdc31db62479b9f892250a6f45d",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "67241291483c2f479b9e550f1feb351b",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "c7b541b7960ccc4bb180074745c97b63",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "3625773562ff8942b6c8abccb133203b",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "c9d429f16714ed408ee0409244b297dd",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "6f184d7f7eb36d46900b288a82776ca7",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "929252792a129941968073fd4c2ddbd0",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "7d988a682e249b4aa66ca4b10213fcfb",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "138d764fd1013046bcc0a5d1f29491e8",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "bd5b4b924514a14d946fbabc0cd8caab",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "ecf5e0e591fb0b4e8ef37b2c9d64501d",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "e7308448ad6f3b4997b4829d707ee294",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "62f78f16d459714aab09f9d847527615",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "d3364bc90e04c245b69c743d49faf67f",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "797c0419f3aae2479ff40a9efc4e681b",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "ad0e0c35c5cb9343b1cba755bee5f2bb",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "f5d161720d241243ae01260bbbe6bbc6",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "2c0727f6ee6d9540af0a30fe02d57b80",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "b65306f4eaf07e4cba9055800481fb5b",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "4cafcfbec8ef7c438ab6554150ad0b83",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "f54b7f99b016c74e8e52498be0d909d3",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "6b20616925320642a5e93bb4b4fbefce",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "b6efa14f650ebb408b4b6ea5d6957272",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "35a2aba336b14b4bad283646d665aa7a",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "4fc282c4a0907d4ca64bf187f7fd807c",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "00277e1bc87f10498284e42f3126c985",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "9028cb7aa43f754ebb7a838e34baa883",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "53d68a64dd6fd048899f8faa96cab513",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "b37235ab97ad2246b6009d327c293cb4",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "9533ee984d3c1842bf70a64078015944",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "278e9712b6e61d489f4f1cd0e1fd7ca6",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "92a57bbcc90b4e4699fd4714487b29d4",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "75c75ed43919fb438022bbc53c9b5889",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "f7219f51bf375a41acd52881da90bf96",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "8fd209f683442d4097eb35058905f1a9",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "72b2f288242c6e4e9aa5d354fe4f9a0d",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "be407b6973c98645a9928eae682a3d54",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "803d7442ca332c4aa307e494c231b9cd",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "e11b58983deb2748b3b2b3cf6849314c",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "55ccebd58c78cb4cb160c27111ecd549",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "d9416a6308b3dc448ea7e764471ad093",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "95fa8bc3ba408b40b72e44591279462f",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "8ce8fd35d79135499ff9671ea0920bb9",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "84c8b3a09f9db540b8ff8eb9c18ac775",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "146e9c0f2f20874aa687c2628d395bb6",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "b2fe6aae04a0704daff21eccefcf53bc",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "ab9dc75676240f4c936056ad6773828d",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "661118179182734d8ad27fc7eaa0ad9d",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "2bf91a1ccf614a4a9e42071d9f9a876f",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "0fc65f63569c71469df0ed10350d6d2d",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "6b7c141bb742794496dd894d26ec336e",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "1ddfcf6a2e11ab4fad90228ee80a3e3f",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "b06010f1bdb09a418b9822f14115b29a",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "3deed4fad9868a4188a7dbbfea346f7e",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "06c8d967bb1e7147baa1a3dbc35be0a1",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "438fec199fd37c41ba4b9ca70e593fb7",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "1e970d210ba0524dafe94462fe56c0db",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "8be6e1e1fe46f74988d5710f542d4634",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "7d0838b9860f4e448f4a19bf6393cc32",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "5191153a2d03ae41a170c30db7449941",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "4fae94bb71cdb8448e41a8d808ea4b8f",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "e6acdb79198c1d4b91d8ea1a09a42465",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "958241f63fcfb6408a5e6cf17eb023e8",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "4c23d672d4a6b74082089e0cb6d8423c",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "8d5b13e0bda8cb4d8915073e57d4b586",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "3aaffee2d35d7d43adb4858c5a408f84",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "5857de3b3fc8e647ab9b697cf9dec652",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "17d81926c5b932458c6b5e195b04868f",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "0659b536e6f7f74c8d67f318713f896b",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "7d64b1ff7c1be647a443155435084ac2",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "cd236a373bcfcf479939a7e5144f1905",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "65abd2b89ad863479cedf40e6b152a91",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "08b5bdb058c649439068b112b071d88f",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "da77c1fe5fe3ff4288ccab1baaf4dbef",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "c6aba135f8824e42acc4e1345f9a5323",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "72f7735b96dea245961aa903d543f51d",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "5563ce643088a54181f150d67096a2b6",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "f1b23e785a7e3844a5b75a4a43f66f98",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "bb6eba88e2005d4990c9f23c30d5a452",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "d0b31410d0ff564bae7f5aef34394644",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "582616a36dc0db459b8223cc25846063",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "a93df0202014144d95cba515e11c3677",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "9c6a2dc228eca84ba375d918a66529ea",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "74aad64434e8474389fb9f610855143c",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "0e575cb5156b8a4f885fe50262403d01",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "e993919fc961e24a92f1f77cf6019832",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "352c3804fcb39f4eac0dcca8d5c1f3e1",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "3366b259e721a243a8ac409defd8f082",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "d3fa96c8cb8c5c4494aab2108a957681",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "bc649c9deedf784395b5593704abb7a0",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "49235229deea4b4895b9811ad68dccc7",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "d08c2d80e66f0f4fa38469bba8d0d782",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "e65f18ecb67cc8488c43d9954962a35d",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "c056bf55e71dda428a437952650cecd2",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "7d4881558d87224d8e48445c83bf490e",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "063fa69dd1204348a605b7975607543d",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "490adbd92135084095732d06eff5ebdb",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "1927b8593198a748b7171e6bac3859c8",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "35d103553e00e24b9aeaaffa6b8a516e",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "0b7712ee861aa9468c83d661a3c5e6eb",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "d49708ad6137be4f81892660295859e8",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "2c465b38cfd18b459b11d1231ae5f793",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "577d4c84162af3409853efa6318fd4bd",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "7a77aed46576bc458e4ba7b63538423e",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "fce78131bb789a46a3dd9d96d62cbea7",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "a12f1217252b234e987b4fdffbe812a3",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "c749f49b5ab2d34aaeb10b3cd907a4b5",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "6a6d08a7d40e0e4a8a1b461ad734ea70",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "290c74db7223804eac3a714f014b145c",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "60a22845a0cacd47a6a0ebe7160ae451",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "cbc6c9bc07754848ac65fc88d82e1fe4",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "a1f0650c1e0153439dff81680bffbb29",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "0a446f71311f7b429a60883ce3a062e0",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "d64a756976d00e4dbb2f40c5474330c0",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "fee659abac62bb4e81c854d7042f831b",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "d6b7b8196e78334ca6dec36d93128a6c",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "a9a19b098aca454b87a3f6dfa9275620",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "1927ace2c12d784b9b9f63950ff72507",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "d3ae2ced8323844f874955e4f381a7f8",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "cd1c5d6e3c3f964b85af9c57e76ca5cb",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "358985be0d0c2348ba8568ff5fb3aa1a",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "0d0d3142dd068d4fb8a1c2114aa978b7",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "6354ea51465ad6498af5deec3fd76aea",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "edcaea7fb8a9c94f8834fc435bee068d",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "d5a95ac34841cf4a8d8998ec2876a506",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "c83775fc3a43284084d06fa9287106c5",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "3fdda5e02bed6b42ba641d69059c1a98",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "6234793a5e402b40b5d28aa22b265aae",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "673db36969b98e4e9139b0f7c30641fd",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "3a5d9cd34130b340a529e6ea38f4f382",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "c8f42dd53270c94a9f85d713adaa35b4",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "b80e5adc2d425249a7b50d86b1612192",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "93b13bd21a0a4d4e81572fbaec350844",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "b3698f6f3d1de540af774a4d585496a1",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "1ab177e28ac92545a313003f75a781f4",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "00258ff5a3482345afd1c77d0190ee0e",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "e34be34b0589624783562b307c482c72",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "6b0830361759964ead0ef757bd579c52",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "078a1cd66b90d145b1d8ffca3d5d3e53",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "cc8e80992dd7674e8f8766f4acbc5554",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "158bf13d937a0d4d8b2cf26d43f1e219",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "ae19e8d7b379a64eb9889c348e8cf9bb",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "6c413ec9fb5e974697424a6da62acc0b",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "4d2cc0e1ad6f5f4a876407bb001ebd77",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "d9372292b2e716468be7977ecfaaf8d7",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "681ca9245a01ef4a9807956852e8d6f4",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "8071c4609493224fa47fb94193826a16",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "5816f7a4867ebc4caf1f6beadab49cd9",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "55e63a384d48694881db00c6a1e61194",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "a2b949b5c32ceb40b9d7d52f64051e60",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "0f8653423554f34584972419da29787e",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "7c1382ff500c1347a6d4a821bf8a1016",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "718e0cd7cb0bd740afbacee59ad49819",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "9fd8cf644537bc45b9440334b04f3f78",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "0c412978f95bc741a1ebea46226e211c",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "743b69dc487c804fa4c2b492418dc8bb",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "97c0efe8ea639747aa729ade77107977",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "1370439ddd576c4793969228aa632047",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "a3fbdda10081d347821936bf0d14f99d",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "e1f0c660b20ceb458a9baf0f5c08b0b6",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "bcafa4ed21137c47b704df3c24b3e3c3",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "af2c9c566a5a7046a1122d9c8b4767b0",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "98981aec4d9f0540b3b546e52f4e14db",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "130afb63b1af50409328d60c019b0849",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "e9541acdd0272c41b4a7bd2482c8d86f",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "8263f114f69b9d4baa6d9b6087fd21d2",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "8f0f0c47e421ca4cb4bd37110ebf9146",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "47b0dfc03250ed4d9dbfc3993b61270d",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "c1c6469abe022244a1b94828ac8c8df6",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "82df52fd60eeca43947d09281b598a0b",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "62475dffa22532479e18388f5cb23779",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "117361bf4e34004da05f486471aa8305",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "424d38da0aa5ee42a92613654336a6df",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "3280203a3b7a854ea2babdc799638982",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "635a1fd2a3c3e24ba7c2053e4928ab9e",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "2f3d9b885e8607479396eab5c1c70a7d",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "c8cdfd779ccf82458d70149c4290f232",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "9f644e8c4a4b5546bf27bf0da1127db3",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "cf36429a1d5ce94998937a4d6da97404",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "50ec9593de69544ab4c7cf2c9af96354",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "326c059dc72f4a4d8c99d4a3ac4ad1a7",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "661d917f707c3b4fb8e22d35ccfce414",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "02f3039744f3dd418fd02a86cd6fd240",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "ad9bf04b89779d44944685430a1e21df",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "332feae616038647a0d680d3c5c47264",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "ceb0b714b491064b85884b309fb40f8b",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "ed670f9bb2a0bc4e8919615aa14c645a",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "b8989121be3ba54da34ab395078ee75d",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "f8f26a81c4183a40bbc121a16151dd16",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "ed418bd41f17334f9cd8c91db793905c",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "babd06753f02ad46a3d9b098978e442a",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "e0fbe555b99fe84190eb25d0b5918022",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "74163eb37885484aa2209b76f7a393dd",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "c10a375d492d5346b864e94cc8d781b8",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "19b9ca906bfc144582cea360b24ebca6",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "9f1bfd35dc9e8f4690b6bdfc404834f1",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "c2e863cfa828914ab325c65ce44b6ad1",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "b1840c846ed64e48b35e1f045520166a",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "27c5bdcc6afcbd488725440a2f768482",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "c55efc91e0099a488b7e08f0e567cb79",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "05de1908299cd04580e87931d4f43a0c",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "55cc23372416b947938ecab9f22b8a6e",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "3ad37a6ad1f7984ca7ace3c7905ea9cb",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "8b93912d6fb2244c877a4671ba4ead78",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "37aa09efaf2cd448b7e752c020957bb6",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "960abb0d515cbb4284aa474df0ad5e54",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "f84c32383b29c949b2ff53f8a32ab14c",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "c85afecf5359414b8dff5b317a4f12d6",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "96d17055f4f5e14581a94b382f6f15bb",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "e8b32ad6efc170448f9e5948f2df6bac",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "cbd54f550f2e0941a70a8ea419b5914f",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "1c8390807b1d054499a5158763a4277e",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "21407cfa4d282b4db929715df0d88228",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "738b50cfa55b65488f5ba0a92ef83e78",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "fd9e7a5a0a68bf47a0183bd28f30c54a",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "0f1f592f6ddf5942a645d58f92d090a1",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "ccc9e04d71087a45ba88f4ca5e33864f",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "c47d336ed60b2f41b420ead20a4c2bf6",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "910bf7e6e0dd9840ad387810340b5355",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "49dad88c9c4463489c361f69d475c569",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "e4aa26f8ef2039449e33fe30e34f8c64",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "b034f29ea675fc43a095b0e4d980f464",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "79c22ffafdf3bb43ba953e5af8557232",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "0b47f735db2acb4ebbbf4943f1bfe0a0",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "07ea88990186aa4eabcf95df68e0958d",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "20fe9acd3461d249a2e69f1ddb21adb4",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "15a2a9f0c956c84a998d62d1906fa71f",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "602e0d180550474c87c7f7de09da2f76",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "7e2defe0af771d4996d83bb17595566c",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "6f9a6b38d2a27246affa11bef4008685",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "cfc66493561d9244bd91054be8d31ce4",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "ec0a55181ce4bc499c046de1ec2481e5",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "550750c3e149fe478318df39bc1979ec",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "9a99d62ac5fb6e44bce298f677bed7f0",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "1c823d489d93544d82658b205e613b83",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "8abe1f4f030bef4cb20ef6894f11e1bc",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "146d6f183f79b84ba7ee9522d5ab0c23",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "e1c9d5a8bd56984d9fc5b75fe3028cca",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "fee4471a1f5aba41b5ee3db11ac55fe9",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "b6dc0a93590c0643bbe67b6d9214e30b",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "62b38b316b25314e91c1f3ec297696a3",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "458676260355c9499532d7f62c7a7560",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "74dd77124d6d09408066352b469f9b8b",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "f9a3a13ba0bb56449324fac18e9ab76c",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "5c3d1870347a824d90663906c57614f3",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "c42b530902c9924293e7203af9a0e7c5",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "f1b35a77059a3244b9350e17103a46e3",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "e490f99112a06e449723908db4a660c1",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "8a069a0186d49c4f9148cc1160e4d210",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "11e393e2e9d8f34bb4f972d44f316bdb",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "ca16bd68d63b71458e029993a0306920",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "89d63e38d456d04bae14dccb8cea387a",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "d228a78d940c8449aa208322eab49a81",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "e82934c1010b1c45b37ab45c87874cf6",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "1df197b8dfcc2d48aa9f9e5bfce230f2",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "f8f2cd3ecbbc3a438515224b9241c505",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "4fc591c05ee0b34e96fc2001303877b4",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "34bb951052cc6e458644af2d325ae164",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "85dd8900bd051348ad4177ad27f8fed0",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "e9e6581efc46bd4c8a91de680baa3ab2",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "77a67fd8a9912648b8fd727ecce008bf",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "00cd913f4f61ef4e9517ff609fa68b40",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "e1a63aa70cd56e428f93028d14c841ef",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "353c7b510d22ea44958431f18ba5aef3",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "5e15f41351a1ce43a709502ec78a3d80",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "8610764235114243b32ee29858dc34e9",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "c22643c440d5ab44a04229c0ffa92cad",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "e456b75a59f80649ae570d707980ffce",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "1656a30dada43c4eb610f66d3d594c9c",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "28e3929b8bc5de448911614f2a7a74be",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "878c0fe1993f1044a79689c723ee52a9",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "8b2a2f0e95987545a1ed7517578f106f",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "b81e061c0300334d99ceca01a386ec84",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "bf10610893fe114bb63a136f43640a33",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "8e819feb4361704a9c187100ea71d5c8",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "a82112f58354af4199cb33442f197b90",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "5ae7c20b1b7a234cbe92405733ed5a8c",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "2d47eab68b75444f8299c29b63ff59af",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "166a25a93543804ca25b91af357fb538",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "c183680feaa458419f63c6037e0c8fe4",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "960e6ff4a263064ba740f590f0df08b6",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "70893604df61f942b0c874a8d8a9e204",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "55f49cdfe872eb4f80835255970614f7",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "3dc4128e5677ba4e9cccfaa1e229fcf0",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "b232d7da6739e447b1f7c42e467e5715",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "6ca9811e788b3d41934f06f9fa2fc6e6",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "de9702fd4de94c428f2833ccb5724782",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "a37323a99cf2f543b330775d7b7ca307",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "1b6ef42814e5b0409d478e03e6498ba0",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "b6a5169c6e27e941b6c0b16f75b120a8",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "147a6f777cf38244a7302929c38c28c3",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "a6ea87e3d9cbc84198850c687e3616bb",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "62d134e31663d5479609db583c5be32e",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "34b14e2d40e1b349a79fef12e460434c",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "a7ee8d253cad824aa14154f6be5809c4",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "781c4af1fe17cc448c4d8908dd5e51d2",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "aad90c185e09024b8148c51ebecef713",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "219a3aea3f4ab54c9c7e09707cd12025",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "37d9314722e9d54f8890a83bab857f8f",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "92f6b6591f2b9841bbc9f0d802a414c7",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "32bf14c5e2473a42baca0a4494e28b38",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "939568488a51104a81665a3925754fc5",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "4872775a3122f74184fcb6baedbdf761",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "9791f1debf5638459886f75c7df0d7c1",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "2b80e0511265a44dbb07cf986ce52df4",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "89d600f27ecf244fa30ef894a3fa5f93",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "e02f58970955c5478c8eb57f905d867c",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "7c2e1b9e1785a34f80c52d75125e5fac",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "69ab29399e1bc441b121d2fba63d437a",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "f378d8c584d650469b25f79874a9d76e",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "d29a68a549bb2b458700e5aed265057c",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "0a8fc47f57609f469c02a52d4981a50e",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "d9e5417a922db74e8734d3f7c7023c90",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "0c59d030c048f9478b1da6baae8fd87e",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "de2460f48800524089e26ac06b1509f7",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "24f765311991634c9d35e3bd2f54fb34",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "959a6d6d61bf574b988b43f35dd62689",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "c311e168a0f53147b350ee0631ffb821",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "2f3f772a1c707e4c8279689f502324a6",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "72d097af8950184d9bbd6e1033f64825",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "29d7ecf0d7678246a745b4493d870600",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "b00e81e116738545a554d162958e7ffb",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "3118d54a863384499702dc85e98d1706",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "eb2601d20b539a45bd636e7575c9ead5",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "7aa8ae3c2323804bbf0789562d09c43b",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "5759bf46e7fa444f928e83a45d54a4d3",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "e9b26c97ad4f1f4fa2343768361d9193",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "95494993ed14094684f4ef96031389d9",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "fa6995d2a0251d428525e65b94406316",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "198c54329c484a4193a0ab1e6c06dead",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ },
+ {
+  "guid": "c64d7488c2a29745878f4bfb7b851ab9",
+  "bValid": true,
+  "RespawnTime": -1.0,
+  "RemainingHP": -1.0
+ }
+]

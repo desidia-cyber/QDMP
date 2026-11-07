@@ -1,0 +1,107 @@
+﻿ATTACH 47396
+READY [{"ready": true, "base": "0x7ff75d670000", "manager": "0x1a8388c5100"}]
+>>> tpplayer -48756 66032 -33470
+{
+ "ok": true,
+ "v": {
+  "after": {
+   "x": -48756,
+   "y": 66032,
+   "z": -33470
+  }
+ }
+}
+>>> sleep 6
+... slept 6
+>>> spawner 0x1a8eb32cdd0
+{
+ "addr": "0x1a8eb32cdd0",
+ "guidCount": 2,
+ "guids": [
+  "dfdda115-4ccfdafe-ee80c696-71bf25cc",
+  "5071a6ed-41b1d2d3-201eaf9b-64a32d73"
+ ],
+ "saveDataCount": 2,
+ "mySaveData": "0x1a952474c40",
+ "mySaveDataN": 2,
+ "respawnTimer": 0,
+ "spawnDisabled": 0,
+ "maxKill": 1,
+ "useMaxKill": 1,
+ "initted": 1,
+ "enemySpawned": 0,
+ "readyForSpawn": 0,
+ "playerInRange": 0,
+ "spawnOnActivate": 0,
+ "levelIsRemoved": 0,
+ "currentKill": 0,
+ "enemyWasKilled": 0,
+ "maxSpawnDist": 10000,
+ "minSpawnDist": 5000,
+ "enemyData": "0x1a8e98b7940",
+ "enemyDataName": "LargeRobot_Rusted_Data",
+ "enemyDataCls": "EnemyData_C"
+}
+>>> actors LargeRobot_Base
+[
+ {
+  "cls": "LargeRobot_Base_Spawner_C",
+  "name": "LargeRobot_Base_Spawner2",
+  "addr": "0x1a875602990",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_Base_Spawner_C",
+  "name": "LargeRobot_Base_Spawner3",
+  "addr": "0x1a875602500",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_Base_Spawner_C",
+  "name": "LargeRobot_Base_Spawner4",
+  "addr": "0x1a875602070",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_Base_Spawner_C",
+  "name": "LargeRobot_Base_Spawner5",
+  "addr": "0x1a875601be0",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_Base_Spawner_C",
+  "name": "LargeRobot_Base_Spawner6",
+  "addr": "0x1a875601750",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_Base_Spawner_C",
+  "name": "LargeRobot_Base_Spawner",
+  "addr": "0x1a8756012c0",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ }
+]

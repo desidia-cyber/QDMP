@@ -1,0 +1,9 @@
+[package]
+name = "qd-core"
+version.workspace = true
+edition.workspace = true
+description = "QDCOOP wire format (WIRE.md v1): bit packing, envelopes, quantisers, reliability, flag bank"
+
+# Deliberately dependency-free. The DollsMP core ported cleanly for exactly this
+# reason, and a native (C++) side must be able to reproduce every byte.
+[dependencies]

@@ -1,0 +1,5 @@
+﻿    const le = [];
+    const hex = KNOWN_BLOCK.toString(16).replace(/^0x/, '').padStart(16, '0');
+    const be = [];
+    for (let i = 0; i < 16; i += 2) be.push(hex.substr(i, 2));
+    for (let i = be.length - 1; i >= 0; i--) le.push(parseInt(be[i], 16));

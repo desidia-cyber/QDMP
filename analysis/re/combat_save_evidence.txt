@@ -1,0 +1,671 @@
+QueensDomain-Win64-Shipping.exe  ImageBase 140000000  SizeOfImage 05043000
+sections:
+   .text      rva 00001000 vsz 0373962B raw 00000600 rsz 03739800
+   .rdata     rva 0373B000 vsz 00FB5DC2 raw 03739E00 rsz 00FB5E00
+   .data      rva 046F1000 vsz 00516174 raw 046EFC00 rsz 00273C00
+   .pdata     rva 04C08000 vsz 002C74B0 raw 04963800 rsz 002C7600
+   .msvcjmc   rva 04ED0000 vsz 00000008 raw 04C2AE00 rsz 00000200
+   _RDATA     rva 04ED1000 vsz 00027210 raw 04C2B000 rsz 00027400
+   .rsrc      rva 04EF9000 vsz 0001B1D8 raw 04C52400 rsz 0001B200
+   .reloc     rva 04F15000 vsz 0012D624 raw 04C6D600 rsz 0012D800
+pair tables: 7483 names / 725 tables
+  NOTE: two mirrored tables exist per module; one maps every name to the
+        generic Blueprint-VM dispatcher 0119D280 and is discarded here.
+
+==============================================================================
+D4  enemy spawner identity semantics
+==============================================================================
+claim: the enemy save key is an AUTHORED FGuid baked into the level package,
+       reached through SavableActor_C.GUIDs -> EnemySpawner_C.GetSaveGUID.
+
+[D4.1] the save-state API, resolved from the pair tables
+StoreEnemySaveState               
+      table 0395D6E0  thunk 00E62000  impl=00E3BF10  VERIFIED (thunk calls it)
+RetrieveEnemySaveState            
+      table 0395AFB8  thunk 00E5E070  GENERIC-COPY(useless)
+      table 0395D6E0  thunk 00E61EF0  impl=00E39240  VERIFIED (thunk calls it)
+ClearEnemySaveState               
+      table 0395AFB8  thunk 00E5DE90  GENERIC-COPY(useless)
+      table 0395D6E0  thunk 00E60CD0  impl=00E27570  VERIFIED (thunk calls it)
+ClearAllEnemySaveStates           
+      table 0395AFB8  thunk 00E5DE60  GENERIC-COPY(useless)
+      table 0395D6E0  thunk 00E60C50  impl=00E27460  VERIFIED (thunk calls it)
+GetNamedSaveData                  
+      table 0395AFB8  thunk 00E5DFE0  GENERIC-COPY(useless)
+      table 0395D6E0  thunk 00E61800  impl=00E2F6D0
+GetActiveBaseSave                 
+      table 0394CD78  thunk 00E55620  GENERIC-COPY(useless)
+      table 03950060  thunk 00E58AA0  impl=00E2D070
+      table 0395AFB8  thunk 00E5DEC0  GENERIC-COPY(useless)
+      table 0395D6E0  thunk 00E60DC0  impl=00E2D100
+
+[D4.2] StoreEnemySaveState writes TMap at save+0x270 with a 3-field record
+--- disasm 00E3BF10 StoreEnemySaveState impl
+   00E3BF10 push      rbx                                           
+   00E3BF12 sub       rsp, 0x50                                     
+   00E3BF16 movaps    xmmword ptr [rsp + 0x40], xmm6                
+   00E3BF1B mov       rbx, rdx                                      
+   00E3BF1E movaps    xmmword ptr [rsp + 0x30], xmm7                
+   00E3BF23 movaps    xmm6, xmm3                                    
+   00E3BF26 movaps    xmm7, xmm2                                    
+   00E3BF29 call      0xe2d100                                         ; FUN_00E2D100
+   00E3BF2E test      rax, rax                                      
+   00E3BF31 je        0xe3bf58                                      
+   00E3BF33 lea       rcx, [rax + 0x270]                            
+   00E3BF3A movss     dword ptr [rsp + 0x24], xmm7                  
+   00E3BF40 lea       r8, [rsp + 0x20]                              
+   00E3BF45 movss     dword ptr [rsp + 0x28], xmm6                  
+   00E3BF4B mov       rdx, rbx                                      
+   00E3BF4E mov       byte ptr [rsp + 0x20], 1                      
+   00E3BF53 call      0xe19fc0                                         ; FUN_00E19FC0
+   00E3BF58 movaps    xmm6, xmmword ptr [rsp + 0x40]                
+   00E3BF5D movaps    xmm7, xmmword ptr [rsp + 0x30]                
+   00E3BF62 add       rsp, 0x50                                     
+   00E3BF66 pop       rbx                                           
+   00E3BF67 ret                                                     
+   00E3BF68 int3                                                    
+   00E3BF69 int3                                                    
+
+[D4.3] ClearEnemySaveState / ClearAllEnemySaveStates touch the same +0x270
+--- disasm 00E27570 ClearEnemySaveState impl
+   00E27570 push      rbx                                           
+   00E27572 sub       rsp, 0x20                                     
+   00E27576 mov       rbx, rdx                                      
+   00E27579 call      0xe2d100                                         ; FUN_00E2D100
+   00E2757E test      rax, rax                                      
+   00E27581 je        0xe27592                                      
+   00E27583 lea       rcx, [rax + 0x270]                            
+   00E2758A mov       rdx, rbx                                      
+   00E2758D call      0xe38860                                         ; FUN_00E38860
+   00E27592 add       rsp, 0x20                                     
+--- disasm 00E27460 ClearAllEnemySaveStates impl
+   00E27460 sub       rsp, 0x28                                     
+   00E27464 call      0xe2d100                                         ; FUN_00E2D100
+   00E27469 test      rax, rax                                      
+   00E2746C je        0xe274d2                                      
+   00E2746E mov       qword ptr [rsp + 0x20], rbx                   
+   00E27473 lea       rbx, [rax + 0x270]                            
+   00E2747A mov       rcx, rbx                                      
+   00E2747D call      0xe3f5c0                                         ; FUN_00E3F5C0
+   00E27482 cmp       dword ptr [rbx + 0xc], 0                      
+   00E27486 mov       dword ptr [rbx + 8], 0                        
+   00E2748D je        0xe27499                                      
+   00E2748F xor       edx, edx                                      
+
+[D4.4] offset derivation: which functions use +0x270 / +0x220
+   +0x220 : 1 site(s)
+        00E3933F  in FUN_00E392F0
+   +0x270 : 11 site(s)
+        00ACDDB4  in FUN_00ACDD00
+        00D2AE93  in FUN_00D2AD90
+        00D2B0A7  in FUN_00D2AF9A
+        00E27473  in FUN_00E2746E
+        00E27583  in FUN_00E27570
+        00E3927B  in FUN_00E39271
+        00E3BF33  in FUN_00E3BF10
+        01E42D61  in FUN_01E42AA0
+        024153CC  in FUN_00000000
+        02B27F3D  in FUN_02B27DF1
+        02BA72AB  in FUN_02BA6E51
+
+[D4.5] SpawnerGUID is a NAME only on the spawner class - it is not serialised
+   SpawnerGUID            rva(s): ['0395A568']
+   GUIDs                  rva(s): ['04089BF8', '04089C08', '04089C30']
+   GetSaveGUID            rva(s): []
+   FS_SpawnerInterface    rva(s): []
+
+[D4.6] the authored GUID property, decoded from a cooked map
+   tagged layout verified byte-for-byte in 100_GR.umap:
+      FName GUIDs | FName StructProperty | i32 size=16 | i32 idx=0
+      | FName Guid | 16B StructGuid=0 | u8 HasPropertyGuid=0 | 16B value
+
+   StoreEnemySaveState referenced by 1 asset(s):
+       QueensDomain/Content/Enemies/EnemySpawner.uasset
+
+   RetrieveEnemySaveState referenced by 1 asset(s):
+       QueensDomain/Content/Enemies/EnemySpawner.uasset
+
+   RollItemDrop referenced by 1 asset(s):
+       QueensDomain/Content/Blueprints/ItemSystem/SpawnItemDrop.uasset
+
+   GetDropSourceIDFromDataAsset referenced by 2 asset(s):
+       QueensDomain/Content/Enemies/EnemyBase.uasset
+       QueensDomain/Content/Enemies/Lizer_00/Default_Lizer_01.uasset
+
+   EnemyDiedEvent referenced by 11 asset(s):
+       QueensDomain/Content/Enemies/EnemyBase.uasset
+       QueensDomain/Content/Enemies/EnemySpawner.uasset
+       QueensDomain/Content/Enemies/JosamiKnight_00/DesBoss/Josami_Des_BloodPoolSpawner.uasset
+       QueensDomain/Content/Enemies/JosamiKnight_00/JosamiKnight_Base.uasset
+       QueensDomain/Content/Enemies/Necronomicon/Necronomicon_BP.uasset
+       QueensDomain/Content/Enemies/Necronomicon/Zombie/NecroZombie_Spawner.uasset
+       QueensDomain/Content/Enemies/RoyalDuo/Fated_Wheeler_Miniboss_BP.uasset
+       QueensDomain/Content/Enemies/Shared/EnemyAttachmentMesh.uasset
+       QueensDomain/Content/Enemies/Shared/EnemySkeletalMeshAttachment.uasset
+       QueensDomain/Content/Enemies/Shared/Enemy_Projectile_Base.uasset
+       QueensDomain/Content/Items/Weapons/Daggers/Dagger_Projectile_Base.uasset
+
+   RegisterEnemyKill referenced by 8 asset(s):
+       QueensDomain/Content/Blueprints/SaveSystem/SaveFunctions.uasset
+       QueensDomain/Content/Enemies/BloodPoolDuo/BloodPool_EnemySpawner.uasset
+       QueensDomain/Content/Enemies/Boner_00/Skeletons24/Black/Mage/Boner_Black_Mage_Spawner.uasset
+       QueensDomain/Content/Enemies/EnemyBase.uasset
+       QueensDomain/Content/Enemies/JosamiKnight_00/DesBoss/Josami_Des_BloodPoolSpawner.uasset
+       QueensDomain/Content/Enemies/Necronomicon/Necronomicon_BP.uasset
+       QueensDomain/Content/Enemies/Queen/Queen_BP.uasset
+       QueensDomain/Content/Enemies/Sipeha/Sipeha_BP.uasset
+
+   ApplyDamage referenced by 159 asset(s):
+       QueensDomain/Content/Blueprints/BreakableBarricade/BreakableBarricade.uasset
+       QueensDomain/Content/Blueprints/DamageTarget_BP.uasset
+       QueensDomain/Content/Blueprints/DamagingCollision.uasset
+       QueensDomain/Content/Blueprints/FS_Cheats.uasset
+       QueensDomain/Content/Enemies/Alien1/Stalker_Base_BP.uasset
+       QueensDomain/Content/Enemies/Ballooner/Ballooner_Base_BP.uasset
+       QueensDomain/Content/Enemies/Barnacle/Barnacle_Base_BP.uasset
+       QueensDomain/Content/Enemies/Barnacle/Barnacle_Disease_BP.uasset
+       QueensDomain/Content/Enemies/Barnacle/Barnacle_Projectile.uasset
+       QueensDomain/Content/Enemies/BlackRobotDuo/DrillRobot_Miniboss_Mine.uasset
+       QueensDomain/Content/Enemies/BloodPoolDuo/SnailBull_Miniboss_BP.uasset
+       QueensDomain/Content/Enemies/BloodPoolDuo/Stalker_Miniboss_BP.uasset
+
+   ApplyPointDamage referenced by 0 asset(s):
+
+   BlockSuspendSaves referenced by 4 asset(s):
+       QueensDomain/Content/Blueprints/FS_GameInstance.uasset
+       QueensDomain/Content/Blueprints/GameInstanceUtils.uasset
+       QueensDomain/Content/Blueprints/SuspendSaveBlockingVolume.uasset
+       QueensDomain/Content/Enemies/EnemyBase.uasset
+
+   ClearAllEnemySaveStates referenced by 4 asset(s):
+       QueensDomain/Content/Enemies/Queen/Queen_BP.uasset
+       QueensDomain/Content/Enemies/Sipeha/Sipeha_NPC.uasset
+       QueensDomain/Content/LD45/Blueprints/Checkpoint/Checkpoint.uasset
+       QueensDomain/Content/Player/FS_PlayerChar.uasset
+
+[D4.7] 414/414 verification against the live save
+   EnemySaveStates records           : 414
+   authored GUIDs parsed from maps   : 4315 over 38 maps
+   save keys matched by an authored GUID: 414 / 414
+   authored GUIDs NOT in this save   : 3888  (the world authors far more
+                                        than one playthrough touches)
+   per-map authored GUID count       : {'SublevelRefTest.umap': 2, 'BirdsTestZone.umap': 130, '070_UpperShell.umap': 3, '100_GR.umap': 343, '110_GR_dungeon.umap': 46, '120_GR_goldenroom.umap': 2, '125_GR_CubeHall.umap': 11, '130_GR_outerisles.umap': 16, '140_GR_ShopIsleOnly.umap': 22, '200_AQ.umap': 145, '210_AQ_underground.umap': 282, '300_LIB.umap': 401, '310_LIB_exterior.umap': 32, '320_LIB_basement.umap': 69, '400_MAUS_entrance.umap': 81, '420_MAUS_mid.umap': 146, '450_MAUS_darkmaze.umap': 153, '500_AUT.umap': 599, '510_AUT_droptunnel.umap': 63, '600_Castle.umap': 353, '610_Castle_Ext.umap': 5, '700_SZ_GR.umap': 57, '710_SZ_AQ.umap': 40, '720_SZ_LIB.umap': 27, '730_HOD.umap': 12, '740_SZ_Prison.umap': 139, '750_SZ_MAUS2.umap': 29, '760_Dekanima.umap': 64, '760_SZ_AUT.umap': 212, '770_SZ_Swamp.umap': 353, '775_JigekiTemple.umap': 19, '780_SZ_Depths.umap': 317, '790_SG.umap': 96, '800_FinalZone.umap': 17, '900_SipehaWorld.umap': 2, '998_QueenCutscenes.umap': 1, 'Intro_Level_00.umap': 1, 'VideoConfigMap.umap': 25}
+
+[D4.8] spawner placements per map (the denominator)
+   placed ENEMY spawner actors (FX spawners excluded): 1708 over 32 maps
+   map                            enemy spawners
+   SublevelRefTest.umap           1
+   BirdsTestZone.umap             33
+   100_GR.umap                    137
+   110_GR_dungeon.umap            15
+   120_GR_goldenroom.umap         1
+   125_GR_CubeHall.umap           8
+   130_GR_outerisles.umap         3
+   140_GR_ShopIsleOnly.umap       1
+   200_AQ.umap                    80
+   210_AQ_underground.umap        132
+   300_LIB.umap                   164
+   310_LIB_exterior.umap          2
+   320_LIB_basement.umap          31
+   400_MAUS_entrance.umap         29
+   420_MAUS_mid.umap              48
+   450_MAUS_darkmaze.umap         42
+   500_AUT.umap                   252
+   510_AUT_droptunnel.umap        29
+   600_Castle.umap                171
+   610_Castle_Ext.umap            3
+   700_SZ_GR.umap                 13
+   710_SZ_AQ.umap                 17
+   720_SZ_LIB.umap                13
+   740_SZ_Prison.umap             60
+   750_SZ_MAUS2.umap              12
+   760_Dekanima.umap              47
+   760_SZ_AUT.umap                90
+   770_SZ_Swamp.umap              114
+   775_JigekiTemple.umap          7
+   780_SZ_Depths.umap             112
+   790_SG.umap                    40
+   900_SipehaWorld.umap           1
+
+==============================================================================
+D5  enemy death / damage authority surface
+==============================================================================
+claim: damage is applied by UGameplayStatics::ApplyDamage -> AActor::TakeDamage;
+       HP lives in UFB_AttributeComponent; the death DELEGATE is a Blueprint
+       multicast declared by C++ and broadcast from EnemyBase_C bytecode;
+       persistence is written by one native function, StoreEnemySaveState.
+
+[D5.1] damage entry
+ApplyDamage                       
+      table 03F98D28  thunk 02DB91A0  GENERIC-COPY(useless)
+      table 03F9AC10  thunk 02DBA5D0  impl=028D2190  VERIFIED (thunk calls it)
+--- disasm 028D2190 UGameplayStatics::ApplyDamage
+   028D2190 mov       qword ptr [rsp + 0x10], rbp                   
+   028D2195 mov       qword ptr [rsp + 0x18], rsi                   
+   028D219A push      rdi                                           
+   028D219B sub       rsp, 0x50                                     
+   028D219F movaps    xmmword ptr [rsp + 0x40], xmm6                
+   028D21A4 movaps    xmm6, xmm1                                    
+   028D21A7 mov       rsi, r9                                       
+   028D21AA mov       rbp, r8                                       
+   028D21AD mov       rdi, rcx                                      
+   028D21B0 xorps     xmm0, xmm0                                    
+   028D21B3 test      rcx, rcx                                      
+   028D21B6 je        0x28d222d                                     
+   028D21B8 ucomiss   xmm6, xmm0                                    
+   028D21BB je        0x28d222d                                     
+   028D21BD mov       qword ptr [rsp + 0x60], rbx                   
+   028D21C2 mov       rbx, qword ptr [rsp + 0x80]                   
+   028D21CA test      rbx, rbx                                      
+   028D21CD je        0x28d21f3                                     
+   028D21CF call      0x2d9e270                                        ; FUN_02D9E270
+   028D21D4 test      rax, rax                                      
+   028D21D7 je        0x28d21f3                                     
+   028D21D9 lea       rdx, [rax + 0x30]                             
+   028D21DD movsxd    rax, dword ptr [rax + 0x38]                   
+   028D21E1 cmp       eax, dword ptr [rbx + 0x38]                   
+   028D21E4 jg        0x28d21f3                                     
+   028D21E6 mov       rcx, rax                                      
+   028D21E9 mov       rax, qword ptr [rbx + 0x30]                   
+   028D21ED cmp       qword ptr [rax + rcx*8], rdx                  
+   028D21F1 je        0x28d21fb                                     
+   028D21F3 call      0x2d9e270                                        ; FUN_02D9E270
+   028D21F8 mov       rbx, rax                                      
+   028D21FB lea       rax, [rip + 0x152ecbe]                           ; ->03E00EC0
+   028D2202 mov       qword ptr [rsp + 0x38], rbx                   
+   028D2207 mov       qword ptr [rsp + 0x30], rax                   
+   028D220C lea       r8, [rsp + 0x30]                              
+   028D2211 mov       rax, qword ptr [rdi]                          
+   028D2214 mov       r9, rbp                                       
+   028D2217 movaps    xmm1, xmm6                                    
+   028D221A mov       qword ptr [rsp + 0x20], rsi                   
+   028D221F mov       rcx, rdi                                      
+   028D2222 call      qword ptr [rax + 0x598]                       
+   028D2228 mov       rbx, qword ptr [rsp + 0x60]                   
+
+[D5.2] the attribute component that owns CurrentHealth/MaxHealth
+ApplyAttributeModifier            
+      table 038EEDA8  thunk 00CFCDC0  GENERIC-COPY(useless)
+      table 038F0290  thunk 00CFF6A0  impl=unresolved
+AddToAttributeBaseValue           
+      table 038EEDA8  thunk 00CFCD60  GENERIC-COPY(useless)
+      table 038F0290  thunk 00CFF5D0  impl=unresolved
+SetAttributeBaseValue             
+      table 038EEDA8  thunk 00CFD2C0  GENERIC-COPY(useless)
+      table 038F0290  thunk 00D00EF0  impl=unresolved
+GetAttributeValue                 
+      table 038EEDA8  thunk 00CFCF80  GENERIC-COPY(useless)
+      table 038F0290  thunk 00D000B0  impl=00CF8020
+ClampAttributeWasUpdated          
+      table 038EFDC0  thunk 00CFFD10  impl=unresolved
+
+[D5.3] damageable-actor registry
+RegisterDamageableActor           
+      table 038F13E8  thunk 00D00B20  impl=unresolved
+UnregisterDamageableActor         
+      table 038F13E8  thunk 00D019C0  impl=unresolved
+DamageableActorEndedPlay          
+      table 038F13E8  thunk 00CFFE50  impl=unresolved
+TryApplyDamage                    
+      table 038F0B00  thunk 00D01330  impl=unresolved
+
+[D5.4] the only native function that touches the death path by name
+OnEnemyDied                       
+      table 03941A68  thunk 00E4B5F0  GENERIC-COPY(useless)
+      table 03944EF0  thunk 00E4EA10  impl=00E36240  VERIFIED (thunk calls it)
+OnEnemyStaggered                  
+      table 03941A68  thunk 00E4B620  GENERIC-COPY(useless)
+      table 03944EF0  thunk 00E4EAE0  impl=00E36250  VERIFIED (thunk calls it)
+--- disasm 00E36240 OnEnemyDied impl (UFS_EnemyAction)
+   00E36240 mov       dl, 1                                         
+   00E36242 jmp       0xe4c820                                         ; FUN_00E4C820
+   00E36247 int3                                                    
+   00E36248 int3                                                    
+   00E36249 int3                                                    
+   00E3624A int3                                                    
+
+[D5.5] persistence writer
+StoreEnemySaveState               
+      table 0395D6E0  thunk 00E62000  impl=00E3BF10  VERIFIED (thunk calls it)
+      caller 00E62141 in FUN_00E62000  (call)
+
+[D5.6] call-graph edges for the whole death/persistence cluster
+      StoreEnemySaveState      <- 1 direct caller(s): ['00E62141/FUN_00E62000']
+      RetrieveEnemySaveState   <- 1 direct caller(s): ['00E61FB6/FUN_00E61EF0']
+      ClearAllEnemySaveStates  <- 1 direct caller(s): ['00E60CB5/FUN_00E60C50']
+      ClearEnemySaveState      <- 1 direct caller(s): ['00E60D89/FUN_00E60CD0']
+      GetActiveBaseSave        <- 20 direct caller(s): ['00E24D35/FUN_00E24CD0', '00E27464/FUN_00E27460', '00E27579/FUN_00E27570', '00E2AF47/FUN_00E2AED0', '00E2EA49/FUN_00E2EA40', '00E2EB60/FUN_00E2EABB', '00E2EBE0/FUN_00E2EBD0', '00E2ED22/FUN_00E2ED10']
+
+==============================================================================
+D6  loot roll location
+==============================================================================
+claim: the drop roll is a local, single-machine call in UFS_ItemDropSystem,
+       cached in a transient map keyed by (FName source, int32 dropIndex).
+
+[D6.1] the three functions of UFS_ItemDropSystem (table 0x03951480)
+GetDropSourceIDFromClass          
+      table 03951480  thunk 00E58C90  impl=00E2E5C0  VERIFIED (thunk calls it)
+GetDropSourceIDFromDataAsset      
+      table 03951480  thunk 00E58C90  impl=00E2E5C0  VERIFIED (thunk calls it)
+RollItemDrop                      
+      table 03951480  thunk 00E592B0  impl=00E392F0  VERIFIED (thunk calls it)
+
+[D6.2] GetDropSourceIDFrom* returns the source object's UObject Name (FName)
+--- disasm 00E2E5C0 impl: rax=[rdx+0x18]; [rcx]=rax  (UObject.Name)
+   00E2E5C0 mov       rax, qword ptr [rdx + 0x18]                   
+   00E2E5C4 mov       qword ptr [rcx], rax                          
+   00E2E5C7 mov       rax, rcx                                      
+   00E2E5CA ret                                                     
+   00E2E5CB int3                                                    
+   00E2E5CC int3                                                    
+   00E2E5CD int3                                                    
+   00E2E5CE int3                                                    
+
+[D6.3] RollItemDrop, disassembled past its .pdata end
+--- disasm 00E392F0 UFS_ItemDropSystem::RollItemDrop
+   00E392F0 mov       qword ptr [rsp + 0x18], rbx                   
+   00E392F5 push      rdi                                           
+   00E392F6 sub       rsp, 0x60                                     
+   00E392FA movaps    xmmword ptr [rsp + 0x50], xmm6                
+   00E392FF movaps    xmm6, xmm3                                    
+   00E39302 mov       edi, r8d                                      
+   00E39305 mov       rbx, rdx                                      
+   00E39308 test      rcx, rcx                                      
+   00E3930B je        0xe394af                                      
+   00E39311 test      rdx, rdx                                      
+   00E39314 je        0xe394af                                      
+   00E3931A call      0xe2d100                                         ; FUN_00E2D100
+   00E3931F test      rax, rax                                      
+   00E39322 je        0xe394af                                      
+   00E39328 mulss     xmm6, dword ptr [rsp + 0x90]                  
+   00E39331 lea       r8, [rsp + 0x20]                              
+   00E39336 mov       dword ptr [rsp + 0x28], edi                   
+   00E3933A lea       rdx, [rsp + 0x70]                             
+   00E3933F lea       rdi, [rax + 0x220]                            
+   00E39346 mov       qword ptr [rsp + 0x78], rsi                   
+   00E3934B mov       rcx, rdi                                      
+   00E3934E mov       qword ptr [rsp + 0x20], rbx                   
+   00E39353 call      0xd646c0                                         ; FUN_00D646C0
+   00E39358 movsxd    rax, dword ptr [rsp + 0x70]                   
+   00E3935D xor       esi, esi                                      
+   00E3935F cmp       eax, -1                                       
+   00E39362 je        0xe3937b                                      
+   00E39364 mov       rbx, rax                                      
+   00E39367 shl       rbx, 5                                        
+   00E3936B add       rbx, qword ptr [rdi]                          
+   00E3936E lea       rbx, [rbx + 0xc]                              
+   00E39372 cmove     rbx, rsi                                      
+   00E39376 test      rbx, rbx                                      
+   00E39379 jne       0xe393de                                      
+   00E3937B lea       rax, [rsp + 0x20]                             
+   00E39380 mov       qword ptr [rsp + 0x30], rsi                   
+   00E39385 mov       qword ptr [rsp + 0x40], rax                   
+   00E3938A lea       r8, [rsp + 0x40]                              
+   00E3938F lea       rax, [rsp + 0x30]                             
+   00E39394 mov       dword ptr [rsp + 0x38], esi                   
+   00E39398 xor       r9d, r9d                                      
+   00E3939B mov       qword ptr [rsp + 0x48], rax                   
+   00E393A0 lea       rdx, [rsp + 0x70]                             
+   00E393A5 mov       rcx, rdi                                      
+   00E393A8 call      0xe1a750                                         ; FUN_00E1A750
+   00E393AD lea       r8, [rsp + 0x20]                              
+   00E393B2 mov       rcx, rdi                                      
+   00E393B5 lea       rdx, [rsp + 0x70]                             
+   00E393BA call      0xd646c0                                         ; FUN_00D646C0
+   00E393BF movsxd    rax, dword ptr [rsp + 0x70]                   
+   00E393C4 cmp       eax, -1                                       
+   00E393C7 je        0xe393db                                      
+   00E393C9 mov       rbx, rax                                      
+   00E393CC shl       rbx, 5                                        
+   00E393D0 add       rbx, qword ptr [rdi]                          
+   00E393D3 je        0xe393db                                      
+   00E393D5 add       rbx, 0xc                                      
+   00E393D9 jmp       0xe393de                                         ; FUN_00E393DE
+   00E393DB mov       rbx, rsi                                      
+   00E393DE mov       eax, dword ptr [rbx + 4]                      
+   00E393E1 movd      xmm2, dword ptr [rbx + 8]                     
+   00E393E6 inc       eax                                           
+   00E393E8 movss     xmm0, dword ptr [rsp + 0xa0]                  
+   00E393F1 addss     xmm0, dword ptr [rip + 0x2933ae7]                ; ->0376CEE0
+   00E393F9 cvtdq2ps  xmm2, xmm2                                    
+   00E393FC mov       dword ptr [rbx + 4], eax                      
+   00E393FF mulss     xmm2, dword ptr [rsp + 0x98]                  
+   00E39408 mulss     xmm2, xmm0                                    
+   00E3940C addss     xmm2, dword ptr [rip + 0x2933acc]                ; ->0376CEE0
+   00E39414 mulss     xmm6, xmm2                                    
+   00E39418 comiss    xmm6, dword ptr [rip + 0x2afee99]                ; ->039382B8
+   00E3941F jb        0xe39448                                      
+   00E39421 inc       eax                                           
+   00E39423 mov       dword ptr [rbx + 8], esi                      
+   00E39426 inc       dword ptr [rbx]                               
+   00E39428 mov       cl, 1                                         
+   00E3942A mov       rsi, qword ptr [rsp + 0x78]                   
+   00E3942F mov       dword ptr [rbx + 4], eax                      
+   00E39432 movzx     eax, cl                                       
+   00E39435 mov       rbx, qword ptr [rsp + 0x80]                   
+   00E3943D movaps    xmm6, xmmword ptr [rsp + 0x50]                
+   00E39442 add       rsp, 0x60                                     
+   00E39446 pop       rdi                                           
+   00E39447 ret                                                     
+   00E39448 mov       r8d, 1                                        
+   00E3944E lea       rdx, [rip + 0x2af8fe3]                           ; ->03932438
+   00E39455 lea       rcx, [rsp + 0x70]                             
+   00E3945A call      0xfabf20                                         ; FUN_00FABF20
+   00E3945F movaps    xmm1, xmm6                                    
+   00E39462 mov       rcx, qword ptr [rax]                          
+   00E39465 call      0xbc5e70                                         ; FUN_00BC5E70
+   00E3946A inc       dword ptr [rbx + 4]                           
+   00E3946D movzx     ecx, al                                       
+   00E39470 test      al, al                                        
+   00E39472 je        0xe39491                                      
+
+[D6.4] the chance function it calls is FB_GetRandomBool
+FB_GetRandomBool                  
+      table 03896A70  thunk 00BDBE10  impl=00BC5E70  VERIFIED (thunk calls it)
+--- disasm 00BC5E70 FB_GetRandomBool(float P)
+   00BC5E70 push      rbx                                           
+   00BC5E72 sub       rsp, 0x30                                     
+   00BC5E76 movaps    xmmword ptr [rsp + 0x20], xmm6                
+   00BC5E7B mov       rbx, rcx                                      
+   00BC5E7E movaps    xmm6, xmm1                                    
+   00BC5E81 call      0xbc9160                                         ; FUN_00BC9160
+   00BC5E86 mov       rcx, rax                                      
+   00BC5E89 mov       rdx, rbx                                      
+   00BC5E8C call      0xbc8e20                                         ; FUN_00BC8E20
+   00BC5E91 mov       r11, rax                                      
+   00BC5E94 xorps     xmm0, xmm0                                    
+   00BC5E97 mov       r9d, dword ptr [rax + 4]                      
+   00BC5E9B mov       r8d, r9d                                      
+   00BC5E9E mov       ebx, dword ptr [rax]                          
+   00BC5EA0 mov       edx, ebx                                      
+   00BC5EA2 xor       edx, dword ptr [rax + 8]                      
+   00BC5EA5 mov       r10d, dword ptr [rax + 0xc]                   
+   00BC5EA9 mov       ecx, edx                                      
+   00BC5EAB xor       ecx, r9d                                      
+   00BC5EAE xor       r8d, r10d                                     
+   00BC5EB1 mov       dword ptr [rax + 4], ecx                      
+   00BC5EB4 mov       eax, r8d                                      
+   00BC5EB7 xor       eax, ebx                                      
+   00BC5EB9 shl       r9d, 9                                        
+   00BC5EBD mov       dword ptr [r11], eax                          
+   00BC5EC0 xor       r9d, edx                                      
+
+[D6.5] pair layout: key 12B (FName+i32), pair stride 0x20, value at key+12
+      evidence: shl rbx,5 / add rbx,[rdi] / lea rbx,[rbx+0xC] at 0x00E39364..
+      key store: mov qword [rsp+0x20],rbx ; mov dword [rsp+0x28],edi
+
+[D6.6] the cache is transient: ItemDrops is not in World0.sav
+      ItemDrops            serialised=False
+      EnemyDropDataA       serialised=False
+      KilledEnemyCounts    serialised=False
+      EnemySaveStates      serialised=True
+
+==============================================================================
+D8  input path
+==============================================================================
+   import                       provider
+   RegisterRawInputDevices      USER32.dll
+   GetRawInputData              USER32.dll
+   GetRawInputDeviceList        USER32.dll
+   GetRawInputDeviceInfoA       USER32.dll
+   GetAsyncKeyState             USER32.dll
+   GetKeyState                  USER32.dll
+   MapVirtualKeyW               USER32.dll
+   PostMessageW                 USER32.dll
+   SendMessageW                 USER32.dll
+   PeekMessageW                 USER32.dll
+   DispatchMessageW             USER32.dll
+   TranslateMessage             USER32.dll
+   SetCapture                   USER32.dll
+   SetWindowsHookExW            USER32.dll
+   DirectInput8Create           -- not imported --
+   XInputGetState               -- not imported --
+
+   DLLs in the import directory that matter for input:
+      XINPUT1_3.dll
+      USER32.dll
+
+   Blueprint-side input events (from the pak, FS_PlayerChar):
+      InpActEvt_Jump / Attack / Pause / Status / UltraAttack / WindDash
+      InpAxisEvt_TurnMouse, InpAxisEvt_LookUpMouse   <- mouse LOOK is an axis
+
+==============================================================================
+C9  save write triggers, especially the silent suspend saves
+==============================================================================
+claim: every save goes through UGameplayStatics::SaveGameToSlot, reached only
+       from the FB_SaveUtils plugin; the suspend save is a SetTimer loop in
+       FS_GameInstance_C writing an alternating slot index.
+
+[C9.1] the single write primitive
+SaveGameToSlot                    
+      table 03F98D28  thunk 02DB88A0  GENERIC-COPY(useless)
+      table 03F9AC10  thunk 02DC30F0  impl=028F2B40  VERIFIED (thunk calls it)
+--- disasm 028F2B40 UGameplayStatics::SaveGameToSlot
+   028F2B40 mov       qword ptr [rsp + 8], rbx                      
+   028F2B45 mov       qword ptr [rsp + 0x10], rsi                   
+   028F2B4A push      rdi                                           
+   028F2B4B sub       rsp, 0x40                                     
+   028F2B4F mov       rbx, rdx                                      
+   028F2B52 xor       esi, esi                                      
+   028F2B54 lea       rdx, [rsp + 0x30]                             
+   028F2B59 mov       qword ptr [rsp + 0x30], rsi                   
+   028F2B5E mov       qword ptr [rsp + 0x38], rsi                   
+   028F2B63 mov       edi, r8d                                      
+   028F2B66 call      0x28f2970                                        ; FUN_028F2970
+   028F2B6B test      al, al                                        
+   028F2B6D je        0x28f2bc7                                     
+   028F2B6F call      0x28dd1c0                                        ; FUN_028DD1C0
+   028F2B74 mov       rcx, rax                                      
+   028F2B77 mov       rdx, qword ptr [rax]                          
+   028F2B7A call      qword ptr [rdx + 0x40]                        
+   028F2B7D mov       r10, rax                                      
+   028F2B80 test      rax, rax                                      
+   028F2B83 je        0x28f2bc7                                     
+   028F2B85 cmp       dword ptr [rsp + 0x38], esi                   
+   028F2B89 jle       0x28f2bc7                                     
+   028F2B8B mov       edx, dword ptr [rbx + 8]                      
+   028F2B8E test      edx, edx                                      
+   028F2B90 lea       ecx, [rdx - 1]                                
+   028F2B93 cmove     ecx, esi                                      
+   028F2B96 test      ecx, ecx                                      
+   028F2B98 jle       0x28f2bc7                                     
+   028F2B9A test      edx, edx                                      
+   028F2B9C je        0x28f2ba3                                     
+
+[C9.2] every direct caller of SaveGameToSlot (all inside the FB_SaveUtils module)
+      site 00BE2DA0 in FUN_00BE2D59 [00BE2D59..00BE2DD2]
+      site 00BE2F42 in FUN_00BE2F02 [00BE2F02..00BE2F74]
+      site 00BE3A44 in FUN_00BE3A0F [00BE3A0F..00BE3A70]
+      site 00BE44E8 in FUN_00BE44B3 [00BE44B3..00BE4546]
+      site 00BE4F2A in FUN_00BE4C7C [00BE4C7C..00BE4F99]
+      site 02DC31E9 in FUN_02DC30F0 [02DC30F0..02DC320F]
+
+[C9.3] slot-name + slot-index helpers
+GetSaveSlotName                   
+      table 03939B68  thunk 00E45C60  GENERIC-COPY(useless)
+      table 0393CE30  thunk 00E47C70  impl=00E306D0  VERIFIED (thunk calls it)
+GetGameSaveRootFolder             
+      table 03939B68  thunk 00E45A60  GENERIC-COPY(useless)
+      table 0393CE30  thunk 00E47820  impl=00E2E6B0  VERIFIED (thunk calls it)
+GetCurrentSaveFileSlot            
+      table 03899AE8  thunk 00BE66E0  GENERIC-COPY(useless)
+      table 0389AE20  thunk 00BE7990  impl=00BE2C20  VERIFIED (thunk calls it)
+SetCurrentSaveFileSlot            
+      table 0389AE20  thunk 00BE7B90  impl=00BE3A80  VERIFIED (thunk calls it)
+GetSaveFileName                   
+      table 03899AE8  thunk 00BE6710  GENERIC-COPY(useless)
+      table 0389AE20  thunk 00BE79C0  impl=00BE2F80  VERIFIED (thunk calls it)
+GetCurrentSaveFileName            
+      table 03899AE8  thunk 00BE66B0  GENERIC-COPY(useless)
+      table 0389AE20  thunk 00BE78C0  impl=00BE2BC0  VERIFIED (thunk calls it)
+InitSave                          
+      table 0394CD78  thunk 00E55650  GENERIC-COPY(useless)
+      table 03950060  thunk 00E58E20  impl=00E348E0  VERIFIED (thunk calls it)
+SetActiveSave                     
+      table 03950060  thunk 00E594D0  impl=unresolved
+
+--- disasm 00E306D0 GetSaveSlotName impl (builds the FString slot name)
+   00E306D0 mov       rax, rsp                                      
+   00E306D3 push      rbp                                           
+   00E306D4 push      r12                                           
+   00E306D6 lea       rbp, [rax - 0x4f]                             
+   00E306DA sub       rsp, 0x88                                     
+   00E306E1 mov       qword ptr [rax + 0x10], rsi                   
+   00E306E5 mov       r12, rcx                                      
+   00E306E8 mov       qword ptr [rax + 0x18], rdi                   
+   00E306EC lea       rcx, [rbp - 0x29]                             
+   00E306F0 mov       qword ptr [rax - 0x20], r14                   
+   00E306F4 xor       edi, edi                                      
+   00E306F6 mov       qword ptr [rbp - 0x29], rdi                   
+   00E306FA movzx     r14d, r9b                                     
+   00E306FE mov       qword ptr [rbp - 0x21], rdi                   
+   00E30702 movzx     esi, r8b                                      
+   00E30706 mov       qword ptr [rax - 0x28], r15                   
+   00E3070A call      0xe64c40                                         ; FUN_00E64C40
+   00E3070F lea       rcx, [rbp + 0x17]                             
+   00E30713 call      0xe2e6b0                                         ; FUN_00E2E6B0
+   00E30718 mov       rcx, qword ptr [rax]                          
+   00E3071B mov       r8d, dword ptr [rax + 8]                      
+   00E3071F mov       qword ptr [rax], rdi                          
+   00E30722 mov       qword ptr [rbp - 9], rcx                      
+   00E30726 mov       ecx, dword ptr [rax + 0xc]                    
+   00E30729 mov       qword ptr [rax + 8], rdi                      
+   00E3072D mov       eax, r8d                                      
+   00E30730 neg       eax                                           
+   00E30732 mov       dword ptr [rbp - 1], r8d                      
+   00E30736 mov       dword ptr [rbp + 3], ecx                      
+   00E30739 sbb       edx, edx                                      
+   00E3073B add       edx, 6                                        
+   00E3073E add       edx, r8d                                      
+   00E30741 cmp       edx, ecx                                      
+   00E30743 jle       0xe3074e                                      
+   00E30745 lea       rcx, [rbp - 9]                                
+   00E30749 call      0x785550                                         ; FUN_00785550
+   00E3074E mov       r15d, 5                                       
+   00E30754 mov       qword ptr [rsp + 0xa0], rbx                   
+   00E3075C mov       r8d, r15d                                     
+   00E3075F lea       rdx, [rip + 0x2b0548a]                           ; ->03935BF0
+
+[C9.4] related engine saves
+LoadGameFromSlot                  
+      table 03F98D28  thunk 02DB82A0  GENERIC-COPY(useless)
+      table 03F9AC10  thunk 02DC09F0  impl=028EA4D0
+DeleteGameInSlot                  
+      table 03F98D28  thunk 02DB97B0  GENERIC-COPY(useless)
+      table 03F9AC10  thunk 02DBD7D0  impl=028D8560
+DoesSaveGameExist                 
+      table 03F98D28  thunk 02DB9810  GENERIC-COPY(useless)
+      table 03F9AC10  thunk 02DBDA20  impl=028D87B0
+CreateSaveGameObject              
+      table 03F98D28  thunk 02DB9720  GENERIC-COPY(useless)
+      table 03F9AC10  thunk 02DBD420  impl=028D7BA0
+
+[C9.5] suspend plumbing in the exe and the pak (name references)
+   GenerateSuspendData          ['03953470']
+   RestoreFromSuspendData       ['039534D0']
+   RestoreSuspendState          ['03955FD0']
+   GetSafeLocationSuspendState  ['03956A38']
+   SuspendIndex                 ['0393C7B0']
+
+   no literal 'World0', '_Suspend_' or 'World0_Suspend' exists in the exe
+   or in any cooked package -> the slot name is assembled at runtime.

@@ -1,0 +1,2094 @@
+==============================================================================
+D1  pause / time-dilation / tick-disable: implementations
+==============================================================================
+  (for each name: the usable pair-table copy, its exec thunk, and the
+   implementation the thunk's last real call lands on)
+
+  SetGamePaused              impl 028F3180   via exec-thunk thunk 02DC3580 (table 03F9AC10, 201 bytes)
+                               [other copy table 03F98D28 is the unusable resolver stub -> 0119D280]
+  IsGamePaused               impl 028E8DB0   via exec-thunk thunk 02DC07B0 (table 03F9AC10, 132 bytes)
+                               [other copy table 03F98D28 is the unusable resolver stub -> 0119D280]
+  SetGlobalTimeDilation      impl 028F3410   via exec-thunk thunk 02DC39F0 (table 03F9AC10, 190 bytes)
+                               [other copy table 03F98D28 is the unusable resolver stub -> 0119D280]
+  GetGlobalTimeDilation      impl 028DF810   via exec-thunk thunk 02DBF0C0 (table 03F9AC10, 134 bytes)
+                               [other copy table 03F98D28 is the unusable resolver stub -> 0119D280]
+  SetActorTickEnabled        impl 026636F0   via exec-thunk thunk 02D58C10 (table 03F0E8C0, 135 bytes)
+                               [other copy table 03F0DA28 is the unusable resolver stub -> 0119D280]
+  SetComponentTickEnabled    impl 02D5C905   via exec-thunk thunk 02D5C8B0 (table 03F126A0, 139 bytes)
+                               [other copy table 03F0F3F8 is the unusable resolver stub -> 0119D280]
+  SetTickableWhenPaused      impl 02664C00   via exec-thunk thunk 02D590F0 (table 03F0E8C0, 135 bytes)
+                               [other copy table 03F0DA28 is the unusable resolver stub -> 0119D280]
+  GetTickableWhenPaused      impl 02D55DF0   via direct-impl thunk 02D55DF0 (table 03F0E8C0, 43 bytes)
+                               [other copy table 03F0DA28 is the unusable resolver stub -> 0119D280]
+  SetIgnoreTimeDilation      impl 02CC8110   via exec-thunk thunk 02ECE9A0 (table 040C4600, 135 bytes)
+                               [other copy table 040C0F48 is the unusable resolver stub -> 0119D280]
+  GetIgnoreTimeDilation      impl 02ECE630   via direct-impl thunk 02ECE630 (table 040C4600, 43 bytes)
+                               [other copy table 040C0F48 is the unusable resolver stub -> 0119D280]
+  GetActorTimeDilation       impl 02D54EA0   via direct-impl thunk 02D54EA0 (table 03F0E8C0, 45 bytes)
+                               [other copy table 03F0DA28 is the unusable resolver stub -> 0119D280]
+
+  secondary - NOT used as evidence: these names are ambiguous across a
+  dozen unrelated classes and resolve only to a vtable slot, not a function:
+    Pause                    thunk 00C398A0 (table 038CF650) -> ('virtual', 'qword ptr [rax + 0x20]')
+    ServerPause              thunk 02E80DD0 (table 0405A530) -> ('virtual', 'qword ptr [rax + 0x858]')
+
+------------------------------------------------------------------------------
+D1  direct callers of each implementation (whole .text call index)
+    'exec-thunk' below means the ONLY caller is a Blueprint exec thunk,
+    i.e. the function is reachable only through ProcessEvent / BP bytecode
+------------------------------------------------------------------------------
+  026636F0  SetActorTickEnabled        callers 20    native callers 11
+      site 00949C19 in FUN_00949C0E exec-thunk
+      site 00B67D12 in FUN_00B67D00 NATIVE
+      site 01F41C36 in FUN_01F41C20 NATIVE
+      site 01F4272C in FUN_01F42710 exec-thunk
+      ... 16 more
+      NATIVE caller site 00B67D12 in FUN_00B67D00
+      NATIVE caller site 01F41C36 in FUN_01F41C20
+      NATIVE caller site 0218B876 in FUN_0218B680
+      NATIVE caller site 0218C5CD in FUN_0218C597
+      NATIVE caller site 024917C9 in FUN_02491660
+      NATIVE caller site 0287AFCF in FUN_0287AE70
+      NATIVE caller site 0293E7A0 in FUN_0293E750
+      NATIVE caller site 02957480 in FUN_02957380
+  02664C00  SetTickableWhenPaused      callers 1     native callers 0
+      site 02D59162 in FUN_02D590F0 exec-thunk
+  028DF810  GetGlobalTimeDilation      callers 1     native callers 0
+      site 02DBF12D in FUN_02DBF0C0 exec-thunk
+  028E8DB0  IsGamePaused               callers 1     native callers 0
+      site 02DC081D in FUN_02DC07B0 exec-thunk
+  028F3180  SetGamePaused              callers 1     native callers 0
+      site 02DC3632 in FUN_02DC3580 exec-thunk
+  028F3410  SetGlobalTimeDilation      callers 1     native callers 0
+      site 02DC3A9E in FUN_02DC39F0 exec-thunk
+  02CC8110  SetIgnoreTimeDilation      callers 3     native callers 2
+      site 00B9D102 in FUN_00B9CCB2 NATIVE
+      site 0272E896 in FUN_0272E856 NATIVE
+      site 02ECEA12 in FUN_02ECE9A0 exec-thunk
+      NATIVE caller site 00B9D102 in FUN_00B9CCB2
+      NATIVE caller site 0272E896 in FUN_0272E856
+  02D54EA0  GetActorTimeDilation       callers 0     native callers 0
+  02D55DF0  GetTickableWhenPaused      callers 0     native callers 0
+  02D5C905  SetComponentTickEnabled    callers 1     native callers 0
+      site 02D5C8E7 in FUN_02D5C8B0 exec-thunk
+  02ECE630  GetIgnoreTimeDilation      callers 0     native callers 0
+
+------------------------------------------------------------------------------
+D1  bodies of the two GameplayStatics entry points (to name the
+    deeper sink each one uses)
+------------------------------------------------------------------------------
+  === SetGamePaused @ 028F3180 ===
+    028f3180 push      rbx                                         
+    028f3182 sub       rsp, 0x30                                   
+    028f3186 movzx     ebx, dl                                     
+    028f3189 mov       r8d, 1                                      
+    028f318f mov       rdx, rcx                                    
+    028f3192 mov       rcx, qword ptr [rip + 0x22b1bef]               ; GLOBAL 04BA4D88
+    028f3199 call      0x2cdedf0                                   
+    028f319e test      rax, rax                                    
+    028f31a1 je        0x28f3209                                   
+    028f31a3 mov       rax, qword ptr [rax + 0x180]                
+    028f31aa test      rax, rax                                    
+    028f31ad je        0x28f3209                                   
+    028f31af mov       rcx, qword ptr [rax + 0x38]                 
+    028f31b3 xor       r8d, r8d                                    
+    028f31b6 movsxd    rax, dword ptr [rax + 0x40]                 
+    028f31ba lea       rdx, [rcx + rax*8]                          
+    028f31be cmp       rcx, rdx                                    
+    028f31c1 je        0x28f31dd                                   
+    028f31c3 mov       rax, qword ptr [rcx]                        
+    028f31c6 test      rax, rax                                    
+    028f31c9 je        0x28f31d4                                   
+    028f31cb mov       r9, qword ptr [rax + 0x30]                  
+    028f31cf test      r9, r9                                      
+    028f31d2 jne       0x28f31e5                                   
+    028f31d4 add       rcx, 8                                      
+    028f31d8 cmp       rcx, rdx                                    
+    028f31db jne       0x28f31c3                                   
+    028f31dd mov       r9, r8                                      
+    028f31e0 test      r8, r8                                      
+    028f31e3 je        0x28f3209                                   
+    028f31e5 mov       rax, qword ptr [r9]                         
+    028f31e8 movzx     edx, bl                                     
+    028f31eb mov       qword ptr [rsp + 0x20], r8                  
+    028f31f0 mov       rcx, r9                                     
+    028f31f3 mov       dword ptr [rsp + 0x28], r8d                 
+    028f31f8 lea       r8, [rsp + 0x20]                            
+    028f31fd call      qword ptr [rax + 0xa88]                     
+    028f3203 add       rsp, 0x30                                   
+    028f3207 pop       rbx                                         
+    028f3208 ret                                                   
+    028f3209 xor       al, al                                      
+    028f320b add       rsp, 0x30                                   
+    028f320f pop       rbx                                         
+    028f3210 ret                                                   
+
+  === SetGlobalTimeDilation @ 028F3410 ===
+    028f3410 sub       rsp, 0x38                                   
+    028f3414 mov       rdx, rcx                                    
+    028f3417 movaps    xmmword ptr [rsp + 0x20], xmm6              
+    028f341c mov       rcx, qword ptr [rip + 0x22b1965]               ; GLOBAL 04BA4D88
+    028f3423 mov       r8d, 1                                      
+    028f3429 movaps    xmm6, xmm1                                  
+    028f342c call      0x2cdedf0                                   
+    028f3431 test      rax, rax                                    
+    028f3434 je        0x28f3457                                   
+    028f3436 mov       r8b, 1                                      
+    028f3439 xor       edx, edx                                    
+    028f343b mov       rcx, rax                                    
+    028f343e call      0x2d37250                                   
+    028f3443 test      rax, rax                                    
+    028f3446 je        0x28f3457                                   
+    028f3448 mov       rdx, qword ptr [rax]                        
+    028f344b movaps    xmm1, xmm6                                  
+    028f344e mov       rcx, rax                                    
+    028f3451 call      qword ptr [rdx + 0x658]                     
+    028f3457 movaps    xmm6, xmmword ptr [rsp + 0x20]              
+    028f345c add       rsp, 0x38                                   
+    028f3460 ret                                                   
+
+  === IsGamePaused @ 028E8DB0 ===
+    028e8db0 sub       rsp, 0x28                                   
+    028e8db4 mov       rdx, rcx                                    
+    028e8db7 mov       r8d, 1                                      
+    028e8dbd mov       rcx, qword ptr [rip + 0x22bbfc4]               ; GLOBAL 04BA4D88
+    028e8dc4 call      0x2cdedf0                                   
+    028e8dc9 test      rax, rax                                    
+    028e8dcc je        0x28e8dda                                   
+    028e8dce mov       rcx, rax                                    
+    028e8dd1 add       rsp, 0x28                                   
+    028e8dd5 jmp       0x29a43c0                                   
+    028e8dda add       rsp, 0x28                                   
+    028e8dde ret                                                   
+
+==============================================================================
+D1  dialogue entry -> pause/dilation reachability (native direct calls)
+==============================================================================
+  sink set: 026636F0=SetActorTickEnabled, 028F3180=SetGamePaused, 028F3410=SetGlobalTimeDilation, 02CC8110=SetIgnoreTimeDilation, 02D5C905=SetComponentTickEnabled
+
+  entry points (name, pair table, implementation):
+    InitAction                 table 03944EF0  impl 00E336E0
+    RunAction                  table 03944A98  impl 00E394D0
+    RunAction                  table 03944EF0  impl 00E39500
+    FinishAction               table 03944A98  impl 00E4E1F0
+    FinishAction               table 03944EF0  impl 00E2BE50
+    CancelAction               table 03944EF0  impl 00E4E030
+    CanExecuteAction           table 03944EF0  impl 00E4DFB0
+    JumpToDialogue             table 03944A98  impl 00E34E10
+    EvaluateConditionSet       table 03950350  impl 00EAE0B0
+    EvaluateSingleCondition    table 03950350  impl 00EAE0B0
+
+  InitAction                 00E336E0  sinks: NONE  (1 nodes explored)
+  RunAction                  00E394D0  sinks: NONE  (1 nodes explored)
+  RunAction                  00E39500  sinks: NONE  (31 nodes explored)
+  FinishAction               00E4E1F0  sinks: NONE  (1 nodes explored)
+  FinishAction               00E2BE50  sinks: NONE  (26 nodes explored)
+  CancelAction               00E4E030  sinks: NONE  (1 nodes explored)
+  CanExecuteAction           00E4DFB0  sinks: NONE  (1 nodes explored)
+  JumpToDialogue             00E34E10  sinks: NONE  (7 nodes explored)
+  EvaluateConditionSet       00EAE0B0  sinks: NONE  (2 nodes explored)
+  EvaluateSingleCondition    00EAE0B0  sinks: NONE  (2 nodes explored)
+
+  total distinct native nodes explored: 73
+
+  Blueprint dispatch (ProcessEvent == vtable byte offset 0x220) inside
+  the dialogue bodies - this is what a C++->BP edge looks like:
+    FinishAction               00E2BE50  ProcessEvent at 00E2BEDE
+    JumpToDialogue             00E34E10  ProcessEvent at 00E34E9A
+  (an absent line means the body never dispatches to Blueprint)
+
+==============================================================================
+D3  dialogue exclusivity: state, guards, and where they are written
+==============================================================================
+  native dialogue classes (pair table):
+    InitAction                 00E336E0
+    InitAction_BP              unresolved
+    RunAction                  00E394D0
+    FinishAction               00E4E1F0
+    CancelAction               00E4E030
+    CanExecuteAction           00E4DFB0
+    JumpToDialogue             00E34E10
+    EvaluateConditionSet       00EAE0B0
+    EvaluateSingleCondition    00EAE0B0
+
+  UClass registrations for the dialogue classes:
+    UFS_DialogueAction     stub 006049B0  name@039408D0  StaticClass 00E4A630  Z_Construct 00E4B210  UClassCache 049891C8
+    UFS_DialogueData       stub 006049F0  name@03940AB8  StaticClass 00E4DEF0  Z_Construct 00E49CA0  UClassCache 049891D8
+    AFS_HUD_Base           stub 00605C20  name@0394F750  StaticClass 00E57F80  Z_Construct 00E55B70  UClassCache 049898B8
+    AFS_PlayerController   stub 00607260  name@03958BC8  StaticClass 00E5D1F0  Z_Construct 00E5E6C0  UClassCache 04989F88
+    AFS_PlayerCharacter    stub 00607220  name@0395BB90  StaticClass 00E5E390  Z_Construct 00E5E0B0  UClassCache 04989F40
+
+  bool-sized field access on `this` inside native dialogue bodies
+  (an exclusivity guard shows up as a byte load/store at this+0xNN)
+    InitAction                 00E336E0  no byte field access
+    RunAction                  00E394D0  no byte field access
+    FinishAction               00E4E1F0  no byte field access
+    CancelAction               00E4E030  no byte field access
+    CanExecuteAction           00E4DFB0  00E4DFD7 mov byte ptr [rbx], al
+    JumpToDialogue             00E34E10  no byte field access
+    EvaluateConditionSet       00EAE0B0  no byte field access
+    EvaluateSingleCondition    00EAE0B0  no byte field access
+
+  NOTE: the exclusivity state is not a native field.  It lives in the
+  Blueprint layer - run `pak` / `pkg` for the name-table evidence that
+  names the guards.  Summary of what those modes find:
+  == DialogueManager (the dialogue UMG widget)
+     QueensDomain/Content/UI/DialogueSystem/DialogueManager.uasset
+     PRESENT: RunningDialogue, StartDialogue, EndDialogue, WidgetBlueprintGeneratedClass
+     absent : SetGamePaused, IsGamePaused, SetGlobalTimeDilation, SetPauseTimeDilation, SetPausedEnemyTimeDilation, IsTimeDilationPaused, CustomTimeDilation, TryAutoPause, PauseOnUnfocus, CheckForOverlayPause, ForceNoOverlayPause, OpenPauseMenu, SetTickableWhenPaused, SetActorTickEnabled, DisableAllPlayerInput, EnableAllPlayerInput, SetIgnoreMoveInput, SetIgnoreLookInput, SetInputMode_UIOnlyEx, SetInputMode_GameOnly, bShowMouseCursor, PlayerIsTalkingTo, BlockInteract, ReenableInteract, DisableInteraction, IsInteractible, DialogueEnded, SetUpForDialogue, PrepareForDialogue, DialogueManager, AddToViewport, ReceiveDrawHUD, CallFunc_SetGamePaused_ReturnValue
+  == DialogueScreen
+     QueensDomain/Content/UI/DialogueSystem/DialogueScreen.uasset
+     PRESENT: WidgetBlueprintGeneratedClass
+     absent : SetGamePaused, IsGamePaused, SetGlobalTimeDilation, SetPauseTimeDilation, SetPausedEnemyTimeDilation, IsTimeDilationPaused, CustomTimeDilation, TryAutoPause, PauseOnUnfocus, CheckForOverlayPause, ForceNoOverlayPause, OpenPauseMenu, SetTickableWhenPaused, SetActorTickEnabled, DisableAllPlayerInput, EnableAllPlayerInput, SetIgnoreMoveInput, SetIgnoreLookInput, SetInputMode_UIOnlyEx, SetInputMode_GameOnly, bShowMouseCursor, RunningDialogue, PlayerIsTalkingTo, BlockInteract, ReenableInteract, DisableInteraction, IsInteractible, StartDialogue, EndDialogue, DialogueEnded, SetUpForDialogue, PrepareForDialogue, DialogueManager, AddToViewport, ReceiveDrawHUD, CallFunc_SetGamePaused_ReturnValue
+  == DialogueOptionEntry
+     QueensDomain/Content/UI/DialogueSystem/DialogueOptionEntry.uasset
+     PRESENT: WidgetBlueprintGeneratedClass
+     absent : SetGamePaused, IsGamePaused, SetGlobalTimeDilation, SetPauseTimeDilation, SetPausedEnemyTimeDilation, IsTimeDilationPaused, CustomTimeDilation, TryAutoPause, PauseOnUnfocus, CheckForOverlayPause, ForceNoOverlayPause, OpenPauseMenu, SetTickableWhenPaused, SetActorTickEnabled, DisableAllPlayerInput, EnableAllPlayerInput, SetIgnoreMoveInput, SetIgnoreLookInput, SetInputMode_UIOnlyEx, SetInputMode_GameOnly, bShowMouseCursor, RunningDialogue, PlayerIsTalkingTo, BlockInteract, ReenableInteract, DisableInteraction, IsInteractible, StartDialogue, EndDialogue, DialogueEnded, SetUpForDialogue, PrepareForDialogue, DialogueManager, AddToViewport, ReceiveDrawHUD, CallFunc_SetGamePaused_ReturnValue
+  == DialogueExitButton
+     QueensDomain/Content/UI/DialogueSystem/DialogueExitButton.uasset
+     PRESENT: WidgetBlueprintGeneratedClass
+     absent : SetGamePaused, IsGamePaused, SetGlobalTimeDilation, SetPauseTimeDilation, SetPausedEnemyTimeDilation, IsTimeDilationPaused, CustomTimeDilation, TryAutoPause, PauseOnUnfocus, CheckForOverlayPause, ForceNoOverlayPause, OpenPauseMenu, SetTickableWhenPaused, SetActorTickEnabled, DisableAllPlayerInput, EnableAllPlayerInput, SetIgnoreMoveInput, SetIgnoreLookInput, SetInputMode_UIOnlyEx, SetInputMode_GameOnly, bShowMouseCursor, RunningDialogue, PlayerIsTalkingTo, BlockInteract, ReenableInteract, DisableInteraction, IsInteractible, StartDialogue, EndDialogue, DialogueEnded, SetUpForDialogue, PrepareForDialogue, DialogueManager, AddToViewport, ReceiveDrawHUD, CallFunc_SetGamePaused_ReturnValue
+  == NPC_Base (the base NPC blueprint - where dialogue starts)
+     QueensDomain/Content/NPCs/NPC_Base.uasset
+     PRESENT: SetPausedEnemyTimeDilation, DisableAllPlayerInput, EnableAllPlayerInput, PlayerIsTalkingTo, BlockInteract, ReenableInteract, DisableInteraction, IsInteractible, StartDialogue, EndDialogue, DialogueEnded, SetUpForDialogue
+     absent : SetGamePaused, IsGamePaused, SetGlobalTimeDilation, SetPauseTimeDilation, IsTimeDilationPaused, CustomTimeDilation, TryAutoPause, PauseOnUnfocus, CheckForOverlayPause, ForceNoOverlayPause, OpenPauseMenu, SetTickableWhenPaused, SetActorTickEnabled, SetIgnoreMoveInput, SetIgnoreLookInput, SetInputMode_UIOnlyEx, SetInputMode_GameOnly, bShowMouseCursor, RunningDialogue, PrepareForDialogue, DialogueManager, AddToViewport, ReceiveDrawHUD, WidgetBlueprintGeneratedClass, CallFunc_SetGamePaused_ReturnValue
+  == FS_PlayerChar (the player - hosts the dialogue state)
+     QueensDomain/Content/Player/FS_PlayerChar.uasset
+     PRESENT: SetGamePaused, IsGamePaused, SetPauseTimeDilation, SetPausedEnemyTimeDilation, IsTimeDilationPaused, TryAutoPause, CheckForOverlayPause, ForceNoOverlayPause, OpenPauseMenu, DisableAllPlayerInput, EnableAllPlayerInput, SetIgnoreMoveInput, SetIgnoreLookInput, SetInputMode_UIOnlyEx, SetInputMode_GameOnly, RunningDialogue, DisableInteraction, StartDialogue, DialogueEnded, SetUpForDialogue, PrepareForDialogue, DialogueManager, AddToViewport, WidgetBlueprintGeneratedClass, CallFunc_SetGamePaused_ReturnValue
+     absent : SetGlobalTimeDilation, CustomTimeDilation, PauseOnUnfocus, SetTickableWhenPaused, SetActorTickEnabled, bShowMouseCursor, PlayerIsTalkingTo, BlockInteract, ReenableInteract, IsInteractible, EndDialogue, ReceiveDrawHUD
+  == PlayerInteractionComponent (the interactor that starts dialogue)
+     QueensDomain/Content/Player/PlayerInteractionComponent.uasset
+     PRESENT: DisableInteraction
+     absent : SetGamePaused, IsGamePaused, SetGlobalTimeDilation, SetPauseTimeDilation, SetPausedEnemyTimeDilation, IsTimeDilationPaused, CustomTimeDilation, TryAutoPause, PauseOnUnfocus, CheckForOverlayPause, ForceNoOverlayPause, OpenPauseMenu, SetTickableWhenPaused, SetActorTickEnabled, DisableAllPlayerInput, EnableAllPlayerInput, SetIgnoreMoveInput, SetIgnoreLookInput, SetInputMode_UIOnlyEx, SetInputMode_GameOnly, bShowMouseCursor, RunningDialogue, PlayerIsTalkingTo, BlockInteract, ReenableInteract, IsInteractible, StartDialogue, EndDialogue, DialogueEnded, SetUpForDialogue, PrepareForDialogue, DialogueManager, AddToViewport, ReceiveDrawHUD, WidgetBlueprintGeneratedClass, CallFunc_SetGamePaused_ReturnValue
+  == FS_HUD (AHUD blueprint - owns the dialogue widget)
+     QueensDomain/Content/Player/Assets/Input/FS_HUD.uasset
+     PRESENT: ReceiveDrawHUD
+     absent : SetGamePaused, IsGamePaused, SetGlobalTimeDilation, SetPauseTimeDilation, SetPausedEnemyTimeDilation, IsTimeDilationPaused, CustomTimeDilation, TryAutoPause, PauseOnUnfocus, CheckForOverlayPause, ForceNoOverlayPause, OpenPauseMenu, SetTickableWhenPaused, SetActorTickEnabled, DisableAllPlayerInput, EnableAllPlayerInput, SetIgnoreMoveInput, SetIgnoreLookInput, SetInputMode_UIOnlyEx, SetInputMode_GameOnly, bShowMouseCursor, RunningDialogue, PlayerIsTalkingTo, BlockInteract, ReenableInteract, DisableInteraction, IsInteractible, StartDialogue, EndDialogue, DialogueEnded, SetUpForDialogue, PrepareForDialogue, DialogueManager, AddToViewport, WidgetBlueprintGeneratedClass, CallFunc_SetGamePaused_ReturnValue
+  == FS_PlayerController_BP
+     QueensDomain/Content/Player/FS_PlayerController_BP.uasset
+     PRESENT: TryAutoPause, PauseOnUnfocus, OpenPauseMenu, bShowMouseCursor
+     absent : SetGamePaused, IsGamePaused, SetGlobalTimeDilation, SetPauseTimeDilation, SetPausedEnemyTimeDilation, IsTimeDilationPaused, CustomTimeDilation, CheckForOverlayPause, ForceNoOverlayPause, SetTickableWhenPaused, SetActorTickEnabled, DisableAllPlayerInput, EnableAllPlayerInput, SetIgnoreMoveInput, SetIgnoreLookInput, SetInputMode_UIOnlyEx, SetInputMode_GameOnly, RunningDialogue, PlayerIsTalkingTo, BlockInteract, ReenableInteract, DisableInteraction, IsInteractible, StartDialogue, EndDialogue, DialogueEnded, SetUpForDialogue, PrepareForDialogue, DialogueManager, AddToViewport, ReceiveDrawHUD, WidgetBlueprintGeneratedClass, CallFunc_SetGamePaused_ReturnValue
+  == EnemyBase (the enemy side of the pause-by-dilation system)
+     QueensDomain/Content/Enemies/EnemyBase.uasset
+     PRESENT: SetPauseTimeDilation, CustomTimeDilation, SetActorTickEnabled
+     absent : SetGamePaused, IsGamePaused, SetGlobalTimeDilation, SetPausedEnemyTimeDilation, IsTimeDilationPaused, TryAutoPause, PauseOnUnfocus, CheckForOverlayPause, ForceNoOverlayPause, OpenPauseMenu, SetTickableWhenPaused, DisableAllPlayerInput, EnableAllPlayerInput, SetIgnoreMoveInput, SetIgnoreLookInput, SetInputMode_UIOnlyEx, SetInputMode_GameOnly, bShowMouseCursor, RunningDialogue, PlayerIsTalkingTo, BlockInteract, ReenableInteract, DisableInteraction, IsInteractible, StartDialogue, EndDialogue, DialogueEnded, SetUpForDialogue, PrepareForDialogue, DialogueManager, AddToViewport, ReceiveDrawHUD, WidgetBlueprintGeneratedClass, CallFunc_SetGamePaused_ReturnValue
+  == TimeDilationManager
+     QueensDomain/Content/LD45/Blueprints/TimeDilationManager.uasset
+     PRESENT: SetPauseTimeDilation, SetPausedEnemyTimeDilation
+     absent : SetGamePaused, IsGamePaused, SetGlobalTimeDilation, IsTimeDilationPaused, CustomTimeDilation, TryAutoPause, PauseOnUnfocus, CheckForOverlayPause, ForceNoOverlayPause, OpenPauseMenu, SetTickableWhenPaused, SetActorTickEnabled, DisableAllPlayerInput, EnableAllPlayerInput, SetIgnoreMoveInput, SetIgnoreLookInput, SetInputMode_UIOnlyEx, SetInputMode_GameOnly, bShowMouseCursor, RunningDialogue, PlayerIsTalkingTo, BlockInteract, ReenableInteract, DisableInteraction, IsInteractible, StartDialogue, EndDialogue, DialogueEnded, SetUpForDialogue, PrepareForDialogue, DialogueManager, AddToViewport, ReceiveDrawHUD, WidgetBlueprintGeneratedClass, CallFunc_SetGamePaused_ReturnValue
+
+  -- prefix test: cooked packages strip the U/A prefix from class names
+     UFS_DialogueData            0 package(s)
+     FS_DialogueData           182 package(s)
+     UFS_DialogueAction          0 package(s)
+     FS_DialogueAction          40 package(s)
+     AFS_HUD_Base                0 package(s)
+     FS_HUD_Base                 1 package(s)   e.g. FS_HUD.uasset
+     AFS_PlayerCharacter         0 package(s)
+     FS_PlayerCharacter          2 package(s)   e.g. WeaponScriptBase.uasset, FS_PlayerChar.uasset
+     AFS_PlayerController        0 package(s)
+     FS_PlayerController         6 package(s)
+
+==============================================================================
+D7  HUD: class registration + widget creation path
+==============================================================================
+  AddToViewport              table 03C1FCC8 thunk 0247C1D0 thunkbytes  47  resolver-stub (unusable) impl 0119D280
+  AddToViewport              table 03C24B30 thunk 0247FF70 thunkbytes 131  exec-thunk     impl 023F7BB0
+  AddToPlayerScreen          table 03C1FCC8 thunk 0247C1A0 thunkbytes  47  resolver-stub (unusable) impl 0119D280
+  AddToPlayerScreen          table 03C24B30 thunk 0247FED0 thunkbytes 146  exec-thunk     impl 023F6C40
+  Create                     table 03C2CCF8 thunk 02486550 thunkbytes  47  resolver-stub (unusable) impl 0119D280
+  Create                     table 03C2EB40 thunk 02488C60 thunkbytes 254  exec-thunk     impl 02402C00
+  GetHUD                     table 04056668 thunk 02E782A0 thunkbytes  47  resolver-stub (unusable) impl 0119D280
+  GetHUD                     table 0405A530 thunk 02E7E300 thunkbytes  44  direct-impl    impl 02E7E300
+  ShowHUD                    table 03FA4A20 thunk 02DB6A70 thunkbytes 768  direct-impl    impl 02DB6A70
+  InitializeHUDForPlayer     table 03F932C8 thunk 02DB88D0 thunkbytes  47  resolver-stub (unusable) impl 0119D280
+  InitializeHUDForPlayer     table 03F9A960 thunk 02DAAA80 thunkbytes 137  exec-thunk     impl 02DAAAD6
+  ClientSetHUD               table 04056668 thunk 02E77AB0 thunkbytes  47  resolver-stub (unusable) impl 0119D280
+  ClientSetHUD               table 0405A530 thunk 02E7CD20 thunkbytes 137  exec-thunk     impl 02E7CD76
+  ReceiveDrawHUD             table 03FA3728 thunk 02DCB680 thunkbytes  47  resolver-stub (unusable) impl 0119D280
+  SpawnObject                table 03F98D28 thunk 02DB92D0 thunkbytes  47  resolver-stub (unusable) impl 0119D280
+  SpawnObject                table 03F9AC10 thunk 02DC5E10 thunkbytes 201  exec-thunk     impl 028F62C0
+  GetUserWidgetObject        table 03C28E98 thunk 02487890 thunkbytes  47  resolver-stub (unusable) impl 0119D280
+  GetUserWidgetObject        table 03C2F300 thunk 0248B1F0 thunkbytes  44  direct-impl    impl 0248B1F0
+  SetWidget                  table 03C28E98 thunk 02486300 thunkbytes  47  resolver-stub (unusable) impl 0119D280
+  SetWidget                  table 03C2F300 thunk 0248CDD0 thunkbytes 137  exec-thunk     impl 0248CE26
+  AddWidget                  table 0384E740 thunk 00AE28E0 thunkbytes 133  exec-thunk     impl 00A87A40
+
+  AFS_HUD_Base / AFS_PlayerController / AFS_PlayerCharacter registration:
+    AFS_HUD_Base           stub 00605C20  name@0394F750  StaticClass 00E57F80  Z_Construct 00E55B70  UClassCache 049898B8
+    AFS_PlayerController   stub 00607260  name@03958BC8  StaticClass 00E5D1F0  Z_Construct 00E5E6C0  UClassCache 04989F88
+    AFS_PlayerCharacter    stub 00607220  name@0395BB90  StaticClass 00E5E390  Z_Construct 00E5E0B0  UClassCache 04989F40
+    AFS_GameModeCore       stub 00605BE0  name@0394E9C0  StaticClass 00E55900  Z_Construct 00E55E50  UClassCache 04989878
+    UFS_GameViewport       stub 00605D60  name@0394C4D0  StaticClass 00E57FE0  Z_Construct 00E552E0  UClassCache 049898A8
+
+  UUserWidget::AddToViewport body @ 023F7BB0  (tail call = the real
+  add-to-screen entry point; the offset printed is a vtable byte offset)
+    023f7bb0 mov       rax, qword ptr [rcx]
+    023f7bb3 mov       r8d, edx
+    023f7bb6 xor       edx, edx
+    023f7bb8 jmp       qword ptr [rax + 0x300]
+    023f7bbf int3      
+
+  UWidgetBlueprintLibrary::Create body head @ 02402C00
+    02402c00 mov       qword ptr [rsp + 8], rbx                    
+    02402c05 mov       qword ptr [rsp + 0x18], rbp                 
+    02402c0a mov       qword ptr [rsp + 0x20], rsi                 
+    02402c0f push      rdi                                         
+    02402c10 sub       rsp, 0x20                                   
+    02402c14 mov       rbp, r8                                     
+    02402c17 mov       rbx, rdx                                    
+    02402c1a mov       rsi, rcx                                    
+    02402c1d test      rdx, rdx                                    
+    02402c20 je        0x2402d41                                   
+    02402c26 call      0x247d5c0                                   
+    02402c2b test      rax, rax                                    
+    02402c2e je        0x2402d41                                   
+    02402c34 lea       rdx, [rax + 0x30]                           
+    02402c38 movsxd    rax, dword ptr [rax + 0x38]                 
+    02402c3c cmp       eax, dword ptr [rbx + 0x38]                 
+    02402c3f jg        0x2402d41                                   
+    02402c45 mov       rcx, rax                                    
+    02402c48 mov       rax, qword ptr [rbx + 0x30]                 
+    02402c4c cmp       qword ptr [rax + rcx*8], rdx                
+    02402c50 jne       0x2402d41                                   
+    02402c56 test      rbp, rbp                                    
+    02402c59 je        0x2402ca6                                   
+    02402c5b mov       rcx, rbp                                    
+    02402c5e xor       edi, edi                                    
+    02402c60 mov       rdx, rbx                                    
+    02402c63 mov       r8d, edi                                    
+    ...
+
+==============================================================================
+pak-side evidence
+==============================================================================
+  == DialogueManager (the dialogue UMG widget)
+     QueensDomain/Content/UI/DialogueSystem/DialogueManager.uasset
+     PRESENT: RunningDialogue, StartDialogue, EndDialogue, WidgetBlueprintGeneratedClass
+     absent : SetGamePaused, IsGamePaused, SetGlobalTimeDilation, SetPauseTimeDilation, SetPausedEnemyTimeDilation, IsTimeDilationPaused, CustomTimeDilation, TryAutoPause, PauseOnUnfocus, CheckForOverlayPause, ForceNoOverlayPause, OpenPauseMenu, SetTickableWhenPaused, SetActorTickEnabled, DisableAllPlayerInput, EnableAllPlayerInput, SetIgnoreMoveInput, SetIgnoreLookInput, SetInputMode_UIOnlyEx, SetInputMode_GameOnly, bShowMouseCursor, PlayerIsTalkingTo, BlockInteract, ReenableInteract, DisableInteraction, IsInteractible, DialogueEnded, SetUpForDialogue, PrepareForDialogue, DialogueManager, AddToViewport, ReceiveDrawHUD, CallFunc_SetGamePaused_ReturnValue
+  == DialogueScreen
+     QueensDomain/Content/UI/DialogueSystem/DialogueScreen.uasset
+     PRESENT: WidgetBlueprintGeneratedClass
+     absent : SetGamePaused, IsGamePaused, SetGlobalTimeDilation, SetPauseTimeDilation, SetPausedEnemyTimeDilation, IsTimeDilationPaused, CustomTimeDilation, TryAutoPause, PauseOnUnfocus, CheckForOverlayPause, ForceNoOverlayPause, OpenPauseMenu, SetTickableWhenPaused, SetActorTickEnabled, DisableAllPlayerInput, EnableAllPlayerInput, SetIgnoreMoveInput, SetIgnoreLookInput, SetInputMode_UIOnlyEx, SetInputMode_GameOnly, bShowMouseCursor, RunningDialogue, PlayerIsTalkingTo, BlockInteract, ReenableInteract, DisableInteraction, IsInteractible, StartDialogue, EndDialogue, DialogueEnded, SetUpForDialogue, PrepareForDialogue, DialogueManager, AddToViewport, ReceiveDrawHUD, CallFunc_SetGamePaused_ReturnValue
+  == DialogueOptionEntry
+     QueensDomain/Content/UI/DialogueSystem/DialogueOptionEntry.uasset
+     PRESENT: WidgetBlueprintGeneratedClass
+     absent : SetGamePaused, IsGamePaused, SetGlobalTimeDilation, SetPauseTimeDilation, SetPausedEnemyTimeDilation, IsTimeDilationPaused, CustomTimeDilation, TryAutoPause, PauseOnUnfocus, CheckForOverlayPause, ForceNoOverlayPause, OpenPauseMenu, SetTickableWhenPaused, SetActorTickEnabled, DisableAllPlayerInput, EnableAllPlayerInput, SetIgnoreMoveInput, SetIgnoreLookInput, SetInputMode_UIOnlyEx, SetInputMode_GameOnly, bShowMouseCursor, RunningDialogue, PlayerIsTalkingTo, BlockInteract, ReenableInteract, DisableInteraction, IsInteractible, StartDialogue, EndDialogue, DialogueEnded, SetUpForDialogue, PrepareForDialogue, DialogueManager, AddToViewport, ReceiveDrawHUD, CallFunc_SetGamePaused_ReturnValue
+  == DialogueExitButton
+     QueensDomain/Content/UI/DialogueSystem/DialogueExitButton.uasset
+     PRESENT: WidgetBlueprintGeneratedClass
+     absent : SetGamePaused, IsGamePaused, SetGlobalTimeDilation, SetPauseTimeDilation, SetPausedEnemyTimeDilation, IsTimeDilationPaused, CustomTimeDilation, TryAutoPause, PauseOnUnfocus, CheckForOverlayPause, ForceNoOverlayPause, OpenPauseMenu, SetTickableWhenPaused, SetActorTickEnabled, DisableAllPlayerInput, EnableAllPlayerInput, SetIgnoreMoveInput, SetIgnoreLookInput, SetInputMode_UIOnlyEx, SetInputMode_GameOnly, bShowMouseCursor, RunningDialogue, PlayerIsTalkingTo, BlockInteract, ReenableInteract, DisableInteraction, IsInteractible, StartDialogue, EndDialogue, DialogueEnded, SetUpForDialogue, PrepareForDialogue, DialogueManager, AddToViewport, ReceiveDrawHUD, CallFunc_SetGamePaused_ReturnValue
+  == NPC_Base (the base NPC blueprint - where dialogue starts)
+     QueensDomain/Content/NPCs/NPC_Base.uasset
+     PRESENT: SetPausedEnemyTimeDilation, DisableAllPlayerInput, EnableAllPlayerInput, PlayerIsTalkingTo, BlockInteract, ReenableInteract, DisableInteraction, IsInteractible, StartDialogue, EndDialogue, DialogueEnded, SetUpForDialogue
+     absent : SetGamePaused, IsGamePaused, SetGlobalTimeDilation, SetPauseTimeDilation, IsTimeDilationPaused, CustomTimeDilation, TryAutoPause, PauseOnUnfocus, CheckForOverlayPause, ForceNoOverlayPause, OpenPauseMenu, SetTickableWhenPaused, SetActorTickEnabled, SetIgnoreMoveInput, SetIgnoreLookInput, SetInputMode_UIOnlyEx, SetInputMode_GameOnly, bShowMouseCursor, RunningDialogue, PrepareForDialogue, DialogueManager, AddToViewport, ReceiveDrawHUD, WidgetBlueprintGeneratedClass, CallFunc_SetGamePaused_ReturnValue
+  == FS_PlayerChar (the player - hosts the dialogue state)
+     QueensDomain/Content/Player/FS_PlayerChar.uasset
+     PRESENT: SetGamePaused, IsGamePaused, SetPauseTimeDilation, SetPausedEnemyTimeDilation, IsTimeDilationPaused, TryAutoPause, CheckForOverlayPause, ForceNoOverlayPause, OpenPauseMenu, DisableAllPlayerInput, EnableAllPlayerInput, SetIgnoreMoveInput, SetIgnoreLookInput, SetInputMode_UIOnlyEx, SetInputMode_GameOnly, RunningDialogue, DisableInteraction, StartDialogue, DialogueEnded, SetUpForDialogue, PrepareForDialogue, DialogueManager, AddToViewport, WidgetBlueprintGeneratedClass, CallFunc_SetGamePaused_ReturnValue
+     absent : SetGlobalTimeDilation, CustomTimeDilation, PauseOnUnfocus, SetTickableWhenPaused, SetActorTickEnabled, bShowMouseCursor, PlayerIsTalkingTo, BlockInteract, ReenableInteract, IsInteractible, EndDialogue, ReceiveDrawHUD
+  == PlayerInteractionComponent (the interactor that starts dialogue)
+     QueensDomain/Content/Player/PlayerInteractionComponent.uasset
+     PRESENT: DisableInteraction
+     absent : SetGamePaused, IsGamePaused, SetGlobalTimeDilation, SetPauseTimeDilation, SetPausedEnemyTimeDilation, IsTimeDilationPaused, CustomTimeDilation, TryAutoPause, PauseOnUnfocus, CheckForOverlayPause, ForceNoOverlayPause, OpenPauseMenu, SetTickableWhenPaused, SetActorTickEnabled, DisableAllPlayerInput, EnableAllPlayerInput, SetIgnoreMoveInput, SetIgnoreLookInput, SetInputMode_UIOnlyEx, SetInputMode_GameOnly, bShowMouseCursor, RunningDialogue, PlayerIsTalkingTo, BlockInteract, ReenableInteract, IsInteractible, StartDialogue, EndDialogue, DialogueEnded, SetUpForDialogue, PrepareForDialogue, DialogueManager, AddToViewport, ReceiveDrawHUD, WidgetBlueprintGeneratedClass, CallFunc_SetGamePaused_ReturnValue
+  == FS_HUD (AHUD blueprint - owns the dialogue widget)
+     QueensDomain/Content/Player/Assets/Input/FS_HUD.uasset
+     PRESENT: ReceiveDrawHUD
+     absent : SetGamePaused, IsGamePaused, SetGlobalTimeDilation, SetPauseTimeDilation, SetPausedEnemyTimeDilation, IsTimeDilationPaused, CustomTimeDilation, TryAutoPause, PauseOnUnfocus, CheckForOverlayPause, ForceNoOverlayPause, OpenPauseMenu, SetTickableWhenPaused, SetActorTickEnabled, DisableAllPlayerInput, EnableAllPlayerInput, SetIgnoreMoveInput, SetIgnoreLookInput, SetInputMode_UIOnlyEx, SetInputMode_GameOnly, bShowMouseCursor, RunningDialogue, PlayerIsTalkingTo, BlockInteract, ReenableInteract, DisableInteraction, IsInteractible, StartDialogue, EndDialogue, DialogueEnded, SetUpForDialogue, PrepareForDialogue, DialogueManager, AddToViewport, WidgetBlueprintGeneratedClass, CallFunc_SetGamePaused_ReturnValue
+  == FS_PlayerController_BP
+     QueensDomain/Content/Player/FS_PlayerController_BP.uasset
+     PRESENT: TryAutoPause, PauseOnUnfocus, OpenPauseMenu, bShowMouseCursor
+     absent : SetGamePaused, IsGamePaused, SetGlobalTimeDilation, SetPauseTimeDilation, SetPausedEnemyTimeDilation, IsTimeDilationPaused, CustomTimeDilation, CheckForOverlayPause, ForceNoOverlayPause, SetTickableWhenPaused, SetActorTickEnabled, DisableAllPlayerInput, EnableAllPlayerInput, SetIgnoreMoveInput, SetIgnoreLookInput, SetInputMode_UIOnlyEx, SetInputMode_GameOnly, RunningDialogue, PlayerIsTalkingTo, BlockInteract, ReenableInteract, DisableInteraction, IsInteractible, StartDialogue, EndDialogue, DialogueEnded, SetUpForDialogue, PrepareForDialogue, DialogueManager, AddToViewport, ReceiveDrawHUD, WidgetBlueprintGeneratedClass, CallFunc_SetGamePaused_ReturnValue
+  == EnemyBase (the enemy side of the pause-by-dilation system)
+     QueensDomain/Content/Enemies/EnemyBase.uasset
+     PRESENT: SetPauseTimeDilation, CustomTimeDilation, SetActorTickEnabled
+     absent : SetGamePaused, IsGamePaused, SetGlobalTimeDilation, SetPausedEnemyTimeDilation, IsTimeDilationPaused, TryAutoPause, PauseOnUnfocus, CheckForOverlayPause, ForceNoOverlayPause, OpenPauseMenu, SetTickableWhenPaused, DisableAllPlayerInput, EnableAllPlayerInput, SetIgnoreMoveInput, SetIgnoreLookInput, SetInputMode_UIOnlyEx, SetInputMode_GameOnly, bShowMouseCursor, RunningDialogue, PlayerIsTalkingTo, BlockInteract, ReenableInteract, DisableInteraction, IsInteractible, StartDialogue, EndDialogue, DialogueEnded, SetUpForDialogue, PrepareForDialogue, DialogueManager, AddToViewport, ReceiveDrawHUD, WidgetBlueprintGeneratedClass, CallFunc_SetGamePaused_ReturnValue
+  == TimeDilationManager
+     QueensDomain/Content/LD45/Blueprints/TimeDilationManager.uasset
+     PRESENT: SetPauseTimeDilation, SetPausedEnemyTimeDilation
+     absent : SetGamePaused, IsGamePaused, SetGlobalTimeDilation, IsTimeDilationPaused, CustomTimeDilation, TryAutoPause, PauseOnUnfocus, CheckForOverlayPause, ForceNoOverlayPause, OpenPauseMenu, SetTickableWhenPaused, SetActorTickEnabled, DisableAllPlayerInput, EnableAllPlayerInput, SetIgnoreMoveInput, SetIgnoreLookInput, SetInputMode_UIOnlyEx, SetInputMode_GameOnly, bShowMouseCursor, RunningDialogue, PlayerIsTalkingTo, BlockInteract, ReenableInteract, DisableInteraction, IsInteractible, StartDialogue, EndDialogue, DialogueEnded, SetUpForDialogue, PrepareForDialogue, DialogueManager, AddToViewport, ReceiveDrawHUD, WidgetBlueprintGeneratedClass, CallFunc_SetGamePaused_ReturnValue
+
+  -- prefix test: cooked packages strip the U/A prefix from class names
+     UFS_DialogueData            0 package(s)
+     FS_DialogueData           182 package(s)
+     UFS_DialogueAction          0 package(s)
+     FS_DialogueAction          40 package(s)
+     AFS_HUD_Base                0 package(s)
+     FS_HUD_Base                 1 package(s)   e.g. FS_HUD.uasset
+     AFS_PlayerCharacter         0 package(s)
+     FS_PlayerCharacter          2 package(s)   e.g. WeaponScriptBase.uasset, FS_PlayerChar.uasset
+     AFS_PlayerController        0 package(s)
+     FS_PlayerController         6 package(s)
+==============================================================================
+pak name-table scan: 18585 packages under QueensDomain/Content, 0 unparsed
+(instrument: FPackageFileSummary name table; see pakread.uasset_names)
+==============================================================================
+  SetGamePaused                     3 package(s)
+  IsGamePaused                      8 package(s)
+  SetGlobalTimeDilation             2 package(s)
+  GetGlobalTimeDilation            12 package(s)
+  SetActorTickEnabled              19 package(s)
+  SetComponentTickEnabled          19 package(s)
+  SetTickableWhenPaused             3 package(s)
+  SetIgnoreTimeDilation             0 package(s)
+  CustomTimeDilation               14 package(s)
+  bIgnoreTimeDilation              66 package(s)
+  SetPauseTimeDilation              5 package(s)
+  SetPausedEnemyTimeDilation        8 package(s)
+  IsTimeDilationPaused              4 package(s)
+  IsPausedTimeDilationEnabled       3 package(s)
+  IsEnemyPauseTDLEnabled            3 package(s)
+  StartDialogue                     6 package(s)
+  DialogueEnded                    23 package(s)
+  PrepareForDialogue                2 package(s)
+  SetUpForDialogue                  2 package(s)
+  EndDialogue                      17 package(s)
+  RunningDialogue                   4 package(s)
+  DialogueManager                   4 package(s)
+  PlayerIsTalkingTo                 1 package(s)
+  DisableAllPlayerInput             6 package(s)
+  EnableAllPlayerInput              7 package(s)
+  SetIgnoreMoveInput                4 package(s)
+  SetIgnoreLookInput                4 package(s)
+  SetInputMode_UIOnlyEx            13 package(s)
+  SetInputMode_GameOnly            12 package(s)
+  bShowMouseCursor                  6 package(s)
+  BlockInteract                     2 package(s)
+  ReenableInteract                  2 package(s)
+  DisableInteraction                3 package(s)
+  IsInteractible                  119 package(s)
+  TryAutoPause                      2 package(s)
+  PauseOnUnfocus                    3 package(s)
+  OpenPauseMenu                     2 package(s)
+  CheckForOverlayPause              2 package(s)
+  ForceNoOverlayPause               2 package(s)
+  AddToViewport                    17 package(s)
+  AddToPlayerScreen                 0 package(s)
+  RemoveFromParent                 35 package(s)
+  WidgetBlueprintGeneratedClass   159 package(s)
+  HUD                              15 package(s)
+  ShouldHideHUD                     4 package(s)
+
+------------------------------------------------------------------------------
+full lists for the rare (<=10 package) hits - these are the load-bearing ones
+------------------------------------------------------------------------------
+  SetGamePaused:
+      QueensDomain/Content/Blueprints/UpgradeMachine/WeaponUpgradeMachine.uasset
+      QueensDomain/Content/Player/FS_PlayerChar.uasset
+      QueensDomain/Content/UI/PhotoMode/Photomode_Pawn.uasset
+  IsGamePaused:
+      QueensDomain/Content/Blueprints/FS_GameInstance.uasset
+      QueensDomain/Content/Cutscenes/AwakenTextWidget.uasset
+      QueensDomain/Content/Cutscenes/EndingTextWidget.uasset
+      QueensDomain/Content/Cutscenes/RitualCutscene/RitualText.uasset
+      QueensDomain/Content/LD45/Blueprints/Base_LD45_GM.uasset
+      QueensDomain/Content/Player/FS_PlayerChar.uasset
+      QueensDomain/Content/Player/ItemmergeAnim/ItemMergeAnim_Comp.uasset
+      QueensDomain/Content/RuinsLevel/Intro/IntroTextWidget.uasset
+  SetGlobalTimeDilation:
+      QueensDomain/Content/Blueprints/Utils/ShaderCompileManager.uasset
+      QueensDomain/Content/LD45/Blueprints/Base_LD45_GM.uasset
+  SetTickableWhenPaused:
+      QueensDomain/Content/LD45/Blueprints/Checkpoint/Checkpoint.uasset
+      QueensDomain/Content/UI/Menus/Journal/Journal3DVisualizer.uasset
+      QueensDomain/Content/UI/Menus/Journal/Journal_RWM_BP.uasset
+  SetPauseTimeDilation:
+      QueensDomain/Content/Enemies/EnemyBase.uasset
+      QueensDomain/Content/LD45/Blueprints/Base_LD45_GM.uasset
+      QueensDomain/Content/LD45/Blueprints/TimeDilationManagement.uasset
+      QueensDomain/Content/LD45/Blueprints/TimeDilationManager.uasset
+      QueensDomain/Content/Player/FS_PlayerChar.uasset
+  SetPausedEnemyTimeDilation:
+      QueensDomain/Content/Blueprints/UpgradeMachine/WeaponUpgradeMachine.uasset
+      QueensDomain/Content/Items/Consumables/Grimoire/Grimoire_Logic.uasset
+      QueensDomain/Content/LD45/Blueprints/Base_LD45_GM.uasset
+      QueensDomain/Content/LD45/Blueprints/TimeDilationManagement.uasset
+      QueensDomain/Content/LD45/Blueprints/TimeDilationManager.uasset
+      QueensDomain/Content/LD45/Blueprints/Checkpoint/Checkpoint.uasset
+      QueensDomain/Content/NPCs/NPC_Base.uasset
+      QueensDomain/Content/Player/FS_PlayerChar.uasset
+  IsTimeDilationPaused:
+      QueensDomain/Content/Blueprints/FS_GameInstance.uasset
+      QueensDomain/Content/LD45/Blueprints/TimeDilationManagement.uasset
+      QueensDomain/Content/Player/FS_PlayerChar.uasset
+      QueensDomain/Content/Player/ItemmergeAnim/ItemMergeAnim_Comp.uasset
+  IsPausedTimeDilationEnabled:
+      QueensDomain/Content/LD45/Blueprints/Base_LD45_GM.uasset
+      QueensDomain/Content/LD45/Blueprints/TimeDilationManagement.uasset
+      QueensDomain/Content/LD45/Blueprints/TimeDilationManager.uasset
+  IsEnemyPauseTDLEnabled:
+      QueensDomain/Content/Enemies/EnemyBase.uasset
+      QueensDomain/Content/LD45/Blueprints/Base_LD45_GM.uasset
+      QueensDomain/Content/LD45/Blueprints/TimeDilationManager.uasset
+  StartDialogue:
+      QueensDomain/Content/Blueprints/SecretSwordAltar/SecretSword_Altar_BP.uasset
+      QueensDomain/Content/NPCs/NPC_Base.uasset
+      QueensDomain/Content/NPCs/Chef/Chef_Ghost_BP.uasset
+      QueensDomain/Content/NPCs/Chef/Chef_NPC_BP.uasset
+      QueensDomain/Content/Player/FS_PlayerChar.uasset
+      QueensDomain/Content/UI/DialogueSystem/DialogueManager.uasset
+  PrepareForDialogue:
+      QueensDomain/Content/Blueprints/SecretSwordAltar/SecretSword_Altar_BP.uasset
+      QueensDomain/Content/Player/FS_PlayerChar.uasset
+  SetUpForDialogue:
+      QueensDomain/Content/NPCs/NPC_Base.uasset
+      QueensDomain/Content/Player/FS_PlayerChar.uasset
+  RunningDialogue:
+      QueensDomain/Content/Blueprints/ChefCrowEvent/ChefCrowEvent_NPC.uasset
+      QueensDomain/Content/Player/FS_PlayerChar.uasset
+      QueensDomain/Content/Player/ItemmergeAnim/ItemMergeAnim_Comp.uasset
+      QueensDomain/Content/UI/DialogueSystem/DialogueManager.uasset
+  DialogueManager:
+      QueensDomain/Content/Blueprints/ChefCrowEvent/ChefCrowEvent_NPC.uasset
+      QueensDomain/Content/NPCs/Scientist/Scientist_Install_WeaponUpgrades.uasset
+      QueensDomain/Content/Player/FS_PlayerChar.uasset
+      QueensDomain/Content/Player/ItemmergeAnim/ItemMergeAnim_Comp.uasset
+  PlayerIsTalkingTo:
+      QueensDomain/Content/NPCs/NPC_Base.uasset
+  DisableAllPlayerInput:
+      QueensDomain/Content/Blueprints/SuperCubeAltar/SuperCubeAltar.uasset
+      QueensDomain/Content/NPCs/NPC_Base.uasset
+      QueensDomain/Content/Player/AcidVialAnimation.uasset
+      QueensDomain/Content/Player/FS_PlayerChar.uasset
+      QueensDomain/Content/Player/PlayerStatsAndUtils.uasset
+      QueensDomain/Content/Player/WeaponEvoAnimation.uasset
+  EnableAllPlayerInput:
+      QueensDomain/Content/Blueprints/SecretSwordAltar/SecretSword_Altar_BP.uasset
+      QueensDomain/Content/Blueprints/SuperCubeAltar/SuperCubeAltar.uasset
+      QueensDomain/Content/NPCs/NPC_Base.uasset
+      QueensDomain/Content/Player/AcidVialAnimation.uasset
+      QueensDomain/Content/Player/FS_PlayerChar.uasset
+      QueensDomain/Content/Player/PlayerStatsAndUtils.uasset
+      QueensDomain/Content/Player/WeaponEvoAnimation.uasset
+  SetIgnoreMoveInput:
+      QueensDomain/Content/LD45/Blueprints/Checkpoint/Checkpoint.uasset
+      QueensDomain/Content/Player/FS_PlayerChar.uasset
+      QueensDomain/Content/Player/PlayerStatsAndUtils.uasset
+      QueensDomain/Content/Player/ItemmergeAnim/ItemMergeAnim_Comp.uasset
+  SetIgnoreLookInput:
+      QueensDomain/Content/LD45/Blueprints/Checkpoint/Checkpoint.uasset
+      QueensDomain/Content/Player/FS_PlayerChar.uasset
+      QueensDomain/Content/Player/PlayerStatsAndUtils.uasset
+      QueensDomain/Content/Player/ItemmergeAnim/ItemMergeAnim_Comp.uasset
+  bShowMouseCursor:
+      QueensDomain/Content/LD45/Blueprints/Checkpoint/Checkpoint.uasset
+      QueensDomain/Content/LD45/Maps/title_screen.umap
+      QueensDomain/Content/Player/FS_PlayerController_BP.uasset
+      QueensDomain/Content/UI/Menus/DemoEndSplash.uasset
+      QueensDomain/Content/UI/Menus/DemoIntroSplash.uasset
+      QueensDomain/Content/UI/Menus/ReadTextUI.uasset
+  BlockInteract:
+      QueensDomain/Content/Blueprints/SecretSwordAltar/SecretSword_Altar_BP.uasset
+      QueensDomain/Content/NPCs/NPC_Base.uasset
+  ReenableInteract:
+      QueensDomain/Content/Blueprints/SecretSwordAltar/SecretSword_Altar_BP.uasset
+      QueensDomain/Content/NPCs/NPC_Base.uasset
+  DisableInteraction:
+      QueensDomain/Content/NPCs/NPC_Base.uasset
+      QueensDomain/Content/Player/FS_PlayerChar.uasset
+      QueensDomain/Content/Player/PlayerInteractionComponent.uasset
+  TryAutoPause:
+      QueensDomain/Content/Player/FS_PlayerChar.uasset
+      QueensDomain/Content/Player/FS_PlayerController_BP.uasset
+  PauseOnUnfocus:
+      QueensDomain/Content/Blueprints/SaveSystem/FS_SystemSave.uasset
+      QueensDomain/Content/Player/FS_PlayerController_BP.uasset
+      QueensDomain/Content/UI/Menus/OptionsMenu/OptionLists/Game_OptionsList.uasset
+  OpenPauseMenu:
+      QueensDomain/Content/Player/FS_PlayerChar.uasset
+      QueensDomain/Content/Player/FS_PlayerController_BP.uasset
+  CheckForOverlayPause:
+      QueensDomain/Content/Player/FS_PlayerChar.uasset
+      QueensDomain/Content/Player/WeaponEvoAnimation.uasset
+  ForceNoOverlayPause:
+      QueensDomain/Content/Blueprints/LevelScripts/DemoEndTrigger.uasset
+      QueensDomain/Content/Player/FS_PlayerChar.uasset
+  ShouldHideHUD:
+      QueensDomain/Content/Player/FS_PlayerChar.uasset
+      QueensDomain/Content/Player/Assets/Input/FS_HUD.uasset
+      QueensDomain/Content/Player/Assets/Input/ShouldHideHUD.uasset
+      QueensDomain/Content/UI/HUD/FS_PlayerHUD.uasset
+
+wrote G:\Freespace\Queens_Domain\analysis\re\pak_name_scan.json
+==============================================================================
+UGameplayStatics::SetGamePaused  (sink)  @ 028F3180   pdata=028F3180..028F3211
+==============================================================================
+  028F3180  push      rbx                                           
+  028F3182  sub       rsp, 0x30                                     
+  028F3186  movzx     ebx, dl                                       
+  028F3189  mov       r8d, 1                                        
+  028F318F  mov       rdx, rcx                                      
+  028F3192  mov       rcx, qword ptr [rip + 0x22b1bef]                 ; GLOBAL 04BA4D88
+  028F3199  call      0x2cdedf0                                        ; FUN_02CDEDF0
+  028F319E  test      rax, rax                                      
+  028F31A1  je        0x28f3209                                     
+  028F31A3  mov       rax, qword ptr [rax + 0x180]                  
+  028F31AA  test      rax, rax                                      
+  028F31AD  je        0x28f3209                                     
+  028F31AF  mov       rcx, qword ptr [rax + 0x38]                   
+  028F31B3  xor       r8d, r8d                                      
+  028F31B6  movsxd    rax, dword ptr [rax + 0x40]                   
+  028F31BA  lea       rdx, [rcx + rax*8]                            
+  028F31BE  cmp       rcx, rdx                                      
+  028F31C1  je        0x28f31dd                                     
+  028F31C3  mov       rax, qword ptr [rcx]                          
+  028F31C6  test      rax, rax                                      
+  028F31C9  je        0x28f31d4                                     
+  028F31CB  mov       r9, qword ptr [rax + 0x30]                    
+  028F31CF  test      r9, r9                                        
+  028F31D2  jne       0x28f31e5                                     
+  028F31D4  add       rcx, 8                                        
+  028F31D8  cmp       rcx, rdx                                      
+  028F31DB  jne       0x28f31c3                                     
+  028F31DD  mov       r9, r8                                        
+  028F31E0  test      r8, r8                                        
+  028F31E3  je        0x28f3209                                     
+  028F31E5  mov       rax, qword ptr [r9]                           
+  028F31E8  movzx     edx, bl                                       
+  028F31EB  mov       qword ptr [rsp + 0x20], r8                    
+  028F31F0  mov       rcx, r9                                       
+  028F31F3  mov       dword ptr [rsp + 0x28], r8d                   
+  028F31F8  lea       r8, [rsp + 0x20]                              
+  028F31FD  call      qword ptr [rax + 0xa88]                       
+  028F3203  add       rsp, 0x30                                     
+  028F3207  pop       rbx                                           
+  028F3208  ret                                                     
+  028F3209  xor       al, al                                        
+  028F320B  add       rsp, 0x30                                     
+  028F320F  pop       rbx                                           
+  028F3210  ret                                                     
+
+==============================================================================
+UGameplayStatics::SetGlobalTimeDilation  (sink)  @ 028F3410   pdata=028F3410..028F3461
+==============================================================================
+  028F3410  sub       rsp, 0x38                                     
+  028F3414  mov       rdx, rcx                                      
+  028F3417  movaps    xmmword ptr [rsp + 0x20], xmm6                
+  028F341C  mov       rcx, qword ptr [rip + 0x22b1965]                 ; GLOBAL 04BA4D88
+  028F3423  mov       r8d, 1                                        
+  028F3429  movaps    xmm6, xmm1                                    
+  028F342C  call      0x2cdedf0                                        ; FUN_02CDEDF0
+  028F3431  test      rax, rax                                      
+  028F3434  je        0x28f3457                                     
+  028F3436  mov       r8b, 1                                        
+  028F3439  xor       edx, edx                                      
+  028F343B  mov       rcx, rax                                      
+  028F343E  call      0x2d37250                                        ; FUN_02D37250
+  028F3443  test      rax, rax                                      
+  028F3446  je        0x28f3457                                     
+  028F3448  mov       rdx, qword ptr [rax]                          
+  028F344B  movaps    xmm1, xmm6                                    
+  028F344E  mov       rcx, rax                                      
+  028F3451  call      qword ptr [rdx + 0x658]                       
+  028F3457  movaps    xmm6, xmmword ptr [rsp + 0x20]                
+  028F345C  add       rsp, 0x38                                     
+  028F3460  ret                                                     
+
+==============================================================================
+UGameplayStatics::IsGamePaused  (oracle)  @ 028E8DB0   pdata=028E8DB0..028E8DDF
+==============================================================================
+  028E8DB0  sub       rsp, 0x28                                     
+  028E8DB4  mov       rdx, rcx                                      
+  028E8DB7  mov       r8d, 1                                        
+  028E8DBD  mov       rcx, qword ptr [rip + 0x22bbfc4]                 ; GLOBAL 04BA4D88
+  028E8DC4  call      0x2cdedf0                                        ; FUN_02CDEDF0
+  028E8DC9  test      rax, rax                                      
+  028E8DCC  je        0x28e8dda                                     
+  028E8DCE  mov       rcx, rax                                      
+  028E8DD1  add       rsp, 0x28                                     
+  028E8DD5  jmp       0x29a43c0                                        ; FUN_029A43C0
+  028E8DDA  add       rsp, 0x28                                     
+  028E8DDE  ret                                                     
+
+==============================================================================
+UWorld::IsPaused  (the cheapest pause oracle)  @ 029A43C0   pdata=029A43C0..029A444A
+==============================================================================
+  029A43C0  push      rbx                                           
+  029A43C2  sub       rsp, 0x20                                     
+  029A43C6  xor       r8d, r8d                                      
+  029A43C9  xor       edx, edx                                      
+  029A43CB  mov       rbx, rcx                                      
+  029A43CE  call      0x2d37250                                        ; FUN_02D37250
+  029A43D3  test      rax, rax                                      
+  029A43D6  je        0x29a43fc                                     
+  029A43D8  cmp       qword ptr [rax + 0x370], 0                    
+  029A43E0  je        0x29a43fc                                     
+  029A43E2  cmp       byte ptr [rbx + 0x620], 0                     
+  029A43E9  jne       0x29a43fc                                     
+  029A43EB  movss     xmm0, dword ptr [rbx + 0x5b4]                 
+  029A43F3  comiss    xmm0, dword ptr [rbx + 0x5a0]                 
+  029A43FA  jbe       0x29a4442                                     
+  029A43FC  test      byte ptr [rbx + 0x10c], 0x40                  
+  029A4403  je        0x29a4412                                     
+  029A4405  mov       rcx, rbx                                      
+  029A4408  call      0x2d39cf0                                        ; FUN_02D39CF0
+  029A440D  cmp       eax, 3                                        
+  029A4410  je        0x29a4442                                     
+  029A4412  mov       rcx, qword ptr [rip + 0x220096f]                 ; GLOBAL 04BA4D88
+  029A4419  mov       rdx, rbx                                      
+  029A441C  call      0x2cf04a0                                        ; FUN_02CF04A0
+  029A4421  test      al, al                                        
+  029A4423  jne       0x29a4442                                     
+  029A4425  mov       rcx, rbx                                      
+  029A4428  call      0x2d39f10                                        ; FUN_02D39F10
+  029A442D  test      al, al                                        
+  029A442F  je        0x29a443a                                     
+  029A4431  cmp       byte ptr [rbx + 0x10d], 0                     
+  029A4438  jl        0x29a4442                                     
+  029A443A  xor       al, al                                        
+  029A443C  add       rsp, 0x20                                     
+  029A4440  pop       rbx                                           
+  029A4441  ret                                                     
+  029A4442  mov       al, 1                                         
+  029A4444  add       rsp, 0x20                                     
+  029A4448  pop       rbx                                           
+  029A4449  ret                                                     
+
+==============================================================================
+UWorld::GetWorldSettings  @ 02D37250   pdata=02D37250..02D37276
+==============================================================================
+  02D37250  mov       qword ptr [rsp + 0x10], rbp                   
+  02D37255  mov       qword ptr [rsp + 0x18], rsi                   
+  02D3725A  push      rdi                                           
+  02D3725B  sub       rsp, 0x20                                     
+  02D3725F  mov       rdi, rcx                                      
+  02D37262  movzx     esi, r8b                                      
+  02D37266  mov       rcx, qword ptr [rcx + 0x30]                   
+  02D3726A  movzx     ebp, dl                                       
+  02D3726D  test      rcx, rcx                                      
+  02D37270  je        0x2d372e2                                     
+  02D37272  movzx     edx, r8b                                      
+
+==============================================================================
+UGameplayStatics::GetGameInstance (proves UWorld::OwningGameInstance = +0x180)  @ 02413EA0   pdata=02413EA0..02413EC3
+==============================================================================
+  02413EA0  sub       rsp, 0x28                                     
+  02413EA4  mov       rax, qword ptr [rcx]                          
+  02413EA7  call      qword ptr [rax + 0x160]                       
+  02413EAD  test      rax, rax                                      
+  02413EB0  je        0x2413ebe                                     
+  02413EB2  mov       rax, qword ptr [rax + 0x180]                  
+  02413EB9  add       rsp, 0x28                                     
+  02413EBD  ret                                                     
+  02413EBE  add       rsp, 0x28                                     
+  02413EC2  ret                                                     
+
+==============================================================================
+AActor::SetActorTickEnabled  @ 026636F0   pdata=026636F0..0266372C
+==============================================================================
+  026636F0  mov       qword ptr [rsp + 8], rbx                      
+  026636F5  push      rdi                                           
+  026636F6  sub       rsp, 0x20                                     
+  026636FA  test      byte ptr [rcx + 0x32], 2                      
+  026636FE  movzx     edi, dl                                       
+  02663701  mov       rbx, rcx                                      
+  02663704  je        0x2663721                                     
+  02663706  mov       edx, 0x30                                     
+  0266370B  call      0x11a4790                                        ; FUN_011A4790
+  02663710  test      al, al                                        
+  02663712  jne       0x2663721                                     
+  02663714  lea       rcx, [rbx + 0x28]                             
+  02663718  movzx     edx, dil                                      
+  0266371C  call      0x2cc8c50                                        ; FUN_02CC8C50
+  02663721  mov       rbx, qword ptr [rsp + 0x30]                   
+  02663726  add       rsp, 0x20                                     
+  0266372A  pop       rdi                                           
+  0266372B  ret                                                     
+
+==============================================================================
+AActor::SetIgnoreTimeDilation  @ 02CC8110   pdata=NONE
+==============================================================================
+  02CC8110  and       dword ptr [rcx + 0x148], 0xfffffffe           
+  02CC8117  movzx     eax, dl                                       
+  02CC811A  or        dword ptr [rcx + 0x148], eax                  
+  02CC8120  ret                                                     
+  02CC8121  int3                                                    
+  02CC8122  int3                                                    
+  02CC8123  int3                                                    
+  02CC8124  int3                                                    
+  02CC8125  int3                                                    
+  02CC8126  int3                                                    
+  02CC8127  int3                                                    
+  02CC8128  int3                                                    
+  02CC8129  int3                                                    
+  02CC812A  int3                                                    
+  02CC812B  int3                                                    
+  02CC812C  int3                                                    
+  02CC812D  int3                                                    
+  02CC812E  int3                                                    
+  02CC812F  int3                                                    
+  02CC8130  mov       qword ptr [rsp + 8], rbx                      
+  02CC8135  mov       qword ptr [rsp + 0x10], rsi                   
+  02CC813A  push      rdi                                           
+  02CC813B  sub       rsp, 0x20                                     
+  02CC813F  mov       rsi, rdx                                      
+  02CC8142  mov       rdi, rcx                                      
+  02CC8145  mov       ecx, r8d                                      
+  02CC8148  xor       edx, edx                                      
+  02CC814A  mov       rbx, r8                                       
+  02CC814D  call      0xfaf620                                         ; FUN_00FAF620
+  02CC8152  test      al, al                                        
+  02CC8154  mov       rax, rbx                                      
+  02CC8157  sete      r8b                                           
+  02CC815B  shr       rax, 0x20                                     
+  02CC815F  test      eax, eax                                      
+  02CC8161  setne     al                                            
+  02CC8164  or        al, r8b                                       
+  02CC8167  je        0x2cc81a5                                     
+  02CC8169  mov       rax, qword ptr [rdi + 0xf0]                   
+  02CC8170  movsxd    rcx, dword ptr [rdi + 0xf8]                   
+  02CC8177  shl       rcx, 6                                        
+  02CC817B  add       rcx, rax                                      
+  02CC817E  cmp       rax, rcx                                      
+  02CC8181  je        0x2cc81a5                                     
+  02CC8183  cmp       qword ptr [rax + 0x18], rbx                   
+  02CC8187  je        0x2cc81a2                                     
+  02CC8189  add       rax, 0x40                                     
+  02CC818D  cmp       rax, rcx                                      
+  02CC8190  jne       0x2cc8183                                     
+  02CC8192  mov       rbx, qword ptr [rsp + 0x30]                   
+  02CC8197  mov       rsi, qword ptr [rsp + 0x38]                   
+  02CC819C  add       rsp, 0x20                                     
+  02CC81A0  pop       rdi                                           
+  02CC81A1  ret                                                     
+  02CC81A2  mov       qword ptr [rax], rsi                          
+  02CC81A5  mov       rbx, qword ptr [rsp + 0x30]                   
+  02CC81AA  mov       rsi, qword ptr [rsp + 0x38]                   
+  02CC81AF  add       rsp, 0x20                                     
+  02CC81B3  pop       rdi                                           
+  02CC81B4  ret                                                     
+  02CC81B5  int3                                                    
+  02CC81B6  int3                                                    
+  02CC81B7  int3                                                    
+  02CC81B8  int3                                                    
+  02CC81B9  int3                                                    
+  02CC81BA  int3                                                    
+  02CC81BB  int3                                                    
+  02CC81BC  int3                                                    
+  02CC81BD  int3                                                    
+  02CC81BE  int3                                                    
+  02CC81BF  int3                                                    
+  02CC81C0  and       byte ptr [rcx + 0xb1], 0xfe                   
+  02CC81C7  or        byte ptr [rcx + 0xb1], dl                     
+  02CC81CD  ret                                                     
+  02CC81CE  int3                                                    
+  02CC81CF  int3                                                    
+  02CC81D0  mov       eax, 1                                        
+  02CC81D5  cmp       ecx, eax                                      
+  02CC81D7  cmovge    eax, ecx                                      
+  02CC81DA  mov       dword ptr [rip + 0x1ac6128], eax                 ; GLOBAL 0478E308
+  02CC81E0  ret                                                     
+  02CC81E1  int3                                                    
+  02CC81E2  int3                                                    
+  02CC81E3  int3                                                    
+  02CC81E4  int3                                                    
+  02CC81E5  int3                                                    
+  02CC81E6  int3                                                    
+  02CC81E7  int3                                                    
+  02CC81E8  int3                                                    
+  02CC81E9  int3                                                    
+  02CC81EA  int3                                                    
+  02CC81EB  int3                                                    
+  02CC81EC  int3                                                    
+  02CC81ED  int3                                                    
+  02CC81EE  int3                                                    
+  02CC81EF  int3                                                    
+  02CC81F0  add       rcx, 0xb0                                     
+  02CC81F7  xorps     xmm0, xmm0                                    
+  02CC81FA  comiss    xmm1, xmm0                                    
+  02CC81FD  jae       0x2cc820d                                     
+  02CC81FF  xorps     xmm1, xmm1                                    
+  02CC8202  mov       r9b, 1                                        
+  02CC8205  xor       r8d, r8d                                      
+  02CC8208  jmp       0x2cc8240                                        ; FUN_02CC8240
+  02CC820D  movss     xmm0, dword ptr [rcx + 4]                     
+  02CC8212  comiss    xmm1, xmm0                                    
+  02CC8215  jb        0x2cc821a                                     
+  02CC8217  movaps    xmm1, xmm0                                    
+  02CC821A  mov       r9b, 1                                        
+  02CC821D  xor       r8d, r8d                                      
+  02CC8220  jmp       0x2cc8240                                        ; FUN_02CC8240
+  02CC8225  int3                                                    
+  02CC8226  int3                                                    
+  02CC8227  int3                                                    
+  02CC8228  int3                                                    
+  02CC8229  int3                                                    
+  02CC822A  int3                                                    
+  02CC822B  int3                                                    
+  02CC822C  int3                                                    
+  02CC822D  int3                                                    
+  02CC822E  int3                                                    
+  02CC822F  int3                                                    
+  02CC8230  movss     dword ptr [rcx + 0xb8], xmm1                  
+  02CC8238  ret                                                     
+  02CC8239  int3                                                    
+  02CC823A  int3                                                    
+  02CC823B  int3                                                    
+  02CC823C  int3                                                    
+  02CC823D  int3                                                    
+  02CC823E  int3                                                    
+  02CC823F  int3                                                    
+  02CC8240  mov       rax, rsp                                      
+  02CC8243  mov       byte ptr [rax + 0x20], r9b                    
+  02CC8247  mov       byte ptr [rax + 0x18], r8b                    
+  02CC824B  push      rbp                                           
+  02CC824C  push      r13                                           
+
+==============================================================================
+UFS_DialogueAction::RunAction  (table 0x03944EF0 copy)  @ 00E39500   pdata=00E39500..00E397D8
+==============================================================================
+  00E39500  mov       qword ptr [rsp + 0x10], rbx                   
+  00E39505  mov       qword ptr [rsp + 0x18], rsi                   
+  00E3950A  push      rbp                                           
+  00E3950B  push      rdi                                           
+  00E3950C  push      r12                                           
+  00E3950E  push      r14                                           
+  00E39510  push      r15                                           
+  00E39512  mov       rbp, rsp                                      
+  00E39515  sub       rsp, 0x30                                     
+  00E39519  mov       rax, qword ptr [rdx]                          
+  00E3951C  mov       r15, rcx                                      
+  00E3951F  mov       qword ptr [rcx + 0x38], rax                   
+  00E39523  xor       r12d, r12d                                    
+  00E39526  mov       rax, qword ptr [rdx + 8]                      
+  00E3952A  mov       ebx, r12d                                     
+  00E3952D  mov       qword ptr [rcx + 0x40], rax                   
+  00E39531  lea       rdx, [rip + 0x293566c]                        
+  00E39538  lea       rcx, [rip + 0x2af1961]                        
+  00E3953F  call      0x36b4de1                                        ; FUN_036B4DE1
+  00E39544  test      rax, rax                                      
+  00E39547  je        0xe39568                                      
+  00E39549  nop       dword ptr [rax]                               
+  00E39550  lea       rcx, [rax + 2]                                
+  00E39554  mov       rbx, rax                                      
+  00E39557  lea       rdx, [rip + 0x2935646]                        
+  00E3955E  call      0x36b4de1                                        ; FUN_036B4DE1
+  00E39563  test      rax, rax                                      
+  00E39566  jne       0xe39550                                      
+  00E39568  lea       rdx, [rbx + 4]                                
+  00E3956C  mov       r8d, 1                                        
+  00E39572  lea       rcx, [rbp + 0x30]                             
+  00E39576  call      0xfabf20                                         ; FUN_00FABF20
+  00E3957B  mov       rsi, qword ptr [r15 + 0x30]                   
+  00E3957F  lea       rcx, [rbp - 0x10]                             
+  00E39583  mov       rbx, qword ptr [rbp + 0x30]                   
+  00E39587  xor       edx, edx                                      
+  00E39589  add       rsi, 0x4f8                                    
+  00E39590  call      0x11bb360                                        ; FUN_011BB360
+  00E39595  mov       rdx, r15                                      
+  00E39598  mov       qword ptr [rbp - 8], r12                      
+  00E3959C  lea       rcx, [rbp - 0x10]                             
+  00E395A0  call      0x11bb360                                        ; FUN_011BB360
+  00E395A5  xor       edx, edx                                      
+  00E395A7  mov       qword ptr [rbp - 8], rbx                      
+  00E395AB  mov       ecx, ebx                                      
+  00E395AD  call      0xfaf620                                         ; FUN_00FAF620
+  00E395B2  test      al, al                                        
+  00E395B4  sete      cl                                            
+  00E395B7  cmp       dword ptr [rbp - 4], r12d                     
+  00E395BB  setne     al                                            
+  00E395BE  or        al, cl                                        
+  00E395C0  je        0xe395dc                                      
+  00E395C2  lea       rcx, [rbp - 0x10]                             
+  00E395C6  call      0x11bdd50                                        ; FUN_011BDD50
+  00E395CB  test      rax, rax                                      
+  00E395CE  je        0xe395dc                                      
+  00E395D0  mov       rdx, qword ptr [rbp - 8]                      
+  00E395D4  mov       rcx, rax                                      
+  00E395D7  call      0x11a0040                                        ; FUN_011A0040
+  00E395DC  mov       r14, qword ptr [rsi]                          
+  00E395DF  movsxd    rdi, dword ptr [rsi + 8]                      
+  00E395E3  mov       rbx, r14                                      
+  00E395E6  shl       rdi, 4                                        
+  00E395EA  add       rdi, r14                                      
+  00E395ED  cmp       r14, rdi                                      
+  00E395F0  je        0xe3963b                                      
+  00E395F2  mov       eax, dword ptr [rbp - 0x10]                   
+  00E395F5  cmp       dword ptr [rbx], eax                          
+  00E395F7  jne       0xe39601                                      
+  00E395F9  mov       eax, dword ptr [rbp - 0xc]                    
+  00E395FC  cmp       dword ptr [rbx + 4], eax                      
+  00E395FF  je        0xe3961a                                      
+  00E39601  mov       rcx, rbx                                      
+  00E39604  call      0x11c0140                                        ; FUN_011C0140
+  00E39609  test      al, al                                        
+  00E3960B  jne       0xe39624                                      
+  00E3960D  lea       rcx, [rbp - 0x10]                             
+  00E39611  call      0x11c0140                                        ; FUN_011C0140
+  00E39616  test      al, al                                        
+  00E39618  jne       0xe39624                                      
+  00E3961A  mov       rax, qword ptr [rbp - 8]                      
+  00E3961E  cmp       qword ptr [rbx + 8], rax                      
+  00E39622  je        0xe3962f                                      
+  00E39624  add       rbx, 0x10                                     
+  00E39628  cmp       rbx, rdi                                      
+  00E3962B  jne       0xe395f2                                      
+  00E3962D  jmp       0xe3963b                                         ; FUN_00E3963B
+  00E3962F  sub       rbx, r14                                      
+  00E39632  sar       rbx, 4                                        
+  00E39636  cmp       ebx, -1                                       
+  00E39639  jne       0xe39665                                      
+  00E3963B  movsxd    rbx, dword ptr [rsi + 8]                      
+  00E3963F  lea       eax, [rbx + 1]                                
+  00E39642  mov       dword ptr [rsi + 8], eax                      
+  00E39645  cmp       eax, dword ptr [rsi + 0xc]                    
+  00E39648  jle       0xe39654                                      
+  00E3964A  mov       edx, ebx                                      
+  00E3964C  mov       rcx, rsi                                      
+  00E3964F  call      0x784fe0                                         ; FUN_00784FE0
+  00E39654  mov       rax, qword ptr [rsi]                          
+  00E39657  mov       rdx, rbx                                      
+  00E3965A  movups    xmm0, xmmword ptr [rbp - 0x10]                
+  00E3965E  add       rdx, rdx                                      
+  00E39661  movups    xmmword ptr [rax + rdx*8], xmm0               
+  00E39665  mov       rcx, rsi                                      
+  00E39668  call      0xa8b2e0                                         ; FUN_00A8B2E0
+  00E3966D  lea       rdx, [rip + 0x2935530]                        
+  00E39674  mov       rbx, r12                                      
+  00E39677  lea       rcx, [rip + 0x2af186a]                        
+  00E3967E  call      0x36b4de1                                        ; FUN_036B4DE1
+  00E39683  test      rax, rax                                      
+  00E39686  je        0xe396a8                                      
+  00E39688  nop       dword ptr [rax + rax]                         
+  00E39690  lea       rcx, [rax + 2]                                
+  00E39694  mov       rbx, rax                                      
+  00E39697  lea       rdx, [rip + 0x2935506]                        
+  00E3969E  call      0x36b4de1                                        ; FUN_036B4DE1
+  00E396A3  test      rax, rax                                      
+  00E396A6  jne       0xe39690                                      
+  00E396A8  lea       rdx, [rbx + 4]                                
+  00E396AC  mov       r8d, 1                                        
+  00E396B2  lea       rcx, [rbp + 0x30]                             
+  00E396B6  call      0xfabf20                                         ; FUN_00FABF20
+  00E396BB  mov       rsi, qword ptr [r15 + 0x30]                   
+  00E396BF  lea       rcx, [rbp - 0x10]                             
+  00E396C3  mov       rbx, qword ptr [rbp + 0x30]                   
+  00E396C7  xor       edx, edx                                      
+  00E396C9  add       rsi, 0x4e8                                    
+  00E396D0  call      0x11bb360                                        ; FUN_011BB360
+  00E396D5  mov       rdx, r15                                      
+  00E396D8  mov       qword ptr [rbp - 8], r12                      
+  00E396DC  lea       rcx, [rbp - 0x10]                             
+  00E396E0  call      0x11bb360                                        ; FUN_011BB360
+  00E396E5  xor       edx, edx                                      
+  00E396E7  mov       qword ptr [rbp - 8], rbx                      
+  00E396EB  mov       ecx, ebx                                      
+  00E396ED  call      0xfaf620                                         ; FUN_00FAF620
+  00E396F2  test      al, al                                        
+  00E396F4  sete      cl                                            
+  00E396F7  cmp       dword ptr [rbp - 4], r12d                     
+  00E396FB  setne     al                                            
+  00E396FE  or        al, cl                                        
+  00E39700  je        0xe3971c                                      
+  00E39702  lea       rcx, [rbp - 0x10]                             
+  00E39706  call      0x11bdd50                                        ; FUN_011BDD50
+  00E3970B  test      rax, rax                                      
+  00E3970E  je        0xe3971c                                      
+  00E39710  mov       rdx, qword ptr [rbp - 8]                      
+  00E39714  mov       rcx, rax                                      
+  00E39717  call      0x11a0040                                        ; FUN_011A0040
+  00E3971C  mov       r14, qword ptr [rsi]                          
+  00E3971F  movsxd    rdi, dword ptr [rsi + 8]                      
+  00E39723  mov       rbx, r14                                      
+  00E39726  shl       rdi, 4                                        
+  00E3972A  add       rdi, r14                                      
+  00E3972D  cmp       r14, rdi                                      
+  00E39730  je        0xe3977b                                      
+  00E39732  mov       eax, dword ptr [rbp - 0x10]                   
+  00E39735  cmp       dword ptr [rbx], eax                          
+  00E39737  jne       0xe39741                                      
+  00E39739  mov       eax, dword ptr [rbp - 0xc]                    
+  00E3973C  cmp       dword ptr [rbx + 4], eax                      
+  00E3973F  je        0xe3975a                                      
+  00E39741  mov       rcx, rbx                                      
+  00E39744  call      0x11c0140                                        ; FUN_011C0140
+  00E39749  test      al, al                                        
+  00E3974B  jne       0xe39764                                      
+  00E3974D  lea       rcx, [rbp - 0x10]                             
+  00E39751  call      0x11c0140                                        ; FUN_011C0140
+  00E39756  test      al, al                                        
+  00E39758  jne       0xe39764                                      
+  00E3975A  mov       rax, qword ptr [rbp - 8]                      
+  00E3975E  cmp       qword ptr [rbx + 8], rax                      
+  00E39762  je        0xe3976f                                      
+  00E39764  add       rbx, 0x10                                     
+  00E39768  cmp       rbx, rdi                                      
+  00E3976B  jne       0xe39732                                      
+  00E3976D  jmp       0xe3977b                                         ; FUN_00E3977B
+  00E3976F  sub       rbx, r14                                      
+  00E39772  sar       rbx, 4                                        
+  00E39776  cmp       ebx, -1                                       
+  00E39779  jne       0xe397a5                                      
+  00E3977B  movsxd    rbx, dword ptr [rsi + 8]                      
+  00E3977F  lea       eax, [rbx + 1]                                
+  00E39782  mov       dword ptr [rsi + 8], eax                      
+  00E39785  cmp       eax, dword ptr [rsi + 0xc]                    
+  00E39788  jle       0xe39794                                      
+  00E3978A  mov       edx, ebx                                      
+  00E3978C  mov       rcx, rsi                                      
+  00E3978F  call      0x784fe0                                         ; FUN_00784FE0
+  00E39794  mov       rax, qword ptr [rsi]                          
+  00E39797  mov       rdx, rbx                                      
+  00E3979A  movups    xmm0, xmmword ptr [rbp - 0x10]                
+  00E3979E  add       rdx, rdx                                      
+  00E397A1  movups    xmmword ptr [rax + rdx*8], xmm0               
+  00E397A5  mov       rcx, rsi                                      
+  00E397A8  call      0xa8b2e0                                         ; FUN_00A8B2E0
+  00E397AD  mov       edx, dword ptr [r15 + 0x28]                   
+  00E397B1  mov       rcx, qword ptr [r15 + 0x30]                   
+  00E397B5  call      0xe50b50                                         ; FUN_00E50B50
+  00E397BA  mov       rcx, r15                                      
+  00E397BD  mov       rbx, qword ptr [rsp + 0x68]                   
+  00E397C2  mov       rsi, qword ptr [rsp + 0x70]                   
+  00E397C7  add       rsp, 0x30                                     
+  00E397CB  pop       r15                                           
+  00E397CD  pop       r14                                           
+  00E397CF  pop       r12                                           
+  00E397D1  pop       rdi                                           
+  00E397D2  pop       rbp                                           
+  00E397D3  jmp       0xe4d980                                         ; FUN_00E4D980
+
+==============================================================================
+UFS_DialogueAction::FinishAction (C++ -> BP via ProcessEvent)  @ 00E2BE50   pdata=00E2BE50..00E2C0E1
+==============================================================================
+  00E2BE50  mov       qword ptr [rsp + 0x10], rbx                   
+  00E2BE55  mov       qword ptr [rsp + 0x18], rbp                   
+  00E2BE5A  mov       qword ptr [rsp + 0x20], rsi                   
+  00E2BE5F  push      rdi                                           
+  00E2BE60  push      r12                                           
+  00E2BE62  push      r13                                           
+  00E2BE64  push      r14                                           
+  00E2BE66  push      r15                                           
+  00E2BE68  sub       rsp, 0x20                                     
+  00E2BE6C  mov       rbp, rcx                                      
+  00E2BE6F  movzx     ebx, dl                                       
+  00E2BE72  mov       rcx, qword ptr [rcx + 0x30]                   
+  00E2BE76  call      0xe50b10                                         ; FUN_00E50B10
+  00E2BE7B  mov       ecx, dword ptr [rbp + 0x40]                   
+  00E2BE7E  xor       edx, edx                                      
+  00E2BE80  call      0xfaf620                                         ; FUN_00FAF620
+  00E2BE85  test      al, al                                        
+  00E2BE87  sete      cl                                            
+  00E2BE8A  cmp       dword ptr [rbp + 0x44], 0                     
+  00E2BE8E  setne     al                                            
+  00E2BE91  or        al, cl                                        
+  00E2BE93  je        0xe2bee5                                      
+  00E2BE95  lea       rcx, [rbp + 0x38]                             
+  00E2BE99  call      0x11bdd50                                        ; FUN_011BDD50
+  00E2BE9E  test      rax, rax                                      
+  00E2BEA1  je        0xe2bee5                                      
+  00E2BEA3  mov       rdx, qword ptr [rbp + 0x40]                   
+  00E2BEA7  mov       rcx, rax                                      
+  00E2BEAA  call      0x11a0040                                        ; FUN_011A0040
+  00E2BEAF  test      rax, rax                                      
+  00E2BEB2  je        0xe2bee5                                      
+  00E2BEB4  lea       rcx, [rbp + 0x38]                             
+  00E2BEB8  mov       byte ptr [rsp + 0x50], bl                     
+  00E2BEBC  call      0x11bdd50                                        ; FUN_011BDD50
+  00E2BEC1  mov       rdx, qword ptr [rbp + 0x40]                   
+  00E2BEC5  mov       rcx, rax                                      
+  00E2BEC8  mov       rbx, rax                                      
+  00E2BECB  call      0x11a0050                                        ; FUN_011A0050
+  00E2BED0  mov       r9, qword ptr [rbx]                           
+  00E2BED3  lea       r8, [rsp + 0x50]                              
+  00E2BED8  mov       rdx, rax                                      
+  00E2BEDB  mov       rcx, rbx                                      
+  00E2BEDE  call      qword ptr [r9 + 0x220]                        
+  00E2BEE5  xor       edx, edx                                      
+  00E2BEE7  lea       rcx, [rbp + 0x38]                             
+  00E2BEEB  call      0x11bb360                                        ; FUN_011BB360
+  00E2BEF0  xor       esi, esi                                      
+  00E2BEF2  lea       rdx, [rip + 0x2942cab]                        
+  00E2BEF9  mov       eax, esi                                      
+  00E2BEFB  mov       qword ptr [rsp + 0x50], rsi                   
+  00E2BF00  lea       rcx, [rip + 0x2afef99]                        
+  00E2BF07  mov       qword ptr [rbp + 0x40], rax                   
+  00E2BF0B  mov       ebx, esi                                      
+  00E2BF0D  call      0x36b4de1                                        ; FUN_036B4DE1
+  00E2BF12  test      rax, rax                                      
+  00E2BF15  je        0xe2bf38                                      
+  00E2BF17  nop       word ptr [rax + rax]                          
+  00E2BF20  lea       rcx, [rax + 2]                                
+  00E2BF24  mov       rbx, rax                                      
+  00E2BF27  lea       rdx, [rip + 0x2942c76]                        
+  00E2BF2E  call      0x36b4de1                                        ; FUN_036B4DE1
+  00E2BF33  test      rax, rax                                      
+  00E2BF36  jne       0xe2bf20                                      
+  00E2BF38  mov       r13d, 1                                       
+  00E2BF3E  lea       rdx, [rbx + 4]                                
+  00E2BF42  mov       r8d, r13d                                     
+  00E2BF45  lea       rcx, [rsp + 0x50]                             
+  00E2BF4A  call      0xfabf20                                         ; FUN_00FABF20
+  00E2BF4F  mov       r15, qword ptr [rbp + 0x30]                   
+  00E2BF53  mov       rbx, qword ptr [rsp + 0x50]                   
+  00E2BF58  add       r15, 0x4f8                                    
+  00E2BF5F  mov       r12, qword ptr [r15]                          
+  00E2BF62  movsxd    r14, dword ptr [r15 + 8]                      
+  00E2BF66  mov       rdi, r12                                      
+  00E2BF69  shl       r14, 4                                        
+  00E2BF6D  add       r14, r12                                      
+  00E2BF70  cmp       r12, r14                                      
+  00E2BF73  je        0xe2bfe1                                      
+  00E2BF75  cmp       qword ptr [rdi + 8], rbx                      
+  00E2BF79  jne       0xe2bf88                                      
+  00E2BF7B  mov       rcx, rdi                                      
+  00E2BF7E  call      0x11be0e0                                        ; FUN_011BE0E0
+  00E2BF83  cmp       rbp, rax                                      
+  00E2BF86  je        0xe2bf93                                      
+  00E2BF88  add       rdi, 0x10                                     
+  00E2BF8C  cmp       rdi, r14                                      
+  00E2BF8F  jne       0xe2bf75                                      
+  00E2BF91  jmp       0xe2bfe1                                         ; FUN_00E2BFE1
+  00E2BF93  sub       rdi, r12                                      
+  00E2BF96  sar       rdi, 4                                        
+  00E2BF9A  cmp       edi, -1                                       
+  00E2BF9D  je        0xe2bfe1                                      
+  00E2BF9F  mov       edx, dword ptr [r15 + 8]                      
+  00E2BFA3  mov       ecx, edx                                      
+  00E2BFA5  sub       ecx, edi                                      
+  00E2BFA7  dec       ecx                                           
+  00E2BFA9  cmp       ecx, r13d                                     
+  00E2BFAC  cmovge    ecx, r13d                                     
+  00E2BFB0  test      ecx, ecx                                      
+  00E2BFB2  je        0xe2bfda                                      
+  00E2BFB4  sub       edx, ecx                                      
+  00E2BFB6  movsxd    r8, ecx                                       
+  00E2BFB9  movsxd    rdx, edx                                      
+  00E2BFBC  shl       rdx, 4                                        
+  00E2BFC0  add       rdx, qword ptr [r15]                          
+  00E2BFC3  movsxd    rcx, edi                                      
+  00E2BFC6  shl       rcx, 4                                        
+  00E2BFCA  add       rcx, qword ptr [r15]                          
+  00E2BFCD  shl       r8, 4                                         
+  00E2BFD1  call      0x36b4dc9                                        ; FUN_036B4DC9
+  00E2BFD6  mov       edx, dword ptr [r15 + 8]                      
+  00E2BFDA  lea       eax, [rdx - 1]                                
+  00E2BFDD  mov       dword ptr [r15 + 8], eax                      
+  00E2BFE1  mov       rcx, r15                                      
+  00E2BFE4  call      0xa8b2e0                                         ; FUN_00A8B2E0
+  00E2BFE9  lea       rdx, [rip + 0x2942bb4]                        
+  00E2BFF0  lea       rcx, [rip + 0x2afeef1]                        
+  00E2BFF7  call      0x36b4de1                                        ; FUN_036B4DE1
+  00E2BFFC  test      rax, rax                                      
+  00E2BFFF  je        0xe2c019                                      
+  00E2C001  lea       rcx, [rax + 2]                                
+  00E2C005  mov       rsi, rax                                      
+  00E2C008  lea       rdx, [rip + 0x2942b95]                        
+  00E2C00F  call      0x36b4de1                                        ; FUN_036B4DE1
+  00E2C014  test      rax, rax                                      
+  00E2C017  jne       0xe2c001                                      
+  00E2C019  lea       rdx, [rsi + 4]                                
+  00E2C01D  mov       r8d, r13d                                     
+  00E2C020  lea       rcx, [rsp + 0x50]                             
+  00E2C025  call      0xfabf20                                         ; FUN_00FABF20
+  00E2C02A  mov       r14, qword ptr [rbp + 0x30]                   
+  00E2C02E  mov       rbx, qword ptr [rsp + 0x50]                   
+  00E2C033  add       r14, 0x4e8                                    
+  00E2C03A  mov       r15, qword ptr [r14]                          
+  00E2C03D  movsxd    rsi, dword ptr [r14 + 8]                      
+  00E2C041  mov       rdi, r15                                      
+  00E2C044  shl       rsi, 4                                        
+  00E2C048  add       rsi, r15                                      
+  00E2C04B  cmp       r15, rsi                                      
+  00E2C04E  je        0xe2c0bc                                      
+  00E2C050  cmp       qword ptr [rdi + 8], rbx                      
+  00E2C054  jne       0xe2c063                                      
+  00E2C056  mov       rcx, rdi                                      
+  00E2C059  call      0x11be0e0                                        ; FUN_011BE0E0
+  00E2C05E  cmp       rbp, rax                                      
+  00E2C061  je        0xe2c06e                                      
+  00E2C063  add       rdi, 0x10                                     
+  00E2C067  cmp       rdi, rsi                                      
+  00E2C06A  jne       0xe2c050                                      
+  00E2C06C  jmp       0xe2c0bc                                         ; FUN_00E2C0BC
+  00E2C06E  sub       rdi, r15                                      
+  00E2C071  sar       rdi, 4                                        
+  00E2C075  cmp       edi, -1                                       
+  00E2C078  je        0xe2c0bc                                      
+  00E2C07A  mov       edx, dword ptr [r14 + 8]                      
+  00E2C07E  mov       ecx, edx                                      
+  00E2C080  sub       ecx, edi                                      
+  00E2C082  dec       ecx                                           
+  00E2C084  cmp       ecx, r13d                                     
+  00E2C087  cmovge    ecx, r13d                                     
+  00E2C08B  test      ecx, ecx                                      
+  00E2C08D  je        0xe2c0b5                                      
+  00E2C08F  sub       edx, ecx                                      
+  00E2C091  movsxd    r8, ecx                                       
+  00E2C094  movsxd    rdx, edx                                      
+  00E2C097  shl       rdx, 4                                        
+  00E2C09B  add       rdx, qword ptr [r14]                          
+  00E2C09E  movsxd    rcx, edi                                      
+  00E2C0A1  shl       rcx, 4                                        
+  00E2C0A5  add       rcx, qword ptr [r14]                          
+  00E2C0A8  shl       r8, 4                                         
+  00E2C0AC  call      0x36b4dc9                                        ; FUN_036B4DC9
+  00E2C0B1  mov       edx, dword ptr [r14 + 8]                      
+  00E2C0B5  lea       eax, [rdx - 1]                                
+  00E2C0B8  mov       dword ptr [r14 + 8], eax                      
+  00E2C0BC  mov       rcx, r14                                      
+  00E2C0BF  call      0xa8b2e0                                         ; FUN_00A8B2E0
+  00E2C0C4  mov       rbx, qword ptr [rsp + 0x58]                   
+  00E2C0C9  mov       rbp, qword ptr [rsp + 0x60]                   
+  00E2C0CE  mov       rsi, qword ptr [rsp + 0x68]                   
+  00E2C0D3  add       rsp, 0x20                                     
+  00E2C0D7  pop       r15                                           
+  00E2C0D9  pop       r14                                           
+  00E2C0DB  pop       r13                                           
+  00E2C0DD  pop       r12                                           
+  00E2C0DF  pop       rdi                                           
+  00E2C0E0  ret                                                     
+
+==============================================================================
+UFS_DialogueAction::JumpToDialogue (C++ -> BP via ProcessEvent)  @ 00E34E10   pdata=00E34E10..00E34EE6
+==============================================================================
+  00E34E10  mov       qword ptr [rsp + 0x10], rbx                   
+  00E34E15  mov       qword ptr [rsp + 0x18], rbp                   
+  00E34E1A  mov       qword ptr [rsp + 0x20], rsi                   
+  00E34E1F  push      rdi                                           
+  00E34E20  sub       rsp, 0x30                                     
+  00E34E24  lea       rdi, [rcx + 0x40]                             
+  00E34E28  mov       rbp, rdx                                      
+  00E34E2B  mov       rsi, rcx                                      
+  00E34E2E  xor       edx, edx                                      
+  00E34E30  mov       ecx, dword ptr [rdi + 8]                      
+  00E34E33  movzx     ebx, r8b                                      
+  00E34E37  call      0xfaf620                                         ; FUN_00FAF620
+  00E34E3C  test      al, al                                        
+  00E34E3E  sete      r9b                                           
+  00E34E42  cmp       dword ptr [rdi + 0xc], 0                      
+  00E34E46  setne     al                                            
+  00E34E49  or        al, r9b                                       
+  00E34E4C  je        0xe34ea1                                      
+  00E34E4E  mov       rcx, rdi                                      
+  00E34E51  call      0x11bdd50                                        ; FUN_011BDD50
+  00E34E56  test      rax, rax                                      
+  00E34E59  je        0xe34ea1                                      
+  00E34E5B  mov       rdx, qword ptr [rdi + 8]                      
+  00E34E5F  mov       rcx, rax                                      
+  00E34E62  call      0x11a0040                                        ; FUN_011A0040
+  00E34E67  test      rax, rax                                      
+  00E34E6A  je        0xe34ea1                                      
+  00E34E6C  mov       rcx, rdi                                      
+  00E34E6F  mov       qword ptr [rsp + 0x20], rbp                   
+  00E34E74  mov       byte ptr [rsp + 0x28], bl                     
+  00E34E78  call      0x11bdd50                                        ; FUN_011BDD50
+  00E34E7D  mov       rdx, qword ptr [rdi + 8]                      
+  00E34E81  mov       rcx, rax                                      
+  00E34E84  mov       rbx, rax                                      
+  00E34E87  call      0x11a0050                                        ; FUN_011A0050
+  00E34E8C  mov       r9, qword ptr [rbx]                           
+  00E34E8F  lea       r8, [rsp + 0x20]                              
+  00E34E94  mov       rdx, rax                                      
+  00E34E97  mov       rcx, rbx                                      
+  00E34E9A  call      qword ptr [r9 + 0x220]                        
+  00E34EA1  lea       rbx, [rsi + 0x30]                             
+  00E34EA5  xor       edx, edx                                      
+  00E34EA7  mov       rcx, rbx                                      
+  00E34EAA  call      0x11bb360                                        ; FUN_011BB360
+  00E34EAF  xor       esi, esi                                      
+  00E34EB1  xor       edx, edx                                      
+  00E34EB3  mov       eax, esi                                      
+  00E34EB5  mov       qword ptr [rsp + 0x40], rsi                   
+  00E34EBA  mov       rcx, rdi                                      
+  00E34EBD  mov       qword ptr [rbx + 8], rax                      
+  00E34EC1  call      0x11bb360                                        ; FUN_011BB360
+  00E34EC6  mov       rbx, qword ptr [rsp + 0x48]                   
+  00E34ECB  mov       eax, esi                                      
+  00E34ECD  mov       rbp, qword ptr [rsp + 0x50]                   
+  00E34ED2  mov       qword ptr [rsp + 0x40], rsi                   
+  00E34ED7  mov       rsi, qword ptr [rsp + 0x58]                   
+  00E34EDC  mov       qword ptr [rdi + 8], rax                      
+  00E34EE0  add       rsp, 0x30                                     
+  00E34EE4  pop       rdi                                           
+  00E34EE5  ret                                                     
+
+==============================================================================
+UFS_DialogueAction::InitAction  @ 00E336E0   pdata=NONE
+==============================================================================
+  00E336E0  mov       qword ptr [rcx + 0x30], rdx                   
+  00E336E4  jmp       0xe4d880                                         ; FUN_00E4D880
+  00E336E9  int3                                                    
+  00E336EA  int3                                                    
+  00E336EB  int3                                                    
+  00E336EC  int3                                                    
+  00E336ED  int3                                                    
+  00E336EE  int3                                                    
+  00E336EF  int3                                                    
+  00E336F0  push      rbp                                           
+  00E336F2  push      rdi                                           
+  00E336F3  push      r13                                           
+  00E336F5  push      r14                                           
+  00E336F7  push      r15                                           
+  00E336F9  sub       rsp, 0x60                                     
+  00E336FD  mov       r14, qword ptr [rcx + 0x5a0]                  
+  00E33704  mov       r15, rcx                                      
+  00E33707  test      r14, r14                                      
+  00E3370A  jne       0xe3371b                                      
+  00E3370C  call      0xe511b0                                         ; FUN_00E511B0
+  00E33711  mov       r14, rax                                      
+  00E33714  mov       qword ptr [r15 + 0x5a0], rax                  
+  00E3371B  lea       rdi, [r15 + 0x508]                            
+  00E33722  xor       r13d, r13d                                    
+  00E33725  mov       dword ptr [rdi + 8], r13d                     
+  00E33729  cmp       dword ptr [rdi + 0xc], r13d                   
+  00E3372D  je        0xe33739                                      
+  00E3372F  xor       edx, edx                                      
+  00E33731  mov       rcx, rdi                                      
+  00E33734  call      0x7da7c0                                         ; FUN_007DA7C0
+  00E33739  mov       ebp, r13d                                     
+  00E3373C  cmp       dword ptr [r14 + 0x60], r13d                  
+  00E33740  jle       0xe3390a                                      
+  00E33746  mov       qword ptr [rsp + 0xa0], rsi                   
+  00E3374E  mov       qword ptr [rsp + 0xa8], r12                   
+  00E33756  mov       r12, r13                                      
+  00E33759  mov       qword ptr [rsp + 0x98], rbx                   
+  00E33761  mov       rax, qword ptr [r14 + 0x58]                   
+  00E33765  mov       rsi, qword ptr [r12 + rax + 0x60]             
+  00E3376A  test      rsi, rsi                                      
+  00E3376D  je        0xe338bf                                      
+  00E33773  call      0xe4b070                                         ; FUN_00E4B070
+  00E33778  test      rax, rax                                      
+  00E3377B  je        0xe338bf                                      
+  00E33781  lea       rdx, [rax + 0x30]                             
+  00E33785  movsxd    rax, dword ptr [rax + 0x38]                   
+  00E33789  cmp       eax, dword ptr [rsi + 0x38]                   
+  00E3378C  jg        0xe338bf                                      
+  00E33792  mov       rcx, rax                                      
+  00E33795  mov       rax, qword ptr [rsi + 0x30]                   
+  00E33799  cmp       qword ptr [rax + rcx*8], rdx                  
+  00E3379D  jne       0xe338bf                                      
+  00E337A3  mov       eax, dword ptr [rsi + 0xc]                    
+  00E337A6  cmp       eax, dword ptr [rip + 0x3c30ac8]                 ; GLOBAL 04A64274
+  00E337AC  jge       0xe337de                                      
+  00E337AE  movzx     edx, ax                                       
+  00E337B1  test      eax, eax                                      
+  00E337B3  jns       0xe337c0                                      
+  00E337B5  add       eax, 0xffff                                   
+  00E337BA  sub       edx, 0x10000                                  
+  00E337C0  sar       eax, 0x10                                     
+  00E337C3  movsxd    rcx, eax                                      
+  00E337C6  movsxd    rax, edx                                      
+  00E337C9  lea       rdx, [rax + rax*2]                            
+  00E337CD  mov       rax, qword ptr [rip + 0x3c30a8c]                 ; GLOBAL 04A64260
+  00E337D4  mov       rcx, qword ptr [rax + rcx*8]                  
+  00E337D8  lea       rax, [rcx + rdx*8]                            
+  00E337DC  jmp       0xe337e1                                         ; FUN_00E337E1
+  00E337DE  mov       rax, r13                                      
+  00E337E1  mov       eax, dword ptr [rax + 8]                      
+  00E337E4  shr       eax, 0x1d                                     
+  00E337E7  test      al, 1                                         
+  00E337E9  jne       0xe338bf                                      
+  00E337EF  mov       qword ptr [rsp + 0x90], r13                   
+  00E337F7  call      0xe4b070                                         ; FUN_00E4B070
+  00E337FC  test      rax, rax                                      
+  00E337FF  je        0xe3381b                                      
+  00E33801  lea       rdx, [rax + 0x30]                             
+  00E33805  movsxd    rax, dword ptr [rax + 0x38]                   
+  00E33809  cmp       eax, dword ptr [rsi + 0x38]                   
+  00E3380C  jg        0xe3381b                                      
+  00E3380E  mov       rcx, rax                                      
+  00E33811  mov       rax, qword ptr [rsi + 0x30]                   
+  00E33815  cmp       qword ptr [rax + rcx*8], rdx                  
+  00E33819  je        0xe3381e                                      
+  00E3381B  mov       rsi, r13                                      
+  00E3381E  xor       edx, edx                                      
+
+==============================================================================
+shared helper (terminal call of several BP thunks)  @ 00EAE0B0   pdata=00EAE0B0..00EAE0E4
+==============================================================================
+  00EAE0B0  test      rcx, rcx                                      
+  00EAE0B3  je        0xeae0e3                                      
+  00EAE0B5  push      rbx                                           
+  00EAE0B6  sub       rsp, 0x20                                     
+  00EAE0BA  mov       rbx, rcx                                      
+  00EAE0BD  mov       rcx, qword ptr [rip + 0x3b31a6c]                 ; GLOBAL 049DFB30
+  00EAE0C4  test      rcx, rcx                                      
+  00EAE0C7  jne       0xeae0d5                                      
+  00EAE0C9  call      0xeae1c0                                         ; FUN_00EAE1C0
+  00EAE0CE  mov       rcx, qword ptr [rip + 0x3b31a5b]                 ; GLOBAL 049DFB30
+  00EAE0D5  mov       rax, qword ptr [rcx]                          
+  00EAE0D8  mov       rdx, rbx                                      
+  00EAE0DB  call      qword ptr [rax + 0x30]                        
+  00EAE0DE  add       rsp, 0x20                                     
+  00EAE0E2  pop       rbx                                           
+  00EAE0E3  ret                                                     
+
+==============================================================================
+APlayerController::GetHUD  (MyHUD at +0x2B0)  @ 02E7E300   pdata=02E7E300..02E7E32C
+==============================================================================
+  02E7E300  push      rbx                                           
+  02E7E302  sub       rsp, 0x20                                     
+  02E7E306  mov       rax, qword ptr [rdx + 0x20]                   
+  02E7E30A  xor       r9d, r9d                                      
+  02E7E30D  test      rax, rax                                      
+  02E7E310  mov       rbx, r8                                       
+  02E7E313  setne     r9b                                           
+  02E7E317  add       r9, rax                                       
+  02E7E31A  mov       qword ptr [rdx + 0x20], r9                    
+  02E7E31E  call      0x2b5f160                                        ; FUN_02B5F160
+  02E7E323  mov       qword ptr [rbx], rax                          
+  02E7E326  add       rsp, 0x20                                     
+  02E7E32A  pop       rbx                                           
+  02E7E32B  ret                                                     
+
+==============================================================================
+UUserWidget::AddToViewport (tails into UUserWidget vtable +0x300)  @ 023F7BB0   pdata=NONE
+==============================================================================
+  023F7BB0  mov       rax, qword ptr [rcx]                          
+  023F7BB3  mov       r8d, edx                                      
+  023F7BB6  xor       edx, edx                                      
+  023F7BB8  jmp       qword ptr [rax + 0x300]                       
+  023F7BBF  int3                                                    
+  023F7BC0  xor       r8d, r8d                                      
+  023F7BC3  mov       edx, r8d                                      
+  023F7BC6  cmp       byte ptr [rcx + 0x579], dl                    
+  023F7BCC  cmovne    rdx, rcx                                      
+  023F7BD0  test      rdx, rdx                                      
+  023F7BD3  lea       rax, [rdx + 0x340]                            
+  023F7BDA  cmove     rax, r8                                       
+  023F7BDE  ret                                                     
+  023F7BDF  int3                                                    
+  023F7BE0  movzx     eax, byte ptr [rcx + 0x579]                   
+  023F7BE7  ret                                                     
+  023F7BE8  int3                                                    
+  023F7BE9  int3                                                    
+  023F7BEA  int3                                                    
+  023F7BEB  int3                                                    
+  023F7BEC  int3                                                    
+  023F7BED  int3                                                    
+  023F7BEE  int3                                                    
+  023F7BEF  int3                                                    
+  023F7BF0  cmp       qword ptr [rcx + 0x58], 0                     
+  023F7BF5  je        0x23f7c05                                     
+  023F7BF7  mov       eax, dword ptr [rcx + 0x98]                   
+  023F7BFD  cmp       dword ptr [rdx + 0x50], eax                   
+  023F7C00  jne       0x23f7c05                                     
+  023F7C02  mov       al, 1                                         
+  023F7C04  ret                                                     
+  023F7C05  xor       al, al                                        
+  023F7C07  ret                                                     
+  023F7C08  int3                                                    
+  023F7C09  int3                                                    
+  023F7C0A  int3                                                    
+  023F7C0B  int3                                                    
+  023F7C0C  int3                                                    
+  023F7C0D  int3                                                    
+  023F7C0E  int3                                                    
+  023F7C0F  int3                                                    
+  023F7C10  push      rbp                                           
+  023F7C12  push      rsi                                           
+  023F7C13  push      r15                                           
+  023F7C15  sub       rsp, 0x20                                     
+  023F7C19  mov       rsi, rcx                                      
+  023F7C1C  mov       r15, rdx                                      
+  023F7C1F  add       rcx, 0x70                                     
+  023F7C23  call      0x13bd0f0                                        ; FUN_013BD0F0
+  023F7C28  test      al, al                                        
+  023F7C2A  jne       0x23f7cd2                                     
+  023F7C30  cmp       dword ptr [rsi + 0x88], 0                     
+  023F7C37  mov       qword ptr [rsp + 0x40], rbx                   
+  023F7C3C  mov       qword ptr [rsp + 0x48], rdi                   
+  023F7C41  mov       qword ptr [rsp + 0x50], r12                   
+  023F7C46  mov       qword ptr [rsp + 0x58], r14                   
+  023F7C4B  je        0x23f7c68                                     
+  023F7C4D  mov       rcx, qword ptr [rsi + 0x80]                   
+  023F7C54  test      rcx, rcx                                      
+  023F7C57  je        0x23f7c68                                     
+  023F7C59  mov       rax, qword ptr [rcx]                          
+  023F7C5C  call      qword ptr [rax + 0x30]                        
+  023F7C5F  test      al, al                                        
+  023F7C61  je        0x23f7c68                                     
+  023F7C63  mov       r12b, 1                                       
+  023F7C66  jmp       0x23f7c6b                                        ; FUN_023F7C6B
+  023F7C68  xor       r12b, r12b                                    
+  023F7C6B  cmp       dword ptr [r15 + 0x18], 0                     
+  023F7C70  je        0x23f7c89                                     
+  023F7C72  mov       rcx, qword ptr [r15 + 0x10]                   
+  023F7C76  test      rcx, rcx                                      
+  023F7C79  je        0x23f7c89                                     
+  023F7C7B  mov       rax, qword ptr [rcx]                          
+  023F7C7E  call      qword ptr [rax + 0x30]                        
+  023F7C81  test      al, al                                        
+  023F7C83  je        0x23f7c89                                     
+  023F7C85  mov       bl, 1                                         
+  023F7C87  jmp       0x23f7c8b                                        ; FUN_023F7C8B
+  023F7C89  xor       bl, bl                                        
+  023F7C8B  movsd     xmm0, qword ptr [r15]                         
+  023F7C90  lea       rdx, [r15 + 0x10]                             
+  023F7C94  movsd     qword ptr [rsi + 0x70], xmm0                  
+  023F7C99  lea       rcx, [rsi + 0x80]                             
+  023F7CA0  movzx     eax, byte ptr [r15 + 8]                       
+  023F7CA5  mov       byte ptr [rsi + 0x78], al                     
+  023F7CA8  call      0x7b3fd0                                         ; FUN_007B3FD0
+  023F7CAD  xor       bl, r12b                                      
+  023F7CB0  mov       rcx, rsi                                      
+  023F7CB3  shl       bl, 2                                         
+  023F7CB6  lea       edx, [rbx + 1]                                
+  023F7CB9  call      0x127f760                                        ; FUN_0127F760
+  023F7CBE  mov       r14, qword ptr [rsp + 0x58]                   
+  023F7CC3  mov       r12, qword ptr [rsp + 0x50]                   
+  023F7CC8  mov       rdi, qword ptr [rsp + 0x48]                   
+  023F7CCD  mov       rbx, qword ptr [rsp + 0x40]                   
+  023F7CD2  mov       rax, rsi                                      
+  023F7CD5  add       rsp, 0x20                                     
+  023F7CD9  pop       r15                                           
+  023F7CDB  pop       rsi                                           
+  023F7CDC  pop       rbp                                           
+  023F7CDD  ret                                                     
+  023F7CDE  int3                                                    
+  023F7CDF  int3                                                    
+  023F7CE0  mov       qword ptr [rsp + 0x10], rbx                   
+  023F7CE5  mov       qword ptr [rsp + 0x18], rsi                   
+  023F7CEA  push      rdi                                           
+  023F7CEB  sub       rsp, 0x20                                     
+
+==============================================================================
+UUserWidget::AddToPlayerScreen (GetOwningLocalPlayer = slot 0x2A0)  @ 023F6C40   pdata=023F6C40..023F6D5C
+==============================================================================
+  023F6C40  mov       qword ptr [rsp + 0x10], rbx                   
+  023F6C45  push      rdi                                           
+  023F6C46  sub       rsp, 0x70                                     
+  023F6C4A  mov       rax, qword ptr [rcx]                          
+  023F6C4D  mov       edi, edx                                      
+  023F6C4F  mov       rbx, rcx                                      
+  023F6C52  call      qword ptr [rax + 0x2a0]                       
+  023F6C58  test      rax, rax                                      
+  023F6C5B  je        0x23f6c80                                     
+  023F6C5D  mov       r9, qword ptr [rbx]                           
+  023F6C60  mov       r8d, edi                                      
+  023F6C63  mov       rdx, rax                                      
+  023F6C66  mov       rcx, rbx                                      
+  023F6C69  call      qword ptr [r9 + 0x300]                        
+  023F6C70  mov       al, 1                                         
+  023F6C72  mov       rbx, qword ptr [rsp + 0x88]                   
+  023F6C7A  add       rsp, 0x70                                     
+  023F6C7E  pop       rdi                                           
+  023F6C7F  ret                                                     
+  023F6C80  mov       r8d, 1                                        
+  023F6C86  lea       rdx, [rip + 0x141615f]                        
+  023F6C8D  lea       rcx, [rsp + 0x80]                             
+  023F6C95  call      0xfabdf0                                         ; FUN_00FABDF0
+  023F6C9A  lea       r9, [rip + 0x180d10f]                         
+  023F6CA1  lea       r8, [rip + 0x17f7ce0]                         
+  023F6CA8  lea       rdx, [rip + 0x180d141]                        
+  023F6CAF  lea       rcx, [rsp + 0x30]                             
+  023F6CB4  call      0xead410                                         ; FUN_00EAD410
+  023F6CB9  lea       rdx, [rsp + 0x80]                             
+  023F6CC1  mov       rbx, rax                                      
+  023F6CC4  lea       rcx, [rsp + 0x48]                             
+  023F6CC9  call      0xf0be40                                         ; FUN_00F0BE40
+  023F6CCE  mov       rcx, rax                                      
+  023F6CD1  lea       rdx, [rsp + 0x20]                             
+  023F6CD6  mov       r8, rbx                                       
+  023F6CD9  call      0xf138a0                                         ; FUN_00F138A0
+  023F6CDE  mov       rbx, qword ptr [rsp + 0x28]                   
+  023F6CE3  test      rbx, rbx                                      
+  023F6CE6  je        0x23f6d0a                                     
+  023F6CE8  sub       dword ptr [rbx + 8], 1                        
+  023F6CEC  jne       0x23f6d0a                                     
+  023F6CEE  mov       rax, qword ptr [rbx]                          
+  023F6CF1  mov       rcx, rbx                                      
+  023F6CF4  call      qword ptr [rax]                               
+  023F6CF6  sub       dword ptr [rbx + 0xc], 1                      
+  023F6CFA  jne       0x23f6d0a                                     
+  023F6CFC  mov       rax, qword ptr [rbx]                          
+  023F6CFF  mov       edx, 1                                        
+  023F6D04  mov       rcx, rbx                                      
+  023F6D07  call      qword ptr [rax + 8]                           
+  023F6D0A  lea       rcx, [rsp + 0x48]                             
+  023F6D0F  call      0xf0d1b0                                         ; FUN_00F0D1B0
+  023F6D14  mov       rbx, qword ptr [rsp + 0x38]                   
+  023F6D19  test      rbx, rbx                                      
+  023F6D1C  je        0x23f6d4c                                     
+  023F6D1E  mov       edi, 0xffffffff                               
+  023F6D23  mov       eax, edi                                      
+  023F6D25  lock xadd dword ptr [rbx + 8], eax                      
+  023F6D2A  cmp       eax, 1                                        
+  023F6D2D  jne       0x23f6d4c                                     
+  023F6D2F  mov       rax, qword ptr [rbx]                          
+  023F6D32  mov       rcx, rbx                                      
+  023F6D35  call      qword ptr [rax]                               
+  023F6D37  lock xadd dword ptr [rbx + 0xc], edi                    
+  023F6D3C  cmp       edi, 1                                        
+  023F6D3F  jne       0x23f6d4c                                     
+  023F6D41  mov       rax, qword ptr [rbx]                          
+  023F6D44  mov       edx, edi                                      
+  023F6D46  mov       rcx, rbx                                      
+  023F6D49  call      qword ptr [rax + 8]                           
+  023F6D4C  mov       rbx, qword ptr [rsp + 0x88]                   
+  023F6D54  xor       al, al                                        
+  023F6D56  add       rsp, 0x70                                     
+  023F6D5A  pop       rdi                                           
+  023F6D5B  ret                                                     
+
+==============================================================================
+UWidgetBlueprintLibrary::Create  @ 02402C00   pdata=02402C00..02402D58
+==============================================================================
+  02402C00  mov       qword ptr [rsp + 8], rbx                      
+  02402C05  mov       qword ptr [rsp + 0x18], rbp                   
+  02402C0A  mov       qword ptr [rsp + 0x20], rsi                   
+  02402C0F  push      rdi                                           
+  02402C10  sub       rsp, 0x20                                     
+  02402C14  mov       rbp, r8                                       
+  02402C17  mov       rbx, rdx                                      
+  02402C1A  mov       rsi, rcx                                      
+  02402C1D  test      rdx, rdx                                      
+  02402C20  je        0x2402d41                                     
+  02402C26  call      0x247d5c0                                        ; FUN_0247D5C0
+  02402C2B  test      rax, rax                                      
+  02402C2E  je        0x2402d41                                     
+  02402C34  lea       rdx, [rax + 0x30]                             
+  02402C38  movsxd    rax, dword ptr [rax + 0x38]                   
+  02402C3C  cmp       eax, dword ptr [rbx + 0x38]                   
+  02402C3F  jg        0x2402d41                                     
+  02402C45  mov       rcx, rax                                      
+  02402C48  mov       rax, qword ptr [rbx + 0x30]                   
+  02402C4C  cmp       qword ptr [rax + rcx*8], rdx                  
+  02402C50  jne       0x2402d41                                     
+  02402C56  test      rbp, rbp                                      
+  02402C59  je        0x2402ca6                                     
+  02402C5B  mov       rcx, rbp                                      
+  02402C5E  xor       edi, edi                                      
+  02402C60  mov       rdx, rbx                                      
+  02402C63  mov       r8d, edi                                      
+  02402C66  mov       qword ptr [rsp + 0x38], rdi                   
+  02402C6B  call      0x24063d0                                        ; FUN_024063D0
+  02402C70  mov       rbx, rax                                      
+  02402C73  test      rax, rax                                      
+  02402C76  je        0x2402c9b                                     
+  02402C78  call      0x247d5c0                                        ; FUN_0247D5C0
+  02402C7D  mov       rdx, qword ptr [rbx + 0x10]                   
+  02402C81  lea       r8, [rax + 0x30]                              
+  02402C85  movsxd    rax, dword ptr [rax + 0x38]                   
+  02402C89  cmp       eax, dword ptr [rdx + 0x38]                   
+  02402C8C  jg        0x2402c9b                                     
+  02402C8E  mov       rcx, rax                                      
+  02402C91  mov       rax, qword ptr [rdx + 0x30]                   
+  02402C95  cmp       qword ptr [rax + rcx*8], r8                   
+  02402C99  je        0x2402c9e                                     
+  02402C9B  mov       rbx, rdi                                      
+  02402C9E  mov       rax, rbx                                      
+  02402CA1  jmp       0x2402d43                                        ; FUN_02402D43
+  02402CA6  test      rsi, rsi                                      
+  02402CA9  je        0x2402d10                                     
+  02402CAB  call      0x2e7a290                                        ; FUN_02E7A290
+  02402CB0  mov       rdx, qword ptr [rsi + 0x10]                   
+  02402CB4  lea       r8, [rax + 0x30]                              
+  02402CB8  movsxd    rax, dword ptr [rax + 0x38]                   
+  02402CBC  cmp       eax, dword ptr [rdx + 0x38]                   
+  02402CBF  jg        0x2402cd3                                     
+  02402CC1  mov       rcx, rax                                      
+  02402CC4  mov       rax, qword ptr [rdx + 0x30]                   
+  02402CC8  cmp       qword ptr [rax + rcx*8], r8                   
+  02402CCC  jne       0x2402cd3                                     
+  02402CCE  mov       rcx, rsi                                      
+  02402CD1  jmp       0x2402c5e                                        ; FUN_02402C5E
+  02402CD3  call      0x247d5c0                                        ; FUN_0247D5C0
+  02402CD8  mov       rdx, qword ptr [rsi + 0x10]                   
+  02402CDC  lea       r8, [rax + 0x30]                              
+  02402CE0  movsxd    rax, dword ptr [rax + 0x38]                   
+  02402CE4  cmp       eax, dword ptr [rdx + 0x38]                   
+  02402CE7  jg        0x2402d10                                     
+  02402CE9  mov       rcx, rax                                      
+  02402CEC  mov       rax, qword ptr [rdx + 0x30]                   
+  02402CF0  cmp       qword ptr [rax + rcx*8], r8                   
+  02402CF4  jne       0x2402d10                                     
+  02402CF6  xor       edi, edi                                      
+  02402CF8  mov       rdx, rbx                                      
+  02402CFB  mov       r8d, edi                                      
+  02402CFE  mov       qword ptr [rsp + 0x38], rdi                   
+  02402D03  mov       rcx, rsi                                      
+  02402D06  call      0x2406a60                                        ; FUN_02406A60
+  02402D0B  jmp       0x2402c70                                        ; FUN_02402C70
+  02402D10  mov       rcx, qword ptr [rip + 0x27a2071]                 ; GLOBAL 04BA4D88
+  02402D17  mov       r8d, 1                                        
+  02402D1D  mov       rdx, rsi                                      
+  02402D20  call      0x2cdedf0                                        ; FUN_02CDEDF0
+  02402D25  test      rax, rax                                      
+  02402D28  je        0x2402d41                                     
+  02402D2A  xor       edi, edi                                      
+  02402D2C  mov       rdx, rbx                                      
+  02402D2F  mov       r8d, edi                                      
+  02402D32  mov       qword ptr [rsp + 0x38], rdi                   
+  02402D37  mov       rcx, rax                                      
+  02402D3A  call      0xa71240                                         ; FUN_00A71240
+  02402D3F  jmp       0x2402d43                                        ; FUN_02402D43
+  02402D41  xor       eax, eax                                      
+  02402D43  mov       rbx, qword ptr [rsp + 0x30]                   
+  02402D48  mov       rbp, qword ptr [rsp + 0x40]                   
+  02402D4D  mov       rsi, qword ptr [rsp + 0x48]                   
+  02402D52  add       rsp, 0x20                                     
+  02402D56  pop       rdi                                           
+  02402D57  ret                                                     
+
+==============================================================================
+AHUD::DrawText  @ 02DCE0E0   pdata=02DCE0E0..02DCE315
+==============================================================================
+  02DCE0E0  mov       qword ptr [rsp + 8], rbx                      
+  02DCE0E5  push      rbp                                           
+  02DCE0E6  push      rsi                                           
+  02DCE0E7  push      rdi                                           
+  02DCE0E8  mov       rbp, rsp                                      
+  02DCE0EB  sub       rsp, 0x80                                     
+  02DCE0F2  xor       edi, edi                                      
+  02DCE0F4  mov       rbx, rdx                                      
+  02DCE0F7  mov       qword ptr [rbp - 0x30], rdi                   
+  02DCE0FB  mov       rsi, rcx                                      
+  02DCE0FE  mov       qword ptr [rbp - 0x28], rdi                   
+  02DCE102  call      0x1193870                                        ; FUN_01193870
+  02DCE107  mov       rcx, rbx                                      
+  02DCE10A  cmp       qword ptr [rbx + 0x20], rdi                   
+  02DCE10E  je        0x2dce11f                                     
+  02DCE110  mov       rdx, qword ptr [rbx + 0x18]                   
+  02DCE114  lea       r8, [rbp - 0x30]                              
+  02DCE118  call      0x11b1870                                        ; FUN_011B1870
+  02DCE11D  jmp       0x2dce13a                                        ; FUN_02DCE13A
+  02DCE11F  mov       r8, qword ptr [rbx + 0x80]                    
+  02DCE126  lea       rdx, [rbp - 0x30]                             
+  02DCE12A  mov       rax, qword ptr [r8 + 0x20]                    
+  02DCE12E  mov       qword ptr [rbx + 0x80], rax                   
+  02DCE135  call      0x11b18a0                                        ; FUN_011B18A0
+  02DCE13A  call      0x1193920                                        ; FUN_01193920
+  02DCE13F  mov       rcx, rbx                                      
+  02DCE142  cmp       qword ptr [rbx + 0x20], rdi                   
+  02DCE146  je        0x2dce157                                     
+  02DCE148  mov       rdx, qword ptr [rbx + 0x18]                   
+  02DCE14C  lea       r8, [rbp - 0x20]                              
+  02DCE150  call      0x11b1870                                        ; FUN_011B1870
+  02DCE155  jmp       0x2dce172                                        ; FUN_02DCE172
+  02DCE157  mov       r8, qword ptr [rbx + 0x80]                    
+  02DCE15E  lea       rdx, [rbp - 0x20]                             
+  02DCE162  mov       rax, qword ptr [r8 + 0x20]                    
+  02DCE166  mov       qword ptr [rbx + 0x80], rax                   
+  02DCE16D  call      0x11b18a0                                        ; FUN_011B18A0
+  02DCE172  mov       dword ptr [rbp - 0x3c], edi                   
+  02DCE175  call      0x11890d0                                        ; FUN_011890D0
+  02DCE17A  mov       rcx, rbx                                      
+  02DCE17D  cmp       qword ptr [rbx + 0x20], rdi                   
+  02DCE181  je        0x2dce192                                     
+  02DCE183  mov       rdx, qword ptr [rbx + 0x18]                   
+  02DCE187  lea       r8, [rbp - 0x3c]                              
+  02DCE18B  call      0x11b1870                                        ; FUN_011B1870
+  02DCE190  jmp       0x2dce1ad                                        ; FUN_02DCE1AD
+  02DCE192  mov       r8, qword ptr [rbx + 0x80]                    
+  02DCE199  lea       rdx, [rbp - 0x3c]                             
+  02DCE19D  mov       rax, qword ptr [r8 + 0x20]                    
+  02DCE1A1  mov       qword ptr [rbx + 0x80], rax                   
+  02DCE1A8  call      0x11b18a0                                        ; FUN_011B18A0
+  02DCE1AD  mov       dword ptr [rbp - 0x40], edi                   
+  02DCE1B0  call      0x11890d0                                        ; FUN_011890D0
+  02DCE1B5  mov       rcx, rbx                                      
+  02DCE1B8  cmp       qword ptr [rbx + 0x20], rdi                   
+  02DCE1BC  je        0x2dce1cd                                     
+  02DCE1BE  mov       rdx, qword ptr [rbx + 0x18]                   
+  02DCE1C2  lea       r8, [rbp - 0x40]                              
+  02DCE1C6  call      0x11b1870                                        ; FUN_011B1870
+  02DCE1CB  jmp       0x2dce1e8                                        ; FUN_02DCE1E8
+  02DCE1CD  mov       r8, qword ptr [rbx + 0x80]                    
+  02DCE1D4  lea       rdx, [rbp - 0x40]                             
+  02DCE1D8  mov       rax, qword ptr [r8 + 0x20]                    
+  02DCE1DC  mov       qword ptr [rbx + 0x80], rax                   
+  02DCE1E3  call      0x11b18a0                                        ; FUN_011B18A0
+  02DCE1E8  mov       qword ptr [rbp - 0x38], rdi                   
+  02DCE1EC  call      0x1189a70                                        ; FUN_01189A70
+  02DCE1F1  mov       rcx, rbx                                      
+  02DCE1F4  cmp       qword ptr [rbx + 0x20], rdi                   
+  02DCE1F8  je        0x2dce209                                     
+  02DCE1FA  mov       rdx, qword ptr [rbx + 0x18]                   
+  02DCE1FE  lea       r8, [rbp - 0x38]                              
+  02DCE202  call      0x11b1870                                        ; FUN_011B1870
+  02DCE207  jmp       0x2dce224                                        ; FUN_02DCE224
+  02DCE209  mov       r8, qword ptr [rbx + 0x80]                    
+  02DCE210  lea       rdx, [rbp - 0x38]                             
+  02DCE214  mov       rax, qword ptr [r8 + 0x20]                    
+  02DCE218  mov       qword ptr [rbx + 0x80], rax                   
+  02DCE21F  call      0x11b18a0                                        ; FUN_011B18A0
+  02DCE224  mov       dword ptr [rbp + 0x38], edi                   
+  02DCE227  call      0x11890d0                                        ; FUN_011890D0
+  02DCE22C  mov       rcx, rbx                                      
+  02DCE22F  cmp       qword ptr [rbx + 0x20], rdi                   
+  02DCE233  je        0x2dce244                                     
+  02DCE235  mov       rdx, qword ptr [rbx + 0x18]                   
+  02DCE239  lea       r8, [rbp + 0x38]                              
+  02DCE23D  call      0x11b1870                                        ; FUN_011B1870
+  02DCE242  jmp       0x2dce25f                                        ; FUN_02DCE25F
+  02DCE244  mov       r8, qword ptr [rbx + 0x80]                    
+  02DCE24B  lea       rdx, [rbp + 0x38]                             
+  02DCE24F  mov       rax, qword ptr [r8 + 0x20]                    
+  02DCE253  mov       qword ptr [rbx + 0x80], rax                   
+  02DCE25A  call      0x11b18a0                                        ; FUN_011B18A0
+  02DCE25F  mov       dword ptr [rbp + 0x28], edi                   
+  02DCE262  call      0x1188d60                                        ; FUN_01188D60
+  02DCE267  mov       rcx, rbx                                      
+  02DCE26A  cmp       qword ptr [rbx + 0x20], rdi                   
+  02DCE26E  je        0x2dce27f                                     
+  02DCE270  mov       rdx, qword ptr [rbx + 0x18]                   
+  02DCE274  lea       r8, [rbp + 0x28]                              
+  02DCE278  call      0x11b1870                                        ; FUN_011B1870
+  02DCE27D  jmp       0x2dce29a                                        ; FUN_02DCE29A
+  02DCE27F  mov       r8, qword ptr [rbx + 0x80]                    
+  02DCE286  lea       rdx, [rbp + 0x28]                             
+  02DCE28A  mov       rax, qword ptr [r8 + 0x20]                    
+  02DCE28E  mov       qword ptr [rbx + 0x80], rax                   
+  02DCE295  call      0x11b18a0                                        ; FUN_011B18A0
+  02DCE29A  mov       rax, qword ptr [rbx + 0x20]                   
+  02DCE29E  lea       r8, [rbp - 0x10]                              
+  02DCE2A2  movups    xmm0, xmmword ptr [rbp - 0x20]                
+  02DCE2A6  lea       rdx, [rbp - 0x30]                             
+  02DCE2AA  test      rax, rax                                      
+  02DCE2AD  movss     xmm3, dword ptr [rbp - 0x3c]                  
+  02DCE2B2  mov       rcx, rsi                                      
+  02DCE2B5  setne     dil                                           
+  02DCE2B9  movdqa    xmmword ptr [rbp - 0x10], xmm0                
+  02DCE2BE  movss     xmm0, dword ptr [rbp + 0x38]                  
+  02DCE2C3  add       rdi, rax                                      
+  02DCE2C6  cmp       dword ptr [rbp + 0x28], 0                     
+  02DCE2CA  mov       qword ptr [rbx + 0x20], rdi                   
+  02DCE2CE  setne     al                                            
+  02DCE2D1  mov       byte ptr [rsp + 0x38], al                     
+  02DCE2D5  mov       rax, qword ptr [rbp - 0x38]                   
+  02DCE2D9  movss     dword ptr [rsp + 0x30], xmm0                  
+  02DCE2DF  movss     xmm0, dword ptr [rbp - 0x40]                  
+  02DCE2E4  mov       qword ptr [rsp + 0x28], rax                   
+  02DCE2E9  movss     dword ptr [rsp + 0x20], xmm0                  
+  02DCE2EF  call      0x2942210                                        ; FUN_02942210
+  02DCE2F4  mov       rcx, qword ptr [rbp - 0x30]                   
+  02DCE2F8  test      rcx, rcx                                      
+  02DCE2FB  je        0x2dce302                                     
+  02DCE2FD  call      0xeae0b0                                         ; FUN_00EAE0B0
+  02DCE302  mov       rbx, qword ptr [rsp + 0xa0]                   
+  02DCE30A  add       rsp, 0x80                                     
+  02DCE311  pop       rdi                                           
+  02DCE312  pop       rsi                                           
+  02DCE313  pop       rbp                                           
+  02DCE314  ret                                                     
+
+==============================================================================
+AHUD::DrawRect  @ 02942160   pdata=02942160..0294220A
+==============================================================================
+  02942160  mov       rax, rsp                                      
+  02942163  mov       qword ptr [rax + 8], rbx                      
+  02942167  push      rdi                                           
+  02942168  sub       rsp, 0xe0                                     
+  0294216F  movaps    xmmword ptr [rax - 0x18], xmm6                
+  02942173  mov       rdi, rdx                                      
+  02942176  movaps    xmmword ptr [rax - 0x28], xmm7                
+  0294217A  movaps    xmm6, xmm3                                    
+  0294217D  movaps    xmm7, xmm2                                    
+  02942180  mov       rbx, rcx                                      
+  02942183  call      0x2955640                                        ; FUN_02955640
+  02942188  test      al, al                                        
+  0294218A  je        0x29421ef                                     
+  0294218C  movss     xmm0, dword ptr [rsp + 0x110]                 
+  02942195  lea       r9, [rsp + 0x30]                              
+  0294219A  movss     xmm1, dword ptr [rsp + 0x118]                 
+  029421A3  lea       rdx, [rsp + 0x38]                             
+  029421A8  mov       r8, qword ptr [rip + 0x2222701]                  ; GLOBAL 04B648B0
+  029421AF  lea       rcx, [rsp + 0x40]                             
+  029421B4  movss     dword ptr [rsp + 0x30], xmm0                  
+  029421BA  movss     dword ptr [rsp + 0x34], xmm1                  
+  029421C0  movss     dword ptr [rsp + 0x38], xmm7                  
+  029421C6  movss     dword ptr [rsp + 0x3c], xmm6                  
+  029421CC  mov       qword ptr [rsp + 0x20], rdi                   
+  029421D1  call      0x2cf7ae0                                        ; FUN_02CF7AE0
+  029421D6  mov       rcx, qword ptr [rbx + 0x270]                  
+  029421DD  lea       rdx, [rsp + 0x40]                             
+  029421E2  mov       dword ptr [rsp + 0x54], 2                     
+  029421EA  call      0x2d07140                                        ; FUN_02D07140
+  029421EF  lea       r11, [rsp + 0xe0]                             
+  029421F7  mov       rbx, qword ptr [r11 + 0x10]                   
+  029421FB  movaps    xmm6, xmmword ptr [r11 - 0x10]                
+  02942200  movaps    xmm7, xmmword ptr [r11 - 0x20]                
+  02942205  mov       rsp, r11                                      
+  02942208  pop       rdi                                           
+  02942209  ret                                                     
+
+==============================================================================
+AHUD::Project  @ 02958890   pdata=02958890..02958904
+==============================================================================
+  02958890  mov       qword ptr [rsp + 8], rbx                      
+  02958895  mov       qword ptr [rsp + 0x10], rsi                   
+  0295889A  push      rdi                                           
+  0295889B  sub       rsp, 0x30                                     
+  0295889F  mov       rdi, r8                                       
+  029588A2  mov       rbx, rdx                                      
+  029588A5  mov       rsi, rcx                                      
+  029588A8  call      0x2955640                                        ; FUN_02955640
+  029588AD  test      al, al                                        
+  029588AF  je        0x29588e9                                     
+  029588B1  movsd     xmm0, qword ptr [rdi]                         
+  029588B5  lea       r8, [rsp + 0x20]                              
+  029588BA  mov       eax, dword ptr [rdi + 8]                      
+  029588BD  mov       rdx, rbx                                      
+  029588C0  mov       rcx, qword ptr [rsi + 0x270]                  
+  029588C7  movsd     qword ptr [rsp + 0x20], xmm0                  
+  029588CD  mov       dword ptr [rsp + 0x28], eax                   
+  029588D1  call      0x2d1b510                                        ; FUN_02D1B510
+  029588D6  mov       rax, rbx                                      
+  029588D9  mov       rbx, qword ptr [rsp + 0x40]                   
+  029588DE  mov       rsi, qword ptr [rsp + 0x48]                   
+  029588E3  add       rsp, 0x30                                     
+  029588E7  pop       rdi                                           
+  029588E8  ret                                                     
+  029588E9  mov       rsi, qword ptr [rsp + 0x48]                   
+  029588EE  xor       eax, eax                                      
+  029588F0  mov       qword ptr [rbx], rax                          
+  029588F3  mov       dword ptr [rbx + 8], eax                      
+  029588F6  mov       rax, rbx                                      
+  029588F9  mov       rbx, qword ptr [rsp + 0x40]                   
+  029588FE  add       rsp, 0x30                                     
+  02958902  pop       rdi                                           
+  02958903  ret                                                     
+
+==============================================================================
+AFS_HUD_Base UClass registration stub  @ 00605C20   pdata=00605C20..00605C5A
+==============================================================================
+  00605C20  sub       rsp, 0x48                                     
+  00605C24  xor       eax, eax                                      
+  00605C26  lea       r9, [rip + 0x33334cb]                         
+  00605C2D  mov       qword ptr [rsp + 0x30], rax                   
+  00605C32  lea       r8, [rip + 0x3349b17]                         
+  00605C39  mov       qword ptr [rsp + 0x28], rax                   
+  00605C3E  lea       rdx, [rip + 0x84ff2b]                         
+  00605C45  lea       rcx, [rip + 0x852334]                         
+  00605C4C  mov       byte ptr [rsp + 0x20], al                     
+  00605C50  call      0x11b2330                                        ; FUN_011B2330
+  00605C55  add       rsp, 0x48                                     
+  00605C59  ret                                                     
+
+==============================================================================
+AFS_HUD_Base Z_Construct (via FUN_01041040)  @ 00E55B70   pdata=00E55B70..00E55C22
+==============================================================================
+  00E55B70  mov       r11, rsp                                      
+  00E55B73  sub       rsp, 0x88                                     
+  00E55B7A  mov       rax, qword ptr [rip + 0x3b33d37]                 ; GLOBAL 049898B8
+  00E55B81  test      rax, rax                                      
+  00E55B84  jne       0xe55c1a                                      
+  00E55B8A  xor       ecx, ecx                                      
+  00E55B8C  lea       rax, [rip - 0x6cea63]                         
+  00E55B93  mov       qword ptr [r11 - 0x10], rcx                   
+  00E55B97  lea       r9, [rip - 0x6e14be]                          
+  00E55B9E  mov       byte ptr [rsp + 0x70], cl                     
+  00E55BA2  lea       r8, [rip + 0x3b33d0f]                            ; GLOBAL 049898B8
+  00E55BA9  mov       qword ptr [r11 - 0x20], rax                   
+  00E55BAD  lea       rdx, [rip + 0x2af9b9e]                        
+  00E55BB4  lea       rax, [rip - 0x27be9b]                         
+  00E55BBB  mov       qword ptr [r11 - 0x28], rax                   
+  00E55BBF  lea       rax, [rip + 0x17f353a]                        
+  00E55BC6  mov       qword ptr [r11 - 0x30], rax                   
+  00E55BCA  lea       rax, [rip - 0x6e13c1]                         
+  00E55BD1  mov       qword ptr [r11 - 0x38], rax                   
+  00E55BD5  lea       rax, [rip + 0x464]                            
+  00E55BDC  mov       qword ptr [r11 - 0x40], rax                   
+  00E55BE0  lea       rax, [rip + 0x2914a41]                        
+  00E55BE7  mov       qword ptr [r11 - 0x48], rax                   
+  00E55BEB  mov       qword ptr [r11 - 0x50], rcx                   
+  00E55BEF  lea       rcx, [rip + 0x2ae3502]                        
+  00E55BF6  mov       dword ptr [rsp + 0x30], 0x1000000c            
+  00E55BFE  mov       dword ptr [rsp + 0x28], 8                     
+  00E55C06  mov       dword ptr [rsp + 0x20], 0x350                 
+  00E55C0E  call      0x1041040                                        ; FUN_01041040
+  00E55C13  mov       rax, qword ptr [rip + 0x3b33c9e]                 ; GLOBAL 049898B8
+  00E55C1A  add       rsp, 0x88                                     
+  00E55C21  ret                                                     
+

@@ -1,0 +1,30 @@
+﻿ATTACH 37840
+READY [{"ready": true, "base": "0x7ff75d670000", "manager": "0x28703d8cf00"}]
+>>> findobj GreenDragon_Spawner
+[
+ {
+  "cls": "Package",
+  "name": "/Game/Enemies/Dragon/GreenDragon_Spawner",
+  "addr": "0x287c99ff060"
+ },
+ {
+  "cls": "Function",
+  "name": "ExecuteUbergraph_GreenDragon_Spawner",
+  "addr": "0x287d6c78120"
+ },
+ {
+  "cls": "BlueprintGeneratedClass",
+  "name": "GreenDragon_Spawner_C",
+  "addr": "0x287d6c3b300"
+ },
+ {
+  "cls": "GreenDragon_Spawner_C",
+  "name": "Default__GreenDragon_Spawner_C",
+  "addr": "0x287ca4b7290"
+ },
+ {
+  "cls": "GreenDragon_Spawner_C",
+  "name": "GreenDragon_Spawner",
+  "addr": "0x28774e36e00"
+ }
+]

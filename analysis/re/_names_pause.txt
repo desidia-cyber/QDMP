@@ -1,0 +1,55 @@
+﻿reflected names matching pause/dilation/tick pattern: 43
+
+ActionPause                                tables=1  usable=0  
+CanPause                                   tables=2  usable=1  025DBDA0
+GetActorTickInterval                       tables=2  usable=1  02652DE0
+GetActorTimeDilation                       tables=2  usable=1  02652E30
+GetComponentTickInterval                   tables=2  usable=1  0277B640
+GetGlobalTimeDilation                      tables=2  usable=1  028DF810
+GetIgnoreTimeDilation                      tables=2  usable=1  02CBEC60
+GetTickableWhenPaused                      tables=2  usable=1  02657EE0
+GetUnpausedTimeSeconds                     tables=2  usable=1  028E1AF0
+IsActorTickEnabled                         tables=2  usable=1  0265A010
+IsComponentTickEnabled                     tables=2  usable=0  
+IsGamePaused                               tables=2  usable=1  028E8DB0
+IsPaused                                   tables=8  usable=3  00820E90 0223A560 025E2BC0
+IsReconstructionPaused                     tables=2  usable=0  
+K2_IsTimerPaused                           tables=2  usable=1  00EAE0B0
+K2_IsTimerPausedDelegate                   tables=2  usable=1  029872B0
+K2_IsTimerPausedHandle                     tables=2  usable=1  029873A0
+K2_PauseTimer                              tables=2  usable=1  00EAE0B0
+K2_PauseTimerDelegate                      tables=2  usable=1  02987550
+K2_PauseTimerHandle                        tables=2  usable=1  02987610
+K2_UnPauseTimer                            tables=2  usable=1  00EAE0B0
+K2_UnPauseTimerDelegate                    tables=2  usable=1  02987E80
+K2_UnPauseTimerHandle                      tables=2  usable=1  02987F40
+Montage_Pause                              tables=2  usable=1  02698D60
+OnPauseCapture                             tables=1  usable=0  
+Pause                                      tables=12  usable=1  025E39C0
+PauseARSession                             tables=2  usable=0  
+PauseAnimation                             tables=2  usable=1  024297A0
+PauseClock                                 tables=2  usable=1  024F75C0
+PauseReconstruction                        tables=2  usable=0  
+PauseRecordingOutput                       tables=2  usable=1  024F7820
+ServerPause                                tables=2  usable=1  0106F4B0
+SetActorTickEnabled                        tables=2  usable=1  026636F0
+SetActorTickInterval                       tables=2  usable=1  024C2180
+SetComponentTickEnabled                    tables=2  usable=1  011B18A0
+SetComponentTickInterval                   tables=2  usable=1  027866E0
+SetComponentTickIntervalAndCooldown        tables=2  usable=1  027866F0
+SetGamePaused                              tables=2  usable=1  028F3180
+SetGlobalTimeDilation                      tables=2  usable=1  028F3410
+SetIgnoreTimeDilation                      tables=2  usable=1  02CC8110
+SetNiagaraTickWhenPaused                   tables=2  usable=1  00E3A9E0
+SetPaused                                  tables=5  usable=3  008309C0 00949AA0 02786ED0
+SetTickableWhenPaused                      tables=4  usable=2  02664C00 027876A0
+
+usable (non-VM-dispatch) names: 37 of 43
+
+only VM-dispatcher copies (no information):
+    ActionPause
+    IsComponentTickEnabled
+    IsReconstructionPaused
+    OnPauseCapture
+    PauseARSession
+    PauseReconstruction

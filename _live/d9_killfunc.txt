@@ -1,0 +1,25 @@
+﻿ATTACH 37840
+READY [{"ready": true, "base": "0x7ff75d670000", "manager": "0x28703d8cf00"}]
+>>> callfunc 0x2873a0c0100 Kill
+{
+ "ok": true,
+ "v": {
+  "ok": true,
+  "fn": "0x287783d1c80",
+  "owner": "0x287df381c80"
+ }
+}
+>>> sleep 3
+... slept 3
+>>> events 80
+[
+ {
+  "ev": "StoreEnemySaveState",
+  "at": 1794026557070,
+  "worldctx": "0x28774e36e00",
+  "guid": "17181166-4d738291-c77fd28a-9dada0ea",
+  "respawn": 0,
+  "hp": 0,
+  "lr": "0x7ff75e4d2146"
+ }
+]

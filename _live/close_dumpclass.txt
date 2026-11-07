@@ -1,0 +1,740 @@
+﻿ATTACH 47396
+READY [{"ready": true, "base": "0x7ff75d670000", "manager": "0x1a8388c5100"}]
+>>> dumpclass 0x1a8eb32cdd0
+[
+ {
+  "name": "UberGraphFrame",
+  "off": 1096,
+  "type": null
+ },
+ {
+  "name": "AddsAttackActivatables",
+  "off": 1104,
+  "type": null
+ },
+ {
+  "name": "LockInDoors",
+  "off": 1120,
+  "type": null
+ },
+ {
+  "name": "ActivateOnDeath",
+  "off": 1136,
+  "type": null
+ },
+ {
+  "name": "UberGraphFrame",
+  "off": 608,
+  "type": null
+ },
+ {
+  "name": "SaveLocationOverridePos",
+  "off": 616,
+  "type": null
+ },
+ {
+  "name": "LineOfSightCheckerComp",
+  "off": 624,
+  "type": null
+ },
+ {
+  "name": "ActorUROManager",
+  "off": 632,
+  "type": null
+ },
+ {
+  "name": "WanderRadiusVisualizer",
+  "off": 640,
+  "type": null
+ },
+ {
+  "name": "LOSCheckLocation",
+  "off": 648,
+  "type": null
+ },
+ {
+  "name": "TrapActivateTrigger",
+  "off": 656,
+  "type": null
+ },
+ {
+  "name": "TrapDeactivateTrigger",
+  "off": 664,
+  "type": null
+ },
+ {
+  "name": "EnemyHomeLocation",
+  "off": 672,
+  "type": null
+ },
+ {
+  "name": "SpawnLocation",
+  "off": 680,
+  "type": null
+ },
+ {
+  "name": "ForceItemDropSaveLocationOverrides",
+  "off": 688,
+  "type": null
+ },
+ {
+  "name": "UseMaxKillCount",
+  "off": 689,
+  "type": null
+ },
+ {
+  "name": "MaxKillCount",
+  "off": 692,
+  "type": null
+ },
+ {
+  "name": "EnemyData",
+  "off": 696,
+  "type": null
+ },
+ {
+  "name": "RequireNamedSaveDataToSpawn",
+  "off": 704,
+  "type": null
+ },
+ {
+  "name": "NamedSaveDataToCheck",
+  "off": 708,
+  "type": null
+ },
+ {
+  "name": "NamedSaveDataMin",
+  "off": 716,
+  "type": null
+ },
+ {
+  "name": "NamedSaveDataMax",
+  "off": 720,
+  "type": null
+ },
+ {
+  "name": "CurrentManagedEnemy",
+  "off": 728,
+  "type": null
+ },
+ {
+  "name": "OverrideRespawnTime",
+  "off": 736,
+  "type": null
+ },
+ {
+  "name": "OveriddenRespawnTime",
+  "off": 740,
+  "type": null
+ },
+ {
+  "name": "CurrentKillCount",
+  "off": 744,
+  "type": null
+ },
+ {
+  "name": "RespawnTimer",
+  "off": 752,
+  "type": null
+ },
+ {
+  "name": "PlayerDistanceDespawnCheck",
+  "off": 760,
+  "type": null
+ },
+ {
+  "name": "SpawnerDistanceDespawnCheck",
+  "off": 764,
+  "type": null
+ },
+ {
+  "name": "MaxSpawnDistance",
+  "off": 768,
+  "type": null
+ },
+ {
+  "name": "MinSpawnDistance",
+  "off": 772,
+  "type": null
+ },
+ {
+  "name": "RespawnVisRetryTime",
+  "off": 776,
+  "type": null
+ },
+ {
+  "name": "CurrentFogAlphaDA",
+  "off": 784,
+  "type": null
+ },
+ {
+  "name": "OverrideItemDrop",
+  "off": 792,
+  "type": null
+ },
+ {
+  "name": "ItemDropOverride",
+  "off": 800,
+  "type": null
+ },
+ {
+  "name": "Wander Radius",
+  "off": 912,
+  "type": null
+ },
+ {
+  "name": "VisualizeWanderRadius",
+  "off": 916,
+  "type": null
+ },
+ {
+  "name": "DisablePlaceOnGroundHelp",
+  "off": 917,
+  "type": null
+ },
+ {
+  "name": "BehaviourMode",
+  "off": 918,
+  "type": null
+ },
+ {
+  "name": "EnableBuiltInActivationTrigger",
+  "off": 919,
+  "type": null
+ },
+ {
+  "name": "PlayerIsInActivationRange",
+  "off": 920,
+  "type": null
+ },
+ {
+  "name": "ChildActorComp",
+  "off": 928,
+  "type": null
+ },
+ {
+  "name": "ChildActor",
+  "off": 936,
+  "type": null
+ },
+ {
+  "name": "DisableFacingCheckForTrap",
+  "off": 944,
+  "type": null
+ },
+ {
+  "name": "DisableDamageTillTrapTriggered",
+  "off": 945,
+  "type": null
+ },
+ {
+  "name": "Config",
+  "off": 952,
+  "type": null
+ },
+ {
+  "name": "EnemyWasKilled",
+  "off": 960,
+  "type": null
+ },
+ {
+  "name": "ActivateOnAggroTargets",
+  "off": 976,
+  "type": null
+ },
+ {
+  "name": "SpawnOnActivate",
+  "off": 992,
+  "type": null
+ },
+ {
+  "name": "TriggerTrapOnActivationSpawn",
+  "off": 993,
+  "type": null
+ },
+ {
+  "name": "ReadyForSpawnAttempt",
+  "off": 994,
+  "type": null
+ },
+ {
+  "name": "SpawnDisabledByRespawnTimer",
+  "off": 995,
+  "type": null
+ },
+ {
+  "name": "InSpawnAttemptLoop",
+  "off": 996,
+  "type": null
+ },
+ {
+  "name": "AllowBossDespawn",
+  "off": 997,
+  "type": null
+ },
+ {
+  "name": "RequireQuestStateToSpawn",
+  "off": 998,
+  "type": null
+ },
+ {
+  "name": "QuestStateToCheck",
+  "off": 1000,
+  "type": null
+ },
+ {
+  "name": "QuestStateValue",
+  "off": 1008,
+  "type": null
+ },
+ {
+  "name": "Initted",
+  "off": 1012,
+  "type": null
+ },
+ {
+  "name": "CapsuleHalfHeight",
+  "off": 1016,
+  "type": null
+ },
+ {
+  "name": "MyStreamingLevel",
+  "off": 1024,
+  "type": null
+ },
+ {
+  "name": "LevelIsRemoved",
+  "off": 1040,
+  "type": null
+ },
+ {
+  "name": "Boss Group DA",
+  "off": 1048,
+  "type": null
+ },
+ {
+  "name": "EnemySpawned",
+  "off": 1056,
+  "type": null
+ },
+ {
+  "name": "PairedBossSpawners",
+  "off": 1072,
+  "type": null
+ },
+ {
+  "name": "FollowerSpawner",
+  "off": 1088,
+  "type": null
+ },
+ {
+  "name": "UberGraphFrame",
+  "off": 544,
+  "type": null
+ },
+ {
+  "name": "SaveHelper",
+  "off": 552,
+  "type": null
+ },
+ {
+  "name": "DefaultSceneRoot",
+  "off": 560,
+  "type": null
+ },
+ {
+  "name": "GUIDs",
+  "off": 568,
+  "type": null
+ },
+ {
+  "name": "SaveDataCount",
+  "off": 584,
+  "type": null
+ },
+ {
+  "name": "MySaveData",
+  "off": 592,
+  "type": null
+ },
+ {
+  "name": "PrimaryActorTick",
+  "off": 40,
+  "type": null
+ },
+ {
+  "name": "bNetTemporary",
+  "off": 88,
+  "type": null
+ },
+ {
+  "name": "bNetStartup",
+  "off": 88,
+  "type": null
+ },
+ {
+  "name": "bOnlyRelevantToOwner",
+  "off": 88,
+  "type": null
+ },
+ {
+  "name": "bAlwaysRelevant",
+  "off": 88,
+  "type": null
+ },
+ {
+  "name": "bReplicateMovement",
+  "off": 88,
+  "type": null
+ },
+ {
+  "name": "bHidden",
+  "off": 88,
+  "type": null
+ },
+ {
+  "name": "bTearOff",
+  "off": 88,
+  "type": null
+ },
+ {
+  "name": "bForceNetAddressable",
+  "off": 88,
+  "type": null
+ },
+ {
+  "name": "bExchangedRoles",
+  "off": 89,
+  "type": null
+ },
+ {
+  "name": "bNetLoadOnClient",
+  "off": 89,
+  "type": null
+ },
+ {
+  "name": "bNetUseOwnerRelevancy",
+  "off": 89,
+  "type": null
+ },
+ {
+  "name": "bRelevantForNetworkReplays",
+  "off": 89,
+  "type": null
+ },
+ {
+  "name": "bRelevantForLevelBounds",
+  "off": 89,
+  "type": null
+ },
+ {
+  "name": "bReplayRewindable",
+  "off": 89,
+  "type": null
+ },
+ {
+  "name": "bAllowTickBeforeBeginPlay",
+  "off": 89,
+  "type": null
+ },
+ {
+  "name": "bAutoDestroyWhenFinished",
+  "off": 89,
+  "type": null
+ },
+ {
+  "name": "bCanBeDamaged",
+  "off": 90,
+  "type": null
+ },
+ {
+  "name": "bBlockInput",
+  "off": 90,
+  "type": null
+ },
+ {
+  "name": "bCollideWhenPlacing",
+  "off": 90,
+  "type": null
+ },
+ {
+  "name": "bFindCameraComponentWhenViewTarget",
+  "off": 90,
+  "type": null
+ },
+ {
+  "name": "bGenerateOverlapEventsDuringLevelStreaming",
+  "off": 90,
+  "type": null
+ },
+ {
+  "name": "bIgnoresOriginShifting",
+  "off": 90,
+  "type": null
+ },
+ {
+  "name": "bEnableAutoLODGeneration",
+  "off": 90,
+  "type": null
+ },
+ {
+  "name": "bIsEditorOnlyActor",
+  "off": 90,
+  "type": null
+ },
+ {
+  "name": "bActorSeamlessTraveled",
+  "off": 91,
+  "type": null
+ },
+ {
+  "name": "bReplicates",
+  "off": 91,
+  "type": null
+ },
+ {
+  "name": "bCanBeInCluster",
+  "off": 91,
+  "type": null
+ },
+ {
+  "name": "bAllowReceiveTickEventOnDedicatedServer",
+  "off": 91,
+  "type": null
+ },
+ {
+  "name": "bActorEnableCollision",
+  "off": 92,
+  "type": null
+ },
+ {
+  "name": "bActorIsBeingDestroyed",
+  "off": 92,
+  "type": null
+ },
+ {
+  "name": "UpdateOverlapsMethodDuringLevelStreaming",
+  "off": 93,
+  "type": null
+ },
+ {
+  "name": "DefaultUpdateOverlapsMethodDuringLevelStreaming",
+  "off": 94,
+  "type": null
+ },
+ {
+  "name": "RemoteRole",
+  "off": 95,
+  "type": null
+ },
+ {
+  "name": "ReplicatedMovement",
+  "off": 96,
+  "type": null
+ },
+ {
+  "name": "InitialLifeSpan",
+  "off": 148,
+  "type": null
+ },
+ {
+  "name": "CustomTimeDilation",
+  "off": 152,
+  "type": null
+ },
+ {
+  "name": "AttachmentReplication",
+  "off": 160,
+  "type": null
+ },
+ {
+  "name": "Owner",
+  "off": 224,
+  "type": null
+ },
+ {
+  "name": "NetDriverName",
+  "off": 232,
+  "type": null
+ },
+ {
+  "name": "Role",
+  "off": 240,
+  "type": null
+ },
+ {
+  "name": "NetDormancy",
+  "off": 241,
+  "type": null
+ },
+ {
+  "name": "SpawnCollisionHandlingMethod",
+  "off": 242,
+  "type": null
+ },
+ {
+  "name": "AutoReceiveInput",
+  "off": 243,
+  "type": null
+ },
+ {
+  "name": "InputPriority",
+  "off": 244,
+  "type": null
+ },
+ {
+  "name": "InputComponent",
+  "off": 248,
+  "type": null
+ },
+ {
+  "name": "NetCullDistanceSquared",
+  "off": 256,
+  "type": null
+ },
+ {
+  "name": "NetTag",
+  "off": 260,
+  "type": null
+ },
+ {
+  "name": "NetUpdateFrequency",
+  "off": 264,
+  "type": null
+ },
+ {
+  "name": "MinNetUpdateFrequency",
+  "off": 268,
+  "type": null
+ },
+ {
+  "name": "NetPriority",
+  "off": 272,
+  "type": null
+ },
+ {
+  "name": "Instigator",
+  "off": 280,
+  "type": null
+ },
+ {
+  "name": "Children",
+  "off": 288,
+  "type": null
+ },
+ {
+  "name": "RootComponent",
+  "off": 304,
+  "type": null
+ },
+ {
+  "name": "ControllingMatineeActors",
+  "off": 312,
+  "type": null
+ },
+ {
+  "name": "Layers",
+  "off": 336,
+  "type": null
+ },
+ {
+  "name": "ParentComponent",
+  "off": 352,
+  "type": null
+ },
+ {
+  "name": "Tags",
+  "off": 368,
+  "type": null
+ },
+ {
+  "name": "OnTakeAnyDamage",
+  "off": 384,
+  "type": null
+ },
+ {
+  "name": "OnTakePointDamage",
+  "off": 385,
+  "type": null
+ },
+ {
+  "name": "OnTakeRadialDamage",
+  "off": 386,
+  "type": null
+ },
+ {
+  "name": "OnActorBeginOverlap",
+  "off": 387,
+  "type": null
+ },
+ {
+  "name": "OnActorEndOverlap",
+  "off": 388,
+  "type": null
+ },
+ {
+  "name": "OnBeginCursorOver",
+  "off": 389,
+  "type": null
+ },
+ {
+  "name": "OnEndCursorOver",
+  "off": 390,
+  "type": null
+ },
+ {
+  "name": "OnClicked",
+  "off": 391,
+  "type": null
+ },
+ {
+  "name": "OnReleased",
+  "off": 392,
+  "type": null
+ },
+ {
+  "name": "OnInputTouchBegin",
+  "off": 393,
+  "type": null
+ },
+ {
+  "name": "OnInputTouchEnd",
+  "off": 394,
+  "type": null
+ },
+ {
+  "name": "OnInputTouchEnter",
+  "off": 395,
+  "type": null
+ },
+ {
+  "name": "OnInputTouchLeave",
+  "off": 396,
+  "type": null
+ },
+ {
+  "name": "OnActorHit",
+  "off": 397,
+  "type": null
+ },
+ {
+  "name": "OnDestroyed",
+  "off": 398,
+  "type": null
+ },
+ {
+  "name": "OnEndPlay",
+  "off": 399,
+  "type": null
+ },
+ {
+  "name": "InstanceComponents",
+  "off": 496,
+  "type": null
+ },
+ {
+  "name": "BlueprintCreatedComponents",
+  "off": 512,
+  "type": null
+ }
+]

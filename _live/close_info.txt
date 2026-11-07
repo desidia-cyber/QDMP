@@ -1,0 +1,17 @@
+﻿ATTACH 29512
+python.exe : 
+At line:5 char:6
++ '@ | & $py 'G:\Freespace\Queens_Domain\_live\frida_close.py' 2>&1 | O ...
++      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+(process:41440): Frida-CRITICAL **: 04:56:21.934: file ../subprojects/frida-core/src/windows/winjector.vala: line 87: u
+ncaught error: Error setting ACLs (SetNamedSecurityInfo returned 0x00000000) (g-io-error-quark, 0)
+READY [{"ready": true, "base": "0x7ff75d670000", "manager": "0x1b10a25f200"}]
+>>> info
+ERR InvalidOperationError script has been destroyed
+>>> lists
+ERR InvalidOperationError script has been destroyed
+>>> ulevels
+ERR InvalidOperationError script has been destroyed

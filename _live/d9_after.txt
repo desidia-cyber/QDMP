@@ -1,0 +1,55 @@
+﻿ATTACH 24928
+READY [{"ready": true, "base": "0x7ff75d670000", "manager": "0x17c4ca58900"}]
+>>> spawner 0x17ccbd51750
+{
+ "addr": "0x17ccbd51750",
+ "guidCount": 1,
+ "guids": [
+  "17181166-4d738291-c77fd28a-9dada0ea"
+ ],
+ "saveDataCount": 1,
+ "mySaveData": "0x17ce6d14fa0",
+ "mySaveDataN": 1,
+ "respawnTimer": 0,
+ "spawnDisabled": 0,
+ "maxKill": 1,
+ "useMaxKill": 0,
+ "initted": 1,
+ "enemySpawned": 0,
+ "readyForSpawn": 0,
+ "playerInRange": 0,
+ "spawnOnActivate": 0,
+ "levelIsRemoved": 0,
+ "currentKill": 0,
+ "enemyWasKilled": 0,
+ "maxSpawnDist": 10000,
+ "minSpawnDist": 5000,
+ "enemyData": "0x17cf7ea5b00",
+ "enemyDataName": "GreenDragon_Data",
+ "enemyDataCls": "EnemyData_C",
+ "activationTrigger": 0,
+ "behaviourMode": 2,
+ "trapOnActivation": 0,
+ "myStreamingLevel": "0x17ce6d14f00"
+}
+>>> actors Dragon_Green
+[
+ {
+  "cls": "Dragon_Green_BP_C",
+  "name": "Dragon_Green_BP_C",
+  "addr": "0x17c48210100",
+  "loc": null
+ },
+ {
+  "cls": "Dragon_Green_BP_C",
+  "name": "Dragon_Green_BP_C",
+  "addr": "0x17c1f64f010",
+  "loc": {
+   "x": -28573.869140625,
+   "y": 754.4593505859375,
+   "z": -13028.0478515625
+  }
+ }
+]
+>>> read 0x17cf7ea5b00 304 4
+"00 c0 5a 45"

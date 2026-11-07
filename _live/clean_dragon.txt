@@ -1,0 +1,868 @@
+﻿ATTACH 24928
+READY [{"ready": true, "base": "0x7ff75d670000", "manager": "0x17c4ca58900"}]
+>>> actors GreenDragon
+[
+ {
+  "cls": "GreenDragon_Spawner_C",
+  "name": "GreenDragon_Spawner",
+  "addr": "0x17ccbd51750",
+  "loc": {
+   "x": -28573.869140625,
+   "y": 754.4593505859375,
+   "z": -13118.197265625
+  }
+ }
+]
+>>> actors Dragon
+[
+ {
+  "cls": "FS_Light_C",
+  "name": "DragonLight",
+  "addr": "0x17cc2a90100",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "FS_Light_C",
+  "name": "DragonLight2",
+  "addr": "0x17cc2a9a380",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "NiagaraActor",
+  "name": "Dragon_MouthFire_Loop",
+  "addr": "0x17c5570e740",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "GreenDragon_Spawner_C",
+  "name": "GreenDragon_Spawner",
+  "addr": "0x17ccbd51750",
+  "loc": {
+   "x": -28573.869140625,
+   "y": 754.4593505859375,
+   "z": -13118.197265625
+  }
+ },
+ {
+  "cls": "StaticMeshActor",
+  "name": "LordAndDragon_EnemyWall_SM",
+  "addr": "0x17cce8b4e40",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "Dragon_Statue_C",
+  "name": "Boner_TrapDecoy423",
+  "addr": "0x17cdf25d980",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "Dragonfly_Spawner_C",
+  "name": "Dragonfly_Spawner10",
+  "addr": "0x17ce3b94e10",
+  "loc": {
+   "x": 8987,
+   "y": -2694.51123046875,
+   "z": 4743.58935546875
+  }
+ },
+ {
+  "cls": "Dragonfly_Spawner_C",
+  "name": "Dragonfly_Spawner11",
+  "addr": "0x17ce3b94980",
+  "loc": {
+   "x": 3520.943359375,
+   "y": -4338.11328125,
+   "z": 3028.563232421875
+  }
+ },
+ {
+  "cls": "Dragonfly_Spawner_C",
+  "name": "Dragonfly_Spawner12",
+  "addr": "0x17ce3b944f0",
+  "loc": {
+   "x": 6770.216796875,
+   "y": -4690.76318359375,
+   "z": 3028.563232421875
+  }
+ },
+ {
+  "cls": "Dragonfly_Spawner_C",
+  "name": "Dragonfly_Spawner13",
+  "addr": "0x17ce3b94060",
+  "loc": {
+   "x": 8401.5244140625,
+   "y": -7132.2158203125,
+   "z": 3028.5634765625
+  }
+ },
+ {
+  "cls": "Dragonfly_Spawner_C",
+  "name": "Dragonfly_Spawner14",
+  "addr": "0x17ce3b93bd0",
+  "loc": {
+   "x": 11699.5830078125,
+   "y": -6785.076171875,
+   "z": 3028.56298828125
+  }
+ },
+ {
+  "cls": "Dragonfly_Spawner_C",
+  "name": "Dragonfly_Spawner15",
+  "addr": "0x17ce3b93740",
+  "loc": {
+   "x": 11699.5830078125,
+   "y": -4821.033203125,
+   "z": 4331.58984375
+  }
+ },
+ {
+  "cls": "Dragonfly_Spawner_C",
+  "name": "Dragonfly_Spawner16",
+  "addr": "0x17ce3b932b0",
+  "loc": {
+   "x": 16193.19140625,
+   "y": 577.1356811523438,
+   "z": 2110.4384765625
+  }
+ },
+ {
+  "cls": "Dragonfly_Spawner_C",
+  "name": "Dragonfly_Spawner17",
+  "addr": "0x17ce3b92e20",
+  "loc": {
+   "x": 9899.1103515625,
+   "y": 12966.119140625,
+   "z": 4514.25341796875
+  }
+ },
+ {
+  "cls": "Dragonfly_Spawner_C",
+  "name": "Dragonfly_Spawner18",
+  "addr": "0x17ce3b92990",
+  "loc": {
+   "x": 1945.42578125,
+   "y": 890.8560791015625,
+   "z": 3840.119384765625
+  }
+ },
+ {
+  "cls": "Dragonfly_Spawner_C",
+  "name": "Dragonfly_Spawner19",
+  "addr": "0x17ce3b92500",
+  "loc": {
+   "x": 1346.1243896484375,
+   "y": 3286.421875,
+   "z": 4352.72265625
+  }
+ },
+ {
+  "cls": "Dragonfly_Spawner_C",
+  "name": "Dragonfly_Spawner2",
+  "addr": "0x17ce3b92070",
+  "loc": {
+   "x": 5653.28076171875,
+   "y": 3061.694580078125,
+   "z": 1285.77294921875
+  }
+ },
+ {
+  "cls": "Dragonfly_Spawner_C",
+  "name": "Dragonfly_Spawner20",
+  "addr": "0x17ce3b91be0",
+  "loc": {
+   "x": 219.91851806640625,
+   "y": -2897.666748046875,
+   "z": 1762.429443359375
+  }
+ },
+ {
+  "cls": "Dragonfly_Spawner_C",
+  "name": "Dragonfly_Spawner21",
+  "addr": "0x17ce3b91750",
+  "loc": {
+   "x": 7999.0439453125,
+   "y": -624.6844482421875,
+   "z": 3617.1669921875
+  }
+ },
+ {
+  "cls": "Dragonfly_Spawner_C",
+  "name": "Dragonfly_Spawner6",
+  "addr": "0x17ce3b912c0",
+  "loc": {
+   "x": 11900.9462890625,
+   "y": 6396.9130859375,
+   "z": 3552.2548828125
+  }
+ },
+ {
+  "cls": "Dragonfly_Spawner_C",
+  "name": "Dragonfly_Spawner7",
+  "addr": "0x17ce3b90e30",
+  "loc": {
+   "x": 9964.8564453125,
+   "y": 4784.693359375,
+   "z": 4721.60791015625
+  }
+ },
+ {
+  "cls": "Dragonfly_Spawner_C",
+  "name": "Dragonfly_Spawner8",
+  "addr": "0x17ce3b909a0",
+  "loc": {
+   "x": 8041.9716796875,
+   "y": 3212.9638671875,
+   "z": 5597.6962890625
+  }
+ },
+ {
+  "cls": "Dragonfly_Spawner_C",
+  "name": "Dragonfly_Spawner9",
+  "addr": "0x17ce3b90510",
+  "loc": {
+   "x": 7294.671875,
+   "y": 1511.7247314453125,
+   "z": 4262.955078125
+  }
+ },
+ {
+  "cls": "Dragonfly_Spawner_C",
+  "name": "Dragonfly_Spawner",
+  "addr": "0x17ce3b90080",
+  "loc": {
+   "x": 4658.25390625,
+   "y": 1123.3001708984375,
+   "z": 890.65380859375
+  }
+ },
+ {
+  "cls": "Dragonfly_Spawner_C",
+  "name": "Dragonfly_Spawner3",
+  "addr": "0x17cec7a2500",
+  "loc": {
+   "x": 7003.658203125,
+   "y": 587.6376342773438,
+   "z": -260.296630859375
+  }
+ },
+ {
+  "cls": "Dragonfly_Spawner_C",
+  "name": "Dragonfly_Spawner4",
+  "addr": "0x17cec7a2070",
+  "loc": {
+   "x": 8237.103515625,
+   "y": -61.108428955078125,
+   "z": -355.4426574707031
+  }
+ },
+ {
+  "cls": "Dragonfly_Spawner_C",
+  "name": "Dragonfly_Spawner5",
+  "addr": "0x17cec7a1be0",
+  "loc": {
+   "x": 1948.163818359375,
+   "y": -814.5999755859375,
+   "z": -900.3223266601562
+  }
+ },
+ {
+  "cls": "Dragonfly_Strong_Spawner_C",
+  "name": "Dragonfly_Strong_Spawner",
+  "addr": "0x17ce4b5e930",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "Dragonfly_Strong_Spawner_C",
+  "name": "Dragonfly_Strong_Spawner2",
+  "addr": "0x17ce4b5e4a0",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "Dragonfly_Strong_Spawner_C",
+  "name": "Dragonfly_Strong_Spawner3",
+  "addr": "0x17cee344060",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "Dragonfly_Strong_Spawner_C",
+  "name": "Dragonfly_Strong_Spawner4",
+  "addr": "0x17cee343bd0",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "Dragonfly_Strong_Spawner_C",
+  "name": "Dragonfly_Strong_Spawner5",
+  "addr": "0x17cee343740",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "Dragonfly_Strong_Spawner_C",
+  "name": "Dragonfly_Strong_Spawner6",
+  "addr": "0x17cee3432b0",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "Dragonfly_Strong_Spawner_C",
+  "name": "Dragonfly_Strong_Spawner10",
+  "addr": "0x17cefc01750",
+  "loc": {
+   "x": -13434,
+   "y": -15152.7783203125,
+   "z": 1058.890380859375
+  }
+ },
+ {
+  "cls": "Dragonfly_Strong_Spawner_C",
+  "name": "Dragonfly_Strong_Spawner11",
+  "addr": "0x17cefc012c0",
+  "loc": {
+   "x": -11980.1630859375,
+   "y": -16971.595703125,
+   "z": 2353.237548828125
+  }
+ },
+ {
+  "cls": "Dragonfly_Strong_Spawner_C",
+  "name": "Dragonfly_Strong_Spawner12",
+  "addr": "0x17cefc00e30",
+  "loc": {
+   "x": -1033.3642578125,
+   "y": -18236.9375,
+   "z": 3433.75634765625
+  }
+ },
+ {
+  "cls": "Dragonfly_Strong_Spawner_C",
+  "name": "Dragonfly_Strong_Spawner13",
+  "addr": "0x17cefc009a0",
+  "loc": {
+   "x": 633.922607421875,
+   "y": -20741.146484375,
+   "z": 522.8623046875
+  }
+ },
+ {
+  "cls": "Dragonfly_Strong_Spawner_C",
+  "name": "Dragonfly_Strong_Spawner14",
+  "addr": "0x17cefc00510",
+  "loc": {
+   "x": 582.496826171875,
+   "y": -17917.220703125,
+   "z": 1335.8197021484375
+  }
+ },
+ {
+  "cls": "Dragonfly_Strong_Spawner_C",
+  "name": "Dragonfly_Strong_Spawner15",
+  "addr": "0x17cefc00080",
+  "loc": {
+   "x": -3573.24609375,
+   "y": -13503.138671875,
+   "z": 1905.2982177734375
+  }
+ },
+ {
+  "cls": "Dragonfly_Strong_Spawner_C",
+  "name": "Dragonfly_Strong_Spawner16",
+  "addr": "0x17cefc0fb70",
+  "loc": {
+   "x": -9742.04296875,
+   "y": -14735.9140625,
+   "z": 1159.679931640625
+  }
+ },
+ {
+  "cls": "Dragonfly_Strong_Spawner_C",
+  "name": "Dragonfly_Strong_Spawner8",
+  "addr": "0x17cefc0f6e0",
+  "loc": {
+   "x": -21423.52734375,
+   "y": -26299.994140625,
+   "z": 1067.22314453125
+  }
+ },
+ {
+  "cls": "Dragonfly_Strong_Spawner_C",
+  "name": "Dragonfly_Strong_Spawner9",
+  "addr": "0x17cefc0f250",
+  "loc": {
+   "x": -13528.009765625,
+   "y": -18927.79296875,
+   "z": 948.5173950195312
+  }
+ },
+ {
+  "cls": "Dragonfly_Swamp_Spawner_C",
+  "name": "Dragonfly_Swamp_Spawner10",
+  "addr": "0x17cf16b8040",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "Dragonfly_Swamp_Spawner_C",
+  "name": "Dragonfly_Swamp_Spawner11",
+  "addr": "0x17cf16b4e10",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "Dragonfly_Swamp_Spawner_C",
+  "name": "Dragonfly_Swamp_Spawner12",
+  "addr": "0x17cf16b4980",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "Dragonfly_Swamp_Spawner_C",
+  "name": "Dragonfly_Swamp_Spawner13",
+  "addr": "0x17cf16b44f0",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "Dragonfly_Swamp_Spawner_C",
+  "name": "Dragonfly_Swamp_Spawner14",
+  "addr": "0x17cf16b4060",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "Dragonfly_Swamp_Spawner_C",
+  "name": "Dragonfly_Swamp_Spawner15",
+  "addr": "0x17cf16b3bd0",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "Dragonfly_Swamp_Spawner_C",
+  "name": "Dragonfly_Swamp_Spawner2",
+  "addr": "0x17cf16b3740",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "Dragonfly_Swamp_Spawner_C",
+  "name": "Dragonfly_Swamp_Spawner3",
+  "addr": "0x17cf16b32b0",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "Dragonfly_Swamp_Spawner_C",
+  "name": "Dragonfly_Swamp_Spawner4",
+  "addr": "0x17cf16b2e20",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "Dragonfly_Swamp_Spawner_C",
+  "name": "Dragonfly_Swamp_Spawner5",
+  "addr": "0x17cf16b2990",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "Dragonfly_Swamp_Spawner_C",
+  "name": "Dragonfly_Swamp_Spawner6",
+  "addr": "0x17cf16b2500",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "Dragonfly_Swamp_Spawner_C",
+  "name": "Dragonfly_Swamp_Spawner7",
+  "addr": "0x17cf16b2070",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "Dragonfly_Swamp_Spawner_C",
+  "name": "Dragonfly_Swamp_Spawner8",
+  "addr": "0x17cf16b1be0",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "Dragonfly_Swamp_Spawner_C",
+  "name": "Dragonfly_Swamp_Spawner9",
+  "addr": "0x17cf16b1750",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "Dragonfly_Swamp_Spawner_C",
+  "name": "Dragonfly_Swamp_Spawner",
+  "addr": "0x17cf16b12c0",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "FB_SequenceCamera_C",
+  "name": "DragonCam",
+  "addr": "0x17cf3e2e830",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "FS_SequenceCharacter_C",
+  "name": "DragonCharacter",
+  "addr": "0x17cf40c4600",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "Boner_TrapDecoy_C",
+  "name": "Dragon_ShaderTest",
+  "addr": "0x17d018f7b00",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "ROSDragon_Spawner_C",
+  "name": "ROSDragon_Spawner",
+  "addr": "0x17d02bf9280",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "Dragonfly_Base_BP_C",
+  "name": "Dragonfly_Base_BP_C",
+  "addr": "0x17c4c8f0dc0",
+  "loc": {
+   "x": 9036.126953125,
+   "y": -2424.940673828125,
+   "z": 4600.92626953125
+  }
+ },
+ {
+  "cls": "Dragonfly_Base_BP_C",
+  "name": "Dragonfly_Base_BP_C",
+  "addr": "0x17cd2fc5a40",
+  "loc": {
+   "x": 8506.6025390625,
+   "y": -7166.76025390625,
+   "z": 3022.31201171875
+  }
+ },
+ {
+  "cls": "Dragonfly_Base_BP_C",
+  "name": "Dragonfly_Base_BP_C",
+  "addr": "0x17cd2fc9a00",
+  "loc": {
+   "x": 11699.5830078125,
+   "y": -6785.076171875,
+   "z": 3074.807373046875
+  }
+ },
+ {
+  "cls": "Dragonfly_Base_BP_C",
+  "name": "Dragonfly_Base_BP_C",
+  "addr": "0x17cd2fc3400",
+  "loc": {
+   "x": 11699.5830078125,
+   "y": -4821.033203125,
+   "z": 4377.83447265625
+  }
+ },
+ {
+  "cls": "Dragonfly_Base_BP_C",
+  "name": "Dragonfly_Base_BP_C",
+  "addr": "0x17c5988b380",
+  "loc": {
+   "x": 8065.0166015625,
+   "y": -602.390625,
+   "z": 3657.033447265625
+  }
+ },
+ {
+  "cls": "Dragonfly_Base_BP_C",
+  "name": "Dragonfly_Base_BP_C",
+  "addr": "0x17c4cb5c040",
+  "loc": {
+   "x": 10197.9951171875,
+   "y": 5024.72119140625,
+   "z": 4941.73779296875
+  }
+ },
+ {
+  "cls": "Dragonfly_Base_BP_C",
+  "name": "Dragonfly_Base_BP_C",
+  "addr": "0x17c4cb59a00",
+  "loc": {
+   "x": 8345.73046875,
+   "y": 3554.63720703125,
+   "z": 6136.6650390625
+  }
+ },
+ {
+  "cls": "Dragonfly_Base_BP_C",
+  "name": "Dragonfly_Base_BP_C",
+  "addr": "0x17cc9b2cd00",
+  "loc": {
+   "x": 7327.24169921875,
+   "y": 1516.7764892578125,
+   "z": 4308.26171875
+  }
+ },
+ {
+  "cls": "Dragonfly_Base_BP_C",
+  "name": "Dragonfly_Base_BP_C",
+  "addr": "0x17d0078c040",
+  "loc": {
+   "x": 3692.0048828125,
+   "y": -4417.02392578125,
+   "z": 2459.923828125
+  }
+ },
+ {
+  "cls": "Dragonfly_Base_BP_C",
+  "name": "Dragonfly_Base_BP_C",
+  "addr": "0x17c4bdf8d40",
+  "loc": {
+   "x": 1343.968994140625,
+   "y": -488.9256896972656,
+   "z": -349.40057373046875
+  }
+ },
+ {
+  "cls": "Dragonfly_Base_BP_C",
+  "name": "Dragonfly_Base_BP_C",
+  "addr": "0x17c4bdf73c0",
+  "loc": {
+   "x": 6342.91015625,
+   "y": 3432.46240234375,
+   "z": 4322.236328125
+  }
+ },
+ {
+  "cls": "Dragonfly_Base_BP_C",
+  "name": "Dragonfly_Base_BP_C",
+  "addr": "0x17c4bdf3400",
+  "loc": {
+   "x": 1840.3699951171875,
+   "y": 3643.013916015625,
+   "z": 4019.250244140625
+  }
+ },
+ {
+  "cls": "Dragonfly_Base_BP_C",
+  "name": "Dragonfly_Base_BP_C",
+  "addr": "0x17cd1611a80",
+  "loc": {
+   "x": 8380.779296875,
+   "y": -7503.3076171875,
+   "z": 2508.123046875
+  }
+ },
+ {
+  "cls": "Dragonfly_Base_BP_C",
+  "name": "Dragonfly_Base_BP_C",
+  "addr": "0x17cd12373c0",
+  "loc": {
+   "x": 7284.60693359375,
+   "y": -1379.5521240234375,
+   "z": 4192.26025390625
+  }
+ },
+ {
+  "cls": "Dragonfly_Base_BP_C",
+  "name": "Dragonfly_Base_BP_C",
+  "addr": "0x17cd8668080",
+  "loc": {
+   "x": 28.28411102294922,
+   "y": -2720.220947265625,
+   "z": 1442.6490478515625
+  }
+ },
+ {
+  "cls": "Dragonfly_Base_BP_C",
+  "name": "Dragonfly_Base_BP_C",
+  "addr": "0x17c1c0e3400",
+  "loc": {
+   "x": 1818.89306640625,
+   "y": 1286.621826171875,
+   "z": 4423.86181640625
+  }
+ },
+ {
+  "cls": "Dragonfly_Base_BP_C",
+  "name": "Dragonfly_Base_BP_C",
+  "addr": "0x17c48986700",
+  "loc": {
+   "x": 9249.0419921875,
+   "y": -2683.904296875,
+   "z": 4612.26171875
+  }
+ },
+ {
+  "cls": "Dragonfly_Base_BP_C",
+  "name": "Dragonfly_Base_BP_C",
+  "addr": "0x17c48984d80",
+  "loc": {
+   "x": 10190.732421875,
+   "y": 4214.71142578125,
+   "z": 4686.765625
+  }
+ },
+ {
+  "cls": "Dragonfly_Base_BP_C",
+  "name": "Dragonfly_Base_BP_C",
+  "addr": "0x17c48951a80",
+  "loc": {
+   "x": 11814.392578125,
+   "y": -6983.7490234375,
+   "z": 3980.259033203125
+  }
+ },
+ {
+  "cls": "Dragonfly_Base_BP_C",
+  "name": "Dragonfly_Base_BP_C",
+  "addr": "0x17c533e8d40",
+  "loc": {
+   "x": 6605.92236328125,
+   "y": -5110.75439453125,
+   "z": 2693.38037109375
+  }
+ },
+ {
+  "cls": "Dragonfly_Base_BP_C",
+  "name": "Dragonfly_Base_BP_C",
+  "addr": "0x17c1ccaa6c0",
+  "loc": {
+   "x": 8318.154296875,
+   "y": 428.68109130859375,
+   "z": -364.5739440917969
+  }
+ },
+ {
+  "cls": "Dragonfly_Base_BP_C",
+  "name": "Dragonfly_Base_BP_C",
+  "addr": "0x17cba44cd00",
+  "loc": {
+   "x": 7322.7080078125,
+   "y": 264.11492919921875,
+   "z": -145.678466796875
+  }
+ },
+ {
+  "cls": "Dragonfly_Base_BP_C",
+  "name": "Dragonfly_Base_BP_C",
+  "addr": "0x17c47f03400",
+  "loc": {
+   "x": 11964.794921875,
+   "y": -4888.64697265625,
+   "z": 3503.664306640625
+  }
+ },
+ {
+  "cls": "Dragonfly_Base_BP_C",
+  "name": "Dragonfly_Base_BP_C",
+  "addr": "0x17cc2304d80",
+  "loc": {
+   "x": 7719.111328125,
+   "y": 2492.732666015625,
+   "z": 5917.373046875
+  }
+ }
+]

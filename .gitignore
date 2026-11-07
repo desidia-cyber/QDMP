@@ -1,0 +1,44 @@
+# --- the game install ---------------------------------------------------------
+# The shipped build: shipping exe (77.6 MB), 1.88 GB pak, Engine tree. 2.1 GB total.
+# It is not ours and it must never be in the repository.
+/QueensDomain/
+
+# --- build outputs ------------------------------------------------------------
+mod/rust/target/
+mod/native/build/
+mod/native/test/build/
+__pycache__/
+*.pyc
+
+# --- generated analysis artefacts --------------------------------------------
+# These are caches, not sources. Every one is reproducible from the committed
+# scripts plus the shipped image; together they are ~57 MB, against ~19 MB for the
+# documents, scripts and evidence that the analysis corpus actually cites.
+analysis/re/*.bin
+analysis/data/*.json
+analysis/scratch/*.json
+analysis/pak-files.json
+analysis/pak/code/entries.tsv
+analysis/re/_bp_fn_index.json
+
+# --- live-session artefacts ---------------------------------------------------
+# _live/inst1 is a deployed test instance (143 MB). The scripts, logs and small
+# saves are kept as evidence; the screenshots and the deployment are not.
+_live/inst1/
+_live/*.png
+# verify.log is 23 MB of verbose instrumentation output -- larger than everything
+# else in this repository combined, and reproducible by re-running the probes. The
+# short, cited logs (d4_kill1.log, d4_kill2.log, ...) stay.
+_live/verify.log
+# Engine crash dumps: opaque binaries, no evidentiary value beyond their filename.
+*.dmp
+_live/**/Crashes/
+
+# --- scratch ------------------------------------------------------------------
+_tmp_*
+# Directories a previous sandbox created with deletion denied. Ignoring them keeps
+# git from warning on every status call.
+mod/tools/.dotprobe-*
+mod/tools/.qdsave-selftest-*
+mod/tools/probe-*
+mod/tools/probe2-*

@@ -1,0 +1,9 @@
+﻿
+== QueensDomain/Content/Player/FS_PlayerChar.uasset
+  SetGamePaused            import#517   raw=2  opcode-confirmed=0
+  IsGamePaused             import#510   raw=1  opcode-confirmed=0
+
+== QueensDomain/Content/LD45/Blueprints/Base_LD45_GM.uasset
+  IsGamePaused             import#118   raw=2  opcode-confirmed=0
+  SetGlobalTimeDilation    import#119   raw=2  opcode-confirmed=0
+  GetGlobalTimeDilation    import#115   raw=2  opcode-confirmed=0

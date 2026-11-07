@@ -1,0 +1,50 @@
+﻿== 100_GR.umap ActivatableNamedSaveDataSetter_C FlyingSwordNSDSetter @0x34d686 size=280
+   +0    DefaultSceneRoot                   ObjectProperty  
+   +A4   ImmediatelyRefreshQuestState_9_001CAB7C43B144457811AAA6F6A151DE BoolProperty    
+== 100_GR.umap NamedSaveDataSetterVolume_C NamedSaveDataSetterVolume @0x60fefc size=440
+   +0    StaticMesh                         ObjectProperty  
+   +9C   ImmediatelyRefreshQuestState_9_001CAB7C43B144457811AAA6F6A151DE BoolProperty    
+   +F8   GUIDs                              ArrayProperty    raw=45 00 00 00 00 00 00 00 e1 1e 00 00 00 00 00 00 00 01 00 00 00 99 16 00
+   +108  /Game/Blueprints/PPC_Vis_BP        StructProperty  
+== 110_GR_dungeon.umap ActivatableNamedSaveDataSetter_C SwordShrineKeyNamedSaveDatasetter @0x4d602 size=392
+   +0    DefaultSceneRoot                   ObjectProperty  
+   +A4   ImmediatelyRefreshQuestState_9_001CAB7C43B144457811AAA6F6A151DE BoolProperty    
+   +114  ImmediatelyRefreshQuestState_9_001CAB7C43B144457811AAA6F6A151DE BoolProperty    
+== 200_AQ.umap QuestForceUpdateVolume_C QuestForceUpdateVolume @0x295296 size=173
+   +0    Box                                ObjectProperty  
+   +74   BlueprintCreatedComponents         ArrayProperty    raw=0c 00 00 00 00 00 00 00 b2 0d 00 00 00 00 00 00 00 02 00 00 00 47 16 00
+   +84   /Game/Blueprints/ActorQuestStateManager ObjectProperty  
+== 210_AQ_underground.umap ActivatableNamedSaveDataSetter_C ActivatableNamedSaveDataSetter @0x214440 size=280
+   +0    DefaultSceneRoot                   ObjectProperty  
+   +A4   ImmediatelyRefreshQuestState_9_001CAB7C43B144457811AAA6F6A151DE BoolProperty    
+== 300_LIB.umap QuestForceUpdateVolume_C QuestForceUpdateVolume @0x477508 size=173
+   +0    Box                                ObjectProperty  
+   +74   BlueprintCreatedComponents         ArrayProperty    raw=0c 00 00 00 00 00 00 00 90 17 00 00 00 00 00 00 00 02 00 00 00 2d 29 00
+   +84   /Game/Blueprints/ActorQuestStateManager ObjectProperty  
+== 320_LIB_basement.umap ActivatableNamedSaveDataSetter_C ActivatableNamedSaveDataSetter6 @0x6d520 size=280
+   +0    DefaultSceneRoot                   ObjectProperty  
+   +A4   ImmediatelyRefreshQuestState_9_001CAB7C43B144457811AAA6F6A151DE BoolProperty    
+== 420_MAUS_mid.umap ActivatableNamedSaveDataSetter_C ActivatableNamedSaveDataSetter4 @0x123e11 size=280
+   +0    DefaultSceneRoot                   ObjectProperty  
+   +A4   ImmediatelyRefreshQuestState_9_001CAB7C43B144457811AAA6F6A151DE BoolProperty    
+== 420_MAUS_mid.umap ActivatableNamedSaveDataSetter_C ReanimatedKnightNSDSetter @0x123f29 size=280
+   +0    DefaultSceneRoot                   ObjectProperty  
+   +A4   ImmediatelyRefreshQuestState_9_001CAB7C43B144457811AAA6F6A151DE BoolProperty    
+== 450_MAUS_darkmaze.umap ActivatableNamedSaveDataSetter_C ActivatableNamedSaveDataSetter @0x1fe030 size=280
+   +0    DefaultSceneRoot                   ObjectProperty  
+   +A4   ImmediatelyRefreshQuestState_9_001CAB7C43B144457811AAA6F6A151DE BoolProperty    
+== 700_SZ_GR.umap ActivatableNamedSaveDataSetter_C ActivatableNamedSaveDataSetter2 @0x6afc2 size=280
+   +0    DefaultSceneRoot                   ObjectProperty  
+   +A4   ImmediatelyRefreshQuestState_9_001CAB7C43B144457811AAA6F6A151DE BoolProperty    
+== 770_SZ_Swamp.umap ActivatableNamedSaveDataSetter_C ActivatableNamedSaveDataSetter3 @0x27dd8b size=280
+   +0    DefaultSceneRoot                   ObjectProperty  
+   +A4   ImmediatelyRefreshQuestState_9_001CAB7C43B144457811AAA6F6A151DE BoolProperty    
+== 770_SZ_Swamp.umap NamedSaveDataSetterVolume_C NamedSaveDataSetterVolume2 @0xdf27d6 size=279
+   +0    StaticMesh                         ObjectProperty  
+   +7C   GUIDs                              StructProperty  
+== 770_SZ_Swamp.umap NamedSaveDataSetterVolume_C NamedSaveDataSetterVolume3 @0xdf28ed size=279
+   +0    StaticMesh                         ObjectProperty  
+   +7C   GUIDs                              StructProperty  
+== 780_SZ_Depths.umap ActivatableNamedSaveDataSetter_C ActivatableNamedSaveDataSetter5 @0x456076 size=280
+   +0    DefaultSceneRoot                   ObjectProperty  
+   +A4   ImmediatelyRefreshQuestState_9_001CAB7C43B144457811AAA6F6A151DE BoolProperty    

@@ -1,0 +1,1406 @@
+{
+ "objects": 500253,
+ "actors": 31373,
+ "pawn": "0x1f38c086ad0",
+ "pawnLoc": {
+  "x": 4106.63720703125,
+  "y": -1744.46533203125,
+  "z": 140.41363525390625
+ },
+ "nearest": [
+  {
+   "cls": "AttachmentActor_C",
+   "dist": 0,
+   "addr": "0x1f3a650e080",
+   "enemyish": false,
+   "loc": {
+    "x": 4107,
+    "y": -1744,
+    "z": 140
+   }
+  },
+  {
+   "cls": "MagicPoisonTick_StatusOverlay_C",
+   "dist": 64,
+   "addr": "0x1f3b7cf3f80",
+   "enemyish": false,
+   "loc": {
+    "x": 4108,
+    "y": -1746,
+    "z": 205
+   }
+  },
+  {
+   "cls": "MagicPoisonSubmergedStatusOverlay_C",
+   "dist": 64,
+   "addr": "0x1f3b7cf89c0",
+   "enemyish": false,
+   "loc": {
+    "x": 4108,
+    "y": -1746,
+    "z": 205
+   }
+  },
+  {
+   "cls": "FS_PlayerCameraManager",
+   "dist": 65,
+   "addr": "0x1f34a855580",
+   "enemyish": false,
+   "loc": {
+    "x": 4112,
+    "y": -1747,
+    "z": 205
+   }
+  },
+  {
+   "cls": "ItemPutAwayCurve_C",
+   "dist": 65,
+   "addr": "0x1f3bc3013c0",
+   "enemyish": false,
+   "loc": {
+    "x": 4102,
+    "y": -1746,
+    "z": 205
+   }
+  },
+  {
+   "cls": "RustySword_WeaponVisuals_C",
+   "dist": 93,
+   "addr": "0x1f3b732af00",
+   "enemyish": false,
+   "loc": {
+    "x": 4027,
+    "y": -1765,
+    "z": 183
+   }
+  },
+  {
+   "cls": "FS_Light_C",
+   "dist": 230,
+   "addr": "0x1f3b240a380",
+   "enemyish": false,
+   "loc": {
+    "x": 4157,
+    "y": -1744,
+    "z": 365
+   }
+  },
+  {
+   "cls": "Deco_Rubble_03_BP_C",
+   "dist": 239,
+   "addr": "0x1f3b0c82400",
+   "enemyish": false,
+   "loc": {
+    "x": 3910,
+    "y": -1632,
+    "z": 63
+   }
+  },
+  {
+   "cls": "Checkpoint_C",
+   "dist": 252,
+   "addr": "0x1f3c3566a60",
+   "enemyish": false,
+   "loc": {
+    "x": 3871,
+    "y": -1723,
+    "z": 51
+   }
+  },
+  {
+   "cls": "FS_Fern_00_C",
+   "dist": 253,
+   "addr": "0x1f3b2153d00",
+   "enemyish": false,
+   "loc": {
+    "x": 4135,
+    "y": -1521,
+    "z": 27
+   }
+  },
+  {
+   "cls": "Deco_Rubble_01_BP_C",
+   "dist": 270,
+   "addr": "0x1f38b627180",
+   "enemyish": false,
+   "loc": {
+    "x": 3962,
+    "y": -1536,
+    "z": 48
+   }
+  },
+  {
+   "cls": "Deco_Rubble_02_BP_C",
+   "dist": 277,
+   "addr": "0x1f38cbef880",
+   "enemyish": false,
+   "loc": {
+    "x": 3939,
+    "y": -1528,
+    "z": 97
+   }
+  },
+  {
+   "cls": "gd_plant_02_bp_C",
+   "dist": 310,
+   "addr": "0x1f3b320dd00",
+   "enemyish": false,
+   "loc": {
+    "x": 3878,
+    "y": -1939,
+    "z": 62
+   }
+  },
+  {
+   "cls": "gd_plant_02_bp_C",
+   "dist": 320,
+   "addr": "0x1f3b320df80",
+   "enemyish": false,
+   "loc": {
+    "x": 3811,
+    "y": -1838,
+    "z": 61
+   }
+  },
+  {
+   "cls": "gd_plant_02_bp_C",
+   "dist": 336,
+   "addr": "0x1f3b320d800",
+   "enemyish": false,
+   "loc": {
+    "x": 3810,
+    "y": -1613,
+    "z": 54
+   }
+  },
+  {
+   "cls": "gd_plant_02_bp_C",
+   "dist": 350,
+   "addr": "0x1f3b320da80",
+   "enemyish": false,
+   "loc": {
+    "x": 3768,
+    "y": -1721,
+    "z": 58
+   }
+  },
+  {
+   "cls": "FS_Bush_01_C",
+   "dist": 395,
+   "addr": "0x1f3b2088580",
+   "enemyish": false,
+   "loc": {
+    "x": 3784,
+    "y": -1536,
+    "z": 45
+   }
+  },
+  {
+   "cls": "gd_grass_00_bp_C",
+   "dist": 395,
+   "addr": "0x1f3b27ead80",
+   "enemyish": false,
+   "loc": {
+    "x": 3727,
+    "y": -1670,
+    "z": 60
+   }
+  },
+  {
+   "cls": "FS_StaticMeshActor_C",
+   "dist": 413,
+   "addr": "0x1f3b251d300",
+   "enemyish": false,
+   "loc": {
+    "x": 4310,
+    "y": -1405,
+    "z": 24
+   }
+  },
+  {
+   "cls": "Deco_Rock_02_BP_C",
+   "dist": 467,
+   "addr": "0x1f38c376c80",
+   "enemyish": false,
+   "loc": {
+    "x": 4101,
+    "y": -2204,
+    "z": 62
+   }
+  },
+  {
+   "cls": "gd_grass_00_bp_C",
+   "dist": 503,
+   "addr": "0x1f3b27eb000",
+   "enemyish": false,
+   "loc": {
+    "x": 3662,
+    "y": -1524,
+    "z": 58
+   }
+  },
+  {
+   "cls": "Deco_Rock_03_BP_C",
+   "dist": 515,
+   "addr": "0x1f38b274c00",
+   "enemyish": false,
+   "loc": {
+    "x": 4187,
+    "y": -2245,
+    "z": 46
+   }
+  },
+  {
+   "cls": "Deco_Rock_00_BP_C",
+   "dist": 609,
+   "addr": "0x1f38c1cf880",
+   "enemyish": false,
+   "loc": {
+    "x": 4128,
+    "y": -2348,
+    "z": 60
+   }
+  },
+  {
+   "cls": "Herb_Item_BP_C",
+   "dist": 617,
+   "addr": "0x1f3b39930d0",
+   "enemyish": false,
+   "loc": {
+    "x": 4273,
+    "y": -1151,
+    "z": 105
+   }
+  },
+  {
+   "cls": "Deco_Rubble_03_BP_C",
+   "dist": 620,
+   "addr": "0x1f3b0c84700",
+   "enemyish": false,
+   "loc": {
+    "x": 4106,
+    "y": -1135,
+    "z": 27
+   }
+  },
+  {
+   "cls": "Deco_Rubble_02_BP_C",
+   "dist": 635,
+   "addr": "0x1f39a931780",
+   "enemyish": false,
+   "loc": {
+    "x": 4026,
+    "y": -1122,
+    "z": 42
+   }
+  },
+  {
+   "cls": "FS_StaticMeshActor_C",
+   "dist": 640,
+   "addr": "0x1f3b251f380",
+   "enemyish": false,
+   "loc": {
+    "x": 4216,
+    "y": -1127,
+    "z": 13
+   }
+  },
+  {
+   "cls": "FS_StaticMeshActor_C",
+   "dist": 642,
+   "addr": "0x1f3b2516000",
+   "enemyish": false,
+   "loc": {
+    "x": 4275,
+    "y": -1136,
+    "z": 25
+   }
+  },
+  {
+   "cls": "FS_StaticMeshActor_C",
+   "dist": 644,
+   "addr": "0x1f3b2515880",
+   "enemyish": false,
+   "loc": {
+    "x": 4326,
+    "y": -1149,
+    "z": 31
+   }
+  },
+  {
+   "cls": "BreakableBarricade_C",
+   "dist": 711,
+   "addr": "0x1f3b18ffd00",
+   "enemyish": false,
+   "loc": {
+    "x": 4556,
+    "y": -1200,
+    "z": 223
+   }
+  },
+  {
+   "cls": "gd_grass_00_bp_C",
+   "dist": 740,
+   "addr": "0x1f3b27e6500",
+   "enemyish": false,
+   "loc": {
+    "x": 3969,
+    "y": -1025,
+    "z": 33
+   }
+  },
+  {
+   "cls": "gd_grass_00_bp_C",
+   "dist": 762,
+   "addr": "0x1f3b27e6000",
+   "enemyish": false,
+   "loc": {
+    "x": 4067,
+    "y": -993,
+    "z": 20
+   }
+  },
+  {
+   "cls": "DropDown_Markup_C",
+   "dist": 806,
+   "addr": "0x1f3b1194e80",
+   "enemyish": false,
+   "loc": {
+    "x": 3654,
+    "y": -1737,
+    "z": 807
+   }
+  },
+  {
+   "cls": "FS_StaticMeshActor_C",
+   "dist": 843,
+   "addr": "0x1f3b251d580",
+   "enemyish": false,
+   "loc": {
+    "x": 4875,
+    "y": -1417,
+    "z": 23
+   }
+  },
+  {
+   "cls": "gd_grass_00_bp_C",
+   "dist": 845,
+   "addr": "0x1f3b27e6280",
+   "enemyish": false,
+   "loc": {
+    "x": 4006,
+    "y": -914,
+    "z": 28
+   }
+  },
+  {
+   "cls": "FS_StaticMeshActor_C",
+   "dist": 861,
+   "addr": "0x1f3b251bc80",
+   "enemyish": false,
+   "loc": {
+    "x": 4936,
+    "y": -1542,
+    "z": 24
+   }
+  },
+  {
+   "cls": "FS_Bush_00_C",
+   "dist": 873,
+   "addr": "0x1f3b2082680",
+   "enemyish": false,
+   "loc": {
+    "x": 3777,
+    "y": -946,
+    "z": 15
+   }
+  },
+  {
+   "cls": "Deco_Rock_00_BP_C",
+   "dist": 899,
+   "addr": "0x1f38c2f3f80",
+   "enemyish": false,
+   "loc": {
+    "x": 3647,
+    "y": -2128,
+    "z": 811
+   }
+  },
+  {
+   "cls": "LeafPufferBP_C",
+   "dist": 909,
+   "addr": "0x1f39f2c7fc0",
+   "enemyish": false,
+   "loc": {
+    "x": 3479,
+    "y": -1694,
+    "z": 796
+   }
+  },
+  {
+   "cls": "Deco_Rubble_03_BP_C",
+   "dist": 920,
+   "addr": "0x1f3b0c82180",
+   "enemyish": false,
+   "loc": {
+    "x": 4154,
+    "y": -2659,
+    "z": 55
+   }
+  }
+ ],
+ "enemies": [
+  {
+   "cls": "Boner_TrapDecoy_C",
+   "dist": 1489,
+   "addr": "0x1f3cc189700",
+   "loc": {
+    "x": 5409,
+    "y": -1780,
+    "z": 861
+   }
+  },
+  {
+   "cls": "Boner_Trap_Standard_Fighter_Spawner_C",
+   "dist": 1623,
+   "addr": "0x1f38c23ade0",
+   "loc": {
+    "x": 5552,
+    "y": -1668,
+    "z": 873
+   }
+  },
+  {
+   "cls": "Boner_TrapDecoy_C",
+   "dist": 1732,
+   "addr": "0x1f3cc2dac00",
+   "loc": {
+    "x": 5676,
+    "y": -1724,
+    "z": 872
+   }
+  },
+  {
+   "cls": "Boner_TrapDecoy_C",
+   "dist": 1890,
+   "addr": "0x1f3cc2deb00",
+   "loc": {
+    "x": 5823,
+    "y": -2044,
+    "z": 872
+   }
+  },
+  {
+   "cls": "Boner_Trap_Standard_Fighter_Spawner_C",
+   "dist": 1994,
+   "addr": "0x1f38c23b270",
+   "loc": {
+    "x": 5950,
+    "y": -1951,
+    "z": 873
+   }
+  },
+  {
+   "cls": "Boner_TrapDecoy_C",
+   "dist": 2131,
+   "addr": "0x1f3cd45d280",
+   "loc": {
+    "x": 2773,
+    "y": -2269,
+    "z": -1437
+   }
+  },
+  {
+   "cls": "Boner_TrapDecoy_C",
+   "dist": 2169,
+   "addr": "0x1f3cd45c480",
+   "loc": {
+    "x": 2768,
+    "y": -2396,
+    "z": -1437
+   }
+  },
+  {
+   "cls": "Boner_TrapDecoy_C",
+   "dist": 2186,
+   "addr": "0x1f3cd45cb80",
+   "loc": {
+    "x": 2844,
+    "y": -2577,
+    "z": -1437
+   }
+  },
+  {
+   "cls": "Dragonfly_Base_BP_C",
+   "dist": 2332,
+   "addr": "0x1f3d2d4f340",
+   "loc": {
+    "x": 2349,
+    "y": -832,
+    "z": -1092
+   }
+  },
+  {
+   "cls": "Boner_TrapDecoy_C",
+   "dist": 2371,
+   "addr": "0x1f3cd45ba00",
+   "loc": {
+    "x": 2508,
+    "y": -2503,
+    "z": -1437
+   }
+  },
+  {
+   "cls": "Boner_TrapDecoy_C",
+   "dist": 2388,
+   "addr": "0x1f3cd45bd80",
+   "loc": {
+    "x": 2432,
+    "y": -2385,
+    "z": -1437
+   }
+  },
+  {
+   "cls": "Boner_TrapDecoy_C",
+   "dist": 2394,
+   "addr": "0x1f3cd45b300",
+   "loc": {
+    "x": 2558,
+    "y": -2663,
+    "z": -1437
+   }
+  },
+  {
+   "cls": "Boner_Trap_Standard_Fighter_Spawner_C",
+   "dist": 2417,
+   "addr": "0x1f3f57b6970",
+   "loc": {
+    "x": 2700,
+    "y": -572,
+    "z": -1437
+   }
+  },
+  {
+   "cls": "Dragonfly_Spawner_C",
+   "dist": 2570,
+   "addr": "0x1f3f57ba950",
+   "loc": {
+    "x": 1948,
+    "y": -815,
+    "z": -900
+   }
+  },
+  {
+   "cls": "Boner_TrapDecoy_C",
+   "dist": 2600,
+   "addr": "0x1f3cd45c800",
+   "loc": {
+    "x": 2542,
+    "y": -394,
+    "z": -1437
+   }
+  },
+  {
+   "cls": "Boner_TrapDecoy_C",
+   "dist": 2702,
+   "addr": "0x1f3cd458c80",
+   "loc": {
+    "x": 2037,
+    "y": -1018,
+    "z": -1437
+   }
+  },
+  {
+   "cls": "Boner_TrapDecoy_C",
+   "dist": 2709,
+   "addr": "0x1f3cd458900",
+   "loc": {
+    "x": 3130,
+    "y": 229,
+    "z": -1437
+   }
+  },
+  {
+   "cls": "Boner_TrapDecoy_C",
+   "dist": 2816,
+   "addr": "0x1f3cd457e80",
+   "loc": {
+    "x": 3207,
+    "y": 407,
+    "z": -1437
+   }
+  },
+  {
+   "cls": "Boner_TrapDecoy_C",
+   "dist": 2857,
+   "addr": "0x1f3cd457b00",
+   "loc": {
+    "x": 3799,
+    "y": 617,
+    "z": -1437
+   }
+  },
+  {
+   "cls": "Dragonfly_Spawner_C",
+   "dist": 3015,
+   "addr": "0x1f38c2ac4b0",
+   "loc": {
+    "x": 4658,
+    "y": 1123,
+    "z": 891
+   }
+  },
+  {
+   "cls": "Boner_TrapDecoy_C",
+   "dist": 3030,
+   "addr": "0x1f3cd45a500",
+   "loc": {
+    "x": 3524,
+    "y": 776,
+    "z": -1437
+   }
+  },
+  {
+   "cls": "Boner_Mossy_Fighter_Spawner_C",
+   "dist": 3180,
+   "addr": "0x1f3f57b7290",
+   "loc": {
+    "x": 2252,
+    "y": 301,
+    "z": -1437
+   }
+  },
+  {
+   "cls": "Boner_TrapDecoy_C",
+   "dist": 3261,
+   "addr": "0x1f3cc450080",
+   "loc": {
+    "x": 1828,
+    "y": -1410,
+    "z": 2449
+   }
+  },
+  {
+   "cls": "Boner_TrapDecoy_C",
+   "dist": 3428,
+   "addr": "0x1f3cd458200",
+   "loc": {
+    "x": 2004,
+    "y": 455,
+    "z": -1437
+   }
+  },
+  {
+   "cls": "Boner_Trap_Standard_Fighter_Spawner_C",
+   "dist": 3488,
+   "addr": "0x1f3f57b64e0",
+   "loc": {
+    "x": 1699,
+    "y": 226,
+    "z": -1437
+   }
+  }
+ ],
+ "sameLevel": [
+  {
+   "cls": "AttachmentActor_C",
+   "dist": 0,
+   "addr": "0x1f3a650e080",
+   "loc": {
+    "x": 4107,
+    "y": -1744,
+    "z": 140
+   }
+  },
+  {
+   "cls": "MagicPoisonTick_StatusOverlay_C",
+   "dist": 64,
+   "addr": "0x1f3b7cf3f80",
+   "loc": {
+    "x": 4108,
+    "y": -1746,
+    "z": 205
+   }
+  },
+  {
+   "cls": "MagicPoisonSubmergedStatusOverlay_C",
+   "dist": 64,
+   "addr": "0x1f3b7cf89c0",
+   "loc": {
+    "x": 4108,
+    "y": -1746,
+    "z": 205
+   }
+  },
+  {
+   "cls": "FS_PlayerCameraManager",
+   "dist": 65,
+   "addr": "0x1f34a855580",
+   "loc": {
+    "x": 4112,
+    "y": -1747,
+    "z": 205
+   }
+  },
+  {
+   "cls": "ItemPutAwayCurve_C",
+   "dist": 65,
+   "addr": "0x1f3bc3013c0",
+   "loc": {
+    "x": 4102,
+    "y": -1746,
+    "z": 205
+   }
+  },
+  {
+   "cls": "RustySword_WeaponVisuals_C",
+   "dist": 93,
+   "addr": "0x1f3b732af00",
+   "loc": {
+    "x": 4027,
+    "y": -1765,
+    "z": 183
+   }
+  },
+  {
+   "cls": "Deco_Rubble_03_BP_C",
+   "dist": 239,
+   "addr": "0x1f3b0c82400",
+   "loc": {
+    "x": 3910,
+    "y": -1632,
+    "z": 63
+   }
+  },
+  {
+   "cls": "Checkpoint_C",
+   "dist": 252,
+   "addr": "0x1f3c3566a60",
+   "loc": {
+    "x": 3871,
+    "y": -1723,
+    "z": 51
+   }
+  },
+  {
+   "cls": "FS_Fern_00_C",
+   "dist": 253,
+   "addr": "0x1f3b2153d00",
+   "loc": {
+    "x": 4135,
+    "y": -1521,
+    "z": 27
+   }
+  },
+  {
+   "cls": "Deco_Rubble_01_BP_C",
+   "dist": 270,
+   "addr": "0x1f38b627180",
+   "loc": {
+    "x": 3962,
+    "y": -1536,
+    "z": 48
+   }
+  },
+  {
+   "cls": "Deco_Rubble_02_BP_C",
+   "dist": 277,
+   "addr": "0x1f38cbef880",
+   "loc": {
+    "x": 3939,
+    "y": -1528,
+    "z": 97
+   }
+  },
+  {
+   "cls": "gd_plant_02_bp_C",
+   "dist": 310,
+   "addr": "0x1f3b320dd00",
+   "loc": {
+    "x": 3878,
+    "y": -1939,
+    "z": 62
+   }
+  },
+  {
+   "cls": "gd_plant_02_bp_C",
+   "dist": 320,
+   "addr": "0x1f3b320df80",
+   "loc": {
+    "x": 3811,
+    "y": -1838,
+    "z": 61
+   }
+  },
+  {
+   "cls": "gd_plant_02_bp_C",
+   "dist": 336,
+   "addr": "0x1f3b320d800",
+   "loc": {
+    "x": 3810,
+    "y": -1613,
+    "z": 54
+   }
+  },
+  {
+   "cls": "gd_plant_02_bp_C",
+   "dist": 350,
+   "addr": "0x1f3b320da80",
+   "loc": {
+    "x": 3768,
+    "y": -1721,
+    "z": 58
+   }
+  },
+  {
+   "cls": "FS_Bush_01_C",
+   "dist": 395,
+   "addr": "0x1f3b2088580",
+   "loc": {
+    "x": 3784,
+    "y": -1536,
+    "z": 45
+   }
+  },
+  {
+   "cls": "gd_grass_00_bp_C",
+   "dist": 395,
+   "addr": "0x1f3b27ead80",
+   "loc": {
+    "x": 3727,
+    "y": -1670,
+    "z": 60
+   }
+  },
+  {
+   "cls": "FS_StaticMeshActor_C",
+   "dist": 413,
+   "addr": "0x1f3b251d300",
+   "loc": {
+    "x": 4310,
+    "y": -1405,
+    "z": 24
+   }
+  },
+  {
+   "cls": "Deco_Rock_02_BP_C",
+   "dist": 467,
+   "addr": "0x1f38c376c80",
+   "loc": {
+    "x": 4101,
+    "y": -2204,
+    "z": 62
+   }
+  },
+  {
+   "cls": "gd_grass_00_bp_C",
+   "dist": 503,
+   "addr": "0x1f3b27eb000",
+   "loc": {
+    "x": 3662,
+    "y": -1524,
+    "z": 58
+   }
+  },
+  {
+   "cls": "Deco_Rock_03_BP_C",
+   "dist": 515,
+   "addr": "0x1f38b274c00",
+   "loc": {
+    "x": 4187,
+    "y": -2245,
+    "z": 46
+   }
+  },
+  {
+   "cls": "Deco_Rock_00_BP_C",
+   "dist": 609,
+   "addr": "0x1f38c1cf880",
+   "loc": {
+    "x": 4128,
+    "y": -2348,
+    "z": 60
+   }
+  },
+  {
+   "cls": "Herb_Item_BP_C",
+   "dist": 617,
+   "addr": "0x1f3b39930d0",
+   "loc": {
+    "x": 4273,
+    "y": -1151,
+    "z": 105
+   }
+  },
+  {
+   "cls": "Deco_Rubble_03_BP_C",
+   "dist": 620,
+   "addr": "0x1f3b0c84700",
+   "loc": {
+    "x": 4106,
+    "y": -1135,
+    "z": 27
+   }
+  },
+  {
+   "cls": "Deco_Rubble_02_BP_C",
+   "dist": 635,
+   "addr": "0x1f39a931780",
+   "loc": {
+    "x": 4026,
+    "y": -1122,
+    "z": 42
+   }
+  },
+  {
+   "cls": "FS_StaticMeshActor_C",
+   "dist": 640,
+   "addr": "0x1f3b251f380",
+   "loc": {
+    "x": 4216,
+    "y": -1127,
+    "z": 13
+   }
+  },
+  {
+   "cls": "FS_StaticMeshActor_C",
+   "dist": 642,
+   "addr": "0x1f3b2516000",
+   "loc": {
+    "x": 4275,
+    "y": -1136,
+    "z": 25
+   }
+  },
+  {
+   "cls": "FS_StaticMeshActor_C",
+   "dist": 644,
+   "addr": "0x1f3b2515880",
+   "loc": {
+    "x": 4326,
+    "y": -1149,
+    "z": 31
+   }
+  },
+  {
+   "cls": "BreakableBarricade_C",
+   "dist": 711,
+   "addr": "0x1f3b18ffd00",
+   "loc": {
+    "x": 4556,
+    "y": -1200,
+    "z": 223
+   }
+  },
+  {
+   "cls": "gd_grass_00_bp_C",
+   "dist": 740,
+   "addr": "0x1f3b27e6500",
+   "loc": {
+    "x": 3969,
+    "y": -1025,
+    "z": 33
+   }
+  },
+  {
+   "cls": "gd_grass_00_bp_C",
+   "dist": 762,
+   "addr": "0x1f3b27e6000",
+   "loc": {
+    "x": 4067,
+    "y": -993,
+    "z": 20
+   }
+  },
+  {
+   "cls": "FS_StaticMeshActor_C",
+   "dist": 843,
+   "addr": "0x1f3b251d580",
+   "loc": {
+    "x": 4875,
+    "y": -1417,
+    "z": 23
+   }
+  },
+  {
+   "cls": "gd_grass_00_bp_C",
+   "dist": 845,
+   "addr": "0x1f3b27e6280",
+   "loc": {
+    "x": 4006,
+    "y": -914,
+    "z": 28
+   }
+  },
+  {
+   "cls": "FS_StaticMeshActor_C",
+   "dist": 861,
+   "addr": "0x1f3b251bc80",
+   "loc": {
+    "x": 4936,
+    "y": -1542,
+    "z": 24
+   }
+  },
+  {
+   "cls": "FS_Bush_00_C",
+   "dist": 873,
+   "addr": "0x1f3b2082680",
+   "loc": {
+    "x": 3777,
+    "y": -946,
+    "z": 15
+   }
+  },
+  {
+   "cls": "Deco_Rubble_03_BP_C",
+   "dist": 920,
+   "addr": "0x1f3b0c82180",
+   "loc": {
+    "x": 4154,
+    "y": -2659,
+    "z": 55
+   }
+  },
+  {
+   "cls": "JumpHelper_C",
+   "dist": 978,
+   "addr": "0x1f3b3cefa00",
+   "loc": {
+    "x": 4060,
+    "y": -772,
+    "z": 51
+   }
+  },
+  {
+   "cls": "Deco_Rubble_02_BP_C",
+   "dist": 1025,
+   "addr": "0x1f39a93a380",
+   "loc": {
+    "x": 4169,
+    "y": -2763,
+    "z": 51
+   }
+  },
+  {
+   "cls": "Deco_Rubble_01_BP_C",
+   "dist": 1029,
+   "addr": "0x1f38b626280",
+   "loc": {
+    "x": 4909,
+    "y": -1111,
+    "z": 26
+   }
+  },
+  {
+   "cls": "Deco_Rubble_02_BP_C",
+   "dist": 1034,
+   "addr": "0x1f39a931a00",
+   "loc": {
+    "x": 4934,
+    "y": -1127,
+    "z": 73
+   }
+  },
+  {
+   "cls": "Deco_Rubble_03_BP_C",
+   "dist": 1039,
+   "addr": "0x1f3b0b2df80",
+   "loc": {
+    "x": 5134,
+    "y": -1851,
+    "z": 28
+   }
+  },
+  {
+   "cls": "gd_grass_00_bp_C",
+   "dist": 1056,
+   "addr": "0x1f3b27e5d80",
+   "loc": {
+    "x": 4183,
+    "y": -697,
+    "z": 23
+   }
+  },
+  {
+   "cls": "FS_Bush_01_C",
+   "dist": 1063,
+   "addr": "0x1f3b2087680",
+   "loc": {
+    "x": 4039,
+    "y": -695,
+    "z": -8
+   }
+  },
+  {
+   "cls": "Deco_Rubble_00_BP_C",
+   "dist": 1085,
+   "addr": "0x1f38c150b00",
+   "loc": {
+    "x": 5184,
+    "y": -1687,
+    "z": 26
+   }
+  },
+  {
+   "cls": "Coin_Item_BP_C",
+   "dist": 1101,
+   "addr": "0x1f38a66c040",
+   "loc": {
+    "x": 5194,
+    "y": -1908,
+    "z": 89
+   }
+  },
+  {
+   "cls": "Deco_Rubble_03_BP_C",
+   "dist": 1109,
+   "addr": "0x1f3b0c84980",
+   "loc": {
+    "x": 5018,
+    "y": -1124,
+    "z": 23
+   }
+  },
+  {
+   "cls": "FS_StaticMeshActor_C",
+   "dist": 1123,
+   "addr": "0x1f3b251c400",
+   "loc": {
+    "x": 4941,
+    "y": -1001,
+    "z": 22
+   }
+  },
+  {
+   "cls": "gd_grass_00_bp_C",
+   "dist": 1126,
+   "addr": "0x1f3b28ae200",
+   "loc": {
+    "x": 3795,
+    "y": -667,
+    "z": 47
+   }
+  },
+  {
+   "cls": "Deco_Rubble_03_BP_C",
+   "dist": 1128,
+   "addr": "0x1f3b0b2dd00",
+   "loc": {
+    "x": 5197,
+    "y": -1481,
+    "z": 23
+   }
+  },
+  {
+   "cls": "Deco_Rubble_01_BP_C",
+   "dist": 1130,
+   "addr": "0x1f38b626f00",
+   "loc": {
+    "x": 4314,
+    "y": -2852,
+    "z": 55
+   }
+  },
+  {
+   "cls": "PPC_Preset_C",
+   "dist": 1168,
+   "addr": "0x1f3b4bfc580",
+   "loc": {
+    "x": 4078,
+    "y": -2905,
+    "z": 266
+   }
+  },
+  {
+   "cls": "Deco_Rubble_01_BP_C",
+   "dist": 1173,
+   "addr": "0x1f38b621500",
+   "loc": {
+    "x": 5264,
+    "y": -1909,
+    "z": 43
+   }
+  },
+  {
+   "cls": "FS_StaticMeshActor_C",
+   "dist": 1178,
+   "addr": "0x1f3b251e480",
+   "loc": {
+    "x": 4960,
+    "y": -942,
+    "z": 10
+   }
+  },
+  {
+   "cls": "Deco_Rubble_03_BP_C",
+   "dist": 1204,
+   "addr": "0x1f3b0c81f00",
+   "loc": {
+    "x": 4460,
+    "y": -2891,
+    "z": 41
+   }
+  },
+  {
+   "cls": "DropDown_Markup_C",
+   "dist": 1210,
+   "addr": "0x1f3b0de9700",
+   "loc": {
+    "x": 3927,
+    "y": -550,
+    "z": 216
+   }
+  },
+  {
+   "cls": "DropDown_Markup_C",
+   "dist": 1210,
+   "addr": "0x1f3b1192900",
+   "loc": {
+    "x": 3927,
+    "y": -550,
+    "z": 216
+   }
+  },
+  {
+   "cls": "gd_grass_00_bp_C",
+   "dist": 1237,
+   "addr": "0x1f3b28ace00",
+   "loc": {
+    "x": 3689,
+    "y": -583,
+    "z": 66
+   }
+  },
+  {
+   "cls": "LocationThumbnailRenderer_C",
+   "dist": 1306,
+   "addr": "0x1f3b3c5d800",
+   "loc": {
+    "x": 4718,
+    "y": -2895,
+    "z": 228
+   }
+  },
+  {
+   "cls": "FS_Fern_00_C",
+   "dist": 1325,
+   "addr": "0x1f3b208ab00",
+   "loc": {
+    "x": 5395,
+    "y": -2022,
+    "z": 274
+   }
+  },
+  {
+   "cls": "DropDown_Markup_C",
+   "dist": 1375,
+   "addr": "0x1f3b1192e00",
+   "loc": {
+    "x": 4029,
+    "y": -374,
+    "z": 216
+   }
+  },
+  {
+   "cls": "JumpHelper_C",
+   "dist": 1416,
+   "addr": "0x1f3b3ce9400",
+   "loc": {
+    "x": 4319,
+    "y": -345,
+    "z": 115
+   }
+  },
+  {
+   "cls": "JumpHelper_C",
+   "dist": 1416,
+   "addr": "0x1f3b3cefd00",
+   "loc": {
+    "x": 4319,
+    "y": -345,
+    "z": 115
+   }
+  },
+  {
+   "cls": "Deco_Rock_01_BP_C",
+   "dist": 1451,
+   "addr": "0x1f38c370380",
+   "loc": {
+    "x": 4986,
+    "y": -595,
+    "z": 34
+   }
+  },
+  {
+   "cls": "Deco_Rubble_03_BP_C",
+   "dist": 1468,
+   "addr": "0x1f3b0b2e200",
+   "loc": {
+    "x": 5505,
+    "y": -2192,
+    "z": 156
+   }
+  },
+  {
+   "cls": "DropDown_Markup_C",
+   "dist": 1468,
+   "addr": "0x1f3b1192b80",
+   "loc": {
+    "x": 3899,
+    "y": -293,
+    "z": 216
+   }
+  },
+  {
+   "cls": "FallenLeaves_BP_C",
+   "dist": 1480,
+   "addr": "0x1f3b193e200",
+   "loc": {
+    "x": 5223,
+    "y": -778,
+    "z": 41
+   }
+  },
+  {
+   "cls": "gd_grass_00_bp_C",
+   "dist": 1487,
+   "addr": "0x1f3b28ae480",
+   "loc": {
+    "x": 3499,
+    "y": -390,
+    "z": 53
+   }
+  },
+  {
+   "cls": "FallenLeaves_BP_C",
+   "dist": 1505,
+   "addr": "0x1f3b1933d00",
+   "loc": {
+    "x": 4753,
+    "y": -387,
+    "z": 70
+   }
+  },
+  {
+   "cls": "Pot_Small_Base_C",
+   "dist": 1514,
+   "addr": "0x1f3b60e0080",
+   "loc": {
+    "x": 5529,
+    "y": -2262,
+    "z": 161
+   }
+  },
+  {
+   "cls": "AudioBlocker_C",
+   "dist": 1539,
+   "addr": "0x1f3b0e2f280",
+   "loc": {
+    "x": 5631,
+    "y": -1566,
+    "z": 27
+   }
+  }
+ ]
+}

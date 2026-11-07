@@ -1,0 +1,436 @@
+﻿==============================================================================
+A. reflected pause surface -> exec thunk -> native implementation
+==============================================================================
+name                       exec       impl       pdata     size   direct callers
+SetGamePaused              02DC3580   028F3180   yes       91     1
+IsGamePaused               02DC07B0   028E8DB0   yes       2F     1
+SetGlobalTimeDilation      02DC39F0   028F3410   yes       51     1
+GetGlobalTimeDilation      02DBF0C0   028DF810   yes       45     1
+SetTickableWhenPaused      02D590F0   02664C00   no        -      1
+GetTickableWhenPaused      02D55DF0   02657EE0   no        -      6
+SetActorTickEnabled        02D58C10   026636F0   yes       3C     20
+IsActorTickEnabled         02D55FB0   0265A010   no        -      1
+SetComponentTickEnabled    02D5C8B0   011B18A0   no        -      12812
+IsComponentTickEnabled     -          -          -         -      no usable copy
+GetActorTimeDilation       02D54EA0   02652E30   yes       42     7
+GetIgnoreTimeDilation      02ECE630   02CBEC60   no        -      1
+GetUnpausedTimeSeconds     02DBFD80   028E1AF0   yes       33     1
+GetRealTimeSeconds         02DBFAB0   028E0850   yes       33     5
+GetWorldDeltaSeconds       02DC01B0   028E1CE0   yes       33     1
+
+NOTE 0119D280 is the generic blueprint-VM dispatcher. The second copy of
+     each name table points there and carries no information; only the
+     copy whose thunk ends in a real .pdata function is reported above.
+NOTE SetComponentTickEnabled resolves to 011B18A0, a shared bit-set
+     helper used by thousands of thunks -- that row is not a distinct
+     implementation and is excluded from the conclusions.
+
+==============================================================================
+B. implementations that decide whether the world clock advances
+==============================================================================
+
+-- SetGamePaused  impl 028F3180  [028F3180..028F3211)
+   028F3180  push      rbx                                       
+   028F3182  sub       rsp, 0x30                                 
+   028F3186  movzx     ebx, dl                                   
+   028F3189  mov       r8d, 1                                    
+   028F318F  mov       rdx, rcx                                  
+   028F3192  mov       rcx, qword ptr [rip + 0x22b1bef]          
+   028F3199  call      0x2cdedf0                                    -> 02CDEDF0  UEngine::GetWorldFromContextObject
+   028F319E  test      rax, rax                                  
+   028F31A1  je        0x28f3209                                 
+   028F31A3  mov       rax, qword ptr [rax + 0x180]              
+   028F31AA  test      rax, rax                                  
+   028F31AD  je        0x28f3209                                 
+   028F31AF  mov       rcx, qword ptr [rax + 0x38]               
+   028F31B3  xor       r8d, r8d                                  
+   028F31B6  movsxd    rax, dword ptr [rax + 0x40]               
+   028F31BA  lea       rdx, [rcx + rax*8]                        
+   028F31BE  cmp       rcx, rdx                                  
+   028F31C1  je        0x28f31dd                                 
+   028F31C3  mov       rax, qword ptr [rcx]                      
+   028F31C6  test      rax, rax                                  
+   028F31C9  je        0x28f31d4                                 
+   028F31CB  mov       r9, qword ptr [rax + 0x30]                
+   028F31CF  test      r9, r9                                    
+   028F31D2  jne       0x28f31e5                                 
+   028F31D4  add       rcx, 8                                    
+   028F31D8  cmp       rcx, rdx                                  
+   028F31DB  jne       0x28f31c3                                 
+   028F31DD  mov       r9, r8                                    
+   028F31E0  test      r8, r8                                    
+   028F31E3  je        0x28f3209                                 
+   028F31E5  mov       rax, qword ptr [r9]                       
+   028F31E8  movzx     edx, bl                                   
+   028F31EB  mov       qword ptr [rsp + 0x20], r8                
+   028F31F0  mov       rcx, r9                                   
+   028F31F3  mov       dword ptr [rsp + 0x28], r8d               
+   028F31F8  lea       r8, [rsp + 0x20]                          
+   028F31FD  call      qword ptr [rax + 0xa88]                   
+   028F3203  add       rsp, 0x30                                 
+   028F3207  pop       rbx                                       
+   028F3208  ret                                                 
+   028F3209  xor       al, al                                    
+   028F320B  add       rsp, 0x30                                 
+   028F320F  pop       rbx                                       
+   028F3210  ret                                                 
+
+-- IsGamePaused  impl 028E8DB0  [028E8DB0..028E8DDF)
+   028E8DB0  sub       rsp, 0x28                                 
+   028E8DB4  mov       rdx, rcx                                  
+   028E8DB7  mov       r8d, 1                                    
+   028E8DBD  mov       rcx, qword ptr [rip + 0x22bbfc4]          
+   028E8DC4  call      0x2cdedf0                                    -> 02CDEDF0  UEngine::GetWorldFromContextObject
+   028E8DC9  test      rax, rax                                  
+   028E8DCC  je        0x28e8dda                                 
+   028E8DCE  mov       rcx, rax                                  
+   028E8DD1  add       rsp, 0x28                                 
+   028E8DD5  jmp       0x29a43c0                                    -> 029A43C0
+   028E8DDA  add       rsp, 0x28                                 
+   028E8DDE  ret                                                 
+
+-- SetGlobalTimeDilation  impl 028F3410  [028F3410..028F3461)
+   028F3410  sub       rsp, 0x38                                 
+   028F3414  mov       rdx, rcx                                  
+   028F3417  movaps    xmmword ptr [rsp + 0x20], xmm6            
+   028F341C  mov       rcx, qword ptr [rip + 0x22b1965]          
+   028F3423  mov       r8d, 1                                    
+   028F3429  movaps    xmm6, xmm1                                
+   028F342C  call      0x2cdedf0                                    -> 02CDEDF0  UEngine::GetWorldFromContextObject
+   028F3431  test      rax, rax                                  
+   028F3434  je        0x28f3457                                 
+   028F3436  mov       r8b, 1                                    
+   028F3439  xor       edx, edx                                  
+   028F343B  mov       rcx, rax                                  
+   028F343E  call      0x2d37250                                    -> 02D37250
+   028F3443  test      rax, rax                                  
+   028F3446  je        0x28f3457                                 
+   028F3448  mov       rdx, qword ptr [rax]                      
+   028F344B  movaps    xmm1, xmm6                                
+   028F344E  mov       rcx, rax                                  
+   028F3451  call      qword ptr [rdx + 0x658]                   
+   028F3457  movaps    xmm6, xmmword ptr [rsp + 0x20]            
+   028F345C  add       rsp, 0x38                                 
+   028F3460  ret                                                 
+
+-- GetGlobalTimeDilation  impl 028DF810  [028DF810..028DF855)
+   028DF810  sub       rsp, 0x28                                 
+   028DF814  mov       rdx, rcx                                  
+   028DF817  mov       r8d, 1                                    
+   028DF81D  mov       rcx, qword ptr [rip + 0x22c5564]          
+   028DF824  call      0x2cdedf0                                    -> 02CDEDF0  UEngine::GetWorldFromContextObject
+   028DF829  test      rax, rax                                  
+   028DF82C  je        0x28df848                                 
+   028DF82E  mov       r8b, 1                                    
+   028DF831  xor       edx, edx                                  
+   028DF833  mov       rcx, rax                                  
+   028DF836  call      0x2d37250                                    -> 02D37250
+   028DF83B  movss     xmm0, dword ptr [rax + 0x2e8]             
+   028DF843  add       rsp, 0x28                                 
+   028DF847  ret                                                 
+   028DF848  movss     xmm0, dword ptr [rip + 0xe8d690]          
+   028DF850  add       rsp, 0x28                                 
+   028DF854  ret                                                 
+
+-- SetTickableWhenPaused  impl 02664C00  [02664C00..02664C60)
+   02664C00  and       byte ptr [rcx + 0x32], 0xfe               
+   02664C04  or        byte ptr [rcx + 0x32], dl                 
+   02664C07  ret                                                 
+   02664C08  int3                                                
+   02664C09  int3                                                
+   02664C0A  int3                                                
+   02664C0B  int3                                                
+   02664C0C  int3                                                
+   02664C0D  int3                                                
+   02664C0E  int3                                                
+   02664C0F  int3                                                
+   02664C10  movss     dword ptr [rcx + 0x1a4], xmm1             
+   02664C18  ret                                                 
+   02664C19  int3                                                
+   02664C1A  int3                                                
+   02664C1B  int3                                                
+   02664C1C  int3                                                
+   02664C1D  int3                                                
+   02664C1E  int3                                                
+   02664C1F  int3                                                
+   02664C20  mov       qword ptr [rsp + 0x10], rdx               
+   02664C25  push      rbx                                       
+   02664C26  push      rbp                                       
+   02664C27  push      rdi                                       
+   02664C28  sub       rsp, 0x20                                 
+   02664C2C  mov       rbx, rdx                                  
+   02664C2F  mov       rdi, rcx                                  
+   02664C32  mov       ecx, ebx                                  
+   02664C34  xor       edx, edx                                  
+   02664C36  mov       rbp, r8                                   
+   02664C39  call      0xfaf620                                     -> 00FAF620
+   02664C3E  test      al, al                                    
+   02664C40  sete      dl                                        
+   02664C43  cmp       dword ptr [rsp + 0x4c], 0                 
+   02664C48  setne     al                                        
+   02664C4B  or        dl, al                                    
+   02664C4D  je        0x2664cd8                                 
+   02664C53  add       rdi, 0x738                                
+   02664C5A  mov       qword ptr [rsp + 0x40], rsi               
+
+-- GetActorTimeDilation  impl 02652E30  [02652E30..02652E72)
+   02652E30  push      rbx                                       
+   02652E32  sub       rsp, 0x20                                 
+   02652E36  mov       rax, qword ptr [rcx]                      
+   02652E39  mov       rbx, rcx                                  
+   02652E3C  call      qword ptr [rax + 0x160]                   
+   02652E42  test      rax, rax                                  
+   02652E45  je        0x2652e59                                 
+   02652E47  mov       r8b, 1                                    
+   02652E4A  xor       edx, edx                                  
+   02652E4C  mov       rcx, rax                                  
+   02652E4F  call      0x2d37250                                    -> 02D37250
+   02652E54  mov       rcx, rax                                  
+   02652E57  jmp       0x2652e5b                                    -> 02652E5B
+   02652E59  xor       ecx, ecx                                  
+   02652E5B  mov       rax, qword ptr [rcx]                      
+   02652E5E  call      qword ptr [rax + 0x648]                   
+   02652E64  mulss     xmm0, dword ptr [rbx + 0x98]              
+   02652E6C  add       rsp, 0x20                                 
+   02652E70  pop       rbx                                       
+   02652E71  ret                                                 
+
+-- GetUnpausedTimeSeconds  impl 028E1AF0  [028E1AF0..028E1B23)
+   028E1AF0  sub       rsp, 0x28                                 
+   028E1AF4  mov       rdx, rcx                                  
+   028E1AF7  mov       r8d, 1                                    
+   028E1AFD  mov       rcx, qword ptr [rip + 0x22c3284]          
+   028E1B04  call      0x2cdedf0                                    -> 02CDEDF0  UEngine::GetWorldFromContextObject
+   028E1B09  test      rax, rax                                  
+   028E1B0C  je        0x28e1b1b                                 
+   028E1B0E  movss     xmm0, dword ptr [rax + 0x5a4]             
+   028E1B16  add       rsp, 0x28                                 
+   028E1B1A  ret                                                 
+   028E1B1B  xorps     xmm0, xmm0                                
+   028E1B1E  add       rsp, 0x28                                 
+   028E1B22  ret                                                 
+
+-- GetRealTimeSeconds  impl 028E0850  [028E0850..028E0883)
+   028E0850  sub       rsp, 0x28                                 
+   028E0854  mov       rdx, rcx                                  
+   028E0857  mov       r8d, 1                                    
+   028E085D  mov       rcx, qword ptr [rip + 0x22c4524]          
+   028E0864  call      0x2cdedf0                                    -> 02CDEDF0  UEngine::GetWorldFromContextObject
+   028E0869  test      rax, rax                                  
+   028E086C  je        0x28e087b                                 
+   028E086E  movss     xmm0, dword ptr [rax + 0x5a8]             
+   028E0876  add       rsp, 0x28                                 
+   028E087A  ret                                                 
+   028E087B  xorps     xmm0, xmm0                                
+   028E087E  add       rsp, 0x28                                 
+   028E0882  ret                                                 
+
+-- GetWorldDeltaSeconds  impl 028E1CE0  [028E1CE0..028E1D13)
+   028E1CE0  sub       rsp, 0x28                                 
+   028E1CE4  mov       rdx, rcx                                  
+   028E1CE7  mov       r8d, 1                                    
+   028E1CED  mov       rcx, qword ptr [rip + 0x22c3094]          
+   028E1CF4  call      0x2cdedf0                                    -> 02CDEDF0  UEngine::GetWorldFromContextObject
+   028E1CF9  test      rax, rax                                  
+   028E1CFC  je        0x28e1d0b                                 
+   028E1CFE  movss     xmm0, dword ptr [rax + 0x5b0]             
+   028E1D06  add       rsp, 0x28                                 
+   028E1D0A  ret                                                 
+   028E1D0B  xorps     xmm0, xmm0                                
+   028E1D0E  add       rsp, 0x28                                 
+   028E1D12  ret                                                 
+
+-- proof that UWorld+0x5B0 is the clock GameplayStatics reads
+   028E1CE0  sub       rsp, 0x28
+   028E1CE4  mov       rdx, rcx
+   028E1CE7  mov       r8d, 1
+   028E1CED  mov       rcx, qword ptr [rip + 0x22c3094]
+   028E1CF4  call      0x2cdedf0
+   028E1CF9  test      rax, rax
+   028E1CFC  je        0x28e1d0b
+   028E1CFE  movss     xmm0, dword ptr [rax + 0x5b0]
+   028E1D06  add       rsp, 0x28
+   028E1D0A  ret       
+   028E1D0B  xorps     xmm0, xmm0
+   028E1D0E  add       rsp, 0x28
+   028E1D12  ret       
+
+-- IsGamePaused tail target (a compound predicate, not a bare flag read)
+   029A43C0  push      rbx
+   029A43C2  sub       rsp, 0x20
+   029A43C6  xor       r8d, r8d
+   029A43C9  xor       edx, edx
+   029A43CB  mov       rbx, rcx
+   029A43CE  call      0x2d37250
+   029A43D3  test      rax, rax
+   029A43D6  je        0x29a43fc
+   029A43D8  cmp       qword ptr [rax + 0x370], 0
+   029A43E0  je        0x29a43fc
+   029A43E2  cmp       byte ptr [rbx + 0x620], 0
+   029A43E9  jne       0x29a43fc
+   029A43EB  movss     xmm0, dword ptr [rbx + 0x5b4]
+   029A43F3  comiss    xmm0, dword ptr [rbx + 0x5a0]
+   029A43FA  jbe       0x29a4442
+   029A43FC  test      byte ptr [rbx + 0x10c], 0x40
+   029A4403  je        0x29a4412
+   029A4405  mov       rcx, rbx
+   029A4408  call      0x2d39cf0
+   029A440D  cmp       eax, 3
+   029A4410  je        0x29a4442
+   029A4412  mov       rcx, qword ptr [rip + 0x220096f]
+   029A4419  mov       rdx, rbx
+   029A441C  call      0x2cf04a0
+   029A4421  test      al, al
+   029A4423  jne       0x29a4442
+   029A4425  mov       rcx, rbx
+   029A4428  call      0x2d39f10
+   029A442D  test      al, al
+   029A442F  je        0x29a443a
+   029A4431  cmp       byte ptr [rbx + 0x10d], 0
+   029A4438  jl        0x29a4442
+   029A443A  xor       al, al
+   029A443C  add       rsp, 0x20
+   029A4440  pop       rbx
+   029A4441  ret       
+   029A4442  mov       al, 1
+   029A4444  add       rsp, 0x20
+   029A4448  pop       rbx
+   029A4449  ret       
+
+==============================================================================
+C. every package that *imports* a clock/pause entry point (proven call)
+==============================================================================
+
+SetGamePaused            3 package(s)
+     Blueprints/UpgradeMachine/WeaponUpgradeMachine.uasset
+     Player/FS_PlayerChar.uasset
+     UI/PhotoMode/Photomode_Pawn.uasset
+
+SetGlobalTimeDilation    2 package(s)
+     Blueprints/Utils/ShaderCompileManager.uasset
+     LD45/Blueprints/Base_LD45_GM.uasset
+
+SetTickableWhenPaused    3 package(s)
+     LD45/Blueprints/Checkpoint/Checkpoint.uasset
+     UI/Menus/Journal/Journal3DVisualizer.uasset
+     UI/Menus/Journal/Journal_RWM_BP.uasset
+
+IsGamePaused             8 package(s)
+     Blueprints/FS_GameInstance.uasset
+     Cutscenes/AwakenTextWidget.uasset
+     Cutscenes/EndingTextWidget.uasset
+     Cutscenes/RitualCutscene/RitualText.uasset
+     LD45/Blueprints/Base_LD45_GM.uasset
+     Player/FS_PlayerChar.uasset
+     Player/ItemmergeAnim/ItemMergeAnim_Comp.uasset
+     RuinsLevel/Intro/IntroTextWidget.uasset
+
+GetGlobalTimeDilation    12 package(s)
+     Blueprints/ItemPickupAnimationComp.uasset
+     Blueprints/SuperCubeAltar/SuperCubeAltar.uasset
+     Items/Consumables/Grimoire/Grimoire_UI_Projector.uasset
+     Items/KeyItems/Memento_Content/Memento_Pickup_Base.uasset
+     Items/KeyItems/TridentKeys/TridentKey_02_BP.uasset
+     Items/Upgrades/SharedContent/Food_Pedestal_Base.uasset
+     Items/Weapons/JarHammer/JarHammer_WeaponVisuals.uasset
+     Items/Weapons/TridentKeyTrident/TridentKeyTrident_WeaponVisuals.uasset
+     LD45/Blueprints/Base_LD45_GM.uasset
+     LD45/Blueprints/FS_CommonGM.uasset
+     NPCs/Shared/ItemGiveAnimationComp.uasset
+     Player/WeaponEvoAnimation.uasset
+
+==============================================================================
+D. package name tables: the blueprint-to-blueprint layer
+==============================================================================
+EnterUIMode              ['Blueprints/IntroSplashRead.uasset', 'Blueprints/LevelScripts/DemoEndTrigger.uasset', 'Blueprints/Teleporter/Teleporter.uasset', 'Blueprints/UpgradeMachine/WeaponUpgradeMachine.uasset', 'Items/Consumables/Grimoire/Grimoire_Logic.uasset', 'Player/FS_PlayerChar.uasset']
+ExitUIMode               ['Blueprints/Teleporter/Teleporter.uasset', 'Blueprints/UpgradeMachine/WeaponUpgrade_UI.uasset', 'Items/Consumables/Grimoire/Grimoire_Logic.uasset', 'OtherWorld/OW_MK/NodeKit/ElecPuzzleTerminal.uasset', 'Player/FS_PlayerChar.uasset', 'UI/Menus/GameMenu.uasset', 'UI/Menus/GameplayModalMenu.uasset', 'UI/Menus/PauseMenu.uasset']
+OpenPauseMenu            ['Player/FS_PlayerChar.uasset', 'Player/FS_PlayerController_BP.uasset']
+TryAutoPause             ['Player/FS_PlayerChar.uasset', 'Player/FS_PlayerController_BP.uasset']
+CheckForOverlayPause     ['Player/FS_PlayerChar.uasset', 'Player/WeaponEvoAnimation.uasset']
+ForceNoOverlayPause      ['Blueprints/LevelScripts/DemoEndTrigger.uasset', 'Player/FS_PlayerChar.uasset']
+IsInGameplayModal        ['Player/FS_PlayerChar.uasset', 'UI/Menus/GameplayModalMenu.uasset']
+SetPauseTimeDilation     ['Enemies/EnemyBase.uasset', 'LD45/Blueprints/Base_LD45_GM.uasset', 'LD45/Blueprints/TimeDilationManagement.uasset', 'LD45/Blueprints/TimeDilationManager.uasset', 'Player/FS_PlayerChar.uasset']
+IsTimeDilationPaused     ['Blueprints/FS_GameInstance.uasset', 'LD45/Blueprints/TimeDilationManagement.uasset', 'Player/FS_PlayerChar.uasset', 'Player/ItemmergeAnim/ItemMergeAnim_Comp.uasset']
+
+==============================================================================
+E. bytecode attribution: which export owns each pause call
+==============================================================================
+  SetGamePaused  uexp+00033DF3  owner=ExecuteUbergraph_FS_PlayerChar
+  SetGamePaused  uexp+000342FC  owner=ExecuteUbergraph_FS_PlayerChar
+  IsGamePaused   uexp+0003394A  owner=ExecuteUbergraph_FS_PlayerChar
+
+  neighbourhood of SetGamePaused@33DF3
+       -159  GetPlayerController
+       -121  FS_PlayerController
+        -24  SetCursorShowableOnWake
+        +31  GetPlayerController
+        +69  FS_PlayerController
+       +166  SetCursorShowableOnWake
+
+  neighbourhood of SetGamePaused@342FC
+       -192  FS_PlayerController
+        -95  HideCursor
+        -71  GetPlayerController
+        -58  Default__WidgetBlueprintLibrary
+        -41  SetInputMode_GameOnly
+        +33  Default__WidgetBlueprintLibrary
+        +50  GetAllWidgetsOfClass
+        +73  PauseMenu_C
+       +115  Default__KismetArrayLibrary
+       +140  Array_Length
+       +181  Conv_IntToBool
+
+  neighbourhood of IsGamePaused@3394A
+       -112  IsInUIInputMode
+        -87  IsValid
+        -63  Default__TimeDilationManagement_C
+        +25  BooleanOR
+        +83  BooleanOR
+       +141  BooleanOR
+       +196  DialogueManager_C
+
+==============================================================================
+G. FS_PlayerChar export geometry (why EnterUIMode is not the pause site)
+==============================================================================
+   EnterUIMode        uexp[0003ACB7..0003AD46)  143 bytes
+   ExitUIMode         uexp[0003AD46..0003ADD7)  145 bytes
+   OpenPauseMenu      uexp[0003B356..0003B3E7)  145 bytes
+   OpenSaveMenu       uexp[0003ADD7..0003AF12)  315 bytes
+   OpenShopmenu       uexp[0003AF4C..0003B087)  315 bytes
+   OpenKeymenu        uexp[0003B0C1..0003B150)  143 bytes
+   TryAutoPause       uexp[0003B4B0..0003B4EA)  58 bytes
+   EnterPhotoMode     uexp[0003D976..0003D9B0)  58 bytes
+   pause call sites are at uexp 00033DF3 and 000342FC, i.e. inside
+   ExecuteUbergraph_FS_PlayerChar, not inside any of the above.
+
+   stub entry offsets recovered: 166 of an unknown total
+   covered range: +0000000F .. +0001BB6C   ubergraph size +00038EA3
+   SetGamePaused@33DF3    rel +0003370C  -> OUTSIDE the recovered map
+   SetGamePaused@342FC    rel +00033C15  -> OUTSIDE the recovered map
+   => event-level attribution rejected; see 13b-pause-surface.md.
+
+==============================================================================
+F. per-state table   (Y = yes, N = no, U = undetermined, * = inherited)
+==============================================================================
+state                                    pau dil co-op clock divergence          conf
+Pause menu (Esc)                         Y   N   Y                               HIGH
+Options / Settings (from pause hub)      Y*  N   Y                               MEDIUM
+Challenges / Guides (from pause hub)     Y*  N   Y                               MEDIUM
+Journal / bestiary / notes               Y*  N   Y                               MEDIUM-HIGH
+Photo mode                               Y   N   Y                               HIGH
+Weapon upgrade machine                   Y   N   Y                               HIGH
+Save menu (from checkpoint)              Y*  N   Y                               MEDIUM
+Key-use menu                             Y*  N   Y                               LOW-MEDIUM
+Shop / vendor                            U   N   ? if paused                     LOW
+Inventory / equipment                    U   N   ?                               LOW
+Item inspect / merge                     N   Y   N                               MEDIUM
+Item pickup / give animation             N   Y   N                               MEDIUM
+Dialogue                                 N   N   N                               MEDIUM
+Cutscene / LevelSequence                 N   N   N/A (map change)                MEDIUM
+Death / game over                        U   N   ?                               LOW
+Read-text / notes overlay                U   N   ?                               LOW
+Steam-overlay / focus loss               Y   N   Y                               MEDIUM
+Enemy pause / hit-stop                   N   Y   N (per-world)                   HIGH
+Shader compile (loading)                 N   Y   N                               MEDIUM
+
+Evidence per row is expanded in analysis/13b-pause-surface.md.

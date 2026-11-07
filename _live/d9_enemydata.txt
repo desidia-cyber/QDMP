@@ -1,0 +1,235 @@
+﻿ATTACH 24928
+READY [{"ready": true, "base": "0x7ff75d670000", "manager": "0x17c4ca58900"}]
+>>> dumpclass 0x17cf7ea5b00
+[
+ {
+  "name": "UberGraphFrame",
+  "off": 264,
+  "type": null
+ },
+ {
+  "name": "SortOrder",
+  "off": 272,
+  "type": null
+ },
+ {
+  "name": "Name",
+  "off": 280,
+  "type": null
+ },
+ {
+  "name": "HP",
+  "off": 304,
+  "type": null
+ },
+ {
+  "name": "BaseDamage",
+  "off": 308,
+  "type": null
+ },
+ {
+  "name": "XPReward",
+  "off": 312,
+  "type": null
+ },
+ {
+  "name": "SlashResistance",
+  "off": 316,
+  "type": null
+ },
+ {
+  "name": "BluntResistance",
+  "off": 317,
+  "type": null
+ },
+ {
+  "name": "PierceResistance",
+  "off": 318,
+  "type": null
+ },
+ {
+  "name": "StatusType",
+  "off": 319,
+  "type": null
+ },
+ {
+  "name": "Status%",
+  "off": 320,
+  "type": null
+ },
+ {
+  "name": "StaggerStacks",
+  "off": 324,
+  "type": null
+ },
+ {
+  "name": "DiseaseResistance",
+  "off": 328,
+  "type": null
+ },
+ {
+  "name": "FireResistance",
+  "off": 329,
+  "type": null
+ },
+ {
+  "name": "PoisonResistance",
+  "off": 330,
+  "type": null
+ },
+ {
+  "name": "CustomData",
+  "off": 336,
+  "type": null
+ },
+ {
+  "name": "Data Import Key",
+  "off": 416,
+  "type": null
+ },
+ {
+  "name": "EnemyBP",
+  "off": 424,
+  "type": null
+ },
+ {
+  "name": "VisualEnemyBPOverride",
+  "off": 432,
+  "type": null
+ },
+ {
+  "name": "AttackStopFollowRange",
+  "off": 440,
+  "type": null
+ },
+ {
+  "name": "PassiveStopFollowRange",
+  "off": 444,
+  "type": null
+ },
+ {
+  "name": "MoveSpeed",
+  "off": 448,
+  "type": null
+ },
+ {
+  "name": "TurnSpeed",
+  "off": 452,
+  "type": null
+ },
+ {
+  "name": "RotationTargetOffset",
+  "off": 456,
+  "type": null
+ },
+ {
+  "name": "Drop",
+  "off": 464,
+  "type": null
+ },
+ {
+  "name": "AwarenessProfile",
+  "off": 576,
+  "type": null
+ },
+ {
+  "name": "AggroSensitivity",
+  "off": 584,
+  "type": null
+ },
+ {
+  "name": "AggroDecreaseRate",
+  "off": 588,
+  "type": null
+ },
+ {
+  "name": "Boss",
+  "off": 592,
+  "type": null
+ },
+ {
+  "name": "BestiaryScale",
+  "off": 596,
+  "type": null
+ },
+ {
+  "name": "Bestiary Forward / BackOffset",
+  "off": 600,
+  "type": null
+ },
+ {
+  "name": "Bestiary Up / DownOffset",
+  "off": 604,
+  "type": null
+ },
+ {
+  "name": "Description",
+  "off": 608,
+  "type": null
+ },
+ {
+  "name": "Bestiary Clamp Rotation",
+  "off": 632,
+  "type": null
+ },
+ {
+  "name": "Bestiary Starting Rotation",
+  "off": 636,
+  "type": null
+ },
+ {
+  "name": "Bestiary Pitch Offset",
+  "off": 640,
+  "type": null
+ },
+ {
+  "name": "DoNotCountForBestiaryTotal",
+  "off": 644,
+  "type": null
+ },
+ {
+  "name": "ParentData",
+  "off": 648,
+  "type": null
+ },
+ {
+  "name": "JournalDioramaOverride",
+  "off": 656,
+  "type": null
+ },
+ {
+  "name": "AttackComments",
+  "off": 664,
+  "type": null
+ },
+ {
+  "name": "bDoNotAllowInBestiary",
+  "off": 80,
+  "type": null
+ },
+ {
+  "name": "AttackConfiguration",
+  "off": 88,
+  "type": null
+ },
+ {
+  "name": "KeyToAttackIndex",
+  "off": 104,
+  "type": null
+ },
+ {
+  "name": "AttackIndexToKey",
+  "off": 184,
+  "type": null
+ },
+ {
+  "name": "ViewConfig",
+  "off": 48,
+  "type": null
+ },
+ {
+  "name": "NativeClass",
+  "off": 40,
+  "type": null
+ }
+]

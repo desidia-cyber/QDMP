@@ -1,0 +1,53 @@
+﻿pause-related call sites:
+   SetGamePaused  @00033DF3  export=ExecuteUbergraph_FS_PlayerChar
+   SetGamePaused  @000342FC  export=ExecuteUbergraph_FS_PlayerChar
+   IsGamePaused   @0003394A  export=ExecuteUbergraph_FS_PlayerChar
+
+widget/menu class references in the same package:
+   dist=    63  @0003390B  Default__TimeDilationManagement_C              in ExecuteUbergraph_FS_PlayerChar
+   dist=    73  @00034345  PauseMenu_C                                    in ExecuteUbergraph_FS_PlayerChar
+   dist=   196  @00033A0E  DialogueManager_C                              in ExecuteUbergraph_FS_PlayerChar
+   dist=   213  @00033A1F  DialogueManager_C                              in ExecuteUbergraph_FS_PlayerChar
+   dist=   228  @000343E0  Default__TimeDilationManagement_C              in ExecuteUbergraph_FS_PlayerChar
+   dist=   263  @00034403  Default__TimeDilationManagement_C              in ExecuteUbergraph_FS_PlayerChar
+   dist=   278  @000341E6  Default__TimeDilationManagement_C              in ExecuteUbergraph_FS_PlayerChar
+   dist=   298  @00034426  Default__TimeDilationManagement_C              in ExecuteUbergraph_FS_PlayerChar
+   dist=   381  @000337CD  PlayerInteractionComponent_C                   in ExecuteUbergraph_FS_PlayerChar
+   dist=   398  @000337BC  PlayerInteractionComponent_C                   in ExecuteUbergraph_FS_PlayerChar
+   dist=   399  @0003416D  Default__TimeDilationManagement_C              in ExecuteUbergraph_FS_PlayerChar
+   dist=   400  @0003448C  Default__TimeDilationManagement_C              in ExecuteUbergraph_FS_PlayerChar
+   dist=   422  @00033C4D  Default__AudioDuckFunctions_C                  in ExecuteUbergraph_FS_PlayerChar
+   dist=   449  @00033C32  PlayerInteractionComponent_C                   in ExecuteUbergraph_FS_PlayerChar
+   dist=   454  @00033B10  Default__TimeDilationManagement_C              in ExecuteUbergraph_FS_PlayerChar
+   dist=   460  @0003377E  Default__AudioDuckFunctions_C                  in ExecuteUbergraph_FS_PlayerChar
+   dist=   466  @00033C21  PlayerInteractionComponent_C                   in ExecuteUbergraph_FS_PlayerChar
+   dist=   478  @0003376C  PlayerInteractionComponent_C                   in ExecuteUbergraph_FS_PlayerChar
+   dist=   495  @0003375B  PlayerInteractionComponent_C                   in ExecuteUbergraph_FS_PlayerChar
+   dist=   534  @00033734  ReadTextUI_C                                   in ExecuteUbergraph_FS_PlayerChar
+   dist=   551  @00033723  ReadTextUI_C                                   in ExecuteUbergraph_FS_PlayerChar
+   dist=   616  @00034094  Default__TimeDilationManagement_C              in ExecuteUbergraph_FS_PlayerChar
+   dist=   645  @00034581  Default__TimeDilationManagement_C              in ExecuteUbergraph_FS_PlayerChar
+   dist=   685  @000345A9  Default__AudioDuckFunctions_C                  in ExecuteUbergraph_FS_PlayerChar
+   dist=   714  @000345C6  Default__SaveFunctions_C                       in ExecuteUbergraph_FS_PlayerChar
+   dist=   793  @00034615  FS_SaveSlot_C                                  in ExecuteUbergraph_FS_PlayerChar
+   dist=   810  @00034626  FS_SaveSlot_C                                  in ExecuteUbergraph_FS_PlayerChar
+   dist=   822  @00033614  PauseMenu_C                                    in ExecuteUbergraph_FS_PlayerChar
+   dist=   848  @0003464C  Checkpoint_C                                   in ExecuteUbergraph_FS_PlayerChar
+   dist=   865  @0003465D  Checkpoint_C                                   in ExecuteUbergraph_FS_PlayerChar
+   dist=   914  @0003468E  PlayerInteractionComponent_C                   in ExecuteUbergraph_FS_PlayerChar
+   dist=   931  @0003469F  PlayerInteractionComponent_C                   in ExecuteUbergraph_FS_PlayerChar
+   dist=  1017  @000346F5  SaveMenu_C                                     in ExecuteUbergraph_FS_PlayerChar
+   dist=  1314  @0003481E  DialogueScreen_C                               in ExecuteUbergraph_FS_PlayerChar
+   dist=  1427  @0003488F  PlayerInteractionComponent_C                   in ExecuteUbergraph_FS_PlayerChar
+   dist=  1444  @000348A0  PlayerInteractionComponent_C                   in ExecuteUbergraph_FS_PlayerChar
+   dist=  1491  @000348CF  Default__AudioDuckFunctions_C                  in ExecuteUbergraph_FS_PlayerChar
+   dist=  1656  @00034974  ShopMenu_C                                     in ExecuteUbergraph_FS_PlayerChar
+   dist=  1951  @00034A9B  PlayerInteractionComponent_C                   in ExecuteUbergraph_FS_PlayerChar
+   dist=  1968  @00034AAC  PlayerInteractionComponent_C                   in ExecuteUbergraph_FS_PlayerChar
+   dist=  1972  @00033196  DaggerChargeLogic_C                            in ExecuteUbergraph_FS_PlayerChar
+   dist=  1989  @00033185  DaggerChargeLogic_C                            in ExecuteUbergraph_FS_PlayerChar
+   dist=  2001  @00034ACD  Default__AudioDuckFunctions_C                  in ExecuteUbergraph_FS_PlayerChar
+   dist=  2063  @00034B0B  PlayerInteractionComponent_C                   in ExecuteUbergraph_FS_PlayerChar
+   dist=  2080  @00034B1C  PlayerInteractionComponent_C                   in ExecuteUbergraph_FS_PlayerChar
+
+   (2518 total reference sites)

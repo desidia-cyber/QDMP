@@ -1,0 +1,79 @@
+{"ready": true, "base": "0x7ff75d670000"}
+{"event": "tickoff", "actor": "0x192e3c6d9c0"}
+{"event": "pin", "tick": 60, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 120, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 180, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 240, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 300, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 360, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 420, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 480, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 540, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 600, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 660, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 720, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 780, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 840, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 900, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 960, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 1020, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 1080, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 1140, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 1200, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 1260, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 1320, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 1380, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 1440, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 1500, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 1560, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 1620, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 1680, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 1740, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 1800, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 1860, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 1920, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 1980, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 2040, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 2100, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 2160, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 2220, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 2280, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "StoreEnemySaveState", "at": 1794012001587, "worldctx": "0x1930107f250", "guid": "5ae3b37b-4f721b25-bd55a3b5-958ab1c2", "respawn": 0, "hp": 0, "lr": "0x7ff75e4d2146"}
+{"event": "pin", "tick": 2340, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 2400, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "StoreEnemySaveState", "at": 1794012002285, "worldctx": "0x1930107f250", "guid": "5ae3b37b-4f721b25-bd55a3b5-958ab1c2", "respawn": 0, "hp": 0, "lr": "0x7ff75e4d2146"}
+{"event": "pin", "tick": 2460, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "StoreEnemySaveState", "at": 1794012003013, "worldctx": "0x1930107f250", "guid": "5ae3b37b-4f721b25-bd55a3b5-958ab1c2", "respawn": 0, "hp": 0, "lr": "0x7ff75e4d2146"}
+{"event": "pin", "tick": 2520, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 2580, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "StoreEnemySaveState", "at": 1794012003742, "worldctx": "0x1930107f250", "guid": "5ae3b37b-4f721b25-bd55a3b5-958ab1c2", "respawn": 0, "hp": 0, "lr": "0x7ff75e4d2146"}
+{"event": "pin", "tick": 2640, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "StoreEnemySaveState", "at": 1794012004444, "worldctx": "0x1930107f250", "guid": "5ae3b37b-4f721b25-bd55a3b5-958ab1c2", "respawn": 0, "hp": 0, "lr": "0x7ff75e4d2146"}
+{"event": "pin", "tick": 2700, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 2760, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "StoreEnemySaveState", "at": 1794012005157, "worldctx": "0x1930107f250", "guid": "5ae3b37b-4f721b25-bd55a3b5-958ab1c2", "respawn": 0, "hp": 0, "lr": "0x7ff75e4d2146"}
+{"event": "pin", "tick": 2820, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 2880, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 2940, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 3000, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 3060, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 3120, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 3180, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 3240, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 3300, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 3360, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 3420, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 3480, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 3540, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 3600, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 3660, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 3720, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 3780, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 3840, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 3900, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 3960, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 4020, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 4080, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 4140, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 4200, "at": {"x": 4007, "y": -1736, "z": 140}}
+{"event": "pin", "tick": 4260, "at": {"x": 4007, "y": -1736, "z": 140}}

@@ -1,0 +1,496 @@
+[
+ {
+  "path": "QueensDomain/Content/Blueprints/Door_Base.uasset",
+  "imports": [
+   "SetActorTickEnabled"
+  ],
+  "mentions_only": [],
+  "class": "Door_Base_C",
+  "parent": "SavableActor_C"
+ },
+ {
+  "path": "QueensDomain/Content/Blueprints/FS_GameInstance.uasset",
+  "imports": [
+   "IsGamePaused"
+  ],
+  "mentions_only": [
+   "EnterCutsceneMode",
+   "ExitCutsceneMode",
+   "InCutscene",
+   "IsTimeDilationPaused"
+  ],
+  "class": "FS_GameInstance_C",
+  "parent": "FS_GameInstanceBase"
+ },
+ {
+  "path": "QueensDomain/Content/Blueprints/FS_Light.uasset",
+  "imports": [
+   "SetActorTickEnabled"
+  ],
+  "mentions_only": [],
+  "class": "FS_Light_C",
+  "parent": "PointLight"
+ },
+ {
+  "path": "QueensDomain/Content/Blueprints/ItemPickup_Base.uasset",
+  "imports": [
+   "SetActorTickEnabled"
+  ],
+  "mentions_only": [
+   "CustomTimeDilation",
+   "bIgnoreTimeDilation"
+  ],
+  "class": "ItemPickup_Base_C",
+  "parent": "CoreItemPickupActor_C"
+ },
+ {
+  "path": "QueensDomain/Content/Blueprints/ItemPickupAnimationComp.uasset",
+  "imports": [
+   "GetGlobalTimeDilation"
+  ],
+  "mentions_only": [
+   "CustomTimeDilation",
+   "bIgnoreTimeDilation"
+  ],
+  "class": "ItemPickupAnimationComp_C",
+  "parent": "ActorComponent"
+ },
+ {
+  "path": "QueensDomain/Content/Blueprints/SecretWall.uasset",
+  "imports": [
+   "SetActorTickEnabled"
+  ],
+  "mentions_only": [],
+  "class": "SecretWall_C",
+  "parent": "SavableActor_C"
+ },
+ {
+  "path": "QueensDomain/Content/Blueprints/VisualKeyCOmponent.uasset",
+  "imports": [],
+  "mentions_only": [
+   "bIgnoreTimeDilation"
+  ],
+  "class": "VisualKeyComponent_C",
+  "parent": "StaticMeshComponent"
+ },
+ {
+  "path": "QueensDomain/Content/Blueprints/BreakableBarricade/BreakableBarricade.uasset",
+  "imports": [
+   "SetActorTickEnabled"
+  ],
+  "mentions_only": [],
+  "class": "BreakableBarricade_C",
+  "parent": "SavableActor_C"
+ },
+ {
+  "path": "QueensDomain/Content/Blueprints/ChefCrowEvent/ChefCrowEvent_NPC.uasset",
+  "imports": [
+   "SetActorTickEnabled"
+  ],
+  "mentions_only": [],
+  "class": "ChefCrowEvent_NPC_C",
+  "parent": "NPC_Base_C"
+ },
+ {
+  "path": "QueensDomain/Content/Blueprints/InputSystem/DefaultBindings_DA.uasset",
+  "imports": [],
+  "mentions_only": [
+   "ExitMenu"
+  ],
+  "class": null,
+  "parent": null
+ },
+ {
+  "path": "QueensDomain/Content/Blueprints/LevelScripts/DemoEndTrigger.uasset",
+  "imports": [],
+  "mentions_only": [
+   "ForceNoOverlayPause"
+  ],
+  "class": "DemoEndTrigger_C",
+  "parent": "Actor"
+ },
+ {
+  "path": "QueensDomain/Content/Blueprints/MusicControl/MusicController.uasset",
+  "imports": [],
+  "mentions_only": [
+   "bIgnoreTimeDilation"
+  ],
+  "class": "MusicController_C",
+  "parent": "FS_MusicSystemBase"
+ },
+ {
+  "path": "QueensDomain/Content/Blueprints/SecretSwordAltar/SecretSword_Altar_BP.uasset",
+  "imports": [],
+  "mentions_only": [
+   "EnableAllPlayerInput"
+  ],
+  "class": "SecretSword_Altar_BP_C",
+  "parent": "NPC_Base_C"
+ },
+ {
+  "path": "QueensDomain/Content/Blueprints/Shop/ShopMenu.uasset",
+  "imports": [],
+  "mentions_only": [
+   "IsOpen"
+  ],
+  "class": "ShopMenu_C",
+  "parent": "UserWidget"
+ },
+ {
+  "path": "QueensDomain/Content/Blueprints/SuperCubeAltar/SuperCubeAltar.uasset",
+  "imports": [
+   "GetGlobalTimeDilation"
+  ],
+  "mentions_only": [
+   "DisableAllPlayerInput",
+   "EnableAllPlayerInput",
+   "bIgnoreTimeDilation"
+  ],
+  "class": "SuperCubeAltar_C",
+  "parent": "SavableActor_C"
+ },
+ {
+  "path": "QueensDomain/Content/Blueprints/UpgradeMachine/UpgradeItem3DViewer.uasset",
+  "imports": [],
+  "mentions_only": [
+   "bIgnoreTimeDilation"
+  ],
+  "class": "UpgradeItem3DViewer_C",
+  "parent": "Inspect_RWM_C"
+ },
+ {
+  "path": "QueensDomain/Content/Blueprints/UpgradeMachine/WeaponUpgrade_UI.uasset",
+  "imports": [],
+  "mentions_only": [
+   "IsOpen"
+  ],
+  "class": "WeaponUpgrade_UI_C",
+  "parent": "UserWidget"
+ },
+ {
+  "path": "QueensDomain/Content/Blueprints/UpgradeMachine/WeaponUpgradeMachine.uasset",
+  "imports": [
+   "SetGamePaused"
+  ],
+  "mentions_only": [
+   "SetPausedEnemyTimeDilation"
+  ],
+  "class": "WeaponUpgradeMachine_C",
+  "parent": "FS_StaticMeshActor_C"
+ },
+ {
+  "path": "QueensDomain/Content/Blueprints/Utils/ShaderCompileManager.uasset",
+  "imports": [
+   "SetGlobalTimeDilation"
+  ],
+  "mentions_only": [],
+  "class": "ShaderCompileManager_C",
+  "parent": "Actor"
+ },
+ {
+  "path": "QueensDomain/Content/Cutscenes/AwakenTextWidget.uasset",
+  "imports": [
+   "IsGamePaused"
+  ],
+  "mentions_only": [],
+  "class": "AwakenTextWidget_C",
+  "parent": "UserWidget"
+ },
+ {
+  "path": "QueensDomain/Content/Cutscenes/EndingTextWidget.uasset",
+  "imports": [
+   "IsGamePaused"
+  ],
+  "mentions_only": [],
+  "class": "EndingTextWidget_C",
+  "parent": "UserWidget"
+ },
+ {
+  "path": "QueensDomain/Content/Cutscenes/RitualCutscene/RitualText.uasset",
+  "imports": [
+   "IsGamePaused"
+  ],
+  "mentions_only": [],
+  "class": "RitualText_C",
+  "parent": "UserWidget"
+ },
+ {
+  "path": "QueensDomain/Content/Player/AcidVialAnimation.uasset",
+  "imports": [],
+  "mentions_only": [
+   "CustomTimeDilation",
+   "DisableAllPlayerInput",
+   "EnableAllPlayerInput"
+  ],
+  "class": "AcidVialAnimation_C",
+  "parent": "ActorComponent"
+ },
+ {
+  "path": "QueensDomain/Content/Player/FS_PlayerChar.uasset",
+  "imports": [
+   "IsGamePaused",
+   "SetGamePaused"
+  ],
+  "mentions_only": [
+   "CheckForOverlayPause",
+   "CurrentGameMenu",
+   "DisableAllPlayerInput",
+   "EnableAllPlayerInput",
+   "EndPhotoMode",
+   "EnterCutsceneMode",
+   "ExitCutsceneMode",
+   "ExitMenu",
+   "ForceNoOverlayPause",
+   "InCutscene",
+   "InPhotoMode",
+   "IsInGameplayModal",
+   "IsOpen",
+   "IsTimeDilationPaused",
+   "OpenPauseMenu",
+   "SetIgnoreLookInput",
+   "SetIgnoreMoveInput",
+   "SetPauseTimeDilation",
+   "SetPausedEnemyTimeDilation",
+   "TryAutoPause",
+   "bIgnoreTimeDilation"
+  ],
+  "class": "FS_PlayerChar_C",
+  "parent": "FS_PlayerCharacter"
+ },
+ {
+  "path": "QueensDomain/Content/Player/FS_PlayerController_BP.uasset",
+  "imports": [],
+  "mentions_only": [
+   "InCutscene",
+   "OpenPauseMenu",
+   "TryAutoPause",
+   "bShowMouseCursor"
+  ],
+  "class": "FS_PlayerController_BP_C",
+  "parent": "FS_PlayerController"
+ },
+ {
+  "path": "QueensDomain/Content/Player/PlayerStatsAndUtils.uasset",
+  "imports": [],
+  "mentions_only": [
+   "DisableAllPlayerInput",
+   "EnableAllPlayerInput",
+   "SetIgnoreLookInput",
+   "SetIgnoreMoveInput"
+  ],
+  "class": "PlayerStatsAndUtils_C",
+  "parent": "BlueprintFunctionLibrary"
+ },
+ {
+  "path": "QueensDomain/Content/Player/WeaponEvoAnimation.uasset",
+  "imports": [
+   "GetGlobalTimeDilation"
+  ],
+  "mentions_only": [
+   "CheckForOverlayPause",
+   "CustomTimeDilation",
+   "DisableAllPlayerInput",
+   "EnableAllPlayerInput",
+   "bIgnoreTimeDilation"
+  ],
+  "class": "WeaponEvoAnimation_C",
+  "parent": "ActorComponent"
+ },
+ {
+  "path": "QueensDomain/Content/Player/ItemmergeAnim/FlyingSword_ItemMergeActor.uasset",
+  "imports": [],
+  "mentions_only": [
+   "bIgnoreTimeDilation"
+  ],
+  "class": "FlyingSword_ItemMergeActor_C",
+  "parent": "ItemMergeActor_C"
+ },
+ {
+  "path": "QueensDomain/Content/Player/ItemmergeAnim/ItemMergeActorAnim.uasset",
+  "imports": [],
+  "mentions_only": [
+   "CustomTimeDilation",
+   "bIgnoreTimeDilation"
+  ],
+  "class": "ItemMergeActorAnim_C",
+  "parent": "ActorComponent"
+ },
+ {
+  "path": "QueensDomain/Content/Player/ItemmergeAnim/ItemMergeAnim_Comp.uasset",
+  "imports": [
+   "IsGamePaused"
+  ],
+  "mentions_only": [
+   "IsTimeDilationPaused",
+   "SetIgnoreLookInput",
+   "SetIgnoreMoveInput"
+  ],
+  "class": "ItemMergeAnim_Comp_C",
+  "parent": "ActorComponent"
+ },
+ {
+  "path": "QueensDomain/Content/Player/ItemmergeAnim/RuneVisionMask_ItemMergeActor.uasset",
+  "imports": [],
+  "mentions_only": [
+   "bIgnoreTimeDilation"
+  ],
+  "class": "RuneVisionMask_ItemMergeActor_C",
+  "parent": "ItemMergeActor_C"
+ },
+ {
+  "path": "QueensDomain/Content/UI/Menus/DemoEndSplash.uasset",
+  "imports": [],
+  "mentions_only": [
+   "bShowMouseCursor"
+  ],
+  "class": "DemoEndSplash_C",
+  "parent": "UserWidget"
+ },
+ {
+  "path": "QueensDomain/Content/UI/Menus/DemoIntroSplash.uasset",
+  "imports": [],
+  "mentions_only": [
+   "IsOpen",
+   "bShowMouseCursor"
+  ],
+  "class": "DemoIntroSplash_C",
+  "parent": "UserWidget"
+ },
+ {
+  "path": "QueensDomain/Content/UI/Menus/DieUI.uasset",
+  "imports": [],
+  "mentions_only": [
+   "IsOpen"
+  ],
+  "class": "DieUI_C",
+  "parent": "UserWidget"
+ },
+ {
+  "path": "QueensDomain/Content/UI/Menus/GameMenu.uasset",
+  "imports": [],
+  "mentions_only": [
+   "CurrentGameMenu",
+   "IsOpen"
+  ],
+  "class": "GameMenu_C",
+  "parent": "UserWidget"
+ },
+ {
+  "path": "QueensDomain/Content/UI/Menus/GameplayModalMenu.uasset",
+  "imports": [],
+  "mentions_only": [
+   "CurrentGameMenu",
+   "IsInGameplayModal"
+  ],
+  "class": "GameplayModalMenu_C",
+  "parent": "UserWidget"
+ },
+ {
+  "path": "QueensDomain/Content/UI/Menus/PauseMenu.uasset",
+  "imports": [],
+  "mentions_only": [
+   "InCutscene",
+   "IsOpen"
+  ],
+  "class": "PauseMenu_C",
+  "parent": "UserWidget"
+ },
+ {
+  "path": "QueensDomain/Content/UI/Menus/ReadTextUI.uasset",
+  "imports": [],
+  "mentions_only": [
+   "IsOpen",
+   "bShowMouseCursor"
+  ],
+  "class": "ReadTextUI_C",
+  "parent": "UserWidget"
+ },
+ {
+  "path": "QueensDomain/Content/UI/Menus/Challenges/Challenges_Menu.uasset",
+  "imports": [],
+  "mentions_only": [
+   "IsOpen"
+  ],
+  "class": "Challenges_Menu_C",
+  "parent": "UserWidget"
+ },
+ {
+  "path": "QueensDomain/Content/UI/Menus/Journal/Journal3DVisualizer.uasset",
+  "imports": [
+   "SetTickableWhenPaused"
+  ],
+  "mentions_only": [],
+  "class": "Journal3DVisualizer_C",
+  "parent": "Actor"
+ },
+ {
+  "path": "QueensDomain/Content/UI/Menus/Journal/Journal_RWM_BP.uasset",
+  "imports": [
+   "SetTickableWhenPaused"
+  ],
+  "mentions_only": [],
+  "class": "Journal_RWM_BP_C",
+  "parent": "RenderWorldManager_BP_C"
+ },
+ {
+  "path": "QueensDomain/Content/UI/PhotoMode/PhotoMode_HUD.uasset",
+  "imports": [],
+  "mentions_only": [
+   "EndPhotoMode",
+   "InPhotoMode"
+  ],
+  "class": "PhotoMode_HUD_C",
+  "parent": "UserWidget"
+ },
+ {
+  "path": "QueensDomain/Content/UI/PhotoMode/Photomode_Pawn.uasset",
+  "imports": [
+   "SetActorTickEnabled",
+   "SetGamePaused"
+  ],
+  "mentions_only": [
+   "EndPhotoMode",
+   "InCutscene",
+   "InPhotoMode"
+  ],
+  "class": "Photomode_Pawn_C",
+  "parent": "SpectatorPawn"
+ },
+ {
+  "path": "QueensDomain/Content/UI/Title/TitleScreenUI.uasset",
+  "imports": [],
+  "mentions_only": [
+   "ExitCutsceneMode",
+   "InCutscene"
+  ],
+  "class": "TitleScreenUI_C",
+  "parent": "UserWidget"
+ },
+ {
+  "path": "QueensDomain/Content/UI/Widgets/FS_InspectItem.uasset",
+  "imports": [],
+  "mentions_only": [
+   "IsOpen"
+  ],
+  "class": "FS_InspectItem_C",
+  "parent": "UserWidget"
+ },
+ {
+  "path": "QueensDomain/Content/UI/Widgets/FS_Modal.uasset",
+  "imports": [],
+  "mentions_only": [
+   "IsOpen"
+  ],
+  "class": "FS_Modal_C",
+  "parent": "UserWidget"
+ },
+ {
+  "path": "QueensDomain/Content/UI/Widgets/VirtualKeyboard.uasset",
+  "imports": [],
+  "mentions_only": [
+   "IsOpen"
+  ],
+  "class": "VirtualKeyboard_C",
+  "parent": "UserWidget"
+ }
+]

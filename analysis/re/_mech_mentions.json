@@ -1,0 +1,1084 @@
+[
+ {
+  "path": "QueensDomain/Content/BaseMaterials/Resources/PixelFilter_MPC.uasset",
+  "mentions": [
+   "InCutscene"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/Blueprints/Door_Base.uasset",
+  "mentions": [
+   "SetActorTickEnabled"
+  ],
+  "imports": [
+   "SetActorTickEnabled"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/Blueprints/FS_GameInstance.uasset",
+  "mentions": [
+   "EnterCutsceneMode",
+   "ExitCutsceneMode",
+   "InCutscene",
+   "IsGamePaused",
+   "IsTimeDilationPaused"
+  ],
+  "imports": [
+   "IsGamePaused"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/Blueprints/FS_Light.uasset",
+  "mentions": [
+   "SetActorTickEnabled"
+  ],
+  "imports": [
+   "SetActorTickEnabled"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/Blueprints/IntroSplashRead.uasset",
+  "mentions": [
+   "EnterUIMode"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/Blueprints/ItemPickup_Base.uasset",
+  "mentions": [
+   "CustomTimeDilation",
+   "SetActorTickEnabled",
+   "bIgnoreTimeDilation"
+  ],
+  "imports": [
+   "SetActorTickEnabled"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/Blueprints/ItemPickupAnimationComp.uasset",
+  "mentions": [
+   "CustomTimeDilation",
+   "GetGlobalTimeDilation",
+   "bIgnoreTimeDilation"
+  ],
+  "imports": [
+   "GetGlobalTimeDilation"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/Blueprints/SecretWall.uasset",
+  "mentions": [
+   "SetActorTickEnabled"
+  ],
+  "imports": [
+   "SetActorTickEnabled"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/Blueprints/VisualKeyCOmponent.uasset",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/Blueprints/BreakableBarricade/BreakableBarricade.uasset",
+  "mentions": [
+   "SetActorTickEnabled"
+  ],
+  "imports": [
+   "SetActorTickEnabled"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/Blueprints/ChefCrowEvent/ChefCrowEvent_NPC.uasset",
+  "mentions": [
+   "SetActorTickEnabled"
+  ],
+  "imports": [
+   "SetActorTickEnabled"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/Blueprints/InputSystem/DefaultBindings_DA.uasset",
+  "mentions": [
+   "ExitMenu"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/Blueprints/LevelScripts/DemoEndTrigger.uasset",
+  "mentions": [
+   "EnterUIMode",
+   "ForceNoOverlayPause"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/Blueprints/MusicControl/MusicController.uasset",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/Blueprints/SecretSwordAltar/SecretSword_Altar_BP.uasset",
+  "mentions": [
+   "EnableAllPlayerInput"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/Blueprints/Shop/ShopMenu.uasset",
+  "mentions": [
+   "IsOpen"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/Blueprints/SuperCubeAltar/SuperCubeAltar.uasset",
+  "mentions": [
+   "DisableAllPlayerInput",
+   "EnableAllPlayerInput",
+   "GetGlobalTimeDilation",
+   "bIgnoreTimeDilation"
+  ],
+  "imports": [
+   "GetGlobalTimeDilation"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/Blueprints/Teleporter/Teleporter.uasset",
+  "mentions": [
+   "EnterUIMode",
+   "ExitUIMode"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/Blueprints/UpgradeMachine/UpgradeItem3DViewer.uasset",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/Blueprints/UpgradeMachine/WeaponUpgrade_UI.uasset",
+  "mentions": [
+   "ExitUIMode",
+   "IsOpen"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/Blueprints/UpgradeMachine/WeaponUpgradeMachine.uasset",
+  "mentions": [
+   "EnterUIMode",
+   "SetGamePaused",
+   "SetPausedEnemyTimeDilation"
+  ],
+  "imports": [
+   "SetGamePaused"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/Blueprints/Utils/ShaderCompileManager.uasset",
+  "mentions": [
+   "SetGlobalTimeDilation"
+  ],
+  "imports": [
+   "SetGlobalTimeDilation"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/Cutscenes/AwakenTextWidget.uasset",
+  "mentions": [
+   "IsGamePaused"
+  ],
+  "imports": [
+   "IsGamePaused"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/Cutscenes/EndingTextWidget.uasset",
+  "mentions": [
+   "IsGamePaused"
+  ],
+  "imports": [
+   "IsGamePaused"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/Cutscenes/RitualCutscene/RitualText.uasset",
+  "mentions": [
+   "IsGamePaused"
+  ],
+  "imports": [
+   "IsGamePaused"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/Enemies/EnemyBase.uasset",
+  "mentions": [
+   "CustomTimeDilation",
+   "SetActorTickEnabled",
+   "SetPauseTimeDilation",
+   "bIgnoreTimeDilation"
+  ],
+  "imports": [
+   "SetActorTickEnabled"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/Enemies/EnemySpawner.uasset",
+  "mentions": [
+   "CustomTimeDilation",
+   "SetActorTickEnabled"
+  ],
+  "imports": [
+   "SetActorTickEnabled",
+   "SetActorTickInterval"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/Enemies/Dragon/Dragon_ROS/Dragon_Ros_Bestiary.uasset",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/Enemies/Dragon/Dragon_ROS/Dragon_Ros_BP.uasset",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/Items/Consumables/Grimoire/Grimoire_Logic.uasset",
+  "mentions": [
+   "CurrentGameMenu",
+   "CustomTimeDilation",
+   "EnterUIMode",
+   "ExitUIMode",
+   "SetPausedEnemyTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/Items/Consumables/Grimoire/Grimoire_UI_Projector.uasset",
+  "mentions": [
+   "CustomTimeDilation",
+   "GetGlobalTimeDilation",
+   "bIgnoreTimeDilation"
+  ],
+  "imports": [
+   "GetGlobalTimeDilation"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/Items/KeyItems/Memento_Content/Memento_Pickup_Base.uasset",
+  "mentions": [
+   "GetGlobalTimeDilation"
+  ],
+  "imports": [
+   "GetGlobalTimeDilation"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/Items/KeyItems/ShopProgressionKey/StoneDuck_UnlockMovement.uasset",
+  "mentions": [
+   "CustomTimeDilation",
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/Items/KeyItems/TridentKeys/TridentKey_02_BP.uasset",
+  "mentions": [
+   "GetGlobalTimeDilation"
+  ],
+  "imports": [
+   "GetGlobalTimeDilation"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/Items/Upgrades/SharedContent/Food_Pedestal_Base.uasset",
+  "mentions": [
+   "GetGlobalTimeDilation",
+   "bIgnoreTimeDilation"
+  ],
+  "imports": [
+   "GetGlobalTimeDilation"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/Items/Upgrades/SharedContent/Food_Pickup_Base.uasset",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/Items/Upgrades/SharedContent/Gem_Pedestal_Base_BP.uasset",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/Items/Weapons/WeaponVisuals.uasset",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/Items/Weapons/JarHammer/JarHammer_WeaponVisuals.uasset",
+  "mentions": [
+   "CustomTimeDilation",
+   "GetGlobalTimeDilation",
+   "bIgnoreTimeDilation"
+  ],
+  "imports": [
+   "GetGlobalTimeDilation"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/Items/Weapons/TridentKeyTrident/TridentKeyTrident_WeaponVisuals.uasset",
+  "mentions": [
+   "CustomTimeDilation",
+   "GetGlobalTimeDilation"
+  ],
+  "imports": [
+   "GetGlobalTimeDilation"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/LD45/Blueprints/Base_LD45_GM.uasset",
+  "mentions": [
+   "GetGlobalTimeDilation",
+   "IsGamePaused",
+   "SetGlobalTimeDilation",
+   "SetPauseTimeDilation",
+   "SetPausedEnemyTimeDilation",
+   "bIgnoreTimeDilation"
+  ],
+  "imports": [
+   "IsGamePaused",
+   "SetGlobalTimeDilation",
+   "GetGlobalTimeDilation"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/LD45/Blueprints/FS_CommonGM.uasset",
+  "mentions": [
+   "GetGlobalTimeDilation"
+  ],
+  "imports": [
+   "GetGlobalTimeDilation"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/LD45/Blueprints/TimeDilationManagement.uasset",
+  "mentions": [
+   "IsTimeDilationPaused",
+   "SetPauseTimeDilation",
+   "SetPausedEnemyTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/LD45/Blueprints/TimeDilationManager.uasset",
+  "mentions": [
+   "SetPauseTimeDilation",
+   "SetPausedEnemyTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/LD45/Blueprints/Checkpoint/Checkpoint.uasset",
+  "mentions": [
+   "SetIgnoreLookInput",
+   "SetIgnoreMoveInput",
+   "SetPausedEnemyTimeDilation",
+   "SetTickableWhenPaused",
+   "bIgnoreTimeDilation",
+   "bShowMouseCursor"
+  ],
+  "imports": [
+   "SetTickableWhenPaused"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/LD45/Maps/BirdsTestZone.umap",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/LD45/Maps/title_screen.umap",
+  "mentions": [
+   "bShowMouseCursor"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/NPCs/NPC_Base.uasset",
+  "mentions": [
+   "DisableAllPlayerInput",
+   "EnableAllPlayerInput",
+   "SetPausedEnemyTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/NPCs/NPC_Ghost_Base.uasset",
+  "mentions": [
+   "SetActorTickEnabled",
+   "bIgnoreTimeDilation"
+  ],
+  "imports": [
+   "SetActorTickEnabled"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/NPCs/Shared/ItemGiveAnimationComp.uasset",
+  "mentions": [
+   "CustomTimeDilation",
+   "GetGlobalTimeDilation",
+   "bIgnoreTimeDilation"
+  ],
+  "imports": [
+   "GetGlobalTimeDilation"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/OtherWorld/Castle_Ext/Castle_Int/Queen_Throne_BP.uasset",
+  "mentions": [
+   "SetActorTickEnabled"
+  ],
+  "imports": [
+   "SetActorTickEnabled"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/OtherWorld/Castle_Ext/Castle_Int/CastleDoor_Int_00/Castle_Door_Int_BP.uasset",
+  "mentions": [
+   "SetActorTickEnabled"
+  ],
+  "imports": [
+   "SetActorTickEnabled"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/OtherWorld/OW_MK/NodeKit/ElecPuzzleTerminal.uasset",
+  "mentions": [
+   "ExitUIMode"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/Player/AcidVialAnimation.uasset",
+  "mentions": [
+   "CustomTimeDilation",
+   "DisableAllPlayerInput",
+   "EnableAllPlayerInput"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/Player/FS_PlayerChar.uasset",
+  "mentions": [
+   "CheckForOverlayPause",
+   "CurrentGameMenu",
+   "DisableAllPlayerInput",
+   "EnableAllPlayerInput",
+   "EndPhotoMode",
+   "EnterCutsceneMode",
+   "EnterUIMode",
+   "ExitCutsceneMode",
+   "ExitMenu",
+   "ExitUIMode",
+   "ForceNoOverlayPause",
+   "InCutscene",
+   "InPhotoMode",
+   "IsGamePaused",
+   "IsInGameplayModal",
+   "IsOpen",
+   "IsTimeDilationPaused",
+   "OpenPauseMenu",
+   "SetGamePaused",
+   "SetIgnoreLookInput",
+   "SetIgnoreMoveInput",
+   "SetPauseTimeDilation",
+   "SetPausedEnemyTimeDilation",
+   "TryAutoPause",
+   "bIgnoreTimeDilation"
+  ],
+  "imports": [
+   "SetGamePaused",
+   "IsGamePaused",
+   "Pause"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/Player/FS_PlayerController_BP.uasset",
+  "mentions": [
+   "InCutscene",
+   "OpenPauseMenu",
+   "TryAutoPause",
+   "bShowMouseCursor"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/Player/PlayerStatsAndUtils.uasset",
+  "mentions": [
+   "DisableAllPlayerInput",
+   "EnableAllPlayerInput",
+   "SetIgnoreLookInput",
+   "SetIgnoreMoveInput"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/Player/WeaponEvoAnimation.uasset",
+  "mentions": [
+   "CheckForOverlayPause",
+   "CustomTimeDilation",
+   "DisableAllPlayerInput",
+   "EnableAllPlayerInput",
+   "GetGlobalTimeDilation",
+   "bIgnoreTimeDilation"
+  ],
+  "imports": [
+   "GetGlobalTimeDilation"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/Player/ItemmergeAnim/FlyingSword_ItemMergeActor.uasset",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/Player/ItemmergeAnim/ItemMergeActorAnim.uasset",
+  "mentions": [
+   "CustomTimeDilation",
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/Player/ItemmergeAnim/ItemMergeAnim_Comp.uasset",
+  "mentions": [
+   "IsGamePaused",
+   "IsTimeDilationPaused",
+   "SetIgnoreLookInput",
+   "SetIgnoreMoveInput"
+  ],
+  "imports": [
+   "IsGamePaused"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/Player/ItemmergeAnim/RuneVisionMask_ItemMergeActor.uasset",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/Props/Containers/Permabreakable_base.uasset",
+  "mentions": [
+   "SetActorTickEnabled"
+  ],
+  "imports": [
+   "SetActorTickEnabled"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/Props/Pots/Pot_Base.uasset",
+  "mentions": [
+   "SetActorTickEnabled"
+  ],
+  "imports": [
+   "SetActorTickEnabled"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/Props/SwordShrine/SwordShrineGate_BP.uasset",
+  "mentions": [
+   "SetActorTickEnabled"
+  ],
+  "imports": [
+   "SetActorTickEnabled"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/AquaRuins/AQR_KeyRecepticle_BP.uasset",
+  "mentions": [
+   "CustomTimeDilation",
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/AquaRuins/AquaDoor_00.uasset",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/ForbiddenDoors/ForbiddenDoor_BaseClass.uasset",
+  "mentions": [
+   "SetActorTickEnabled"
+  ],
+  "imports": [
+   "SetActorTickEnabled"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/Intro/IntroTextWidget.uasset",
+  "mentions": [
+   "IsGamePaused"
+  ],
+  "imports": [
+   "IsGamePaused"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/Maps/070_UpperShell.umap",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/Maps/100_GR.umap",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/Maps/110_GR_dungeon.umap",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/Maps/120_GR_goldenroom.umap",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/Maps/125_GR_CubeHall.umap",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/Maps/130_GR_outerisles.umap",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/Maps/140_GR_ShopIsleOnly.umap",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/Maps/200_AQ.umap",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/Maps/210_AQ_underground.umap",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/Maps/300_LIB.umap",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/Maps/310_LIB_exterior.umap",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/Maps/320_LIB_basement.umap",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/Maps/400_MAUS_entrance.umap",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/Maps/420_MAUS_mid.umap",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/Maps/450_MAUS_darkmaze.umap",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/Maps/500_AUT.umap",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/Maps/510_AUT_droptunnel.umap",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/Maps/600_Castle.umap",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/Maps/610_Castle_Ext.umap",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/Maps/700_SZ_GR.umap",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/Maps/710_SZ_AQ.umap",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/Maps/720_SZ_LIB.umap",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/Maps/730_HOD.umap",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/Maps/740_SZ_Prison.umap",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/Maps/750_SZ_MAUS2.umap",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/Maps/760_Dekanima.umap",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/Maps/760_SZ_AUT.umap",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/Maps/770_SZ_Swamp.umap",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/Maps/775_JigekiTemple.umap",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/Maps/780_SZ_Depths.umap",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/Maps/790_SG.umap",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/Maps/800_FinalZone.umap",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/Maps/Intro_Level_00.umap",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/Maps/Ruins_Level_00.umap",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/SecretZones/priosn/JosamiPrisonDoor.uasset",
+  "mentions": [
+   "SetActorTickEnabled"
+  ],
+  "imports": [
+   "SetActorTickEnabled"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/SecretZones/Props/SZ_JailDoor_BP.uasset",
+  "mentions": [
+   "SetActorTickEnabled"
+  ],
+  "imports": [
+   "SetActorTickEnabled"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/SecretZones/RitualSite/prop/DAquaDoor_01.uasset",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/SecretZones/RitualSite/prop/JigekiDoor_BP.uasset",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/RuinsLevel/SecretZones/RoS/ROS_TreeLock_Tree.uasset",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/UI/Menus/DemoEndSplash.uasset",
+  "mentions": [
+   "bShowMouseCursor"
+  ],
+  "imports": [
+   "Pause"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/UI/Menus/DemoIntroSplash.uasset",
+  "mentions": [
+   "IsOpen",
+   "bShowMouseCursor"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/UI/Menus/DieUI.uasset",
+  "mentions": [
+   "IsOpen"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/UI/Menus/GameMenu.uasset",
+  "mentions": [
+   "CurrentGameMenu",
+   "ExitUIMode",
+   "IsOpen"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/UI/Menus/GameplayModalMenu.uasset",
+  "mentions": [
+   "CurrentGameMenu",
+   "ExitUIMode",
+   "IsInGameplayModal"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/UI/Menus/PauseMenu.uasset",
+  "mentions": [
+   "ExitUIMode",
+   "InCutscene",
+   "IsOpen"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/UI/Menus/ReadTextUI.uasset",
+  "mentions": [
+   "IsOpen",
+   "bShowMouseCursor"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/UI/Menus/Challenges/Challenges_Menu.uasset",
+  "mentions": [
+   "IsOpen"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/UI/Menus/Journal/Journal3DVisualizer.uasset",
+  "mentions": [
+   "SetTickableWhenPaused"
+  ],
+  "imports": [
+   "SetTickableWhenPaused"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/UI/Menus/Journal/Journal_RWM_BP.uasset",
+  "mentions": [
+   "SetTickableWhenPaused"
+  ],
+  "imports": [
+   "SetTickableWhenPaused",
+   "SetComponentTickInterval"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/UI/Menus/OptionsMenu/VideoConfigMap.umap",
+  "mentions": [
+   "bIgnoreTimeDilation"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/UI/PhotoMode/PhotoMode_HUD.uasset",
+  "mentions": [
+   "EndPhotoMode",
+   "InPhotoMode"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/UI/PhotoMode/Photomode_Pawn.uasset",
+  "mentions": [
+   "EndPhotoMode",
+   "InCutscene",
+   "InPhotoMode",
+   "SetActorTickEnabled",
+   "SetGamePaused"
+  ],
+  "imports": [
+   "SetGamePaused",
+   "SetActorTickEnabled"
+  ]
+ },
+ {
+  "path": "QueensDomain/Content/UI/Title/TitleScreenUI.uasset",
+  "mentions": [
+   "ExitCutsceneMode",
+   "InCutscene"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/UI/Widgets/FS_InspectItem.uasset",
+  "mentions": [
+   "IsOpen"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/UI/Widgets/FS_Modal.uasset",
+  "mentions": [
+   "IsOpen"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/UI/Widgets/VirtualKeyboard.uasset",
+  "mentions": [
+   "IsOpen"
+  ],
+  "imports": []
+ },
+ {
+  "path": "QueensDomain/Content/VFX/FogCards/FogCard_Base.uasset",
+  "mentions": [
+   "SetActorTickEnabled"
+  ],
+  "imports": [
+   "SetActorTickEnabled"
+  ]
+ }
+]

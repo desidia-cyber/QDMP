@@ -1,0 +1,47 @@
+﻿ATTACH 47396
+READY [{"ready": true, "base": "0x7ff75d670000", "manager": "0x1a8388c5100"}]
+>>> addlist AutumnIsland 0 100
+{
+ "ok": true,
+ "v": {
+  "list": "0x1a81b1e66a0",
+  "sel": 0,
+  "prio": 100,
+  "visBefore": 21,
+  "visAfterAdd": 21,
+  "visAfterFlush": 11,
+  "ulevelsBefore": 49,
+  "ulevelsAfter": 49
+ }
+}
+>>> sleep 2
+... slept 2
+>>> addlist AutumnIslandCastle 0 100
+{
+ "ok": true,
+ "v": {
+  "list": "0x1a81b1e3ca0",
+  "sel": 0,
+  "prio": 100,
+  "visBefore": 11,
+  "visAfterAdd": 11,
+  "visAfterFlush": 11,
+  "ulevelsBefore": 49,
+  "ulevelsAfter": 49
+ }
+}
+>>> sleep 3
+... slept 3
+>>> actors LargeRobot_Rusted_Spawner
+[
+ {
+  "cls": "LargeRobot_Rusted_Spawner_C",
+  "name": "LargeRobot_Rusted_Spawner",
+  "addr": "0x1a8eb32cdd0",
+  "loc": {
+   "x": -48756.7890625,
+   "y": 60032.48828125,
+   "z": -33470.14453125
+  }
+ }
+]

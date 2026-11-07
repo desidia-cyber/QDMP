@@ -1,0 +1,23 @@
+# Text is normalised by core.autocrlf; these are the formats git must not touch.
+*.bin   binary
+*.dll   binary
+*.lib   binary
+*.exp   binary
+*.obj   binary
+*.pdb   binary
+*.sav   binary
+*.png   binary
+*.jpg   binary
+*.uasset binary
+*.umap  binary
+*.pak   binary
+
+# Batch files must keep CRLF in the working tree: cmd.exe mis-parses LF-only .bat
+# files in some configurations, and the symptom is a silently skipped block.
+*.bat   text eol=crlf
+*.ps1   text eol=crlf
+
+# NOTE: mod/native/src/targets.h and mod/doc/vectors.txt are generated, but their
+# diffs are deliberately NOT suppressed.  A change to targets.h means the game build
+# changed (every RVA is byte-verified against it), and a change to vectors.txt means
+# the wire format changed.  Both are things a reviewer must see.

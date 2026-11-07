@@ -1,0 +1,770 @@
+﻿ATTACH 47396
+python.exe : 
+At line:4 char:6
++ '@ | & $py 'G:\Freespace\Queens_Domain\_live\frida_close.py' 2>&1 | O ...
++      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+(process:14720): Frida-CRITICAL **: 05:01:39.603: file ../subprojects/frida-core/src/windows/winjector.vala: line 87: u
+ncaught error: Error setting ACLs (SetNamedSecurityInfo returned 0x00000000) (g-io-error-quark, 0)
+READY [{"ready": true, "base": "0x7ff75d670000", "manager": "0x1a8388c5100"}]
+>>> info
+{
+ "world": "0x1a81ccec080",
+ "manager": "0x1a8388c5100",
+ "player": "0x1a8389d9570",
+ "playerLoc": {
+  "x": 4106.63720703125,
+  "y": -1744.46533203125,
+  "z": 140.41363525390625
+ },
+ "stacks": {
+  "a": [
+   {
+    "addr": "0x1a808d61660",
+    "name": "GreenRuins",
+    "prio": -1
+   }
+  ],
+  "b": []
+ },
+ "levelCount": 50,
+ "levels": [
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a81c6abc80",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a81c6abe00",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a8359c5e00",
+   "flags": 30,
+   "visible": true,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a837727900",
+   "flags": 30,
+   "visible": true,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a8359c6100",
+   "flags": 30,
+   "visible": true,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a8359c5f80",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a8348ba180",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a81be96100",
+   "flags": 30,
+   "visible": true,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a8348ba480",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a8348ba300",
+   "flags": 30,
+   "visible": true,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a8374c5c80",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a81be97000",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a836436400",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a81be96a00",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a8348b1d80",
+   "flags": 30,
+   "visible": true,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a81be97480",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a8348ab200",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a81dbf8500",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a8390aec80",
+   "flags": 30,
+   "visible": true,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a805fb3e80",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a81be93100",
+   "flags": 30,
+   "visible": true,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a81c6a2380",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a837a4f280",
+   "flags": 30,
+   "visible": true,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a81c6aeb00",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a83487d000",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a805fb3700",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a836435f80",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a81be92b00",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a81be92980",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a8348bb500",
+   "flags": 30,
+   "visible": true,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a83487d480",
+   "flags": 30,
+   "visible": true,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a805fb4000",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a8359caa80",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a836435380",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a805fb3b80",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a8348a0100",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a83643d480",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a808d08f80",
+   "flags": 30,
+   "visible": true,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a81dbfe500",
+   "flags": 22,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a83643d180",
+   "flags": 30,
+   "visible": true,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a81dbf3400",
+   "flags": 30,
+   "visible": true,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a8390de380",
+   "flags": 30,
+   "visible": true,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingAlwaysLoaded",
+   "name": "LevelStreamingAlwaysLoaded",
+   "addr": "0x1a81be9a180",
+   "flags": 14,
+   "visible": true,
+   "loaded": false
+  },
+  {
+   "cls": "LevelStreamingAlwaysLoaded",
+   "name": "LevelStreamingAlwaysLoaded",
+   "addr": "0x1a8d3e84900",
+   "flags": 10,
+   "visible": true,
+   "loaded": false
+  },
+  {
+   "cls": "LevelStreamingAlwaysLoaded",
+   "name": "LevelStreamingAlwaysLoaded",
+   "addr": "0x1a8eea57000",
+   "flags": 10,
+   "visible": true,
+   "loaded": false
+  },
+  {
+   "cls": "LevelStreamingAlwaysLoaded",
+   "name": "LevelStreamingAlwaysLoaded",
+   "addr": "0x1a8eea56e80",
+   "flags": 10,
+   "visible": true,
+   "loaded": false
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a81c6aaf00",
+   "flags": 150,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingDynamic",
+   "name": "LevelStreamingDynamic",
+   "addr": "0x1a8c9439580",
+   "flags": 150,
+   "visible": false,
+   "loaded": true
+  },
+  {
+   "cls": "LevelStreamingAlwaysLoaded",
+   "name": "LevelStreamingAlwaysLoaded",
+   "addr": "0x1a8d309bc80",
+   "flags": 10,
+   "visible": true,
+   "loaded": false
+  },
+  {
+   "cls": "LevelStreamingAlwaysLoaded",
+   "name": "LevelStreamingAlwaysLoaded",
+   "addr": "0x1a8d3096700",
+   "flags": 10,
+   "visible": true,
+   "loaded": false
+  }
+ ],
+ "ulevelCount": 48,
+ "ulevels": [
+  {
+   "name": "Default__Level",
+   "addr": "0x1a87df7cfe0",
+   "nameIdx": 2326091
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a839406080",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a81377c640",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8ef467680",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8ef4673c0",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8ef467100",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8ef466b80",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8ef4668c0",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8ef466600",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8ef466340",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8ef466080",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8ef465dc0",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8ef465b00",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8ef461bc0",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8ef46fd40",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8ef46fa80",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8ef46f500",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8ef46f240",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8ef46ef80",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8ef46ecc0",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8ef46ea00",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8ef46e740",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8ef46e480",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8ef46e1c0",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8ef46dc40",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8ef46d980",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8ef46d6c0",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8ef46d400",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8ef46d140",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8ef46cbc0",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8ef46c900",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8ef46c640",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8ef46c380",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8ef46c0c0",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8ef46be00",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8ef46bb40",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8ef46b880",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8ef46b5c0",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8ef46b300",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8d56c5840",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8d56c5580",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8d56c52c0",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8d56c5000",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8d56c4d40",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8d56c4a80",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8bfa81bc0",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8db55b5c0",
+   "nameIdx": 474
+  },
+  {
+   "name": "PersistentLevel",
+   "addr": "0x1a8720dc900",
+   "nameIdx": 474
+  }
+ ],
+ "storeEvents": 0
+}
+>>> lists
+[
+ {
+  "name": "Default__FS_LevelList",
+  "addr": "0x1a87dffbee0"
+ },
+ {
+  "name": "StoneGarden",
+  "addr": "0x1a81d5242a0"
+ },
+ {
+  "name": "AquaRuins",
+  "addr": "0x1a81d52e7a0"
+ },
+ {
+  "name": "SipehaArena",
+  "addr": "0x1a81df19640"
+ },
+ {
+  "name": "IntroCutscene",
+  "addr": "0x1a81df19580"
+ },
+ {
+  "name": "EmptyLevelList",
+  "addr": "0x1a8150384a0"
+ },
+ {
+  "name": "GreenRuins",
+  "addr": "0x1a808d61660"
+ },
+ {
+  "name": "AutumnIsland",
+  "addr": "0x1a81b1e66a0"
+ },
+ {
+  "name": "AutumnIslandCastle",
+  "addr": "0x1a81b1e3ca0"
+ },
+ {
+  "name": "DropTunnel",
+  "addr": "0x1a81b1e4720"
+ },
+ {
+  "name": "GreenRuins_NearLibrary",
+  "addr": "0x1a81b1e4840"
+ },
+ {
+  "name": "GreenRuins_OuterIsles",
+  "addr": "0x1a81b1e48a0"
+ },
+ {
+  "name": "GreenRuins_OuterIsles_ExtraPri",
+  "addr": "0x1a81b1e4780"
+ },
+ {
+  "name": "GreenRuins_SZ",
+  "addr": "0x1a8131edde0"
+ },
+ {
+  "name": "Library",
+  "addr": "0x1a8131e3760"
+ },
+ {
+  "name": "Library_SZ",
+  "addr": "0x1a8131e5f20"
+ },
+ {
+  "name": "Mausoleum",
+  "addr": "0x1a8131ec100"
+ },
+ {
+  "name": "Mausoleum2_Deep",
+  "addr": "0x1a805ccb560"
+ },
+ {
+  "name": "Mausoleum_SZ",
+  "addr": "0x1a818b72f20"
+ },
+ {
+  "name": "Prison_SZ",
+  "addr": "0x1a84a7c7c00"
+ },
+ {
+  "name": "ROS",
+  "addr": "0x1a84a7c48a0"
+ },
+ {
+  "name": "SZ_Depths",
+  "addr": "0x1a84a7c2b60"
+ }
+]

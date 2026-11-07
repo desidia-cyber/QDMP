@@ -1,0 +1,460 @@
+﻿ATTACH 49164
+READY [{"ready": true, "base": "0x7ff75d670000", "manager": "0x246e8267780"}]
+>>> dumpclass 0x24695982200
+[
+ {
+  "name": "UberGraphFrame",
+  "off": 608,
+  "type": null
+ },
+ {
+  "name": "Billboard",
+  "off": 616,
+  "type": null
+ },
+ {
+  "name": "WorldEventReceiver",
+  "off": 624,
+  "type": null
+ },
+ {
+  "name": "NoRefreshAreas",
+  "off": 632,
+  "type": null
+ },
+ {
+  "name": "StateSaveDataname",
+  "off": 712,
+  "type": null
+ },
+ {
+  "name": "InternalState",
+  "off": 720,
+  "type": null
+ },
+ {
+  "name": "States",
+  "off": 728,
+  "type": null
+ },
+ {
+  "name": "DesiredState",
+  "off": 744,
+  "type": null
+ },
+ {
+  "name": "DisableWorldRefreshUpdate",
+  "off": 748,
+  "type": null
+ },
+ {
+  "name": "UberGraphFrame",
+  "off": 544,
+  "type": null
+ },
+ {
+  "name": "SaveHelper",
+  "off": 552,
+  "type": null
+ },
+ {
+  "name": "DefaultSceneRoot",
+  "off": 560,
+  "type": null
+ },
+ {
+  "name": "GUIDs",
+  "off": 568,
+  "type": null
+ },
+ {
+  "name": "SaveDataCount",
+  "off": 584,
+  "type": null
+ },
+ {
+  "name": "MySaveData",
+  "off": 592,
+  "type": null
+ },
+ {
+  "name": "PrimaryActorTick",
+  "off": 40,
+  "type": null
+ },
+ {
+  "name": "bNetTemporary",
+  "off": 88,
+  "type": null
+ },
+ {
+  "name": "bNetStartup",
+  "off": 88,
+  "type": null
+ },
+ {
+  "name": "bOnlyRelevantToOwner",
+  "off": 88,
+  "type": null
+ },
+ {
+  "name": "bAlwaysRelevant",
+  "off": 88,
+  "type": null
+ },
+ {
+  "name": "bReplicateMovement",
+  "off": 88,
+  "type": null
+ },
+ {
+  "name": "bHidden",
+  "off": 88,
+  "type": null
+ },
+ {
+  "name": "bTearOff",
+  "off": 88,
+  "type": null
+ },
+ {
+  "name": "bForceNetAddressable",
+  "off": 88,
+  "type": null
+ },
+ {
+  "name": "bExchangedRoles",
+  "off": 89,
+  "type": null
+ },
+ {
+  "name": "bNetLoadOnClient",
+  "off": 89,
+  "type": null
+ },
+ {
+  "name": "bNetUseOwnerRelevancy",
+  "off": 89,
+  "type": null
+ },
+ {
+  "name": "bRelevantForNetworkReplays",
+  "off": 89,
+  "type": null
+ },
+ {
+  "name": "bRelevantForLevelBounds",
+  "off": 89,
+  "type": null
+ },
+ {
+  "name": "bReplayRewindable",
+  "off": 89,
+  "type": null
+ },
+ {
+  "name": "bAllowTickBeforeBeginPlay",
+  "off": 89,
+  "type": null
+ },
+ {
+  "name": "bAutoDestroyWhenFinished",
+  "off": 89,
+  "type": null
+ },
+ {
+  "name": "bCanBeDamaged",
+  "off": 90,
+  "type": null
+ },
+ {
+  "name": "bBlockInput",
+  "off": 90,
+  "type": null
+ },
+ {
+  "name": "bCollideWhenPlacing",
+  "off": 90,
+  "type": null
+ },
+ {
+  "name": "bFindCameraComponentWhenViewTarget",
+  "off": 90,
+  "type": null
+ },
+ {
+  "name": "bGenerateOverlapEventsDuringLevelStreaming",
+  "off": 90,
+  "type": null
+ },
+ {
+  "name": "bIgnoresOriginShifting",
+  "off": 90,
+  "type": null
+ },
+ {
+  "name": "bEnableAutoLODGeneration",
+  "off": 90,
+  "type": null
+ },
+ {
+  "name": "bIsEditorOnlyActor",
+  "off": 90,
+  "type": null
+ },
+ {
+  "name": "bActorSeamlessTraveled",
+  "off": 91,
+  "type": null
+ },
+ {
+  "name": "bReplicates",
+  "off": 91,
+  "type": null
+ },
+ {
+  "name": "bCanBeInCluster",
+  "off": 91,
+  "type": null
+ },
+ {
+  "name": "bAllowReceiveTickEventOnDedicatedServer",
+  "off": 91,
+  "type": null
+ },
+ {
+  "name": "bActorEnableCollision",
+  "off": 92,
+  "type": null
+ },
+ {
+  "name": "bActorIsBeingDestroyed",
+  "off": 92,
+  "type": null
+ },
+ {
+  "name": "UpdateOverlapsMethodDuringLevelStreaming",
+  "off": 93,
+  "type": null
+ },
+ {
+  "name": "DefaultUpdateOverlapsMethodDuringLevelStreaming",
+  "off": 94,
+  "type": null
+ },
+ {
+  "name": "RemoteRole",
+  "off": 95,
+  "type": null
+ },
+ {
+  "name": "ReplicatedMovement",
+  "off": 96,
+  "type": null
+ },
+ {
+  "name": "InitialLifeSpan",
+  "off": 148,
+  "type": null
+ },
+ {
+  "name": "CustomTimeDilation",
+  "off": 152,
+  "type": null
+ },
+ {
+  "name": "AttachmentReplication",
+  "off": 160,
+  "type": null
+ },
+ {
+  "name": "Owner",
+  "off": 224,
+  "type": null
+ },
+ {
+  "name": "NetDriverName",
+  "off": 232,
+  "type": null
+ },
+ {
+  "name": "Role",
+  "off": 240,
+  "type": null
+ },
+ {
+  "name": "NetDormancy",
+  "off": 241,
+  "type": null
+ },
+ {
+  "name": "SpawnCollisionHandlingMethod",
+  "off": 242,
+  "type": null
+ },
+ {
+  "name": "AutoReceiveInput",
+  "off": 243,
+  "type": null
+ },
+ {
+  "name": "InputPriority",
+  "off": 244,
+  "type": null
+ },
+ {
+  "name": "InputComponent",
+  "off": 248,
+  "type": null
+ },
+ {
+  "name": "NetCullDistanceSquared",
+  "off": 256,
+  "type": null
+ },
+ {
+  "name": "NetTag",
+  "off": 260,
+  "type": null
+ },
+ {
+  "name": "NetUpdateFrequency",
+  "off": 264,
+  "type": null
+ },
+ {
+  "name": "MinNetUpdateFrequency",
+  "off": 268,
+  "type": null
+ },
+ {
+  "name": "NetPriority",
+  "off": 272,
+  "type": null
+ },
+ {
+  "name": "Instigator",
+  "off": 280,
+  "type": null
+ },
+ {
+  "name": "Children",
+  "off": 288,
+  "type": null
+ },
+ {
+  "name": "RootComponent",
+  "off": 304,
+  "type": null
+ },
+ {
+  "name": "ControllingMatineeActors",
+  "off": 312,
+  "type": null
+ },
+ {
+  "name": "Layers",
+  "off": 336,
+  "type": null
+ },
+ {
+  "name": "ParentComponent",
+  "off": 352,
+  "type": null
+ },
+ {
+  "name": "Tags",
+  "off": 368,
+  "type": null
+ },
+ {
+  "name": "OnTakeAnyDamage",
+  "off": 384,
+  "type": null
+ },
+ {
+  "name": "OnTakePointDamage",
+  "off": 385,
+  "type": null
+ },
+ {
+  "name": "OnTakeRadialDamage",
+  "off": 386,
+  "type": null
+ },
+ {
+  "name": "OnActorBeginOverlap",
+  "off": 387,
+  "type": null
+ },
+ {
+  "name": "OnActorEndOverlap",
+  "off": 388,
+  "type": null
+ },
+ {
+  "name": "OnBeginCursorOver",
+  "off": 389,
+  "type": null
+ },
+ {
+  "name": "OnEndCursorOver",
+  "off": 390,
+  "type": null
+ },
+ {
+  "name": "OnClicked",
+  "off": 391,
+  "type": null
+ },
+ {
+  "name": "OnReleased",
+  "off": 392,
+  "type": null
+ },
+ {
+  "name": "OnInputTouchBegin",
+  "off": 393,
+  "type": null
+ },
+ {
+  "name": "OnInputTouchEnd",
+  "off": 394,
+  "type": null
+ },
+ {
+  "name": "OnInputTouchEnter",
+  "off": 395,
+  "type": null
+ },
+ {
+  "name": "OnInputTouchLeave",
+  "off": 396,
+  "type": null
+ },
+ {
+  "name": "OnActorHit",
+  "off": 397,
+  "type": null
+ },
+ {
+  "name": "OnDestroyed",
+  "off": 398,
+  "type": null
+ },
+ {
+  "name": "OnEndPlay",
+  "off": 399,
+  "type": null
+ },
+ {
+  "name": "InstanceComponents",
+  "off": 496,
+  "type": null
+ },
+ {
+  "name": "BlueprintCreatedComponents",
+  "off": 512,
+  "type": null
+ }
+]

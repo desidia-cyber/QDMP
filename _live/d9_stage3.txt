@@ -1,0 +1,10 @@
+﻿ATTACH 37840
+READY [{"ready": true, "base": "0x7ff75d670000", "manager": "0x28703d8cf00"}]
+>>> sleep 12
+... slept 12
+>>> actors Dragon_Green
+[]
+>>> spawner 0x287ce7d17550
+{
+ "err": "Error: access violation accessing 0x287ce7d17788"
+}

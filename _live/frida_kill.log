@@ -1,0 +1,4 @@
+# frida kill 21:10:36 target=0x1df06378d40
+{"ready": true, "base": "0x7ff75d670000"}
+{"event": "kill-attempt", "target": "0x1df06378d40", "cls": "Dragonfly_Base_BP_C"}
+{"event": "apply-damage-returned", "ret": 99999, "target": "0x1df06378d40"}

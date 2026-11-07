@@ -1,0 +1,540 @@
+﻿ATTACH 47396
+READY [{"ready": true, "base": "0x7ff75d670000", "manager": "0x1a8388c5100"}]
+>>> streaming
+[
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a81c6abc80",
+  "names": [
+   "/Game/RuinsLevel/Maps/300_LIB.300_LIB",
+   "/Game/RuinsLevel/Maps/300_LIB"
+  ],
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a81c6abe00",
+  "names": [
+   "/Game/RuinsLevel/Maps/210_AQ_underground.210_AQ_underground",
+   "/Game/RuinsLevel/Maps/210_AQ_underground"
+  ],
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a8359c5e00",
+  "names": [
+   "/Game/RuinsLevel/Maps/200_AQ.200_AQ",
+   "/Game/RuinsLevel/Maps/200_AQ"
+  ],
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a837727900",
+  "names": [
+   "/Game/RuinsLevel/Maps/140_GR_ShopIsleOnly.140_GR_ShopIsleOnly",
+   "/Game/RuinsLevel/Maps/140_GR_ShopIsleOnly"
+  ],
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a8359c6100",
+  "names": [
+   "/Game/RuinsLevel/Maps/130_GR_outerisles.130_GR_outerisles",
+   "/Game/RuinsLevel/Maps/130_GR_outerisles"
+  ],
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a8359c5f80",
+  "names": [
+   "/Game/RuinsLevel/Maps/997_FinalZoneCutscene.997_FinalZoneCutscene",
+   "/Game/RuinsLevel/Maps/997_FinalZoneCutscene"
+  ],
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a8348ba180",
+  "names": [
+   "/Game/RuinsLevel/Maps/775_JigekiTemple.775_JigekiTemple",
+   "/Game/RuinsLevel/Maps/775_JigekiTemple"
+  ],
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a81be96100",
+  "names": [
+   "/Game/RuinsLevel/Maps/125_GR_CubeHall.125_GR_CubeHall",
+   "/Game/RuinsLevel/Maps/125_GR_CubeHall"
+  ],
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a8348ba480",
+  "names": [
+   "/Game/RuinsLevel/Maps/998_QueenCutscenes.998_QueenCutscenes",
+   "/Game/RuinsLevel/Maps/998_QueenCutscenes"
+  ],
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a8348ba300",
+  "names": [
+   "/Game/RuinsLevel/Maps/070_UpperShell.070_UpperShell",
+   "/Game/RuinsLevel/Maps/070_UpperShell"
+  ],
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a8374c5c80",
+  "names": [
+   "/Game/RuinsLevel/Maps/800_FinalZone.800_FinalZone",
+   "/Game/RuinsLevel/Maps/800_FinalZone"
+  ],
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a81be97000",
+  "names": [
+   "/Game/RuinsLevel/Maps/999_SipehaCutscenes.999_SipehaCutscenes",
+   "/Game/RuinsLevel/Maps/999_SipehaCutscenes"
+  ],
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a836436400",
+  "names": [
+   "/Game/RuinsLevel/Maps/770_SZ_Swamp.770_SZ_Swamp",
+   "/Game/RuinsLevel/Maps/770_SZ_Swamp"
+  ],
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a81be96a00",
+  "names": [
+   "/Game/RuinsLevel/Maps/900_SipehaWorld.900_SipehaWorld",
+   "/Game/RuinsLevel/Maps/900_SipehaWorld"
+  ],
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a8348b1d80",
+  "names": [
+   "/Game/RuinsLevel/Maps/000_Shared_Base_Lighting.000_Shared_Base_Lighting",
+   "/Game/RuinsLevel/Maps/000_Shared_Base_Lighting"
+  ],
+  "flags": 30,
+  "visible": true,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a81be97480",
+  "names": [
+   "/Game/RuinsLevel/Maps/060_Ocean_Shadow.060_Ocean_Shadow",
+   "/Game/RuinsLevel/Maps/060_Ocean_Shadow"
+  ],
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a8348ab200",
+  "names": [
+   "/Game/RuinsLevel/Maps/760_Dekanima.760_Dekanima",
+   "/Game/RuinsLevel/Maps/760_Dekanima"
+  ],
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a81dbf8500",
+  "names": [
+   "/Game/RuinsLevel/Maps/Intro_Level_01.Intro_Level_01",
+   "/Game/RuinsLevel/Maps/Intro_Level_01"
+  ],
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a8390aec80",
+  "names": [
+   "/Game/RuinsLevel/Maps/120_GR_goldenroom.120_GR_goldenroom",
+   "/Game/RuinsLevel/Maps/120_GR_goldenroom"
+  ],
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a805fb3e80",
+  "names": [
+   "/Game/RuinsLevel/Maps/Intro_Level_00.Intro_Level_00",
+   "/Game/RuinsLevel/Maps/Intro_Level_00"
+  ],
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a81be93100",
+  "names": [],
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a81c6a2380",
+  "names": [
+   "/Game/RuinsLevel/Maps/790_SG.790_SG",
+   "/Game/RuinsLevel/Maps/790_SG"
+  ],
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a837a4f280",
+  "names": [
+   "/Game/RuinsLevel/Maps/780_SZ_Depths.780_SZ_Depths",
+   "/Game/RuinsLevel/Maps/780_SZ_Depths"
+  ],
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a81c6aeb00",
+  "names": [
+   "/Game/RuinsLevel/Maps/760_SZ_AUT.760_SZ_AUT",
+   "/Game/RuinsLevel/Maps/760_SZ_AUT"
+  ],
+  "flags": 30,
+  "visible": true,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a83487d000",
+  "names": [
+   "/Game/RuinsLevel/Maps/750_SZ_MAUS2.750_SZ_MAUS2",
+   "/Game/RuinsLevel/Maps/750_SZ_MAUS2"
+  ],
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a805fb3700",
+  "names": [
+   "/Game/RuinsLevel/Maps/740_SZ_Prison.740_SZ_Prison",
+   "/Game/RuinsLevel/Maps/740_SZ_Prison"
+  ],
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a836435f80",
+  "names": [
+   "/Game/RuinsLevel/Maps/730_HOD.730_HOD",
+   "/Game/RuinsLevel/Maps/730_HOD"
+  ],
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a81be92b00",
+  "names": [
+   "/Game/RuinsLevel/Maps/720_SZ_LIB.720_SZ_LIB",
+   "/Game/RuinsLevel/Maps/720_SZ_LIB"
+  ],
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a81be92980",
+  "names": [
+   "/Game/RuinsLevel/Maps/710_SZ_AQ.710_SZ_AQ",
+   "/Game/RuinsLevel/Maps/710_SZ_AQ"
+  ],
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a8348bb500",
+  "names": [
+   "/Game/RuinsLevel/Maps/110_GR_dungeon.110_GR_dungeon",
+   "/Game/RuinsLevel/Maps/110_GR_dungeon"
+  ],
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a83487d480",
+  "names": [
+   "/Game/RuinsLevel/Maps/700_SZ_GR.700_SZ_GR",
+   "/Game/RuinsLevel/Maps/700_SZ_GR"
+  ],
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a805fb4000",
+  "names": [
+   "/Game/RuinsLevel/Maps/610_Castle_Ext.610_Castle_Ext",
+   "/Game/RuinsLevel/Maps/610_Castle_Ext"
+  ],
+  "flags": 30,
+  "visible": true,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a8359caa80",
+  "names": [
+   "/Game/RuinsLevel/Maps/600_Castle.600_Castle",
+   "/Game/RuinsLevel/Maps/600_Castle"
+  ],
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a836435380",
+  "names": [
+   "/Game/RuinsLevel/Maps/510_AUT_droptunnel.510_AUT_droptunnel",
+   "/Game/RuinsLevel/Maps/510_AUT_droptunnel"
+  ],
+  "flags": 30,
+  "visible": true,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a805fb3b80",
+  "names": [
+   "/Game/RuinsLevel/Maps/500_AUT.500_AUT",
+   "/Game/RuinsLevel/Maps/500_AUT"
+  ],
+  "flags": 30,
+  "visible": true,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a8348a0100",
+  "names": [
+   "/Game/RuinsLevel/Maps/450_MAUS_darkmaze.450_MAUS_darkmaze",
+   "/Game/RuinsLevel/Maps/450_MAUS_darkmaze"
+  ],
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a83643d480",
+  "names": [
+   "/Game/RuinsLevel/Maps/420_MAUS_mid.420_MAUS_mid",
+   "/Game/RuinsLevel/Maps/420_MAUS_mid"
+  ],
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a808d08f80",
+  "names": [
+   "/Game/RuinsLevel/Maps/400_MAUS_entrance.400_MAUS_entrance",
+   "/Game/RuinsLevel/Maps/400_MAUS_entrance"
+  ],
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a81dbfe500",
+  "names": [
+   "/Game/RuinsLevel/Maps/320_LIB_basement.320_LIB_basement",
+   "/Game/RuinsLevel/Maps/320_LIB_basement"
+  ],
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a83643d180",
+  "names": [
+   "/Game/RuinsLevel/Maps/310_LIB_exterior.310_LIB_exterior",
+   "/Game/RuinsLevel/Maps/310_LIB_exterior"
+  ],
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a81dbf3400",
+  "names": [
+   "/Game/RuinsLevel/Maps/100_GR.100_GR",
+   "/Game/RuinsLevel/Maps/100_GR"
+  ],
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a8390de380",
+  "names": [
+   "/Game/RuinsLevel/Maps/050_Ocean.050_Ocean",
+   "/Game/RuinsLevel/Maps/050_Ocean"
+  ],
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingAlwaysLoaded",
+  "addr": "0x1a81be9a180",
+  "names": [
+   "/Game/RuinsLevel/Maps/990_B33sment.990_B33sment",
+   "/Game/RuinsLevel/Maps/990_B33sment"
+  ],
+  "flags": 14,
+  "visible": true,
+  "loaded": false
+ },
+ {
+  "cls": "LevelStreamingAlwaysLoaded",
+  "addr": "0x1a8d3e84900",
+  "names": [
+   "/Game/RuinsLevel/Maps/Intro_Level_01.Intro_Level_01",
+   "/Game/RuinsLevel/Maps/Intro_Level_01"
+  ],
+  "flags": 10,
+  "visible": true,
+  "loaded": false
+ },
+ {
+  "cls": "LevelStreamingAlwaysLoaded",
+  "addr": "0x1a8eea57000",
+  "names": [
+   "/Game/RuinsLevel/Maps/000_Shared_Base_Lighting.000_Shared_Base_Lighting",
+   "/Game/RuinsLevel/Maps/000_Shared_Base_Lighting"
+  ],
+  "flags": 10,
+  "visible": true,
+  "loaded": false
+ },
+ {
+  "cls": "LevelStreamingAlwaysLoaded",
+  "addr": "0x1a8eea56e80",
+  "names": [],
+  "flags": 10,
+  "visible": true,
+  "loaded": false
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a81c6aaf00",
+  "names": [],
+  "flags": 150,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "addr": "0x1a8c9439580",
+  "names": [],
+  "flags": 150,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingAlwaysLoaded",
+  "addr": "0x1a8d309bc80",
+  "names": [
+   "/Game/RuinsLevel/Maps/000_Shared_Base_Lighting.000_Shared_Base_Lighting",
+   "/Game/RuinsLevel/Maps/000_Shared_Base_Lighting"
+  ],
+  "flags": 10,
+  "visible": true,
+  "loaded": false
+ },
+ {
+  "cls": "LevelStreamingAlwaysLoaded",
+  "addr": "0x1a8d3096700",
+  "names": [],
+  "flags": 10,
+  "visible": true,
+  "loaded": false
+ }
+]

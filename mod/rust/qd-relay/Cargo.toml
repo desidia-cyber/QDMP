@@ -1,0 +1,12 @@
+[package]
+name = "qd-relay"
+version.workspace = true
+edition.workspace = true
+description = "QDCOOP relay: one UDP socket, one session, two peers"
+
+[[bin]]
+name = "qd-relay"
+path = "src/main.rs"
+
+[dependencies]
+qd-core = { path = "../qd-core" }

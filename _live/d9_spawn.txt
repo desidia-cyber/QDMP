@@ -1,0 +1,43 @@
+﻿ATTACH 24928
+READY [{"ready": true, "base": "0x7ff75d670000", "manager": "0x17c4ca58900"}]
+>>> tpplayer -28573 754 -13118
+{
+ "ok": true,
+ "v": {
+  "after": {
+   "x": -28573,
+   "y": 754,
+   "z": -13118
+  }
+ }
+}
+>>> sleep 2
+... slept 2
+>>> spawn 0x17cf950a880 -27573 754 -13118
+{
+ "ok": true,
+ "v": {
+  "err": "Error: access violation accessing 0x1200000012"
+ }
+}
+>>> sleep 3
+... slept 3
+>>> actors Dragon_Green
+[
+ {
+  "cls": "Dragon_Green_BP_C",
+  "name": "Dragon_Green_BP_C",
+  "addr": "0x17c48210100",
+  "loc": null
+ },
+ {
+  "cls": "Dragon_Green_BP_C",
+  "name": "Dragon_Green_BP_C",
+  "addr": "0x17c1f64f010",
+  "loc": {
+   "x": -28573.869140625,
+   "y": 754.4593505859375,
+   "z": -13028.0478515625
+  }
+ }
+]

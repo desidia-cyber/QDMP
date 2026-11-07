@@ -1,0 +1,387 @@
+﻿[
+ {
+  "cls": "LevelStreaming",
+  "name": "Default__LevelStreaming",
+  "flags": 0,
+  "visible": false,
+  "loaded": false
+ },
+ {
+  "cls": "LevelStreamingAlwaysLoaded",
+  "name": "Default__LevelStreamingAlwaysLoaded",
+  "flags": 8,
+  "visible": true,
+  "loaded": false
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "Default__LevelStreamingDynamic",
+  "flags": 0,
+  "visible": false,
+  "loaded": false
+ },
+ {
+  "cls": "LevelStreamingPersistent",
+  "name": "Default__LevelStreamingPersistent",
+  "flags": 0,
+  "visible": false,
+  "loaded": false
+ },
+ {
+  "cls": "LevelStreamingVolume",
+  "name": "Default__LevelStreamingVolume",
+  "flags": 0,
+  "visible": false,
+  "loaded": false
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 30,
+  "visible": true,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 30,
+  "visible": true,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 30,
+  "visible": true,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 30,
+  "visible": true,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 30,
+  "visible": true,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 30,
+  "visible": true,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 30,
+  "visible": true,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 30,
+  "visible": true,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 30,
+  "visible": true,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 30,
+  "visible": true,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 30,
+  "visible": true,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 30,
+  "visible": true,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 22,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 30,
+  "visible": true,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 30,
+  "visible": true,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 30,
+  "visible": true,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingAlwaysLoaded",
+  "name": "LevelStreamingAlwaysLoaded",
+  "flags": 14,
+  "visible": true,
+  "loaded": false
+ },
+ {
+  "cls": "LevelStreamingAlwaysLoaded",
+  "name": "LevelStreamingAlwaysLoaded",
+  "flags": 10,
+  "visible": true,
+  "loaded": false
+ },
+ {
+  "cls": "LevelStreamingAlwaysLoaded",
+  "name": "LevelStreamingAlwaysLoaded",
+  "flags": 10,
+  "visible": true,
+  "loaded": false
+ },
+ {
+  "cls": "LevelStreamingAlwaysLoaded",
+  "name": "LevelStreamingAlwaysLoaded",
+  "flags": 10,
+  "visible": true,
+  "loaded": false
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 150,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingDynamic",
+  "name": "LevelStreamingDynamic",
+  "flags": 150,
+  "visible": false,
+  "loaded": true
+ },
+ {
+  "cls": "LevelStreamingAlwaysLoaded",
+  "name": "LevelStreamingAlwaysLoaded",
+  "flags": 10,
+  "visible": true,
+  "loaded": false
+ },
+ {
+  "cls": "LevelStreamingAlwaysLoaded",
+  "name": "LevelStreamingAlwaysLoaded",
+  "flags": 10,
+  "visible": true,
+  "loaded": false
+ }
+]

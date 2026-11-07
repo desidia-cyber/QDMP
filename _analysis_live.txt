@@ -1,0 +1,6 @@
+=== QDPROBE 17:53:41 ===
+engine: nil
+
+waiting for player pawn...
+--- PLAYER PAWN ---
+full name : <unnamed>

@@ -1,0 +1,6074 @@
+[
+ {
+  "site": 5883112,
+  "func": 5883024,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 7940537,
+  "func": 7940490,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], r14",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 7972145,
+  "func": 7971929,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], r9",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 7978840,
+  "func": 7978840,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rsp + 0x5b0], r15",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 7994583,
+  "func": 7992497,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbp + 0x2e8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 8313685,
+  "func": 8312621,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rdi + 0x5a8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 8446722,
+  "func": 8443280,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], r13",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 8454562,
+  "func": 8443280,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rbp + 0x5a8], r13",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 8454639,
+  "func": 8443280,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rbp + 0x5b0], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 8458420,
+  "func": 8454912,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbp + 0x2e8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 8464017,
+  "func": 8454912,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbp + 0x5a8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 8464030,
+  "func": 8454912,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rbp + 0x5b0], r12",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 8510126,
+  "func": 8486080,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rbp + 0x5a8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 8510243,
+  "func": 8486080,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rbp + 0x5b0], rsi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 8524937,
+  "func": 8524891,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 8723985,
+  "func": 8718768,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rbp + 0x5a8], r12",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 8723992,
+  "func": 8718768,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rbp + 0x5b0], r12",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 8749810,
+  "func": 8745088,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rbp + 0x5a8], r12",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 8749817,
+  "func": 8745088,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rbp + 0x5b0], r12",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 9343079,
+  "func": 9337824,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 9348973,
+  "func": 9337824,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rbp + 0x5a8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 9348992,
+  "func": 9337824,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov dword ptr [rbp + 0x5b0], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 9368419,
+  "func": 9364032,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], r12",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 9455276,
+  "func": 9455093,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], r15",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 9680937,
+  "func": 9674227,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movaps xmmword ptr [rbp + 0x5b0], xmm11",
+  "mnemonic": "movaps"
+ },
+ {
+  "site": 9681170,
+  "func": 9674227,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movaps xmmword ptr [rbp + 0x5b0], xmm11",
+  "mnemonic": "movaps"
+ },
+ {
+  "site": 9895251,
+  "func": 9894016,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movups xmmword ptr [rdi + 0x5b0], xmm0",
+  "mnemonic": "movups"
+ },
+ {
+  "site": 9897634,
+  "func": 9897232,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rbp",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 9997479,
+  "func": 9997396,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], r12",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 10285712,
+  "func": 10285216,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbx + 0x2e8], ebp",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 10286036,
+  "func": 10285760,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rdi + 0x2e8], esi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 10287010,
+  "func": 10286448,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rsi + 0x2e8], 1",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 10296854,
+  "func": 10296752,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rbx + 0x2e8], al",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 10303611,
+  "func": 10303360,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbx + 0x2e8], edi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 10305622,
+  "func": 10304352,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbx + 0x2e8], esi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 10308872,
+  "func": 10308768,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rdi + 0x2e8], r14",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 10401332,
+  "func": 10400224,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rbx + 0x2e8], al",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 10627567,
+  "func": 10627559,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], r12",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 10965028,
+  "func": 10964784,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rdi + 0x5a8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 10965034,
+  "func": 10964784,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rdi + 0x5b0], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 10966550,
+  "func": 10966240,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov word ptr [rbx + 0x2e8], 0x100",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 10967423,
+  "func": 10967104,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rsi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 10967859,
+  "func": 10967600,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rbx + 0x2e8], sil",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 10968620,
+  "func": 10968288,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rdi + 0x2e8], esi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 10969162,
+  "func": 10968704,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rsi + 0x2e8], 1",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 10970252,
+  "func": 10969760,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rsi + 0x2e8], bpl",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 10972894,
+  "func": 10972560,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rdi + 0x2e8], esi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 10979324,
+  "func": 10979120,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 10980180,
+  "func": 10980112,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rcx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 10980955,
+  "func": 10980880,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 10981466,
+  "func": 10981296,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rcx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 10981687,
+  "func": 10981616,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 10985895,
+  "func": 10985072,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rbx + 0x5b0], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 10985986,
+  "func": 10985072,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a8], esi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 10992653,
+  "func": 10992320,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 10994076,
+  "func": 10993872,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rbx + 0x2e8], sil",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 10996347,
+  "func": 10996096,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbx + 0x2e8], edi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 11002299,
+  "func": 11002048,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbx + 0x2e8], edi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 11062821,
+  "func": 11062821,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rsp + 0x5b0], r13",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 11189495,
+  "func": 11189424,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsi + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 11363879,
+  "func": 11363696,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], 2",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 11618815,
+  "func": 11618334,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rdi + 0x2e8], r13",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 11885709,
+  "func": 11885536,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbx + 0x2e8], 0xffffffff",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 11886039,
+  "func": 11885936,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rcx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 11886606,
+  "func": 11886496,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rcx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 11891429,
+  "func": 11891070,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rdi + 0x2e8], ebx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 12094939,
+  "func": 12094879,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movaps xmmword ptr [rsp + 0x5b0], xmm10",
+  "mnemonic": "movaps"
+ },
+ {
+  "site": 12184429,
+  "func": 12184268,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rdi + 0x2e8], 0x3f800000",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 12196220,
+  "func": 12196158,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rbx + 0x2e8], 1",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 12199236,
+  "func": 12199181,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rdi + 0x2e8], 1",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 12210001,
+  "func": 12209946,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rdi + 0x2e8], 1",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 12213539,
+  "func": 12212797,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rdi + 0x2e8], cl",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 12214609,
+  "func": 12212797,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rdi + 0x2e8], cl",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 12221998,
+  "func": 12221943,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rdi + 0x2e8], 1",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 12225036,
+  "func": 12221943,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rdi + 0x2e8], cl",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 12226116,
+  "func": 12221943,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rdi + 0x2e8], cl",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 12233960,
+  "func": 12230234,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rdi + 0x2e8], cl",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 12280657,
+  "func": 12279904,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rdi + 0x2e8], 0x3f800000",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 12298555,
+  "func": 12298555,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rsp + 0x5b0], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 12314480,
+  "func": 12314384,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rdi + 0x5a8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 12487450,
+  "func": 12487120,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsi + 0x2e8], rbp",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 12621075,
+  "func": 12620256,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rdx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 12632240,
+  "func": 12631856,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 12634209,
+  "func": 12633536,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rcx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 12636571,
+  "func": 12636272,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rcx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 12921081,
+  "func": 12920880,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], r13",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 13620556,
+  "func": 13620448,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbx + 0x2e8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 13636663,
+  "func": 13636400,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], r12",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 13688132,
+  "func": 13687811,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rbp + 0x5b0], r15",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 13692554,
+  "func": 13691056,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov dword ptr [rbp + 0x5b0], r9d",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 13698877,
+  "func": 13698575,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rbp + 0x5b0], r14",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 13703667,
+  "func": 13702753,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov dword ptr [rbp + 0x5b0], r10d",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 13741806,
+  "func": 13741632,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movaps xmmword ptr [rbx + 0x5b0], xmm0",
+  "mnemonic": "movaps"
+ },
+ {
+  "site": 13753929,
+  "func": 13753780,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movsd qword ptr [rbp + 0x5b0], xmm0",
+  "mnemonic": "movsd"
+ },
+ {
+  "site": 13758918,
+  "func": 13758787,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movsd qword ptr [rbp + 0x5b0], xmm0",
+  "mnemonic": "movsd"
+ },
+ {
+  "site": 13779815,
+  "func": 13779760,
+  "disp": 1444,
+  "label": "UWorld::UnpausedTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a4], 0x41c71eb8",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 13779825,
+  "func": 13779760,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a8], 0x41955c29",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 13779847,
+  "func": 13779760,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5b0], 0x42480000",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 13807312,
+  "func": 13806992,
+  "disp": 1444,
+  "label": "UWorld::UnpausedTimeSeconds",
+  "text": "movsd qword ptr [rbx + 0x5a4], xmm0",
+  "mnemonic": "movsd"
+ },
+ {
+  "site": 13807339,
+  "func": 13806992,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movups xmmword ptr [rbx + 0x5b0], xmm0",
+  "mnemonic": "movups"
+ },
+ {
+  "site": 13823508,
+  "func": 13821724,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 13877889,
+  "func": 13877211,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], 0",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 14306506,
+  "func": 14306048,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsi + 0x2e8], r13",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 14454487,
+  "func": 14454080,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rbx + 0x5a8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 14454494,
+  "func": 14454080,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rbx + 0x5b0], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 14707570,
+  "func": 14707528,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], r13",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 14801771,
+  "func": 14801568,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [r14 + 0x5a8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 14801778,
+  "func": 14801568,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [r14 + 0x5b0], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 14802540,
+  "func": 14802464,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rdi + 0x2e8], rcx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 14803011,
+  "func": 14802784,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rdi + 0x2e8], rbx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 14803793,
+  "func": 14803648,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 14804412,
+  "func": 14804304,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rdi + 0x5a8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 14804423,
+  "func": 14804304,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rdi + 0x5b0], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 15010064,
+  "func": 15009936,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbx + 0x2e8], 0x40a00000",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 15085486,
+  "func": 15084848,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], r12",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 15086102,
+  "func": 15084848,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rbx + 0x5a8], r12",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 15086109,
+  "func": 15084848,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov byte ptr [rbx + 0x5b0], r12b",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 15297925,
+  "func": 15297280,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rcx + 0x2e8], r15",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 15672365,
+  "func": 15668944,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 16088705,
+  "func": 16088705,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], r14",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 16437890,
+  "func": 16433600,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movdqa xmmword ptr [rbp + 0x5b0], xmm0",
+  "mnemonic": "movdqa"
+ },
+ {
+  "site": 16612945,
+  "func": 16612926,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rsp + 0x5b0], r15",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 16664352,
+  "func": 16664048,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], rcx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 16825899,
+  "func": 16824928,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5b0], r13d",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 16829810,
+  "func": 16829056,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rdi + 0x2e8], r15d",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 16835197,
+  "func": 16834816,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbx + 0x2e8], ebp",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 17955126,
+  "func": 17922992,
+  "disp": 1444,
+  "label": "UWorld::UnpausedTimeSeconds",
+  "text": "mov dword ptr [rsp + 0x5a4], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 17955596,
+  "func": 17922992,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rsp + 0x5a8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 17956833,
+  "func": 17922992,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov dword ptr [rsp + 0x5b0], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 18026005,
+  "func": 17922992,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rsp + 0x2e8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 18143881,
+  "func": 18141184,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], rcx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 18697475,
+  "func": 18670960,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 18708096,
+  "func": 18670960,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rsp + 0x5a8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 18708378,
+  "func": 18670960,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rsp + 0x5b0], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19222840,
+  "func": 19198080,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19222853,
+  "func": 19198080,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19253205,
+  "func": 19198080,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rsp + 0x5a8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19253218,
+  "func": 19198080,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rsp + 0x5a8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19253614,
+  "func": 19198080,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rsp + 0x5b0], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19253627,
+  "func": 19198080,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rsp + 0x5b0], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19371587,
+  "func": 19365056,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rbp + 0x2e8], 1",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19376250,
+  "func": 19365056,
+  "disp": 1444,
+  "label": "UWorld::UnpausedTimeSeconds",
+  "text": "mov dword ptr [rbp + 0x5a4], 0x3040",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19376295,
+  "func": 19365056,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov byte ptr [rbp + 0x5a8], 1",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19376343,
+  "func": 19365056,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov byte ptr [rbp + 0x5b0], 1",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19463827,
+  "func": 19462896,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rbx + 0x2e8], cl",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19464971,
+  "func": 19464816,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rbx + 0x2e8], cl",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19465451,
+  "func": 19465296,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rbx + 0x2e8], cl",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19466375,
+  "func": 19465296,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "and byte ptr [rbx + 0x5a8], 0xfc",
+  "mnemonic": "and"
+ },
+ {
+  "site": 19466406,
+  "func": 19465296,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rbx + 0x5b0], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19467676,
+  "func": 19466848,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19476262,
+  "func": 19475408,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rdi + 0x2e8], 0xffffffff",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19477413,
+  "func": 19476480,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rcx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19479810,
+  "func": 19478880,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rcx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19481410,
+  "func": 19480480,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rcx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19482325,
+  "func": 19480480,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rbx + 0x5a8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19482332,
+  "func": 19480480,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5b0], 0x42000000",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19484633,
+  "func": 19483808,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rbx + 0x5a8], rcx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19484640,
+  "func": 19483808,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rbx + 0x5b0], rcx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19486625,
+  "func": 19486432,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rdi + 0x2e8], 1",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19487542,
+  "func": 19487344,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rdi + 0x2e8], 1",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19488282,
+  "func": 19487344,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov byte ptr [rdi + 0x5a8], sil",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19488289,
+  "func": 19487344,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rdi + 0x5b0], rsi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19494593,
+  "func": 19493680,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov byte ptr [rbx + 0x5a8], bpl",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19702640,
+  "func": 19702176,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsi + 0x2e8], r14",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19703662,
+  "func": 19702176,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rsi + 0x5a8], edi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19703675,
+  "func": 19702176,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rsi + 0x5b0], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19705545,
+  "func": 19704752,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rbp",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19860263,
+  "func": 19860224,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "inc dword ptr [rcx + 0x5a8]",
+  "mnemonic": "inc"
+ },
+ {
+  "site": 19861412,
+  "func": 19861250,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "dec dword ptr [rdi + 0x5a8]",
+  "mnemonic": "dec"
+ },
+ {
+  "site": 19864645,
+  "func": 19864608,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "inc dword ptr [rcx + 0x5a8]",
+  "mnemonic": "inc"
+ },
+ {
+  "site": 19865537,
+  "func": 19865170,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "dec dword ptr [rsi + 0x5a8]",
+  "mnemonic": "dec"
+ },
+ {
+  "site": 19865647,
+  "func": 19865622,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "inc dword ptr [rcx + 0x5a8]",
+  "mnemonic": "inc"
+ },
+ {
+  "site": 19867150,
+  "func": 19867114,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "dec dword ptr [rbx + 0x5a8]",
+  "mnemonic": "dec"
+ },
+ {
+  "site": 19867238,
+  "func": 19867200,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "inc dword ptr [rcx + 0x5a8]",
+  "mnemonic": "inc"
+ },
+ {
+  "site": 19868437,
+  "func": 19868437,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "dec dword ptr [rsi + 0x5a8]",
+  "mnemonic": "dec"
+ },
+ {
+  "site": 19869752,
+  "func": 19869479,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "inc dword ptr [rsi + 0x5a8]",
+  "mnemonic": "inc"
+ },
+ {
+  "site": 19869953,
+  "func": 19869479,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "dec dword ptr [rsi + 0x5a8]",
+  "mnemonic": "dec"
+ },
+ {
+  "site": 19870407,
+  "func": 19870368,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "inc dword ptr [rcx + 0x5a8]",
+  "mnemonic": "inc"
+ },
+ {
+  "site": 19871876,
+  "func": 19870668,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "dec dword ptr [rdi + 0x5a8]",
+  "mnemonic": "dec"
+ },
+ {
+  "site": 19909456,
+  "func": 19909424,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "inc dword ptr [rcx + 0x5a8]",
+  "mnemonic": "inc"
+ },
+ {
+  "site": 19909878,
+  "func": 19909424,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "dec dword ptr [rdi + 0x5a8]",
+  "mnemonic": "dec"
+ },
+ {
+  "site": 19909985,
+  "func": 19909920,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "inc dword ptr [rcx + 0x5a8]",
+  "mnemonic": "inc"
+ },
+ {
+  "site": 19910872,
+  "func": 19909920,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "dec dword ptr [rsi + 0x5a8]",
+  "mnemonic": "dec"
+ },
+ {
+  "site": 19910976,
+  "func": 19910928,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "inc dword ptr [rcx + 0x5a8]",
+  "mnemonic": "inc"
+ },
+ {
+  "site": 19914475,
+  "func": 19910928,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "dec dword ptr [rsi + 0x5a8]",
+  "mnemonic": "dec"
+ },
+ {
+  "site": 19914569,
+  "func": 19914528,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "inc dword ptr [rcx + 0x5a8]",
+  "mnemonic": "inc"
+ },
+ {
+  "site": 19915671,
+  "func": 19914528,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "dec dword ptr [rdi + 0x5a8]",
+  "mnemonic": "dec"
+ },
+ {
+  "site": 19916188,
+  "func": 19916016,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rdi + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19916559,
+  "func": 19916368,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19940114,
+  "func": 19940080,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19948008,
+  "func": 19947872,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rdi + 0x2e8], dl",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19962226,
+  "func": 19962044,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rdi + 0x2e8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19967731,
+  "func": 19967504,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19967737,
+  "func": 19967504,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rbx + 0x5b0], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19970354,
+  "func": 19969968,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rdi + 0x2e8], esi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19970980,
+  "func": 19970720,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rdi + 0x2e8], rsi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19973202,
+  "func": 19972979,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rdi + 0x2e8], rbp",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19981843,
+  "func": 19980848,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rbx + 0x5b0], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19981934,
+  "func": 19980848,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a8], esi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19984807,
+  "func": 19984640,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbx + 0x2e8], edi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19988332,
+  "func": 19988256,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19994023,
+  "func": 19993856,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbx + 0x2e8], edi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19995078,
+  "func": 19994672,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a8], edi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 19998932,
+  "func": 19998784,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20047726,
+  "func": 20046882,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbp + 0x2e8], r12d",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20074760,
+  "func": 20074760,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rsp + 0x5b0], r13",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20091636,
+  "func": 20090560,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rbx + 0x2e8], 1",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20183471,
+  "func": 20183363,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rbp + 0x2e8], 1",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20185968,
+  "func": 20185862,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [r15 + 0x2e8], 1",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20282481,
+  "func": 20282224,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rdi + 0x2e8], al",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20290802,
+  "func": 20290544,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rdi + 0x2e8], rsi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20299356,
+  "func": 20298464,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rdi + 0x5a8], ebp",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20299679,
+  "func": 20299584,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rdi + 0x2e8], rsi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20300372,
+  "func": 20300224,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rcx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20338714,
+  "func": 20338368,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rsi + 0x2e8], al",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20346742,
+  "func": 20345872,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [r13 + 0x5b0], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20351876,
+  "func": 20345872,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], r13",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20359280,
+  "func": 20358832,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbp + 0x2e8], r15d",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20359645,
+  "func": 20358832,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov byte ptr [rbp + 0x5a8], 1",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20359652,
+  "func": 20358832,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rbp + 0x5b0], r15",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20527955,
+  "func": 20527728,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20527961,
+  "func": 20527728,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rbx + 0x5b0], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20528864,
+  "func": 20528352,
+  "disp": 1444,
+  "label": "UWorld::UnpausedTimeSeconds",
+  "text": "mov byte ptr [rbx + 0x5a4], al",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20528870,
+  "func": 20528352,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rbx + 0x5a8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20528877,
+  "func": 20528352,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5b0], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20530162,
+  "func": 20529600,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov word ptr [rsi + 0x2e8], 1",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20530663,
+  "func": 20530336,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsi + 0x2e8], rbp",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20532769,
+  "func": 20532464,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rdi + 0x2e8], 0x3f800000",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20533444,
+  "func": 20532464,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rdi + 0x5a8], esi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20533450,
+  "func": 20532464,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov word ptr [rdi + 0x5b0], 0x100",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20536398,
+  "func": 20536160,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "movss dword ptr [rdi + 0x2e8], xmm0",
+  "mnemonic": "movss"
+ },
+ {
+  "site": 20537154,
+  "func": 20536944,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rdi + 0x5a8], rsi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20537161,
+  "func": 20536944,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov dword ptr [rdi + 0x5b0], esi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20538442,
+  "func": 20538336,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rbx + 0x2e8], al",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20539346,
+  "func": 20539136,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsi + 0x2e8], r12",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20549963,
+  "func": 20549872,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rbx + 0x5a8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20549970,
+  "func": 20549872,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5b0], esi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20554587,
+  "func": 20553104,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20559058,
+  "func": 20558208,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a8], esi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20588280,
+  "func": 20587534,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "movss dword ptr [rbx + 0x2e8], xmm0",
+  "mnemonic": "movss"
+ },
+ {
+  "site": 20603454,
+  "func": 20602480,
+  "disp": 1444,
+  "label": "UWorld::UnpausedTimeSeconds",
+  "text": "mov byte ptr [rsi + 0x5a4], al",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20609419,
+  "func": 20609248,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rsi + 0x2e8], al",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20610596,
+  "func": 20610464,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "movss dword ptr [rdi + 0x2e8], xmm0",
+  "mnemonic": "movss"
+ },
+ {
+  "site": 20618318,
+  "func": 20615360,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [r15 + 0x2e8], al",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20622008,
+  "func": 20621728,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rdi + 0x2e8], al",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20624539,
+  "func": 20624048,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rdi + 0x2e8], al",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20646684,
+  "func": 20640736,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], rcx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20796032,
+  "func": 20796016,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rcx + 0x2e8], 1",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20828480,
+  "func": 20828408,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rdi + 0x5a8], 0",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20828491,
+  "func": 20828408,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rdi + 0x5b0], 0",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20832042,
+  "func": 20831808,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rdi + 0x2e8], rsi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20836559,
+  "func": 20833744,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov byte ptr [rsi + 0x5a8], dil",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20841436,
+  "func": 20841280,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20841970,
+  "func": 20841744,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rdi + 0x5a8], esi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20842218,
+  "func": 20841744,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rdi + 0x5b0], 0x3f800000",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20842923,
+  "func": 20842704,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rdi + 0x5a8], rsi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20842930,
+  "func": 20842704,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov byte ptr [rdi + 0x5b0], sil",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20843670,
+  "func": 20843520,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rdi + 0x5a8], esi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20843676,
+  "func": 20843520,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rdi + 0x5b0], 0x3f800000",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20846170,
+  "func": 20845568,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20851604,
+  "func": 20850240,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20856121,
+  "func": 20854896,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a8], edi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20885719,
+  "func": 20884400,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [r15 + 0x2e8], cl",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20886183,
+  "func": 20886128,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rbp + 0x5b0], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20897891,
+  "func": 20897584,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rbp + 0x2e8], al",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20898383,
+  "func": 20897984,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov byte ptr [r14 + 0x5b0], al",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20903007,
+  "func": 20899968,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rbp + 0x2e8], 1",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 20912928,
+  "func": 20912160,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [r14 + 0x2e8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 21029469,
+  "func": 21029056,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov byte ptr [rsi + 0x5a8], r13b",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 21029666,
+  "func": 21029056,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov byte ptr [rsi + 0x5a8], r13b",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 21034577,
+  "func": 21029728,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], r12",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 21037602,
+  "func": 21029728,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movups xmmword ptr [rbp + 0x5b0], xmm1",
+  "mnemonic": "movups"
+ },
+ {
+  "site": 21043280,
+  "func": 21043216,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rsi + 0x2e8], al",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 21086772,
+  "func": 21086304,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rsi + 0x2e8], ebp",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 21382263,
+  "func": 21381296,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [r15 + 0x2e8], r12",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 21450619,
+  "func": 21450016,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "movsd qword ptr [rbp + 0x2e8], xmm1",
+  "mnemonic": "movsd"
+ },
+ {
+  "site": 21457696,
+  "func": 21456288,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rdi + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 21557763,
+  "func": 21551360,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "movups xmmword ptr [rbp + 0x2e8], xmm0",
+  "mnemonic": "movups"
+ },
+ {
+  "site": 21559312,
+  "func": 21558656,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rdi + 0x2e8], esi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 21650089,
+  "func": 21649904,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rsp + 0x5b0], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 21720112,
+  "func": 21720064,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rdi + 0x5a8], 0xffffffff",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 21763177,
+  "func": 21763161,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rsp + 0x5b0], r15",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 22113629,
+  "func": 22112252,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], rcx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 22401327,
+  "func": 22401327,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movaps xmmword ptr [rsp + 0x5b0], xmm15",
+  "mnemonic": "movaps"
+ },
+ {
+  "site": 22401505,
+  "func": 22401327,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsi + 0x2e8], r14",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 22402037,
+  "func": 22401327,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 22407064,
+  "func": 22405072,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], r8",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 22442644,
+  "func": 22435731,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 22727481,
+  "func": 22726987,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], rbx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 23073566,
+  "func": 23073008,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movups xmmword ptr [rbx + 0x5b0], xmm0",
+  "mnemonic": "movups"
+ },
+ {
+  "site": 23190289,
+  "func": 23190216,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movaps xmmword ptr [rbp + 0x5b0], xmm0",
+  "mnemonic": "movaps"
+ },
+ {
+  "site": 23190342,
+  "func": 23190216,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbp + 0x5a8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 23191066,
+  "func": 23190576,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbp + 0x5a8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 23191103,
+  "func": 23190576,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movaps xmmword ptr [rbp + 0x5b0], xmm0",
+  "mnemonic": "movaps"
+ },
+ {
+  "site": 23191650,
+  "func": 23191450,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "movss dword ptr [rbp + 0x5a8], xmm0",
+  "mnemonic": "movss"
+ },
+ {
+  "site": 23191658,
+  "func": 23191450,
+  "disp": 1444,
+  "label": "UWorld::UnpausedTimeSeconds",
+  "text": "movss dword ptr [rbp + 0x5a4], xmm1",
+  "mnemonic": "movss"
+ },
+ {
+  "site": 23191673,
+  "func": 23191450,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movss dword ptr [rbp + 0x5b0], xmm1",
+  "mnemonic": "movss"
+ },
+ {
+  "site": 23438782,
+  "func": 23431243,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 23462104,
+  "func": 23461954,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rsi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 23464719,
+  "func": 23464632,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rdi + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 23956143,
+  "func": 23955952,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbp + 0x2e8], r12d",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 23984860,
+  "func": 23984496,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], r13",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 24333316,
+  "func": 24332976,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a8], r12d",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 24354753,
+  "func": 24345611,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rbp + 0x2e8], dil",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 24356217,
+  "func": 24345611,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rbp + 0x5b0], r14",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 24392149,
+  "func": 24387664,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rbp + 0x5a8], r10",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 24392159,
+  "func": 24387664,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov dword ptr [rbp + 0x5b0], r10d",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 24392308,
+  "func": 24387664,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov dword ptr [rbp + 0x5b0], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 24392393,
+  "func": 24387664,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov dword ptr [rbp + 0x5b0], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 24392448,
+  "func": 24387664,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov dword ptr [rbp + 0x5b0], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 24419007,
+  "func": 24415664,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], r13",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 24419212,
+  "func": 24415664,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], r13",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 24502828,
+  "func": 24502800,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movaps xmmword ptr [rsp + 0x5b0], xmm6",
+  "mnemonic": "movaps"
+ },
+ {
+  "site": 24739701,
+  "func": 24739095,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "movss dword ptr [rbp + 0x2e8], xmm7",
+  "mnemonic": "movss"
+ },
+ {
+  "site": 24763737,
+  "func": 24762012,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbp + 0x5a8], edx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 24763756,
+  "func": 24762012,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov dword ptr [rbp + 0x5b0], r9d",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 24766198,
+  "func": 24766075,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], rbx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 24766245,
+  "func": 24766075,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbp + 0x2e8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 24786046,
+  "func": 24783280,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], rsi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 24786099,
+  "func": 24783280,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbp + 0x2e8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 24786811,
+  "func": 24783280,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov byte ptr [rbp + 0x5b0], sil",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 24787284,
+  "func": 24783280,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov byte ptr [rbp + 0x5b0], 1",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 24787464,
+  "func": 24783280,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "movdqu xmmword ptr [rbp + 0x2e8], xmm0",
+  "mnemonic": "movdqu"
+ },
+ {
+  "site": 24787755,
+  "func": 24783280,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbp + 0x2e8], edx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 24788374,
+  "func": 24783280,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], rsi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 24788502,
+  "func": 24783280,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbp + 0x2e8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 24788947,
+  "func": 24783280,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], rsi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 24789029,
+  "func": 24783280,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbp + 0x2e8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 24789925,
+  "func": 24783280,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbp + 0x2e8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 24790775,
+  "func": 24783280,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], rsi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 24790872,
+  "func": 24783280,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbp + 0x2e8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 24792692,
+  "func": 24783280,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbp + 0x5a8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 24792716,
+  "func": 24783280,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov dword ptr [rbp + 0x5b0], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 24793595,
+  "func": 24783280,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], rsi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 24793649,
+  "func": 24783280,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbp + 0x2e8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 25069581,
+  "func": 25068842,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbp + 0x2e8], r14d",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 25076273,
+  "func": 25075310,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rbp + 0x5b0], rsi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 25076365,
+  "func": 25075310,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "movsd qword ptr [rbp + 0x5a8], xmm1",
+  "mnemonic": "movsd"
+ },
+ {
+  "site": 25078915,
+  "func": 25076608,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], 0",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 25087833,
+  "func": 25086859,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbp + 0x2e8], ebx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 25286153,
+  "func": 25285872,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a8], r15d",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 25286610,
+  "func": 25286336,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 25289362,
+  "func": 25289072,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a8], r12d",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 25289689,
+  "func": 25289648,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rbp + 0x5a8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 25290076,
+  "func": 25289648,
+  "disp": 1444,
+  "label": "UWorld::UnpausedTimeSeconds",
+  "text": "mov dword ptr [rbp + 0x5a4], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 25290487,
+  "func": 25289648,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 25290739,
+  "func": 25290704,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rbp + 0x5a8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 25291035,
+  "func": 25290749,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 25291516,
+  "func": 25291224,
+  "disp": 1444,
+  "label": "UWorld::UnpausedTimeSeconds",
+  "text": "mov dword ptr [rbp + 0x5a4], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 25291767,
+  "func": 25291224,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 25292290,
+  "func": 25292000,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a8], r12d",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 25292784,
+  "func": 25292509,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a8], r15d",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 25292977,
+  "func": 25292509,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a8], r12d",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 25294194,
+  "func": 25293904,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a8], r12d",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 25294690,
+  "func": 25294400,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a8], r12d",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 25295177,
+  "func": 25294896,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a8], r15d",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 25295634,
+  "func": 25295360,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 25296130,
+  "func": 25295840,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a8], r12d",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 25296617,
+  "func": 25296336,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a8], r15d",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 25297090,
+  "func": 25296800,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a8], r12d",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 25297586,
+  "func": 25297296,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a8], r12d",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 25298082,
+  "func": 25297792,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a8], r12d",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 25315693,
+  "func": 25308199,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], r15",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 25318717,
+  "func": 25318707,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], r12",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 25417787,
+  "func": 25415792,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movaps xmmword ptr [rbp + 0x5b0], xmm1",
+  "mnemonic": "movaps"
+ },
+ {
+  "site": 25565770,
+  "func": 25565344,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rbx + 0x5a8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 25565777,
+  "func": 25565344,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rbx + 0x5b0], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 25578895,
+  "func": 25578576,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbx + 0x2e8], 0xffffffff",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 25608985,
+  "func": 25608944,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rbp + 0x5a8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 25609372,
+  "func": 25608944,
+  "disp": 1444,
+  "label": "UWorld::UnpausedTimeSeconds",
+  "text": "mov dword ptr [rbp + 0x5a4], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 25609783,
+  "func": 25608944,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 25651898,
+  "func": 25650384,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 25652913,
+  "func": 25650384,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movdqa xmmword ptr [rbp + 0x5b0], xmm1",
+  "mnemonic": "movdqa"
+ },
+ {
+  "site": 25653858,
+  "func": 25650384,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 25656136,
+  "func": 25650384,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 25865113,
+  "func": 25864800,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rsp + 0x2e8], 0",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 26045421,
+  "func": 26045136,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rdx + 0x2e8], r8",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 26048976,
+  "func": 26048032,
+  "disp": 1444,
+  "label": "UWorld::UnpausedTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a4], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 26048988,
+  "func": 26048032,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 26049012,
+  "func": 26048032,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5b0], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 26098518,
+  "func": 26097792,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movups xmmword ptr [rbp + 0x5b0], xmm0",
+  "mnemonic": "movups"
+ },
+ {
+  "site": 26099233,
+  "func": 26097792,
+  "disp": 1444,
+  "label": "UWorld::UnpausedTimeSeconds",
+  "text": "mov dword ptr [rbp + 0x5a4], r13d",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 26099240,
+  "func": 26097792,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbp + 0x5a8], 0x10001",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 26100599,
+  "func": 26097792,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "movss dword ptr [rbp + 0x2e8], xmm0",
+  "mnemonic": "movss"
+ },
+ {
+  "site": 26137416,
+  "func": 26136615,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rdi + 0x2e8], r13",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 26137635,
+  "func": 26136615,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rdi + 0x2e8], r13",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 26398515,
+  "func": 26395320,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov byte ptr [rbp + 0x5a8], 0",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 26425590,
+  "func": 26425461,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movups xmmword ptr [rdi + 0x5b0], xmm0",
+  "mnemonic": "movups"
+ },
+ {
+  "site": 26437217,
+  "func": 26437217,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rsp + 0x5b0], rbx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 26437349,
+  "func": 26437349,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rsp + 0x5a8], r12",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 26438386,
+  "func": 26438208,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movups xmmword ptr [rsi + 0x5b0], xmm0",
+  "mnemonic": "movups"
+ },
+ {
+  "site": 26579806,
+  "func": 26579136,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], r13",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 26586492,
+  "func": 26585808,
+  "disp": 1444,
+  "label": "UWorld::UnpausedTimeSeconds",
+  "text": "mov qword ptr [rbp + 0x5a4], 0",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 26586510,
+  "func": 26585808,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rbp + 0x5b0], 0xffffffffffffffff",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 26599042,
+  "func": 26598480,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], r15",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 26656321,
+  "func": 26655904,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rbp + 0x5a8], r12",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 26656328,
+  "func": 26655904,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov dword ptr [rbp + 0x5b0], 0xffffffff",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 26666773,
+  "func": 26655904,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rbp + 0x2e8], bl",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 26869838,
+  "func": 26869808,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rbp + 0x5b0], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 26870912,
+  "func": 26869958,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [r14 + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 26873893,
+  "func": 26869958,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rbp + 0x5a8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 27060424,
+  "func": 27059104,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rdi + 0x2e8], r14",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 27145202,
+  "func": 27144720,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbp + 0x2e8], ebx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 27590588,
+  "func": 27590535,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movaps xmmword ptr [rsp + 0x5b0], xmm15",
+  "mnemonic": "movaps"
+ },
+ {
+  "site": 27596936,
+  "func": 27596923,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movaps xmmword ptr [rsp + 0x5b0], xmm15",
+  "mnemonic": "movaps"
+ },
+ {
+  "site": 27598435,
+  "func": 27598376,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movaps xmmword ptr [rsp + 0x5b0], xmm15",
+  "mnemonic": "movaps"
+ },
+ {
+  "site": 27602365,
+  "func": 27602312,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movaps xmmword ptr [rsp + 0x5b0], xmm15",
+  "mnemonic": "movaps"
+ },
+ {
+  "site": 27614195,
+  "func": 27614136,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movaps xmmword ptr [rsp + 0x5b0], xmm15",
+  "mnemonic": "movaps"
+ },
+ {
+  "site": 27618146,
+  "func": 27618087,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movaps xmmword ptr [rsp + 0x5b0], xmm15",
+  "mnemonic": "movaps"
+ },
+ {
+  "site": 27622092,
+  "func": 27622039,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movaps xmmword ptr [rsp + 0x5b0], xmm15",
+  "mnemonic": "movaps"
+ },
+ {
+  "site": 27629933,
+  "func": 27629880,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movaps xmmword ptr [rsp + 0x5b0], xmm15",
+  "mnemonic": "movaps"
+ },
+ {
+  "site": 27633842,
+  "func": 27633783,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movaps xmmword ptr [rsp + 0x5b0], xmm15",
+  "mnemonic": "movaps"
+ },
+ {
+  "site": 28941037,
+  "func": 28941013,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 28954757,
+  "func": 28954729,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 28986325,
+  "func": 28986297,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 29009916,
+  "func": 29009892,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 29032188,
+  "func": 29032164,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 29048892,
+  "func": 29048868,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 29071212,
+  "func": 29071188,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 29132840,
+  "func": 29132812,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 29219195,
+  "func": 29219179,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 29222815,
+  "func": 29222787,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 29248990,
+  "func": 29248962,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 29267918,
+  "func": 29267890,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 29278592,
+  "func": 29278564,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 29282224,
+  "func": 29282196,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 29285845,
+  "func": 29285821,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 29307013,
+  "func": 29306989,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 29338814,
+  "func": 29338802,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 29384830,
+  "func": 29384818,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 29388316,
+  "func": 29388292,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 29419240,
+  "func": 29419212,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 31579405,
+  "func": 31579374,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 31729829,
+  "func": 31729584,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rbx + 0x5a8], r8",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 31729836,
+  "func": 31729584,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rbx + 0x5b0], r8",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 31730420,
+  "func": 31730336,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rcx + 0x2e8], rdx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 31741718,
+  "func": 31741152,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rsi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 31963725,
+  "func": 31963568,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [r13 + 0x2e8], ebp",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 32311835,
+  "func": 32311360,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], r8",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 32312946,
+  "func": 32312576,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsi + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 32320047,
+  "func": 32319296,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 32396199,
+  "func": 32396160,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rdi + 0x2e8], rdx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 32475107,
+  "func": 32474944,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [r15 + 0x2e8], ebp",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 32476010,
+  "func": 32475840,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [r13 + 0x2e8], ebp",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 32476682,
+  "func": 32476512,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [r13 + 0x2e8], ebp",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 32492878,
+  "func": 32492112,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [r14 + 0x5a8], r15",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 32492885,
+  "func": 32492112,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [r14 + 0x5b0], r15",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 32494515,
+  "func": 32494160,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rsi + 0x2e8], bpl",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 32542887,
+  "func": 32542887,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movaps xmmword ptr [rsp + 0x5b0], xmm6",
+  "mnemonic": "movaps"
+ },
+ {
+  "site": 32545411,
+  "func": 32542887,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbp + 0x2e8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 32546510,
+  "func": 32542887,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbp + 0x2e8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 32549799,
+  "func": 32542887,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbp + 0x2e8], r13d",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 32817618,
+  "func": 32817504,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 32818263,
+  "func": 32818096,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rcx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 32818607,
+  "func": 32818480,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 33105324,
+  "func": 33103056,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [r12 + 0x5a8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 33105367,
+  "func": 33103056,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [r12 + 0x5b0], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 33161739,
+  "func": 33158357,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 33170996,
+  "func": 33158357,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movups xmmword ptr [rbp + 0x5b0], xmm1",
+  "mnemonic": "movups"
+ },
+ {
+  "site": 33189529,
+  "func": 33185773,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], 0",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 33296715,
+  "func": 33291680,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbp + 0x5a8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 33378903,
+  "func": 33378256,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsi + 0x2e8], r14",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 33382378,
+  "func": 33381808,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbx + 0x2e8], ecx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 33389670,
+  "func": 33388592,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rdi + 0x2e8], r15",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 33395349,
+  "func": 33393824,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], r13",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 33403246,
+  "func": 33403216,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rcx + 0x2e8], esi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 33440607,
+  "func": 33437449,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movups xmmword ptr [rbp + 0x5b0], xmm1",
+  "mnemonic": "movups"
+ },
+ {
+  "site": 33458663,
+  "func": 33450194,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], r14",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 33468398,
+  "func": 33450194,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "movups xmmword ptr [rbp + 0x5a8], xmm0",
+  "mnemonic": "movups"
+ },
+ {
+  "site": 33476662,
+  "func": 33472143,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [r13 + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 33598214,
+  "func": 33598202,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], r14",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 33617246,
+  "func": 33616520,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rbp + 0x5b0], r12",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 33732740,
+  "func": 33732740,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], rbx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 33750752,
+  "func": 33750640,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rsi + 0x5a8], rbp",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 33750759,
+  "func": 33750640,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rsi + 0x5b0], rbp",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 33798345,
+  "func": 33798345,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movaps xmmword ptr [rsp + 0x5b0], xmm6",
+  "mnemonic": "movaps"
+ },
+ {
+  "site": 33935321,
+  "func": 33934896,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 33980011,
+  "func": 33979632,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [r14 + 0x2e8], esi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 34204310,
+  "func": 34203504,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rbx + 0x5a8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 34204317,
+  "func": 34203504,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5b0], edi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 34206735,
+  "func": 34206400,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rbx + 0x5a8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 34206742,
+  "func": 34206400,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5b0], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 34209545,
+  "func": 34209200,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 34210148,
+  "func": 34209200,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rbx + 0x5a8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 34210155,
+  "func": 34209200,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rbx + 0x5b0], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 34221842,
+  "func": 34220576,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbx + 0x2e8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 34223363,
+  "func": 34220576,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movsd qword ptr [rbx + 0x5b0], xmm1",
+  "mnemonic": "movsd"
+ },
+ {
+  "site": 34384420,
+  "func": 34383808,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rdi + 0x2e8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 34542680,
+  "func": 34542652,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], r14",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 34652011,
+  "func": 34651032,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], rcx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 34685381,
+  "func": 34675632,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov word ptr [rbp + 0x2e8], r13w",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 34686042,
+  "func": 34675632,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rbp + 0x2e8], 1",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 34741874,
+  "func": 34741360,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [r14 + 0x2e8], r15",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 35188856,
+  "func": 35188816,
+  "disp": 1444,
+  "label": "UWorld::UnpausedTimeSeconds",
+  "text": "mov qword ptr [rbx + 0x5a4], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 35189581,
+  "func": 35189312,
+  "disp": 1444,
+  "label": "UWorld::UnpausedTimeSeconds",
+  "text": "mov qword ptr [rdi + 0x5a4], rbp",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 35257130,
+  "func": 35256416,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rsi + 0x5b0], rbp",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 35763702,
+  "func": 35763306,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rsi + 0x2e8], r15d",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 35769603,
+  "func": 35769408,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rdi + 0x2e8], 0xffffffff",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 35841841,
+  "func": 35838394,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rcx + 0x2e8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 36149168,
+  "func": 36148400,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbx + 0x2e8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 36155494,
+  "func": 36154976,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 36490532,
+  "func": 36489888,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rcx + 0x2e8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 36690336,
+  "func": 36689792,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 36691034,
+  "func": 36689792,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rbx + 0x5a8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 36693218,
+  "func": 36692688,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rdi + 0x2e8], rsi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 36712986,
+  "func": 36712448,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rcx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 37153561,
+  "func": 37153008,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 37424817,
+  "func": 37424288,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rsi + 0x2e8], r13d",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 37452786,
+  "func": 37448856,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movdqu xmmword ptr [rbp + 0x5b0], xmm0",
+  "mnemonic": "movdqu"
+ },
+ {
+  "site": 37483739,
+  "func": 37483558,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov dword ptr [rbp + 0x5b0], r12d",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 37483749,
+  "func": 37483558,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rbp + 0x5a8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 37483770,
+  "func": 37483558,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov dword ptr [rbp + 0x5b0], ebx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 37483841,
+  "func": 37483558,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov dword ptr [rbp + 0x5b0], ebx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 37494128,
+  "func": 37494107,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov dword ptr [rbp + 0x5b0], ebx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 37501851,
+  "func": 37498748,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], rcx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 37505444,
+  "func": 37504071,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "movdqu xmmword ptr [rbp + 0x5a8], xmm0",
+  "mnemonic": "movdqu"
+ },
+ {
+  "site": 37505653,
+  "func": 37504071,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rbp + 0x5a8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 37505717,
+  "func": 37504071,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rbp + 0x5b0], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 37637383,
+  "func": 37636832,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rdi + 0x2e8], rsi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 37652138,
+  "func": 37651995,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsi + 0x2e8], rbp",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 37652693,
+  "func": 37652611,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "movups xmmword ptr [rsi + 0x2e8], xmm1",
+  "mnemonic": "movups"
+ },
+ {
+  "site": 37655585,
+  "func": 37655024,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 37656969,
+  "func": 37656432,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rcx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 37662392,
+  "func": 37662211,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "movups xmmword ptr [rdi + 0x2e8], xmm0",
+  "mnemonic": "movups"
+ },
+ {
+  "site": 37682489,
+  "func": 37682368,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbx + 0x2e8], esi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 37745238,
+  "func": 37745200,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rcx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 37944873,
+  "func": 37944832,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 37948323,
+  "func": 37947040,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [r13 + 0x2e8], al",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 37952359,
+  "func": 37952336,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movaps xmmword ptr [rsp + 0x5b0], xmm6",
+  "mnemonic": "movaps"
+ },
+ {
+  "site": 37952377,
+  "func": 37952336,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rsp + 0x5a8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 37963476,
+  "func": 37963455,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rsp + 0x5b0], r15",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 37973778,
+  "func": 37973697,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 38038519,
+  "func": 38038512,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "movups xmmword ptr [rcx + 0x2e8], xmm0",
+  "mnemonic": "movups"
+ },
+ {
+  "site": 38066006,
+  "func": 38065943,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [r15 + 0x2e8], 1",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 38101723,
+  "func": 38101520,
+  "disp": 1444,
+  "label": "UWorld::UnpausedTimeSeconds",
+  "text": "mov byte ptr [rax + 0x5a4], 1",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 38110536,
+  "func": 38110463,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [r13 + 0x2e8], 1",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 38390326,
+  "func": 38389552,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rcx + 0x2e8], r14",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 38401677,
+  "func": 38401424,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rdi + 0x5a8], r12",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 38401684,
+  "func": 38401424,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rdi + 0x5b0], r12",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 38559872,
+  "func": 38559616,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "movss dword ptr [rbx + 0x2e8], xmm2",
+  "mnemonic": "movss"
+ },
+ {
+  "site": 38608657,
+  "func": 38608400,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rsi + 0x2e8], ebp",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 38616092,
+  "func": 38615584,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rdi + 0x5b0], rsi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 38622692,
+  "func": 38622640,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbx + 0x2e8], 0",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 38632991,
+  "func": 38632352,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [r13 + 0x2e8], ecx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 38725328,
+  "func": 38724654,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rsi + 0x2e8], ecx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 39007500,
+  "func": 39006832,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [r15 + 0x5a8], rsi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 39007507,
+  "func": 39006832,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [r15 + 0x5b0], rsi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 39176114,
+  "func": 39175952,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbp + 0x2e8], edi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 39644049,
+  "func": 39643104,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [r14 + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 40061313,
+  "func": 40061120,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rdi + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 40063926,
+  "func": 40063728,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 40063945,
+  "func": 40063728,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 40287005,
+  "func": 40286432,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rbx + 0x5a8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 40741077,
+  "func": 40740672,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 40743292,
+  "func": 40742880,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [r14 + 0x2e8], rsi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 40904411,
+  "func": 40904389,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], r14",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 40934655,
+  "func": 40933104,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rdi + 0x5a8], rsi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 40934662,
+  "func": 40933104,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov dword ptr [rdi + 0x5b0], esi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 40937790,
+  "func": 40937568,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 41054046,
+  "func": 41053888,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rdi + 0x2e8], esi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 41062477,
+  "func": 41062432,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbx + 0x2e8], 0",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 41100780,
+  "func": 41097269,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "movss dword ptr [rbp + 0x2e8], xmm0",
+  "mnemonic": "movss"
+ },
+ {
+  "site": 41103471,
+  "func": 41097269,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movss dword ptr [rbp + 0x5b0], xmm2",
+  "mnemonic": "movss"
+ },
+ {
+  "site": 41212554,
+  "func": 41212032,
+  "disp": 1444,
+  "label": "UWorld::UnpausedTimeSeconds",
+  "text": "movss dword ptr [rcx + 0x5a4], xmm1",
+  "mnemonic": "movss"
+ },
+ {
+  "site": 41287372,
+  "func": 41286263,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "movups xmmword ptr [rsi + 0x2e8], xmm0",
+  "mnemonic": "movups"
+ },
+ {
+  "site": 41312379,
+  "func": 41312256,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rsi + 0x5b0], rbp",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 41312555,
+  "func": 41312256,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movsd qword ptr [rsi + 0x5b0], xmm0",
+  "mnemonic": "movsd"
+ },
+ {
+  "site": 41469704,
+  "func": 41468080,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbx + 0x2e8], 0x40800000",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 41471098,
+  "func": 41470688,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rbx + 0x5b0], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 41477290,
+  "func": 41477271,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 41629138,
+  "func": 41628928,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 41790801,
+  "func": 41790758,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movaps xmmword ptr [rsp + 0x5b0], xmm6",
+  "mnemonic": "movaps"
+ },
+ {
+  "site": 41792417,
+  "func": 41790758,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbp + 0x2e8], 0",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 41818366,
+  "func": 41818160,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbx + 0x2e8], 0x41f00000",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 42093757,
+  "func": 42093680,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5b0], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 42258704,
+  "func": 42258531,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], r12",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 42311330,
+  "func": 42311232,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movups xmmword ptr [rbx + 0x5b0], xmm0",
+  "mnemonic": "movups"
+ },
+ {
+  "site": 42311386,
+  "func": 42311232,
+  "disp": 1444,
+  "label": "UWorld::UnpausedTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a4], 0x3f800000",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 42353951,
+  "func": 42353951,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], r15",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 42366641,
+  "func": 42366594,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], r13",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 42368794,
+  "func": 42366861,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbp + 0x2e8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 42370296,
+  "func": 42366861,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbp + 0x2e8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 42439157,
+  "func": 42439072,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movups xmmword ptr [rdi + 0x5b0], xmm1",
+  "mnemonic": "movups"
+ },
+ {
+  "site": 42767348,
+  "func": 42755968,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], r15",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 42767369,
+  "func": 42755968,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbp + 0x2e8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 42773552,
+  "func": 42755968,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rbp + 0x5a8], r15",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 42773573,
+  "func": 42755968,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbp + 0x5a8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 42773679,
+  "func": 42755968,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rbp + 0x5b0], r15",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 42784700,
+  "func": 42784336,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsi + 0x2e8], rbx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 42787815,
+  "func": 42787168,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsi + 0x2e8], r13",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 43000138,
+  "func": 42999952,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rbx + 0x5a8], 0",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 43012982,
+  "func": 43012944,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rcx + 0x5a8], r13d",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 43013462,
+  "func": 43012944,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movups xmmword ptr [rdi + 0x5b0], xmm0",
+  "mnemonic": "movups"
+ },
+ {
+  "site": 43018885,
+  "func": 43018849,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rdi + 0x5a8], r8d",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 43019477,
+  "func": 43018849,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movups xmmword ptr [rdi + 0x5b0], xmm0",
+  "mnemonic": "movups"
+ },
+ {
+  "site": 43021158,
+  "func": 43020912,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rsi + 0x5a8], 0",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 43021273,
+  "func": 43020912,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movsd qword ptr [rsi + 0x5b0], xmm0",
+  "mnemonic": "movsd"
+ },
+ {
+  "site": 43041323,
+  "func": 43041077,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rbx + 0x5a8], 0",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 43078942,
+  "func": 43077034,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov dword ptr [rbp + 0x5b0], r14d",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 43082883,
+  "func": 43077034,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rbp + 0x5a8], r14",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 43082890,
+  "func": 43077034,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rbp + 0x5b0], 0",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 43134948,
+  "func": 43134833,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movups xmmword ptr [rsi + 0x5b0], xmm0",
+  "mnemonic": "movups"
+ },
+ {
+  "site": 43177402,
+  "func": 43176728,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movss dword ptr [rbx + 0x5b0], xmm0",
+  "mnemonic": "movss"
+ },
+ {
+  "site": 43177507,
+  "func": 43176728,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movups xmmword ptr [rbx + 0x5b0], xmm0",
+  "mnemonic": "movups"
+ },
+ {
+  "site": 43196089,
+  "func": 43195936,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbx + 0x2e8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 43297839,
+  "func": 43297831,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rsp + 0x5a8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 43300079,
+  "func": 43299841,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], 1",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 43445861,
+  "func": 43445861,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], r14",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 43484314,
+  "func": 43482170,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], rcx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 43708922,
+  "func": 43708096,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "movss dword ptr [rdi + 0x5a8], xmm0",
+  "mnemonic": "movss"
+ },
+ {
+  "site": 43708997,
+  "func": 43708096,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movss dword ptr [rdi + 0x5b0], xmm6",
+  "mnemonic": "movss"
+ },
+ {
+  "site": 43709013,
+  "func": 43708096,
+  "disp": 1444,
+  "label": "UWorld::UnpausedTimeSeconds",
+  "text": "movss dword ptr [rdi + 0x5a4], xmm1",
+  "mnemonic": "movss"
+ },
+ {
+  "site": 43763600,
+  "func": 43763345,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "movss dword ptr [rdx + 0x2e8], xmm1",
+  "mnemonic": "movss"
+ },
+ {
+  "site": 43889776,
+  "func": 43889344,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 44118723,
+  "func": 44118576,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rdi + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 44149430,
+  "func": 44147589,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rbp + 0x5b0], r12",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 44181658,
+  "func": 44181088,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rdi + 0x2e8], ebp",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 44182243,
+  "func": 44181088,
+  "disp": 1444,
+  "label": "UWorld::UnpausedTimeSeconds",
+  "text": "mov dword ptr [rdi + 0x5a4], ebp",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 44182249,
+  "func": 44181088,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rdi + 0x5b0], rbp",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 44311044,
+  "func": 44311008,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "inc dword ptr [rcx + 0x2e8]",
+  "mnemonic": "inc"
+ },
+ {
+  "site": 44341315,
+  "func": 44341104,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rdx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 44346022,
+  "func": 44345776,
+  "disp": 1444,
+  "label": "UWorld::UnpausedTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a4], edi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 44458119,
+  "func": 44458048,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov byte ptr [rsi + 0x5a8], dil",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 44626551,
+  "func": 44624852,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rbp + 0x5a8], r12",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 44626558,
+  "func": 44624852,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rbp + 0x5b0], r12",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 44930323,
+  "func": 44930128,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rdx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 44938724,
+  "func": 44938705,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], r14",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 45303562,
+  "func": 45303182,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov dword ptr [rbp + 0x5b0], edi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 45389810,
+  "func": 45389168,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbx + 0x2e8], 0x3f800000",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 45524849,
+  "func": 45524816,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rbp + 0x5b0], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 45594351,
+  "func": 45593664,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a8], edi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 45594357,
+  "func": 45593664,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rbx + 0x5b0], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 45595698,
+  "func": 45594976,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rcx + 0x2e8], sil",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 45602234,
+  "func": 45601568,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a8], ebp",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 45931518,
+  "func": 45929760,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movups xmmword ptr [rdx + 0x5b0], xmm0",
+  "mnemonic": "movups"
+ },
+ {
+  "site": 45938505,
+  "func": 45938497,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rsp + 0x5b0], r15",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 46016548,
+  "func": 46016528,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rcx + 0x2e8], esi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 46101183,
+  "func": 46100912,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbx + 0x2e8], 0xffffffff",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 46225673,
+  "func": 46225515,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rdi + 0x2e8], r13",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 46227997,
+  "func": 46227696,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], r13",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 46307971,
+  "func": 46305285,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rdi + 0x2e8], edx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 46313344,
+  "func": 46313232,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [r14 + 0x2e8], rcx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 46391307,
+  "func": 46391145,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [r9 + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 46408326,
+  "func": 46408192,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a8], ecx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 46412615,
+  "func": 46412352,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsi + 0x2e8], rbp",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 46450598,
+  "func": 46450416,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 46468022,
+  "func": 46467936,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 46468112,
+  "func": 46468038,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 46499223,
+  "func": 46499168,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 46505585,
+  "func": 46505559,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movss dword ptr [rcx + 0x5b0], xmm7",
+  "mnemonic": "movss"
+ },
+ {
+  "site": 46525753,
+  "func": 46525344,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsi + 0x2e8], rbp",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 46626674,
+  "func": 46626336,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [r14 + 0x2e8], r13",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 46627001,
+  "func": 46626336,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [r14 + 0x5a8], r13",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 46629175,
+  "func": 46628688,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rcx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 46630405,
+  "func": 46629920,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rdi + 0x2e8], rcx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 46777190,
+  "func": 46769280,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], rsi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 46777211,
+  "func": 46769280,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbp + 0x2e8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 46783394,
+  "func": 46769280,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rbp + 0x5a8], rsi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 46783415,
+  "func": 46769280,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbp + 0x5a8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 46783521,
+  "func": 46769280,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rbp + 0x5b0], rsi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 46796510,
+  "func": 46796176,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 46890827,
+  "func": 46890320,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rcx + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 46891443,
+  "func": 46890320,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rcx + 0x5a8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 46891450,
+  "func": 46890320,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rcx + 0x5b0], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 46973973,
+  "func": 46973360,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], r15",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 47167538,
+  "func": 47167056,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbx + 0x2e8], 0xffffffff",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 47372076,
+  "func": 47371408,
+  "disp": 1444,
+  "label": "UWorld::UnpausedTimeSeconds",
+  "text": "mov dword ptr [rcx + 0x5a4], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 47372102,
+  "func": 47371408,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rcx + 0x5a8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 47419926,
+  "func": 47419840,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rdi + 0x5a8], rsi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 47494412,
+  "func": 47493808,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rsi + 0x2e8], 0x3f800000",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 47516576,
+  "func": 47516544,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbx + 0x2e8], 0x3f800000",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 47576894,
+  "func": 47576288,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 47972528,
+  "func": 47971856,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movaps xmmword ptr [rbp + 0x5b0], xmm0",
+  "mnemonic": "movaps"
+ },
+ {
+  "site": 49270706,
+  "func": 49268656,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 49272635,
+  "func": 49268656,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rbx + 0x5a8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 49272664,
+  "func": 49268656,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rbx + 0x5b0], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 49803951,
+  "func": 49803824,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsi + 0x2e8], r12",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 49805625,
+  "func": 49805280,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rsi + 0x2e8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 49820776,
+  "func": 49820112,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rdi + 0x2e8], rsi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 50008666,
+  "func": 50008096,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rdi + 0x2e8], r15",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 50034785,
+  "func": 50034400,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rdx + 0x2e8], r8",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 50316000,
+  "func": 50315888,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 50511100,
+  "func": 50510246,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbp + 0x2e8], 4",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 50520491,
+  "func": 50519892,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov byte ptr [rbp + 0x5a8], 1",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 50520839,
+  "func": 50519892,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov dword ptr [rbp + 0x5b0], 4",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 50588281,
+  "func": 50586000,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rbp + 0x2e8], 1",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 50590961,
+  "func": 50589728,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 51164119,
+  "func": 51163664,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rdi + 0x2e8], r14",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 51165664,
+  "func": 51165202,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rdi + 0x5a8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 51165699,
+  "func": 51165202,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov dword ptr [rdi + 0x5b0], r12d",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 51169062,
+  "func": 51168784,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsi + 0x2e8], rcx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 51171307,
+  "func": 51170800,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov byte ptr [rdi + 0x5a8], r14b",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 51171321,
+  "func": 51170800,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov dword ptr [rdi + 0x5b0], 0x3f800000",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 51180731,
+  "func": 51180512,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rdi + 0x5a8], rbp",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 51191861,
+  "func": 51184915,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "movaps xmmword ptr [rbp + 0x5b0], xmm14",
+  "mnemonic": "movaps"
+ },
+ {
+  "site": 51223434,
+  "func": 51223382,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [r15 + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 51327349,
+  "func": 51326832,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rdi + 0x2e8], esi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 51333354,
+  "func": 51332704,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rcx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 51338668,
+  "func": 51338064,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbx + 0x2e8], ebp",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 51481260,
+  "func": 51481076,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [r13 + 0x2e8], r15d",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 51507312,
+  "func": 51507280,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 51507363,
+  "func": 51507328,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rdi + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 51554682,
+  "func": 51554496,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 51554865,
+  "func": 51554768,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 51565791,
+  "func": 51565392,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rdi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 51566478,
+  "func": 51566048,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rdi + 0x2e8], rsi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 51574199,
+  "func": 51573888,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [r14 + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 52163660,
+  "func": 52163168,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rdi + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 52179745,
+  "func": 52179664,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rcx + 0x2e8], 0",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 52518297,
+  "func": 52518112,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov word ptr [rdi + 0x2e8], si",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 52518570,
+  "func": 52518352,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov word ptr [rdi + 0x2e8], bp",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 52519321,
+  "func": 52519056,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rdi + 0x2e8], al",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 52530952,
+  "func": 52530880,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rbx + 0x2e8], 1",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 52567891,
+  "func": 52567680,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rbx + 0x2e8], 1",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 52569508,
+  "func": 52569248,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rbx + 0x2e8], 1",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 52575132,
+  "func": 52574848,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov word ptr [rbx + 0x2e8], r8w",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 52598551,
+  "func": 52596880,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [r13 + 0x2e8], 0",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 52734002,
+  "func": 52733840,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rbx + 0x2e8], al",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 52734400,
+  "func": 52734240,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rdi + 0x2e8], r13d",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 52737270,
+  "func": 52737024,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rdi + 0x2e8], 1",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 53196112,
+  "func": 53196016,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov word ptr [rdi + 0x2e8], si",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 53196272,
+  "func": 53196176,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov word ptr [rdi + 0x2e8], si",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 53202838,
+  "func": 53202640,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov word ptr [rbx + 0x2e8], r14w",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 53222695,
+  "func": 53222544,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rdi + 0x2e8], rbp",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 53222836,
+  "func": 53222544,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rdi + 0x2e8], rbp",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 53223043,
+  "func": 53222880,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [r14 + 0x2e8], rcx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 53225243,
+  "func": 53225040,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsi + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 53225580,
+  "func": 53225420,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rdi + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 53227767,
+  "func": 53227491,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rdi + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 53237896,
+  "func": 53237840,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], 0",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 53238783,
+  "func": 53238720,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 53239351,
+  "func": 53239178,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rdi + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 53239710,
+  "func": 53239509,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rdi + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 53239814,
+  "func": 53239509,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rdi + 0x2e8], 0",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 53563426,
+  "func": 53560224,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbp + 0x2e8], rcx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 53924499,
+  "func": 53923603,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a8], esi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 53935625,
+  "func": 53935625,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rdi + 0x5a8], 0x47",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 53943370,
+  "func": 53943050,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 53955476,
+  "func": 53955328,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a8], edx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 53958069,
+  "func": 53957280,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5a8], edx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 54074155,
+  "func": 54074096,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rax + 0x2e8], rcx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 54204417,
+  "func": 54204304,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbx + 0x2e8], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 54204486,
+  "func": 54204304,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbx + 0x2e8], edi",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 54345694,
+  "func": 54345408,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rdi + 0x2e8], 0",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 54345888,
+  "func": 54345744,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rdi + 0x2e8], ebx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 54346226,
+  "func": 54345744,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rdi + 0x2e8], 1",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 55794261,
+  "func": 55793744,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov dword ptr [rbx + 0x2e8], 0x1ce",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 55796589,
+  "func": 55796128,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 55830970,
+  "func": 55830953,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], r15",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 56052976,
+  "func": 56052928,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], 0xffffffffffffffff",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 56073749,
+  "func": 56073120,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rbx + 0x5b0], rbp",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 56075589,
+  "func": 56073904,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rdi + 0x5b0], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 56205792,
+  "func": 56205552,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 56922900,
+  "func": 56921248,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov dword ptr [rbx + 0x5b0], eax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 56924271,
+  "func": 56921248,
+  "disp": 1448,
+  "label": "UWorld::RealTimeSeconds",
+  "text": "mov qword ptr [rbx + 0x5a8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 56927429,
+  "func": 56921248,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rbx + 0x2e8], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 56949124,
+  "func": 56949088,
+  "disp": 1456,
+  "label": "UWorld::DeltaTimeSeconds",
+  "text": "mov qword ptr [rbp + 0x5b0], rax",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 57007406,
+  "func": 57007406,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov qword ptr [rsp + 0x2e8], rbx",
+  "mnemonic": "mov"
+ },
+ {
+  "site": 57283537,
+  "func": 57283088,
+  "disp": 744,
+  "label": "AWorldSettings::TimeDilation",
+  "text": "mov byte ptr [rdi + 0x2e8], al",
+  "mnemonic": "mov"
+ }
+]

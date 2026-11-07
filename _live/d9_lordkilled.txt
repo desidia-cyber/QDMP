@@ -1,0 +1,45 @@
+﻿ATTACH 37840
+READY [{"ready": true, "base": "0x7ff75d670000", "manager": "0x28703d8cf00"}]
+>>> callfunc 0x28774e36e00 LordWasKilled
+{
+ "ok": true,
+ "v": {
+  "ok": true,
+  "fn": "0x287d6c77cc0",
+  "owner": "0x287d6c3b300"
+ }
+}
+>>> sleep 2
+... slept 2
+>>> spawner 0x28774e36e00
+{
+ "addr": "0x28774e36e00",
+ "guidCount": 1,
+ "guids": [
+  "17181166-4d738291-c77fd28a-9dada0ea"
+ ],
+ "saveDataCount": 1,
+ "mySaveData": "0x287e26c0f20",
+ "mySaveDataN": 1,
+ "respawnTimer": 0,
+ "spawnDisabled": 0,
+ "maxKill": 1,
+ "useMaxKill": 0,
+ "initted": 1,
+ "enemySpawned": 0,
+ "readyForSpawn": 0,
+ "playerInRange": 0,
+ "spawnOnActivate": 0,
+ "levelIsRemoved": 0,
+ "currentKill": 0,
+ "enemyWasKilled": 0,
+ "maxSpawnDist": 10000,
+ "minSpawnDist": 5000,
+ "enemyData": "0x287e2b14240",
+ "enemyDataName": "GreenDragon_Data",
+ "enemyDataCls": "EnemyData_C",
+ "activationTrigger": 0,
+ "behaviourMode": 2,
+ "trapOnActivation": 0,
+ "myStreamingLevel": "0x287e26c0e80"
+}

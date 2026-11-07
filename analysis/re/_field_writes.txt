@@ -1,0 +1,1472 @@
+﻿  scanned 0/242788 funcs  hits=0
+  scanned 40000/242788 funcs  hits=80
+  scanned 80000/242788 funcs  hits=282
+  scanned 120000/242788 funcs  hits=493
+  scanned 160000/242788 funcs  hits=583
+  scanned 200000/242788 funcs  hits=676
+  scanned 240000/242788 funcs  hits=759
+
+total writes: 759
+
+AWorldSettings::TimeDilation  0x2E8  FUN_0059C490 (size 0x10C)  1 write(s)
+      0059C4E8  mov qword ptr [rbx + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_0079298A (size 0x68D)  1 write(s)
+      007929B9  mov qword ptr [rsp + 0x2e8], r14
+AWorldSettings::TimeDilation  0x2E8  FUN_0079A459 (size 0x1926)  1 write(s)
+      0079A531  mov qword ptr [rbp + 0x2e8], r9
+AWorldSettings::TimeDilation  0x2E8  FUN_0079F4B1 (size 0xE3E)  1 write(s)
+      0079FCD7  mov dword ptr [rbp + 0x2e8], eax
+AWorldSettings::TimeDilation  0x2E8  FUN_0080D590 (size 0x2D61)  1 write(s)
+      0080E302  mov qword ptr [rbp + 0x2e8], r13
+AWorldSettings::TimeDilation  0x2E8  FUN_00810300 (size 0x2CBB)  1 write(s)
+      008110B4  mov dword ptr [rbp + 0x2e8], eax
+AWorldSettings::TimeDilation  0x2E8  FUN_008E7BE0 (size 0x3300)  1 write(s)
+      008E9067  mov qword ptr [rbp + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_008EE240 (size 0x1431)  1 write(s)
+      008EF363  mov qword ptr [rbp + 0x2e8], r12
+AWorldSettings::TimeDilation  0x2E8  FUN_009045F5 (size 0x335)  1 write(s)
+      009046AC  mov qword ptr [rsp + 0x2e8], r15
+AWorldSettings::TimeDilation  0x2E8  FUN_00970510 (size 0x377)  1 write(s)
+      009706A2  mov qword ptr [rbx + 0x2e8], rbp
+AWorldSettings::TimeDilation  0x2E8  FUN_00988C54 (size 0x294)  1 write(s)
+      00988CA7  mov qword ptr [rbp + 0x2e8], r12
+AWorldSettings::TimeDilation  0x2E8  FUN_009CF0A0 (size 0x21D)  1 write(s)
+      009CF290  mov dword ptr [rbx + 0x2e8], ebp
+AWorldSettings::TimeDilation  0x2E8  FUN_009CF2C0 (size 0x2AE)  1 write(s)
+      009CF3D4  mov dword ptr [rdi + 0x2e8], esi
+AWorldSettings::TimeDilation  0x2E8  FUN_009CF570 (size 0x24B)  1 write(s)
+      009CF7A2  mov byte ptr [rsi + 0x2e8], 1
+AWorldSettings::TimeDilation  0x2E8  FUN_009D1DB0 (size 0x176)  1 write(s)
+      009D1E16  mov byte ptr [rbx + 0x2e8], al
+AWorldSettings::TimeDilation  0x2E8  FUN_009D3780 (size 0x3DC)  1 write(s)
+      009D387B  mov dword ptr [rbx + 0x2e8], edi
+AWorldSettings::TimeDilation  0x2E8  FUN_009D3B60 (size 0x59C)  1 write(s)
+      009D4056  mov dword ptr [rbx + 0x2e8], esi
+AWorldSettings::TimeDilation  0x2E8  FUN_009D4CA0 (size 0x21C)  1 write(s)
+      009D4D08  mov qword ptr [rdi + 0x2e8], r14
+AWorldSettings::TimeDilation  0x2E8  FUN_009EB1E0 (size 0x6C1)  1 write(s)
+      009EB634  mov byte ptr [rbx + 0x2e8], al
+AWorldSettings::TimeDilation  0x2E8  FUN_00A229E7 (size 0x30)  1 write(s)
+      00A229EF  mov qword ptr [rsp + 0x2e8], r12
+AWorldSettings::TimeDilation  0x2E8  FUN_00A754E0 (size 0x1DF)  1 write(s)
+      00A75616  mov word ptr [rbx + 0x2e8], 0x100
+AWorldSettings::TimeDilation  0x2E8  FUN_00A75840 (size 0x1EA)  1 write(s)
+      00A7597F  mov qword ptr [rbx + 0x2e8], rsi
+AWorldSettings::TimeDilation  0x2E8  FUN_00A75A30 (size 0x1AB)  1 write(s)
+      00A75B33  mov byte ptr [rbx + 0x2e8], sil
+AWorldSettings::TimeDilation  0x2E8  FUN_00A75CE0 (size 0x1A0)  1 write(s)
+      00A75E2C  mov dword ptr [rdi + 0x2e8], esi
+AWorldSettings::TimeDilation  0x2E8  FUN_00A75E80 (size 0x22E)  1 write(s)
+      00A7604A  mov byte ptr [rsi + 0x2e8], 1
+AWorldSettings::TimeDilation  0x2E8  FUN_00A762A0 (size 0x2E9)  1 write(s)
+      00A7648C  mov byte ptr [rsi + 0x2e8], bpl
+AWorldSettings::TimeDilation  0x2E8  FUN_00A76D90 (size 0x1AC)  1 write(s)
+      00A76EDE  mov dword ptr [rdi + 0x2e8], esi
+AWorldSettings::TimeDilation  0x2E8  FUN_00A78730 (size 0x228)  1 write(s)
+      00A787FC  mov qword ptr [rbx + 0x2e8], rdi
+AWorldSettings::TimeDilation  0x2E8  FUN_00A78B10 (size 0x84)  1 write(s)
+      00A78B54  mov qword ptr [rbx + 0x2e8], rcx
+AWorldSettings::TimeDilation  0x2E8  FUN_00A78E10 (size 0x105)  1 write(s)
+      00A78E5B  mov qword ptr [rbx + 0x2e8], rdi
+AWorldSettings::TimeDilation  0x2E8  FUN_00A78FB0 (size 0x13B)  1 write(s)
+      00A7905A  mov qword ptr [rbx + 0x2e8], rcx
+AWorldSettings::TimeDilation  0x2E8  FUN_00A790F0 (size 0x60)  1 write(s)
+      00A79137  mov qword ptr [rbx + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_00A7BAC0 (size 0x604)  1 write(s)
+      00A7BC0D  mov qword ptr [rbx + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_00A7C0D0 (size 0x5DE)  1 write(s)
+      00A7C19C  mov byte ptr [rbx + 0x2e8], sil
+AWorldSettings::TimeDilation  0x2E8  FUN_00A7C980 (size 0x388)  1 write(s)
+      00A7CA7B  mov dword ptr [rbx + 0x2e8], edi
+AWorldSettings::TimeDilation  0x2E8  FUN_00A7E0C0 (size 0x334)  1 write(s)
+      00A7E1BB  mov dword ptr [rbx + 0x2e8], edi
+AWorldSettings::TimeDilation  0x2E8  FUN_00AABCB0 (size 0x1C3)  1 write(s)
+      00AABCF7  mov qword ptr [rsi + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_00AD6570 (size 0xDE)  1 write(s)
+      00AD6627  mov qword ptr [rbx + 0x2e8], 2
+AWorldSettings::TimeDilation  0x2E8  FUN_00B1481E (size 0xFB4)  1 write(s)
+      00B149FF  mov qword ptr [rdi + 0x2e8], r13
+AWorldSettings::TimeDilation  0x2E8  FUN_00B55BE0 (size 0xE2)  1 write(s)
+      00B55C8D  mov dword ptr [rbx + 0x2e8], 0xffffffff
+AWorldSettings::TimeDilation  0x2E8  FUN_00B55D70 (size 0xE6)  1 write(s)
+      00B55DD7  mov qword ptr [rbx + 0x2e8], rcx
+AWorldSettings::TimeDilation  0x2E8  FUN_00B55FA0 (size 0x10B)  1 write(s)
+      00B5600E  mov qword ptr [rbx + 0x2e8], rcx
+AWorldSettings::TimeDilation  0x2E8  FUN_00B5717E (size 0x1AF)  1 write(s)
+      00B572E5  mov dword ptr [rdi + 0x2e8], ebx
+AWorldSettings::TimeDilation  0x2E8  FUN_00B9EACC (size 0xC3)  1 write(s)
+      00B9EB6D  mov dword ptr [rdi + 0x2e8], 0x3f800000
+AWorldSettings::TimeDilation  0x2E8  FUN_00BA193E (size 0xA4)  1 write(s)
+      00BA197C  mov byte ptr [rbx + 0x2e8], 1
+AWorldSettings::TimeDilation  0x2E8  FUN_00BA250D (size 0x990)  1 write(s)
+      00BA2544  mov byte ptr [rdi + 0x2e8], 1
+AWorldSettings::TimeDilation  0x2E8  FUN_00BA4F1A (size 0x92A)  1 write(s)
+      00BA4F51  mov byte ptr [rdi + 0x2e8], 1
+AWorldSettings::TimeDilation  0x2E8  FUN_00BA5A3D (size 0x8B8)  2 write(s)
+      00BA5D23  mov byte ptr [rdi + 0x2e8], cl
+      00BA6151  mov byte ptr [rdi + 0x2e8], cl
+AWorldSettings::TimeDilation  0x2E8  FUN_00BA7DF7 (size 0x1207)  3 write(s)
+      00BA7E2E  mov byte ptr [rdi + 0x2e8], 1
+      00BA8A0C  mov byte ptr [rdi + 0x2e8], cl
+      00BA8E44  mov byte ptr [rdi + 0x2e8], cl
+AWorldSettings::TimeDilation  0x2E8  FUN_00BA9E5A (size 0x105E)  1 write(s)
+      00BAACE8  mov byte ptr [rdi + 0x2e8], cl
+AWorldSettings::TimeDilation  0x2E8  FUN_00BB6060 (size 0x316)  1 write(s)
+      00BB6351  mov dword ptr [rdi + 0x2e8], 0x3f800000
+AWorldSettings::TimeDilation  0x2E8  FUN_00BE89D0 (size 0x25D)  1 write(s)
+      00BE8B1A  mov qword ptr [rsi + 0x2e8], rbp
+AWorldSettings::TimeDilation  0x2E8  FUN_00C091E0 (size 0x953)  1 write(s)
+      00C09513  mov qword ptr [rbx + 0x2e8], rdx
+AWorldSettings::TimeDilation  0x2E8  FUN_00C0BF30 (size 0x47D)  1 write(s)
+      00C0C0B0  mov qword ptr [rbx + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_00C0C5C0 (size 0x593)  1 write(s)
+      00C0C861  mov qword ptr [rbx + 0x2e8], rcx
+AWorldSettings::TimeDilation  0x2E8  FUN_00C0D070 (size 0x423)  1 write(s)
+      00C0D19B  mov qword ptr [rbx + 0x2e8], rcx
+AWorldSettings::TimeDilation  0x2E8  FUN_00C52830 (size 0x86D)  1 write(s)
+      00C528F9  mov qword ptr [rsp + 0x2e8], r13
+AWorldSettings::TimeDilation  0x2E8  FUN_00CFD4E0 (size 0xB3)  1 write(s)
+      00CFD54C  mov dword ptr [rbx + 0x2e8], eax
+AWorldSettings::TimeDilation  0x2E8  FUN_00D01330 (size 0x683)  1 write(s)
+      00D01437  mov qword ptr [rbp + 0x2e8], r12
+AWorldSettings::TimeDilation  0x2E8  FUN_00D2E71C (size 0x829)  1 write(s)
+      00D2EE14  mov qword ptr [rbp + 0x2e8], rdi
+AWorldSettings::TimeDilation  0x2E8  FUN_00D3BFDB (size 0x14C3)  1 write(s)
+      00D3C281  mov qword ptr [rbp + 0x2e8], 0
+AWorldSettings::TimeDilation  0x2E8  FUN_00DA4B00 (size 0xC47)  1 write(s)
+      00DA4CCA  mov qword ptr [rsi + 0x2e8], r13
+AWorldSettings::TimeDilation  0x2E8  FUN_00E06B48 (size 0x87C)  1 write(s)
+      00E06B72  mov qword ptr [rsp + 0x2e8], r13
+AWorldSettings::TimeDilation  0x2E8  FUN_00E1DE20 (size 0x13C)  1 write(s)
+      00E1DE6C  mov qword ptr [rdi + 0x2e8], rcx
+AWorldSettings::TimeDilation  0x2E8  FUN_00E1DF60 (size 0x226)  1 write(s)
+      00E1E043  mov qword ptr [rdi + 0x2e8], rbx
+AWorldSettings::TimeDilation  0x2E8  FUN_00E1E2C0 (size 0xD6)  1 write(s)
+      00E1E351  mov qword ptr [rbx + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_00E50890 (size 0x90)  1 write(s)
+      00E50910  mov dword ptr [rbx + 0x2e8], 0x40a00000
+AWorldSettings::TimeDilation  0x2E8  FUN_00E62D30 (size 0x7A2)  1 write(s)
+      00E62FAE  mov qword ptr [rbx + 0x2e8], r12
+AWorldSettings::TimeDilation  0x2E8  FUN_00E96B00 (size 0x850)  1 write(s)
+      00E96D85  mov qword ptr [rcx + 0x2e8], r15
+AWorldSettings::TimeDilation  0x2E8  FUN_00EF16D0 (size 0x1225)  1 write(s)
+      00EF242D  mov qword ptr [rsp + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_00F57E81 (size 0x53)  1 write(s)
+      00F57E81  mov qword ptr [rsp + 0x2e8], r14
+AWorldSettings::TimeDilation  0x2E8  FUN_00FE45F0 (size 0xEC6)  1 write(s)
+      00FE4720  mov qword ptr [rbp + 0x2e8], rcx
+AWorldSettings::TimeDilation  0x2E8  FUN_0100CA80 (size 0x55F)  1 write(s)
+      0100CD72  mov dword ptr [rdi + 0x2e8], r15d
+AWorldSettings::TimeDilation  0x2E8  FUN_0100E100 (size 0x34D)  1 write(s)
+      0100E27D  mov dword ptr [rbx + 0x2e8], ebp
+AWorldSettings::TimeDilation  0x2E8  FUN_01117BB0 (size 0x2A749)  1 write(s)
+      01130E15  mov dword ptr [rsp + 0x2e8], eax
+AWorldSettings::TimeDilation  0x2E8  FUN_0114D000 (size 0x1654)  1 write(s)
+      0114DA89  mov qword ptr [rbp + 0x2e8], rcx
+AWorldSettings::TimeDilation  0x2E8  FUN_011CE570 (size 0x22667)  1 write(s)
+      011D4D03  mov qword ptr [rsp + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_0124F080 (size 0x2140E)  2 write(s)
+      01255138  mov qword ptr [rsp + 0x2e8], rax
+      01255145  mov qword ptr [rsp + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_01277CC0 (size 0x711E)  1 write(s)
+      01279643  mov byte ptr [rbp + 0x2e8], 1
+AWorldSettings::TimeDilation  0x2E8  FUN_0128FAF0 (size 0x6FF)  1 write(s)
+      0128FE93  mov byte ptr [rbx + 0x2e8], cl
+AWorldSettings::TimeDilation  0x2E8  FUN_01290270 (size 0x1D3)  1 write(s)
+      0129030B  mov byte ptr [rbx + 0x2e8], cl
+AWorldSettings::TimeDilation  0x2E8  FUN_01290450 (size 0x60A)  1 write(s)
+      012904EB  mov byte ptr [rbx + 0x2e8], cl
+AWorldSettings::TimeDilation  0x2E8  FUN_01290A60 (size 0x395)  1 write(s)
+      01290D9C  mov qword ptr [rbx + 0x2e8], rdi
+AWorldSettings::TimeDilation  0x2E8  FUN_01292BD0 (size 0x422)  1 write(s)
+      01292F26  mov dword ptr [rdi + 0x2e8], 0xffffffff
+AWorldSettings::TimeDilation  0x2E8  FUN_01293000 (size 0x42A)  1 write(s)
+      012933A5  mov qword ptr [rbx + 0x2e8], rcx
+AWorldSettings::TimeDilation  0x2E8  FUN_01293960 (size 0x636)  1 write(s)
+      01293D02  mov qword ptr [rbx + 0x2e8], rcx
+AWorldSettings::TimeDilation  0x2E8  FUN_01293FA0 (size 0xA06)  1 write(s)
+      01294342  mov qword ptr [rbx + 0x2e8], rcx
+AWorldSettings::TimeDilation  0x2E8  FUN_012956E0 (size 0x119)  1 write(s)
+      012957A1  mov byte ptr [rdi + 0x2e8], 1
+AWorldSettings::TimeDilation  0x2E8  FUN_01295A70 (size 0x53D)  1 write(s)
+      01295B36  mov byte ptr [rdi + 0x2e8], 1
+AWorldSettings::TimeDilation  0x2E8  FUN_012CA1A0 (size 0xA02)  1 write(s)
+      012CA370  mov qword ptr [rsi + 0x2e8], r14
+AWorldSettings::TimeDilation  0x2E8  FUN_012CABB0 (size 0x5B6)  1 write(s)
+      012CAEC9  mov qword ptr [rbx + 0x2e8], rbp
+AWorldSettings::TimeDilation  0x2E8  FUN_012FE4F0 (size 0x160)  1 write(s)
+      012FE59C  mov qword ptr [rdi + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_012FE650 (size 0x14F)  1 write(s)
+      012FE70F  mov qword ptr [rbp + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_013042F0 (size 0x60)  1 write(s)
+      01304312  mov qword ptr [rbp + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_01306160 (size 0x220)  1 write(s)
+      013061E8  mov byte ptr [rdi + 0x2e8], dl
+AWorldSettings::TimeDilation  0x2E8  FUN_013098BC (size 0xE4)  1 write(s)
+      01309972  mov dword ptr [rdi + 0x2e8], eax
+AWorldSettings::TimeDilation  0x2E8  FUN_0130B7B0 (size 0x1BC)  1 write(s)
+      0130B932  mov dword ptr [rdi + 0x2e8], esi
+AWorldSettings::TimeDilation  0x2E8  FUN_0130BAA0 (size 0x3A9)  1 write(s)
+      0130BBA4  mov qword ptr [rdi + 0x2e8], rsi
+AWorldSettings::TimeDilation  0x2E8  FUN_0130C373 (size 0xF4)  1 write(s)
+      0130C452  mov qword ptr [rdi + 0x2e8], rbp
+AWorldSettings::TimeDilation  0x2E8  FUN_0130F100 (size 0x344)  1 write(s)
+      0130F1A7  mov dword ptr [rbx + 0x2e8], edi
+AWorldSettings::TimeDilation  0x2E8  FUN_0130FF20 (size 0x398)  1 write(s)
+      0130FF6C  mov qword ptr [rbx + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_01311500 (size 0x274)  1 write(s)
+      013115A7  mov dword ptr [rbx + 0x2e8], edi
+AWorldSettings::TimeDilation  0x2E8  FUN_01312840 (size 0x1E3)  1 write(s)
+      013128D4  mov qword ptr [rbx + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_0131E422 (size 0x51D)  1 write(s)
+      0131E76E  mov dword ptr [rbp + 0x2e8], r12d
+AWorldSettings::TimeDilation  0x2E8  FUN_01328EC0 (size 0x594)  1 write(s)
+      013292F4  mov byte ptr [rbx + 0x2e8], 1
+AWorldSettings::TimeDilation  0x2E8  FUN_0133F943 (size 0x16B)  1 write(s)
+      0133F9AF  mov byte ptr [rbp + 0x2e8], 1
+AWorldSettings::TimeDilation  0x2E8  FUN_01340306 (size 0xF0)  1 write(s)
+      01340370  mov byte ptr [r15 + 0x2e8], 1
+AWorldSettings::TimeDilation  0x2E8  FUN_01357B70 (size 0x220)  1 write(s)
+      01357C71  mov byte ptr [rdi + 0x2e8], al
+AWorldSettings::TimeDilation  0x2E8  FUN_01359BF0 (size 0x33F)  1 write(s)
+      01359CF2  mov qword ptr [rdi + 0x2e8], rsi
+AWorldSettings::TimeDilation  0x2E8  FUN_0135BF40 (size 0x273)  1 write(s)
+      0135BF9F  mov qword ptr [rdi + 0x2e8], rsi
+AWorldSettings::TimeDilation  0x2E8  FUN_0135C1C0 (size 0xC7)  1 write(s)
+      0135C254  mov qword ptr [rbx + 0x2e8], rcx
+AWorldSettings::TimeDilation  0x2E8  FUN_013656C0 (size 0x526)  1 write(s)
+      0136581A  mov byte ptr [rsi + 0x2e8], al
+AWorldSettings::TimeDilation  0x2E8  FUN_01367410 (size 0x1FA9)  1 write(s)
+      01368B84  mov qword ptr [rbp + 0x2e8], r13
+AWorldSettings::TimeDilation  0x2E8  FUN_0136A6B0 (size 0x2836)  1 write(s)
+      0136A870  mov dword ptr [rbp + 0x2e8], r15d
+AWorldSettings::TimeDilation  0x2E8  FUN_013941C0 (size 0x24A)  1 write(s)
+      013943F2  mov word ptr [rsi + 0x2e8], 1
+AWorldSettings::TimeDilation  0x2E8  FUN_013944A0 (size 0x40A)  1 write(s)
+      013945E7  mov qword ptr [rsi + 0x2e8], rbp
+AWorldSettings::TimeDilation  0x2E8  FUN_01394CF0 (size 0x51D)  1 write(s)
+      01394E21  mov qword ptr [rdi + 0x2e8], 0x3f800000
+AWorldSettings::TimeDilation  0x2E8  FUN_01395B60 (size 0x1C9)  1 write(s)
+      01395C4E  movss dword ptr [rdi + 0x2e8], xmm0
+AWorldSettings::TimeDilation  0x2E8  FUN_013963E0 (size 0x15F)  1 write(s)
+      0139644A  mov byte ptr [rbx + 0x2e8], al
+AWorldSettings::TimeDilation  0x2E8  FUN_01396700 (size 0x12E)  1 write(s)
+      013967D2  mov qword ptr [rsi + 0x2e8], r12
+AWorldSettings::TimeDilation  0x2E8  FUN_01399D90 (size 0x9A8)  1 write(s)
+      0139A35B  mov qword ptr [rbx + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_013A240E (size 0x3A5)  1 write(s)
+      013A26F8  movss dword ptr [rbx + 0x2e8], xmm0
+AWorldSettings::TimeDilation  0x2E8  FUN_013A78E0 (size 0x4B1)  1 write(s)
+      013A798B  mov byte ptr [rsi + 0x2e8], al
+AWorldSettings::TimeDilation  0x2E8  FUN_013A7DA0 (size 0x2EE)  1 write(s)
+      013A7E24  movss dword ptr [rdi + 0x2e8], xmm0
+AWorldSettings::TimeDilation  0x2E8  FUN_013A90C0 (size 0x18D2)  1 write(s)
+      013A9C4E  mov byte ptr [r15 + 0x2e8], al
+AWorldSettings::TimeDilation  0x2E8  FUN_013AA9A0 (size 0x158)  1 write(s)
+      013AAAB8  mov byte ptr [rdi + 0x2e8], al
+AWorldSettings::TimeDilation  0x2E8  FUN_013AB2B0 (size 0x25C)  1 write(s)
+      013AB49B  mov byte ptr [rdi + 0x2e8], al
+AWorldSettings::TimeDilation  0x2E8  FUN_013AF3E0 (size 0x1DF7)  1 write(s)
+      013B0B1C  mov qword ptr [rbp + 0x2e8], rcx
+AWorldSettings::TimeDilation  0x2E8  FUN_013D5270 (size 0x5F)  1 write(s)
+      013D5280  mov byte ptr [rcx + 0x2e8], 1
+AWorldSettings::TimeDilation  0x2E8  FUN_013DDE40 (size 0x1BD)  1 write(s)
+      013DDF2A  mov qword ptr [rdi + 0x2e8], rsi
+AWorldSettings::TimeDilation  0x2E8  FUN_013E0340 (size 0x1C3)  1 write(s)
+      013E03DC  mov qword ptr [rbx + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_013E1400 (size 0x3EF)  1 write(s)
+      013E165A  mov qword ptr [rbx + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_013E2640 (size 0x74E)  1 write(s)
+      013E2B94  mov qword ptr [rbx + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_013EABB0 (size 0x6BD)  1 write(s)
+      013EB0D7  mov byte ptr [r15 + 0x2e8], cl
+AWorldSettings::TimeDilation  0x2E8  FUN_013EDF30 (size 0x188)  1 write(s)
+      013EE063  mov byte ptr [rbp + 0x2e8], al
+AWorldSettings::TimeDilation  0x2E8  FUN_013EE880 (size 0x1FF6)  1 write(s)
+      013EF45F  mov byte ptr [rbp + 0x2e8], 1
+AWorldSettings::TimeDilation  0x2E8  FUN_013F1820 (size 0x541)  1 write(s)
+      013F1B20  mov dword ptr [r14 + 0x2e8], eax
+AWorldSettings::TimeDilation  0x2E8  FUN_0140E360 (size 0x2663)  1 write(s)
+      0140F651  mov qword ptr [rbp + 0x2e8], r12
+AWorldSettings::TimeDilation  0x2E8  FUN_01411810 (size 0xA7)  1 write(s)
+      01411850  mov byte ptr [rsi + 0x2e8], al
+AWorldSettings::TimeDilation  0x2E8  FUN_0141C060 (size 0x378)  1 write(s)
+      0141C234  mov dword ptr [rsi + 0x2e8], ebp
+AWorldSettings::TimeDilation  0x2E8  FUN_014640B0 (size 0x6EC)  1 write(s)
+      01464477  mov qword ptr [r15 + 0x2e8], r12
+AWorldSettings::TimeDilation  0x2E8  FUN_01474D20 (size 0x3F4)  1 write(s)
+      01474F7B  movsd qword ptr [rbp + 0x2e8], xmm1
+AWorldSettings::TimeDilation  0x2E8  FUN_014765A0 (size 0x652)  1 write(s)
+      01476B20  mov qword ptr [rdi + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_0148D900 (size 0x1C71)  1 write(s)
+      0148F203  movups xmmword ptr [rbp + 0x2e8], xmm0
+AWorldSettings::TimeDilation  0x2E8  FUN_0148F580 (size 0x894)  1 write(s)
+      0148F810  mov dword ptr [rdi + 0x2e8], esi
+AWorldSettings::TimeDilation  0x2E8  FUN_015167FC (size 0x9F2)  1 write(s)
+      01516D5D  mov qword ptr [rbp + 0x2e8], rcx
+AWorldSettings::TimeDilation  0x2E8  FUN_0155D12F (size 0x5DE)  2 write(s)
+      0155D1E1  mov qword ptr [rsi + 0x2e8], r14
+      0155D3F5  mov qword ptr [rbx + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_0155DFD0 (size 0xA18)  1 write(s)
+      0155E798  mov qword ptr [rbp + 0x2e8], r8
+AWorldSettings::TimeDilation  0x2E8  FUN_01565793 (size 0x309C)  1 write(s)
+      01567294  mov qword ptr [rbp + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_015AC94B (size 0x12DF)  1 write(s)
+      015ACB39  mov qword ptr [rbp + 0x2e8], rbx
+AWorldSettings::TimeDilation  0x2E8  FUN_0165884B (size 0x287F)  1 write(s)
+      0165A5BE  mov qword ptr [rbp + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_01660042 (size 0xFE)  1 write(s)
+      016600D8  mov qword ptr [rbx + 0x2e8], rsi
+AWorldSettings::TimeDilation  0x2E8  FUN_01660AB8 (size 0x94)  1 write(s)
+      01660B0F  mov qword ptr [rdi + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_016D89F0 (size 0x13B)  1 write(s)
+      016D8AAF  mov dword ptr [rbp + 0x2e8], r12d
+AWorldSettings::TimeDilation  0x2E8  FUN_016DF970 (size 0x3F4)  1 write(s)
+      016DFADC  mov qword ptr [rbp + 0x2e8], r13
+AWorldSettings::TimeDilation  0x2E8  FUN_01737C0B (size 0x32F4)  1 write(s)
+      01739FC1  mov byte ptr [rbp + 0x2e8], dil
+AWorldSettings::TimeDilation  0x2E8  FUN_01748DB0 (size 0x1528)  2 write(s)
+      01749ABF  mov qword ptr [rbx + 0x2e8], r13
+      01749B8C  mov qword ptr [rbx + 0x2e8], r13
+AWorldSettings::TimeDilation  0x2E8  FUN_01797D17 (size 0x422)  1 write(s)
+      01797F75  movss dword ptr [rbp + 0x2e8], xmm7
+AWorldSettings::TimeDilation  0x2E8  FUN_0179E67B (size 0x66D)  2 write(s)
+      0179E6F6  mov qword ptr [rbp + 0x2e8], rbx
+      0179E725  mov dword ptr [rbp + 0x2e8], eax
+AWorldSettings::TimeDilation  0x2E8  FUN_017A29B0 (size 0x2C80)  13 write(s)
+      017A347E  mov qword ptr [rbp + 0x2e8], rsi
+      017A34B3  mov dword ptr [rbp + 0x2e8], eax
+      017A3A08  movdqu xmmword ptr [rbp + 0x2e8], xmm0
+      017A3B2B  mov dword ptr [rbp + 0x2e8], edx
+      017A3D96  mov qword ptr [rbp + 0x2e8], rsi
+      017A3E16  mov dword ptr [rbp + 0x2e8], eax
+      017A3FD3  mov qword ptr [rbp + 0x2e8], rsi
+      017A4025  mov dword ptr [rbp + 0x2e8], eax
+      017A43A5  mov dword ptr [rbp + 0x2e8], eax
+      017A46F7  mov qword ptr [rbp + 0x2e8], rsi
+      017A4758  mov dword ptr [rbp + 0x2e8], eax
+      017A51FB  mov qword ptr [rbp + 0x2e8], rsi
+      017A5231  mov dword ptr [rbp + 0x2e8], eax
+AWorldSettings::TimeDilation  0x2E8  FUN_017E852A (size 0x190A)  1 write(s)
+      017E880D  mov dword ptr [rbp + 0x2e8], r14d
+AWorldSettings::TimeDilation  0x2E8  FUN_017EA380 (size 0x1275)  1 write(s)
+      017EAC83  mov qword ptr [rbp + 0x2e8], 0
+AWorldSettings::TimeDilation  0x2E8  FUN_017ECB8B (size 0xC42)  1 write(s)
+      017ECF59  mov dword ptr [rbp + 0x2e8], ebx
+AWorldSettings::TimeDilation  0x2E8  FUN_01822C27 (size 0x2079)  1 write(s)
+      0182496D  mov qword ptr [rbx + 0x2e8], r15
+AWorldSettings::TimeDilation  0x2E8  FUN_01825533 (size 0x91)  1 write(s)
+      0182553D  mov qword ptr [rsp + 0x2e8], r12
+AWorldSettings::TimeDilation  0x2E8  FUN_01864C50 (size 0xA4A)  1 write(s)
+      01864D8F  mov dword ptr [rbx + 0x2e8], 0xffffffff
+AWorldSettings::TimeDilation  0x2E8  FUN_018764D0 (size 0x1B31)  3 write(s)
+      01876ABA  mov qword ptr [rbp + 0x2e8], rax
+      01877262  mov qword ptr [rbp + 0x2e8], rax
+      01877B48  mov qword ptr [rbp + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_018AAA60 (size 0x184)  1 write(s)
+      018AAB99  mov dword ptr [rsp + 0x2e8], 0
+AWorldSettings::TimeDilation  0x2E8  FUN_018D6AD0 (size 0x13E)  1 write(s)
+      018D6BED  mov qword ptr [rdx + 0x2e8], r8
+AWorldSettings::TimeDilation  0x2E8  FUN_018E3880 (size 0x3700)  1 write(s)
+      018E4377  movss dword ptr [rbp + 0x2e8], xmm0
+AWorldSettings::TimeDilation  0x2E8  FUN_018ED027 (size 0x4D7)  2 write(s)
+      018ED348  mov qword ptr [rdi + 0x2e8], r13
+      018ED423  mov qword ptr [rdi + 0x2e8], r13
+AWorldSettings::TimeDilation  0x2E8  FUN_019590C0 (size 0xFAE)  1 write(s)
+      0195935E  mov qword ptr [rbp + 0x2e8], r13
+AWorldSettings::TimeDilation  0x2E8  FUN_0195DC50 (size 0x142B)  1 write(s)
+      0195DE82  mov qword ptr [rbp + 0x2e8], r15
+AWorldSettings::TimeDilation  0x2E8  FUN_0196BCA0 (size 0x2D8A)  1 write(s)
+      0196E715  mov byte ptr [rbp + 0x2e8], bl
+AWorldSettings::TimeDilation  0x2E8  FUN_019A00C6 (size 0x1506)  1 write(s)
+      019A0480  mov qword ptr [r14 + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_019CE3A0 (size 0x5AD)  1 write(s)
+      019CE8C8  mov qword ptr [rdi + 0x2e8], r14
+AWorldSettings::TimeDilation  0x2E8  FUN_019E3210 (size 0x17AE)  1 write(s)
+      019E33F2  mov dword ptr [rbp + 0x2e8], ebx
+AWorldSettings::TimeDilation  0x2E8  FUN_01B99AD5 (size 0xC15)  1 write(s)
+      01B99AED  mov qword ptr [rsp + 0x2e8], rdi
+AWorldSettings::TimeDilation  0x2E8  FUN_01B9D069 (size 0xC01)  1 write(s)
+      01B9D085  mov qword ptr [rsp + 0x2e8], rdi
+AWorldSettings::TimeDilation  0x2E8  FUN_01BA4BB9 (size 0xC01)  1 write(s)
+      01BA4BD5  mov qword ptr [rsp + 0x2e8], rdi
+AWorldSettings::TimeDilation  0x2E8  FUN_01BAA7E4 (size 0xC31)  1 write(s)
+      01BAA7FC  mov qword ptr [rsp + 0x2e8], rdi
+AWorldSettings::TimeDilation  0x2E8  FUN_01BAFEE4 (size 0xC1F)  1 write(s)
+      01BAFEFC  mov qword ptr [rsp + 0x2e8], rdi
+AWorldSettings::TimeDilation  0x2E8  FUN_01BB4024 (size 0xC3E)  1 write(s)
+      01BB403C  mov qword ptr [rsp + 0x2e8], rdi
+AWorldSettings::TimeDilation  0x2E8  FUN_01BB9754 (size 0xC31)  1 write(s)
+      01BB976C  mov qword ptr [rsp + 0x2e8], rdi
+AWorldSettings::TimeDilation  0x2E8  FUN_01BC880C (size 0xC33)  1 write(s)
+      01BC8828  mov qword ptr [rsp + 0x2e8], rdi
+AWorldSettings::TimeDilation  0x2E8  FUN_01BDD96B (size 0xC5B)  1 write(s)
+      01BDD97B  mov qword ptr [rsp + 0x2e8], rdi
+AWorldSettings::TimeDilation  0x2E8  FUN_01BDE783 (size 0xC5A)  1 write(s)
+      01BDE79F  mov qword ptr [rsp + 0x2e8], rdi
+AWorldSettings::TimeDilation  0x2E8  FUN_01BE4DC2 (size 0xC00)  1 write(s)
+      01BE4DDE  mov qword ptr [rsp + 0x2e8], rdi
+AWorldSettings::TimeDilation  0x2E8  FUN_01BE97B2 (size 0xC10)  1 write(s)
+      01BE97CE  mov qword ptr [rsp + 0x2e8], rdi
+AWorldSettings::TimeDilation  0x2E8  FUN_01BEC164 (size 0xC5E)  1 write(s)
+      01BEC180  mov qword ptr [rsp + 0x2e8], rdi
+AWorldSettings::TimeDilation  0x2E8  FUN_01BECF94 (size 0xC5E)  1 write(s)
+      01BECFB0  mov qword ptr [rsp + 0x2e8], rdi
+AWorldSettings::TimeDilation  0x2E8  FUN_01BEDDBD (size 0xAE5)  1 write(s)
+      01BEDDD5  mov qword ptr [rsp + 0x2e8], rdi
+AWorldSettings::TimeDilation  0x2E8  FUN_01BF306D (size 0xAD3)  1 write(s)
+      01BF3085  mov qword ptr [rsp + 0x2e8], rdi
+AWorldSettings::TimeDilation  0x2E8  FUN_01BFACB2 (size 0xC7C)  1 write(s)
+      01BFACBE  mov qword ptr [rsp + 0x2e8], rdi
+AWorldSettings::TimeDilation  0x2E8  FUN_01C06072 (size 0xBD4)  1 write(s)
+      01C0607E  mov qword ptr [rsp + 0x2e8], rdi
+AWorldSettings::TimeDilation  0x2E8  FUN_01C06E04 (size 0xB66)  1 write(s)
+      01C06E1C  mov qword ptr [rsp + 0x2e8], rdi
+AWorldSettings::TimeDilation  0x2E8  FUN_01C0E6CC (size 0xC33)  1 write(s)
+      01C0E6E8  mov qword ptr [rsp + 0x2e8], rdi
+AWorldSettings::TimeDilation  0x2E8  FUN_01E1DCEE (size 0xC80)  1 write(s)
+      01E1DD0D  mov qword ptr [rsp + 0x2e8], rdi
+AWorldSettings::TimeDilation  0x2E8  FUN_01E42AA0 (size 0x486)  1 write(s)
+      01E42AF4  mov qword ptr [rcx + 0x2e8], rdx
+AWorldSettings::TimeDilation  0x2E8  FUN_01E454E0 (size 0x2F5)  1 write(s)
+      01E45716  mov qword ptr [rbx + 0x2e8], rsi
+AWorldSettings::TimeDilation  0x2E8  FUN_01E7B9B0 (size 0x2AF)  1 write(s)
+      01E7BA4D  mov dword ptr [r13 + 0x2e8], ebp
+AWorldSettings::TimeDilation  0x2E8  FUN_01ED0840 (size 0x263)  1 write(s)
+      01ED0A1B  mov qword ptr [rbx + 0x2e8], r8
+AWorldSettings::TimeDilation  0x2E8  FUN_01ED0D00 (size 0x608)  1 write(s)
+      01ED0E72  mov qword ptr [rsi + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_01ED2740 (size 0x464)  1 write(s)
+      01ED2A2F  mov qword ptr [rbx + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_01EE5380 (size 0x5A)  1 write(s)
+      01EE53A7  mov qword ptr [rdi + 0x2e8], rdx
+AWorldSettings::TimeDilation  0x2E8  FUN_01EF8740 (size 0xF5)  1 write(s)
+      01EF87E3  mov dword ptr [r15 + 0x2e8], ebp
+AWorldSettings::TimeDilation  0x2E8  FUN_01EF8AC0 (size 0x29E)  1 write(s)
+      01EF8B6A  mov dword ptr [r13 + 0x2e8], ebp
+AWorldSettings::TimeDilation  0x2E8  FUN_01EF8D60 (size 0x2AE)  1 write(s)
+      01EF8E0A  mov dword ptr [r13 + 0x2e8], ebp
+AWorldSettings::TimeDilation  0x2E8  FUN_01EFD250 (size 0x2E3)  1 write(s)
+      01EFD3B3  mov byte ptr [rsi + 0x2e8], bpl
+AWorldSettings::TimeDilation  0x2E8  FUN_01F090A7 (size 0x22DF)  3 write(s)
+      01F09A83  mov dword ptr [rbp + 0x2e8], eax
+      01F09ECE  mov dword ptr [rbp + 0x2e8], eax
+      01F0ABA7  mov dword ptr [rbp + 0x2e8], r13d
+AWorldSettings::TimeDilation  0x2E8  FUN_01F4C160 (size 0x93)  1 write(s)
+      01F4C1D2  mov qword ptr [rbx + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_01F4C3B0 (size 0xC2)  1 write(s)
+      01F4C457  mov qword ptr [rbx + 0x2e8], rcx
+AWorldSettings::TimeDilation  0x2E8  FUN_01F4C530 (size 0x8C)  1 write(s)
+      01F4C5AF  mov qword ptr [rbx + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_01F9F4D5 (size 0x42FA)  1 write(s)
+      01FA020B  mov qword ptr [rbp + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_01FA5FED (size 0x1E58)  1 write(s)
+      01FA6E99  mov qword ptr [rbp + 0x2e8], 0
+AWorldSettings::TimeDilation  0x2E8  FUN_01FD4FD0 (size 0x630)  1 write(s)
+      01FD5257  mov qword ptr [rsi + 0x2e8], r14
+AWorldSettings::TimeDilation  0x2E8  FUN_01FD5DB0 (size 0xCAD)  1 write(s)
+      01FD5FEA  mov dword ptr [rbx + 0x2e8], ecx
+AWorldSettings::TimeDilation  0x2E8  FUN_01FD7830 (size 0x556)  1 write(s)
+      01FD7C66  mov qword ptr [rdi + 0x2e8], r15
+AWorldSettings::TimeDilation  0x2E8  FUN_01FD8CA0 (size 0x64E)  1 write(s)
+      01FD9295  mov qword ptr [rbx + 0x2e8], r13
+AWorldSettings::TimeDilation  0x2E8  FUN_01FDB150 (size 0x1C2)  1 write(s)
+      01FDB16E  mov dword ptr [rcx + 0x2e8], esi
+AWorldSettings::TimeDilation  0x2E8  FUN_01FE68D2 (size 0x4A06)  1 write(s)
+      01FE89E7  mov qword ptr [rbp + 0x2e8], r14
+AWorldSettings::TimeDilation  0x2E8  FUN_01FEBE8F (size 0x14B8)  1 write(s)
+      01FED036  mov qword ptr [r13 + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_0200AAFA (size 0x6B0)  1 write(s)
+      0200AB06  mov qword ptr [rsp + 0x2e8], r14
+AWorldSettings::TimeDilation  0x2E8  FUN_0202B884 (size 0x1F)  1 write(s)
+      0202B884  mov qword ptr [rsp + 0x2e8], rbx
+AWorldSettings::TimeDilation  0x2E8  FUN_0205CE30 (size 0x915)  1 write(s)
+      0205CFD9  mov qword ptr [rbp + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_02067CF0 (size 0x5A4)  1 write(s)
+      02067E6B  mov dword ptr [r14 + 0x2e8], esi
+AWorldSettings::TimeDilation  0x2E8  FUN_0209FDB0 (size 0x53F)  1 write(s)
+      0209FF09  mov qword ptr [rbx + 0x2e8], rdi
+AWorldSettings::TimeDilation  0x2E8  FUN_020A2A20 (size 0xCEA)  1 write(s)
+      020A2F12  mov dword ptr [rbx + 0x2e8], eax
+AWorldSettings::TimeDilation  0x2E8  FUN_020CA7C0 (size 0x296)  1 write(s)
+      020CAA24  mov dword ptr [rdi + 0x2e8], eax
+AWorldSettings::TimeDilation  0x2E8  FUN_020F143C (size 0x6FC)  1 write(s)
+      020F1458  mov qword ptr [rsp + 0x2e8], r14
+AWorldSettings::TimeDilation  0x2E8  FUN_0210BB98 (size 0xA72)  1 write(s)
+      0210BF6B  mov qword ptr [rbp + 0x2e8], rcx
+AWorldSettings::TimeDilation  0x2E8  FUN_02111BB0 (size 0x367F)  2 write(s)
+      021141C5  mov word ptr [rbp + 0x2e8], r13w
+      0211445A  mov byte ptr [rbp + 0x2e8], 1
+AWorldSettings::TimeDilation  0x2E8  FUN_02121C70 (size 0x281)  1 write(s)
+      02121E72  mov qword ptr [r14 + 0x2e8], r15
+AWorldSettings::TimeDilation  0x2E8  FUN_0221B46A (size 0x2EC)  1 write(s)
+      0221B5F6  mov dword ptr [rsi + 0x2e8], r15d
+AWorldSettings::TimeDilation  0x2E8  FUN_0221CC40 (size 0x247)  1 write(s)
+      0221CD03  mov dword ptr [rdi + 0x2e8], 0xffffffff
+AWorldSettings::TimeDilation  0x2E8  FUN_0222D9BA (size 0x1600)  1 write(s)
+      0222E731  mov dword ptr [rcx + 0x2e8], eax
+AWorldSettings::TimeDilation  0x2E8  FUN_022794B0 (size 0x60A)  1 write(s)
+      022797B0  mov dword ptr [rbx + 0x2e8], eax
+AWorldSettings::TimeDilation  0x2E8  FUN_0227AE60 (size 0x6AD)  1 write(s)
+      0227B066  mov qword ptr [rbx + 0x2e8], rdi
+AWorldSettings::TimeDilation  0x2E8  FUN_022CCAA0 (size 0x585)  1 write(s)
+      022CCD24  mov dword ptr [rcx + 0x2e8], eax
+AWorldSettings::TimeDilation  0x2E8  FUN_022FD780 (size 0x755)  1 write(s)
+      022FD9A0  mov qword ptr [rbx + 0x2e8], rdi
+AWorldSettings::TimeDilation  0x2E8  FUN_022FE2D0 (size 0x2D7)  1 write(s)
+      022FE4E2  mov qword ptr [rdi + 0x2e8], rsi
+AWorldSettings::TimeDilation  0x2E8  FUN_02303000 (size 0x303)  1 write(s)
+      0230321A  mov qword ptr [rbx + 0x2e8], rcx
+AWorldSettings::TimeDilation  0x2E8  FUN_0236E8F0 (size 0x521)  1 write(s)
+      0236EB19  mov qword ptr [rbp + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_023B0CA0 (size 0x556)  1 write(s)
+      023B0EB1  mov dword ptr [rsi + 0x2e8], r13d
+AWorldSettings::TimeDilation  0x2E8  FUN_023C2F7C (size 0x1224)  1 write(s)
+      023C3B9B  mov qword ptr [rbp + 0x2e8], rcx
+AWorldSettings::TimeDilation  0x2E8  FUN_023E4AE0 (size 0x258)  1 write(s)
+      023E4D07  mov qword ptr [rdi + 0x2e8], rsi
+AWorldSettings::TimeDilation  0x2E8  FUN_023E861B (size 0x186)  1 write(s)
+      023E86AA  mov qword ptr [rsi + 0x2e8], rbp
+AWorldSettings::TimeDilation  0x2E8  FUN_023E8883 (size 0x62)  1 write(s)
+      023E88D5  movups xmmword ptr [rsi + 0x2e8], xmm1
+AWorldSettings::TimeDilation  0x2E8  FUN_023E91F0 (size 0x2AF)  1 write(s)
+      023E9421  mov qword ptr [rbx + 0x2e8], rdi
+AWorldSettings::TimeDilation  0x2E8  FUN_023E9770 (size 0x4E6)  1 write(s)
+      023E9989  mov qword ptr [rbx + 0x2e8], rcx
+AWorldSettings::TimeDilation  0x2E8  FUN_023EAE03 (size 0xC4)  1 write(s)
+      023EAEB8  movups xmmword ptr [rdi + 0x2e8], xmm0
+AWorldSettings::TimeDilation  0x2E8  FUN_023EFCC0 (size 0x1A5)  1 write(s)
+      023EFD39  mov dword ptr [rbx + 0x2e8], esi
+AWorldSettings::TimeDilation  0x2E8  FUN_023FF230 (size 0x92)  1 write(s)
+      023FF256  mov qword ptr [rbx + 0x2e8], rcx
+AWorldSettings::TimeDilation  0x2E8  FUN_0242FE00 (size 0x899)  1 write(s)
+      0242FE29  mov qword ptr [rbp + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_024306A0 (size 0xA09)  1 write(s)
+      02430BA3  mov byte ptr [r13 + 0x2e8], al
+AWorldSettings::TimeDilation  0x2E8  FUN_02436EC1 (size 0x32C)  1 write(s)
+      02436F12  mov qword ptr [rsp + 0x2e8], rdi
+AWorldSettings::TimeDilation  0x2E8  FUN_02446BF0 (size 0x4C)  1 write(s)
+      02446BF7  movups xmmword ptr [rcx + 0x2e8], xmm0
+AWorldSettings::TimeDilation  0x2E8  FUN_0244D717 (size 0xF5)  1 write(s)
+      0244D756  mov byte ptr [r15 + 0x2e8], 1
+AWorldSettings::TimeDilation  0x2E8  FUN_024584FF (size 0x2F9)  1 write(s)
+      02458548  mov byte ptr [r13 + 0x2e8], 1
+AWorldSettings::TimeDilation  0x2E8  FUN_0249C730 (size 0x457)  1 write(s)
+      0249CA36  mov qword ptr [rcx + 0x2e8], r14
+AWorldSettings::TimeDilation  0x2E8  FUN_024C5F80 (size 0x1E0)  1 write(s)
+      024C6080  movss dword ptr [rbx + 0x2e8], xmm2
+AWorldSettings::TimeDilation  0x2E8  FUN_024D1E10 (size 0x1AA)  1 write(s)
+      024D1F11  mov dword ptr [rsi + 0x2e8], ebp
+AWorldSettings::TimeDilation  0x2E8  FUN_024D55B0 (size 0x95)  1 write(s)
+      024D55E4  mov dword ptr [rbx + 0x2e8], 0
+AWorldSettings::TimeDilation  0x2E8  FUN_024D7BA0 (size 0xEBF)  1 write(s)
+      024D7E1F  mov dword ptr [r13 + 0x2e8], ecx
+AWorldSettings::TimeDilation  0x2E8  FUN_024EE42E (size 0x429)  1 write(s)
+      024EE6D0  mov dword ptr [rsi + 0x2e8], ecx
+AWorldSettings::TimeDilation  0x2E8  FUN_0255C710 (size 0xDD8)  1 write(s)
+      0255C7B2  mov dword ptr [rbp + 0x2e8], edi
+AWorldSettings::TimeDilation  0x2E8  FUN_025CE7E0 (size 0x3D3)  1 write(s)
+      025CEB91  mov qword ptr [r14 + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_026348C0 (size 0x26C)  1 write(s)
+      02634981  mov qword ptr [rdi + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_026352F0 (size 0x241)  2 write(s)
+      026353B6  mov qword ptr [rbx + 0x2e8], rax
+      026353C9  mov qword ptr [rbx + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_026DA740 (size 0x2FB)  1 write(s)
+      026DA8D5  mov qword ptr [rbx + 0x2e8], rdi
+AWorldSettings::TimeDilation  0x2E8  FUN_026DAFE0 (size 0x330)  1 write(s)
+      026DB17C  mov qword ptr [r14 + 0x2e8], rsi
+AWorldSettings::TimeDilation  0x2E8  FUN_027026C5 (size 0x95A)  1 write(s)
+      027026DB  mov qword ptr [rsp + 0x2e8], r14
+AWorldSettings::TimeDilation  0x2E8  FUN_0270A860 (size 0x1B6)  1 write(s)
+      0270A93E  mov qword ptr [rbx + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_02726EC0 (size 0xEA)  1 write(s)
+      02726F5E  mov dword ptr [rdi + 0x2e8], esi
+AWorldSettings::TimeDilation  0x2E8  FUN_02729020 (size 0xEA)  1 write(s)
+      0272904D  mov dword ptr [rbx + 0x2e8], 0
+AWorldSettings::TimeDilation  0x2E8  FUN_02731835 (size 0x2A49)  1 write(s)
+      027325EC  movss dword ptr [rbp + 0x2e8], xmm0
+AWorldSettings::TimeDilation  0x2E8  FUN_0275FA77 (size 0x465)  1 write(s)
+      0275FECC  movups xmmword ptr [rsi + 0x2e8], xmm0
+AWorldSettings::TimeDilation  0x2E8  FUN_0278C0B0 (size 0x8C5)  1 write(s)
+      0278C708  mov dword ptr [rbx + 0x2e8], 0x40800000
+AWorldSettings::TimeDilation  0x2E8  FUN_0278E497 (size 0x39A)  1 write(s)
+      0278E4AA  mov qword ptr [rsp + 0x2e8], rdi
+AWorldSettings::TimeDilation  0x2E8  FUN_027B3500 (size 0x226)  1 write(s)
+      027B35D2  mov qword ptr [rbx + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_027DAD26 (size 0x99E)  1 write(s)
+      027DB3A1  mov dword ptr [rbp + 0x2e8], 0
+AWorldSettings::TimeDilation  0x2E8  FUN_027E1830 (size 0x179)  1 write(s)
+      027E18FE  mov dword ptr [rbx + 0x2e8], 0x41f00000
+AWorldSettings::TimeDilation  0x2E8  FUN_0284D063 (size 0x191)  1 write(s)
+      0284D110  mov qword ptr [rsp + 0x2e8], r12
+AWorldSettings::TimeDilation  0x2E8  FUN_0286451F (size 0x190F)  1 write(s)
+      0286451F  mov qword ptr [rsp + 0x2e8], r15
+AWorldSettings::TimeDilation  0x2E8  FUN_02867682 (size 0x10B)  1 write(s)
+      028676B1  mov qword ptr [rbp + 0x2e8], r13
+AWorldSettings::TimeDilation  0x2E8  FUN_0286778D (size 0x2032)  2 write(s)
+      02867F1A  mov dword ptr [rbp + 0x2e8], eax
+      028684F8  mov dword ptr [rbp + 0x2e8], eax
+AWorldSettings::TimeDilation  0x2E8  FUN_028C6780 (size 0x69C6)  2 write(s)
+      028C93F4  mov qword ptr [rbp + 0x2e8], r15
+      028C9409  mov dword ptr [rbp + 0x2e8], eax
+AWorldSettings::TimeDilation  0x2E8  FUN_028CD650 (size 0x1D7)  1 write(s)
+      028CD7BC  mov qword ptr [rsi + 0x2e8], rbx
+AWorldSettings::TimeDilation  0x2E8  FUN_028CE160 (size 0xFD8)  1 write(s)
+      028CE3E7  mov qword ptr [rsi + 0x2e8], r13
+AWorldSettings::TimeDilation  0x2E8  FUN_02931E20 (size 0xF5)  1 write(s)
+      02931EB9  mov dword ptr [rbx + 0x2e8], eax
+AWorldSettings::TimeDilation  0x2E8  FUN_0294B401 (size 0x1C3)  1 write(s)
+      0294B4EF  mov qword ptr [rbp + 0x2e8], 1
+AWorldSettings::TimeDilation  0x2E8  FUN_0296EE65 (size 0x9E4)  1 write(s)
+      0296EE65  mov qword ptr [rsp + 0x2e8], r14
+AWorldSettings::TimeDilation  0x2E8  FUN_02977C3A (size 0xB39)  1 write(s)
+      0297849A  mov qword ptr [rbp + 0x2e8], rcx
+AWorldSettings::TimeDilation  0x2E8  FUN_029BC691 (size 0x135)  1 write(s)
+      029BC790  movss dword ptr [rdx + 0x2e8], xmm1
+AWorldSettings::TimeDilation  0x2E8  FUN_029DB2C0 (size 0x206)  1 write(s)
+      029DB470  mov qword ptr [rbx + 0x2e8], rdi
+AWorldSettings::TimeDilation  0x2E8  FUN_02A13230 (size 0xD5)  1 write(s)
+      02A132C3  mov qword ptr [rdi + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_02A22660 (size 0x72C)  1 write(s)
+      02A2289A  mov dword ptr [rdi + 0x2e8], ebp
+AWorldSettings::TimeDilation  0x2E8  FUN_02A421E0 (size 0x2D)  1 write(s)
+      02A42204  inc dword ptr [rcx + 0x2e8]
+AWorldSettings::TimeDilation  0x2E8  FUN_02A49770 (size 0x29A)  1 write(s)
+      02A49843  mov qword ptr [rbx + 0x2e8], rdx
+AWorldSettings::TimeDilation  0x2E8  FUN_02AD9450 (size 0x2D7)  1 write(s)
+      02AD9513  mov qword ptr [rbx + 0x2e8], rdx
+AWorldSettings::TimeDilation  0x2E8  FUN_02ADB5D1 (size 0x6F9)  1 write(s)
+      02ADB5E4  mov qword ptr [rsp + 0x2e8], r14
+AWorldSettings::TimeDilation  0x2E8  FUN_02B49570 (size 0x359)  1 write(s)
+      02B497F2  mov dword ptr [rbx + 0x2e8], 0x3f800000
+AWorldSettings::TimeDilation  0x2E8  FUN_02B7B960 (size 0x4BE)  1 write(s)
+      02B7BC32  mov byte ptr [rcx + 0x2e8], sil
+AWorldSettings::TimeDilation  0x2E8  FUN_02BE2810 (size 0x278)  1 write(s)
+      02BE2824  mov dword ptr [rcx + 0x2e8], esi
+AWorldSettings::TimeDilation  0x2E8  FUN_02BF71B0 (size 0x1D2)  1 write(s)
+      02BF72BF  mov dword ptr [rbx + 0x2e8], 0xffffffff
+AWorldSettings::TimeDilation  0x2E8  FUN_02C1586B (size 0x154)  1 write(s)
+      02C15909  mov qword ptr [rdi + 0x2e8], r13
+AWorldSettings::TimeDilation  0x2E8  FUN_02C160F0 (size 0x24D)  1 write(s)
+      02C1621D  mov qword ptr [rbx + 0x2e8], r13
+AWorldSettings::TimeDilation  0x2E8  FUN_02C29005 (size 0xD9D)  1 write(s)
+      02C29A83  mov dword ptr [rdi + 0x2e8], edx
+AWorldSettings::TimeDilation  0x2E8  FUN_02C2AF10 (size 0xF0)  1 write(s)
+      02C2AF80  mov qword ptr [r14 + 0x2e8], rcx
+AWorldSettings::TimeDilation  0x2E8  FUN_02C3DF69 (size 0xC6)  1 write(s)
+      02C3E00B  mov qword ptr [r9 + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_02C43240 (size 0x26F)  1 write(s)
+      02C43347  mov qword ptr [rsi + 0x2e8], rbp
+AWorldSettings::TimeDilation  0x2E8  FUN_02C4C6F0 (size 0x100)  1 write(s)
+      02C4C7A6  mov qword ptr [rbx + 0x2e8], rdi
+AWorldSettings::TimeDilation  0x2E8  FUN_02C50B60 (size 0x66)  1 write(s)
+      02C50BB6  mov qword ptr [rbx + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_02C50BC6 (size 0x56)  1 write(s)
+      02C50C10  mov qword ptr [rbx + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_02C58560 (size 0x4F)  1 write(s)
+      02C58597  mov qword ptr [rbx + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_02C5EBA0 (size 0x1CC)  1 write(s)
+      02C5ED39  mov qword ptr [rsi + 0x2e8], rbp
+AWorldSettings::TimeDilation  0x2E8  FUN_02C77620 (size 0x84C)  1 write(s)
+      02C77772  mov qword ptr [r14 + 0x2e8], r13
+AWorldSettings::TimeDilation  0x2E8  FUN_02C77F50 (size 0x2B9)  1 write(s)
+      02C78137  mov qword ptr [rbx + 0x2e8], rcx
+AWorldSettings::TimeDilation  0x2E8  FUN_02C78420 (size 0x2A3)  1 write(s)
+      02C78605  mov qword ptr [rdi + 0x2e8], rcx
+AWorldSettings::TimeDilation  0x2E8  FUN_02C9A480 (size 0x5C3A)  2 write(s)
+      02C9C366  mov qword ptr [rbp + 0x2e8], rsi
+      02C9C37B  mov dword ptr [rbp + 0x2e8], eax
+AWorldSettings::TimeDilation  0x2E8  FUN_02CA0D90 (size 0x1B6)  1 write(s)
+      02CA0EDE  mov qword ptr [rbx + 0x2e8], rdi
+AWorldSettings::TimeDilation  0x2E8  FUN_02CB7D50 (size 0x84F)  1 write(s)
+      02CB7F4B  mov qword ptr [rcx + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_02CCC1B0 (size 0xB5C)  1 write(s)
+      02CCC415  mov qword ptr [rbp + 0x2e8], r15
+AWorldSettings::TimeDilation  0x2E8  FUN_02CFB650 (size 0x235)  1 write(s)
+      02CFB832  mov dword ptr [rbx + 0x2e8], 0xffffffff
+AWorldSettings::TimeDilation  0x2E8  FUN_02D4B2B0 (size 0x366)  1 write(s)
+      02D4B50C  mov dword ptr [rsi + 0x2e8], 0x3f800000
+AWorldSettings::TimeDilation  0x2E8  FUN_02D50B80 (size 0x3A)  1 write(s)
+      02D50BA0  mov dword ptr [rbx + 0x2e8], 0x3f800000
+AWorldSettings::TimeDilation  0x2E8  FUN_02D5F4E0 (size 0x2A5)  1 write(s)
+      02D5F73E  mov qword ptr [rbx + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_02EFC7B0 (size 0x1C38)  1 write(s)
+      02EFCFB2  mov qword ptr [rbx + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_02F7F230 (size 0x384)  1 write(s)
+      02F7F2AF  mov qword ptr [rsi + 0x2e8], r12
+AWorldSettings::TimeDilation  0x2E8  FUN_02F7F7E0 (size 0x371)  1 write(s)
+      02F7F939  mov dword ptr [rsi + 0x2e8], eax
+AWorldSettings::TimeDilation  0x2E8  FUN_02F831D0 (size 0x58F)  1 write(s)
+      02F83468  mov qword ptr [rdi + 0x2e8], rsi
+AWorldSettings::TimeDilation  0x2E8  FUN_02FB1020 (size 0x42C)  1 write(s)
+      02FB125A  mov qword ptr [rdi + 0x2e8], r15
+AWorldSettings::TimeDilation  0x2E8  FUN_02FB76E0 (size 0x1EA)  1 write(s)
+      02FB7861  mov qword ptr [rdx + 0x2e8], r8
+AWorldSettings::TimeDilation  0x2E8  FUN_02FFC270 (size 0x7D)  1 write(s)
+      02FFC2E0  mov qword ptr [rbx + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_0302B9A6 (size 0x81D)  1 write(s)
+      0302BCFC  mov dword ptr [rbp + 0x2e8], 4
+AWorldSettings::TimeDilation  0x2E8  FUN_0303E190 (size 0xE8A)  1 write(s)
+      0303EA79  mov byte ptr [rbp + 0x2e8], 1
+AWorldSettings::TimeDilation  0x2E8  FUN_0303F020 (size 0xFA9)  1 write(s)
+      0303F4F1  mov qword ptr [rbp + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_030CB210 (size 0x333)  1 write(s)
+      030CB3D7  mov qword ptr [rdi + 0x2e8], r14
+AWorldSettings::TimeDilation  0x2E8  FUN_030CC610 (size 0x609)  1 write(s)
+      030CC726  mov qword ptr [rsi + 0x2e8], rcx
+AWorldSettings::TimeDilation  0x2E8  FUN_030D9B56 (size 0x80)  1 write(s)
+      030D9B8A  mov qword ptr [r15 + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_030F2F70 (size 0x566)  1 write(s)
+      030F3175  mov dword ptr [rdi + 0x2e8], esi
+AWorldSettings::TimeDilation  0x2E8  FUN_030F4660 (size 0x6CD)  1 write(s)
+      030F48EA  mov qword ptr [rbx + 0x2e8], rcx
+AWorldSettings::TimeDilation  0x2E8  FUN_030F5B50 (size 0x3A3)  1 write(s)
+      030F5DAC  mov dword ptr [rbx + 0x2e8], ebp
+AWorldSettings::TimeDilation  0x2E8  FUN_031189F4 (size 0xC4)  1 write(s)
+      03118AAC  mov dword ptr [r13 + 0x2e8], r15d
+AWorldSettings::TimeDilation  0x2E8  FUN_0311F050 (size 0x2D)  1 write(s)
+      0311F070  mov qword ptr [rbx + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_0311F080 (size 0x7F)  1 write(s)
+      0311F0A3  mov qword ptr [rdi + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_0312A8C0 (size 0x109)  1 write(s)
+      0312A97A  mov qword ptr [rbx + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_0312A9D0 (size 0xEE)  1 write(s)
+      0312AA31  mov qword ptr [rbx + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_0312D350 (size 0x1C1)  1 write(s)
+      0312D4DF  mov qword ptr [rbx + 0x2e8], rdi
+AWorldSettings::TimeDilation  0x2E8  FUN_0312D5E0 (size 0x425)  1 write(s)
+      0312D78E  mov qword ptr [rdi + 0x2e8], rsi
+AWorldSettings::TimeDilation  0x2E8  FUN_0312F480 (size 0x159)  1 write(s)
+      0312F5B7  mov qword ptr [r14 + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_031BF260 (size 0x21A)  1 write(s)
+      031BF44C  mov qword ptr [rdi + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_031C32D0 (size 0x6B)  1 write(s)
+      031C3321  mov byte ptr [rcx + 0x2e8], 0
+AWorldSettings::TimeDilation  0x2E8  FUN_03215CE0 (size 0xED)  1 write(s)
+      03215D99  mov word ptr [rdi + 0x2e8], si
+AWorldSettings::TimeDilation  0x2E8  FUN_03215DD0 (size 0x2B7)  1 write(s)
+      03215EAA  mov word ptr [rdi + 0x2e8], bp
+AWorldSettings::TimeDilation  0x2E8  FUN_03216090 (size 0x16B)  1 write(s)
+      03216199  mov byte ptr [rdi + 0x2e8], al
+AWorldSettings::TimeDilation  0x2E8  FUN_03218EC0 (size 0xD9)  1 write(s)
+      03218F08  mov byte ptr [rbx + 0x2e8], 1
+AWorldSettings::TimeDilation  0x2E8  FUN_03221E80 (size 0xEC)  1 write(s)
+      03221F53  mov byte ptr [rbx + 0x2e8], 1
+AWorldSettings::TimeDilation  0x2E8  FUN_032224A0 (size 0x127)  1 write(s)
+      032225A4  mov byte ptr [rbx + 0x2e8], 1
+AWorldSettings::TimeDilation  0x2E8  FUN_03223A80 (size 0x1E0)  1 write(s)
+      03223B9C  mov word ptr [rbx + 0x2e8], r8w
+AWorldSettings::TimeDilation  0x2E8  FUN_03229090 (size 0x793)  1 write(s)
+      03229717  mov byte ptr [r13 + 0x2e8], 0
+AWorldSettings::TimeDilation  0x2E8  FUN_0324A790 (size 0x18C)  1 write(s)
+      0324A832  mov byte ptr [rbx + 0x2e8], al
+AWorldSettings::TimeDilation  0x2E8  FUN_0324A920 (size 0x250)  1 write(s)
+      0324A9C0  mov dword ptr [rdi + 0x2e8], r13d
+AWorldSettings::TimeDilation  0x2E8  FUN_0324B400 (size 0x262)  1 write(s)
+      0324B4F6  mov byte ptr [rdi + 0x2e8], 1
+AWorldSettings::TimeDilation  0x2E8  FUN_032BB4F0 (size 0x9B)  1 write(s)
+      032BB550  mov word ptr [rdi + 0x2e8], si
+AWorldSettings::TimeDilation  0x2E8  FUN_032BB590 (size 0x8B)  1 write(s)
+      032BB5F0  mov word ptr [rdi + 0x2e8], si
+AWorldSettings::TimeDilation  0x2E8  FUN_032BCED0 (size 0x140)  1 write(s)
+      032BCF96  mov word ptr [rbx + 0x2e8], r14w
+AWorldSettings::TimeDilation  0x2E8  FUN_032C1C90 (size 0x148)  2 write(s)
+      032C1D27  mov qword ptr [rdi + 0x2e8], rbp
+      032C1DB4  mov qword ptr [rdi + 0x2e8], rbp
+AWorldSettings::TimeDilation  0x2E8  FUN_032C1DE0 (size 0x135)  1 write(s)
+      032C1E83  mov qword ptr [r14 + 0x2e8], rcx
+AWorldSettings::TimeDilation  0x2E8  FUN_032C2650 (size 0x10E)  1 write(s)
+      032C271B  mov qword ptr [rsi + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_032C27CC (size 0xD9)  1 write(s)
+      032C286C  mov qword ptr [rdi + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_032C2FE3 (size 0x184)  1 write(s)
+      032C30F7  mov qword ptr [rdi + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_032C5850 (size 0x5A)  1 write(s)
+      032C5888  mov qword ptr [rbx + 0x2e8], 0
+AWorldSettings::TimeDilation  0x2E8  FUN_032C5BC0 (size 0x6C)  1 write(s)
+      032C5BFF  mov qword ptr [rbx + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_032C5D8A (size 0xD7)  1 write(s)
+      032C5E37  mov qword ptr [rdi + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_032C5ED5 (size 0x157)  2 write(s)
+      032C5F9E  mov qword ptr [rdi + 0x2e8], rax
+      032C6006  mov qword ptr [rdi + 0x2e8], 0
+AWorldSettings::TimeDilation  0x2E8  FUN_033143A0 (size 0x1BEF)  1 write(s)
+      03315022  mov qword ptr [rbp + 0x2e8], rcx
+AWorldSettings::TimeDilation  0x2E8  FUN_03391AF0 (size 0x59)  1 write(s)
+      03391B2B  mov qword ptr [rax + 0x2e8], rcx
+AWorldSettings::TimeDilation  0x2E8  FUN_033B1790 (size 0x1C6)  2 write(s)
+      033B1801  mov dword ptr [rbx + 0x2e8], eax
+      033B1846  mov dword ptr [rbx + 0x2e8], edi
+AWorldSettings::TimeDilation  0x2E8  FUN_033D3EC0 (size 0x142)  1 write(s)
+      033D3FDE  mov dword ptr [rdi + 0x2e8], 0
+AWorldSettings::TimeDilation  0x2E8  FUN_033D4010 (size 0x50E)  2 write(s)
+      033D40A0  mov dword ptr [rdi + 0x2e8], ebx
+      033D41F2  mov dword ptr [rdi + 0x2e8], 1
+AWorldSettings::TimeDilation  0x2E8  FUN_03535850 (size 0x29F)  1 write(s)
+      03535A55  mov dword ptr [rbx + 0x2e8], 0x1ce
+AWorldSettings::TimeDilation  0x2E8  FUN_035361A0 (size 0x1F5)  1 write(s)
+      0353636D  mov qword ptr [rbx + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_0353E9A9 (size 0x1058)  1 write(s)
+      0353E9BA  mov qword ptr [rsp + 0x2e8], r15
+AWorldSettings::TimeDilation  0x2E8  FUN_03574CC0 (size 0x2E6)  1 write(s)
+      03574CF0  mov qword ptr [rbx + 0x2e8], 0xffffffffffffffff
+AWorldSettings::TimeDilation  0x2E8  FUN_0359A0F0 (size 0x118)  1 write(s)
+      0359A1E0  mov qword ptr [rbx + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_03648CA0 (size 0x1F94)  1 write(s)
+      0364A4C5  mov qword ptr [rbx + 0x2e8], rax
+AWorldSettings::TimeDilation  0x2E8  FUN_0365DD2E (size 0x191)  1 write(s)
+      0365DD2E  mov qword ptr [rsp + 0x2e8], rbx
+AWorldSettings::TimeDilation  0x2E8  FUN_036A1210 (size 0x319)  1 write(s)
+      036A13D1  mov byte ptr [rdi + 0x2e8], al
+UWorld::UnpausedTimeSeconds  0x5A4  FUN_00D24330 (size 0x17D)  1 write(s)
+      00D24367  mov dword ptr [rbx + 0x5a4], 0x41c71eb8
+UWorld::UnpausedTimeSeconds  0x5A4  FUN_00D2AD90 (size 0x1C3)  1 write(s)
+      00D2AED0  movsd qword ptr [rbx + 0x5a4], xmm0
+UWorld::UnpausedTimeSeconds  0x5A4  FUN_01117BB0 (size 0x2A749)  1 write(s)
+      0111F936  mov dword ptr [rsp + 0x5a4], eax
+UWorld::UnpausedTimeSeconds  0x5A4  FUN_01277CC0 (size 0x711E)  1 write(s)
+      0127A87A  mov dword ptr [rbp + 0x5a4], 0x3040
+UWorld::UnpausedTimeSeconds  0x5A4  FUN_01393CE0 (size 0x22A)  1 write(s)
+      01393EE0  mov byte ptr [rbx + 0x5a4], al
+UWorld::UnpausedTimeSeconds  0x5A4  FUN_013A5E70 (size 0x192F)  1 write(s)
+      013A623E  mov byte ptr [rsi + 0x5a4], al
+UWorld::UnpausedTimeSeconds  0x5A4  FUN_0161DF9A (size 0x1A4)  1 write(s)
+      0161E06A  movss dword ptr [rbp + 0x5a4], xmm1
+UWorld::UnpausedTimeSeconds  0x5A4  FUN_0181E3B0 (size 0x416)  1 write(s)
+      0181E55C  mov dword ptr [rbp + 0x5a4], eax
+UWorld::UnpausedTimeSeconds  0x5A4  FUN_0181E9D8 (size 0x2DB)  1 write(s)
+      0181EAFC  mov dword ptr [rbp + 0x5a4], eax
+UWorld::UnpausedTimeSeconds  0x5A4  FUN_0186C2F0 (size 0x416)  1 write(s)
+      0186C49C  mov dword ptr [rbp + 0x5a4], eax
+UWorld::UnpausedTimeSeconds  0x5A4  FUN_018D7620 (size 0x4D4)  1 write(s)
+      018D79D0  mov dword ptr [rbx + 0x5a4], eax
+UWorld::UnpausedTimeSeconds  0x5A4  FUN_018E3880 (size 0x3700)  1 write(s)
+      018E3E21  mov dword ptr [rbp + 0x5a4], r13d
+UWorld::UnpausedTimeSeconds  0x5A4  FUN_0195AAD0 (size 0x17BE)  1 write(s)
+      0195AD7C  mov qword ptr [rbp + 0x5a4], 0
+UWorld::UnpausedTimeSeconds  0x5A4  FUN_0218F050 (size 0x42)  1 write(s)
+      0218F078  mov qword ptr [rbx + 0x5a4], rax
+UWorld::UnpausedTimeSeconds  0x5A4  FUN_0218F240 (size 0x338)  1 write(s)
+      0218F34D  mov qword ptr [rdi + 0x5a4], rbp
+UWorld::UnpausedTimeSeconds  0x5A4  FUN_02456210 (size 0x725)  1 write(s)
+      024562DB  mov byte ptr [rax + 0x5a4], 1
+UWorld::UnpausedTimeSeconds  0x5A4  FUN_0274D880 (size 0x25C)  1 write(s)
+      0274DA8A  movss dword ptr [rcx + 0x5a4], xmm1
+UWorld::UnpausedTimeSeconds  0x5A4  FUN_02859E40 (size 0x170)  1 write(s)
+      02859EDA  mov dword ptr [rbx + 0x5a4], 0x3f800000
+UWorld::UnpausedTimeSeconds  0x5A4  FUN_029AEEC0 (size 0xF69)  1 write(s)
+      029AF255  movss dword ptr [rdi + 0x5a4], xmm1
+UWorld::UnpausedTimeSeconds  0x5A4  FUN_02A22660 (size 0x72C)  1 write(s)
+      02A22AE3  mov dword ptr [rdi + 0x5a4], ebp
+UWorld::UnpausedTimeSeconds  0x5A4  FUN_02A4A9B0 (size 0x394)  1 write(s)
+      02A4AAA6  mov dword ptr [rbx + 0x5a4], edi
+UWorld::UnpausedTimeSeconds  0x5A4  FUN_02D2D490 (size 0x304)  1 write(s)
+      02D2D72C  mov dword ptr [rcx + 0x5a4], eax
+UWorld::RealTimeSeconds  0x5A8  FUN_007ED72D (size 0x5C1)  1 write(s)
+      007EDB55  mov dword ptr [rdi + 0x5a8], eax
+UWorld::RealTimeSeconds  0x5A8  FUN_0080D590 (size 0x2D61)  1 write(s)
+      008101A2  mov qword ptr [rbp + 0x5a8], r13
+UWorld::RealTimeSeconds  0x5A8  FUN_00810300 (size 0x2CBB)  1 write(s)
+      00812691  mov dword ptr [rbp + 0x5a8], eax
+UWorld::RealTimeSeconds  0x5A8  FUN_00817CC0 (size 0x7161)  1 write(s)
+      0081DAAE  mov qword ptr [rbp + 0x5a8], rax
+UWorld::RealTimeSeconds  0x5A8  FUN_0082145B (size 0x61)  1 write(s)
+      00821489  mov dword ptr [rbx + 0x5a8], eax
+UWorld::RealTimeSeconds  0x5A8  FUN_008509B0 (size 0x5953)  1 write(s)
+      00851E11  mov qword ptr [rbp + 0x5a8], r12
+UWorld::RealTimeSeconds  0x5A8  FUN_00857080 (size 0x5B46)  1 write(s)
+      008582F2  mov qword ptr [rbp + 0x5a8], r12
+UWorld::RealTimeSeconds  0x5A8  FUN_008E7BE0 (size 0x3300)  1 write(s)
+      008EA76D  mov qword ptr [rbp + 0x5a8], rax
+UWorld::RealTimeSeconds  0x5A8  FUN_00A74F30 (size 0x273)  1 write(s)
+      00A75024  mov dword ptr [rdi + 0x5a8], eax
+UWorld::RealTimeSeconds  0x5A8  FUN_00A79E70 (size 0x49C)  1 write(s)
+      00A7A202  mov dword ptr [rbx + 0x5a8], esi
+UWorld::RealTimeSeconds  0x5A8  FUN_00BBE710 (size 0xE5)  1 write(s)
+      00BBE770  mov qword ptr [rdi + 0x5a8], rax
+UWorld::RealTimeSeconds  0x5A8  FUN_00D24330 (size 0x17D)  1 write(s)
+      00D24371  mov dword ptr [rbx + 0x5a8], 0x41955c29
+UWorld::RealTimeSeconds  0x5A8  FUN_00DC8D40 (size 0x311)  1 write(s)
+      00DC8ED7  mov qword ptr [rbx + 0x5a8], rax
+UWorld::RealTimeSeconds  0x5A8  FUN_00E1DAA0 (size 0x1A9)  1 write(s)
+      00E1DB6B  mov qword ptr [r14 + 0x5a8], rax
+UWorld::RealTimeSeconds  0x5A8  FUN_00E1E550 (size 0x11C)  1 write(s)
+      00E1E5BC  mov qword ptr [rdi + 0x5a8], rax
+UWorld::RealTimeSeconds  0x5A8  FUN_00E62D30 (size 0x7A2)  1 write(s)
+      00E63216  mov qword ptr [rbx + 0x5a8], r12
+UWorld::RealTimeSeconds  0x5A8  FUN_01117BB0 (size 0x2A749)  1 write(s)
+      0111FB0C  mov dword ptr [rsp + 0x5a8], eax
+UWorld::RealTimeSeconds  0x5A8  FUN_011CE570 (size 0x22667)  1 write(s)
+      011D7680  mov qword ptr [rsp + 0x5a8], rax
+UWorld::RealTimeSeconds  0x5A8  FUN_0124F080 (size 0x2140E)  2 write(s)
+      0125C7D5  mov qword ptr [rsp + 0x5a8], rax
+      0125C7E2  mov qword ptr [rsp + 0x5a8], rax
+UWorld::RealTimeSeconds  0x5A8  FUN_01277CC0 (size 0x711E)  1 write(s)
+      0127A8A7  mov byte ptr [rbp + 0x5a8], 1
+UWorld::RealTimeSeconds  0x5A8  FUN_01290450 (size 0x60A)  1 write(s)
+      01290887  and byte ptr [rbx + 0x5a8], 0xfc
+UWorld::RealTimeSeconds  0x5A8  FUN_01293FA0 (size 0xA06)  1 write(s)
+      012946D5  mov qword ptr [rbx + 0x5a8], rax
+UWorld::RealTimeSeconds  0x5A8  FUN_01294CA0 (size 0x3AD)  1 write(s)
+      01294FD9  mov qword ptr [rbx + 0x5a8], rcx
+UWorld::RealTimeSeconds  0x5A8  FUN_01295A70 (size 0x53D)  1 write(s)
+      01295E1A  mov byte ptr [rdi + 0x5a8], sil
+UWorld::RealTimeSeconds  0x5A8  FUN_01297330 (size 0x545)  1 write(s)
+      012976C1  mov byte ptr [rbx + 0x5a8], bpl
+UWorld::RealTimeSeconds  0x5A8  FUN_012CA1A0 (size 0xA02)  1 write(s)
+      012CA76E  mov dword ptr [rsi + 0x5a8], edi
+UWorld::RealTimeSeconds  0x5A8  FUN_012F0B00 (size 0x4B)  1 write(s)
+      012F0B27  inc dword ptr [rcx + 0x5a8]
+UWorld::RealTimeSeconds  0x5A8  FUN_012F0F02 (size 0xC8)  1 write(s)
+      012F0FA4  dec dword ptr [rdi + 0x5a8]
+UWorld::RealTimeSeconds  0x5A8  FUN_012F1C20 (size 0x3E)  1 write(s)
+      012F1C45  inc dword ptr [rcx + 0x5a8]
+UWorld::RealTimeSeconds  0x5A8  FUN_012F1E52 (size 0x18F)  1 write(s)
+      012F1FC1  dec dword ptr [rsi + 0x5a8]
+UWorld::RealTimeSeconds  0x5A8  FUN_012F2016 (size 0x7F)  1 write(s)
+      012F202F  inc dword ptr [rcx + 0x5a8]
+UWorld::RealTimeSeconds  0x5A8  FUN_012F25EA (size 0x49)  1 write(s)
+      012F260E  dec dword ptr [rbx + 0x5a8]
+UWorld::RealTimeSeconds  0x5A8  FUN_012F2640 (size 0x84)  1 write(s)
+      012F2666  inc dword ptr [rcx + 0x5a8]
+UWorld::RealTimeSeconds  0x5A8  FUN_012F2B15 (size 0x26)  1 write(s)
+      012F2B15  dec dword ptr [rsi + 0x5a8]
+UWorld::RealTimeSeconds  0x5A8  FUN_012F2F27 (size 0x36B)  2 write(s)
+      012F3038  inc dword ptr [rsi + 0x5a8]
+      012F3101  dec dword ptr [rsi + 0x5a8]
+UWorld::RealTimeSeconds  0x5A8  FUN_012F32A0 (size 0x8E)  1 write(s)
+      012F32C7  inc dword ptr [rcx + 0x5a8]
+UWorld::RealTimeSeconds  0x5A8  FUN_012F33CC (size 0x4E5)  1 write(s)
+      012F3884  dec dword ptr [rdi + 0x5a8]
+UWorld::RealTimeSeconds  0x5A8  FUN_012FCB30 (size 0x1ED)  2 write(s)
+      012FCB50  inc dword ptr [rcx + 0x5a8]
+      012FCCF6  dec dword ptr [rdi + 0x5a8]
+UWorld::RealTimeSeconds  0x5A8  FUN_012FCD20 (size 0x3E4)  2 write(s)
+      012FCD61  inc dword ptr [rcx + 0x5a8]
+      012FD0D8  dec dword ptr [rsi + 0x5a8]
+UWorld::RealTimeSeconds  0x5A8  FUN_012FD110 (size 0xE0F)  2 write(s)
+      012FD140  inc dword ptr [rcx + 0x5a8]
+      012FDEEB  dec dword ptr [rsi + 0x5a8]
+UWorld::RealTimeSeconds  0x5A8  FUN_012FDF20 (size 0x49F)  2 write(s)
+      012FDF49  inc dword ptr [rcx + 0x5a8]
+      012FE397  dec dword ptr [rdi + 0x5a8]
+UWorld::RealTimeSeconds  0x5A8  FUN_0130AE10 (size 0x26C)  1 write(s)
+      0130AEF3  mov dword ptr [rbx + 0x5a8], eax
+UWorld::RealTimeSeconds  0x5A8  FUN_0130E230 (size 0x574)  1 write(s)
+      0130E66E  mov dword ptr [rbx + 0x5a8], esi
+UWorld::RealTimeSeconds  0x5A8  FUN_01311830 (size 0x436)  1 write(s)
+      013119C6  mov dword ptr [rbx + 0x5a8], edi
+UWorld::RealTimeSeconds  0x5A8  FUN_0135BAE0 (size 0x454)  1 write(s)
+      0135BE5C  mov dword ptr [rdi + 0x5a8], ebp
+UWorld::RealTimeSeconds  0x5A8  FUN_0136A6B0 (size 0x2836)  1 write(s)
+      0136A9DD  mov byte ptr [rbp + 0x5a8], 1
+UWorld::RealTimeSeconds  0x5A8  FUN_01393A70 (size 0x26C)  1 write(s)
+      01393B53  mov dword ptr [rbx + 0x5a8], eax
+UWorld::RealTimeSeconds  0x5A8  FUN_01393CE0 (size 0x22A)  1 write(s)
+      01393EE6  mov qword ptr [rbx + 0x5a8], rax
+UWorld::RealTimeSeconds  0x5A8  FUN_01394CF0 (size 0x51D)  1 write(s)
+      013950C4  mov dword ptr [rdi + 0x5a8], esi
+UWorld::RealTimeSeconds  0x5A8  FUN_01395E70 (size 0x1B7)  1 write(s)
+      01395F42  mov qword ptr [rdi + 0x5a8], rsi
+UWorld::RealTimeSeconds  0x5A8  FUN_013990F0 (size 0x85E)  1 write(s)
+      0139914B  mov qword ptr [rbx + 0x5a8], rax
+UWorld::RealTimeSeconds  0x5A8  FUN_0139B180 (size 0xACA)  1 write(s)
+      0139B4D2  mov dword ptr [rbx + 0x5a8], esi
+UWorld::RealTimeSeconds  0x5A8  FUN_013DD0F8 (size 0x6C)  1 write(s)
+      013DD140  mov qword ptr [rdi + 0x5a8], 0
+UWorld::RealTimeSeconds  0x5A8  FUN_013DE5D0 (size 0x1783)  1 write(s)
+      013DF0CF  mov byte ptr [rsi + 0x5a8], dil
+UWorld::RealTimeSeconds  0x5A8  FUN_013E0510 (size 0x21E)  1 write(s)
+      013E05F2  mov dword ptr [rdi + 0x5a8], esi
+UWorld::RealTimeSeconds  0x5A8  FUN_013E08D0 (size 0x181)  1 write(s)
+      013E09AB  mov qword ptr [rdi + 0x5a8], rsi
+UWorld::RealTimeSeconds  0x5A8  FUN_013E0C00 (size 0x276)  1 write(s)
+      013E0C96  mov dword ptr [rdi + 0x5a8], esi
+UWorld::RealTimeSeconds  0x5A8  FUN_013E3870 (size 0x537)  1 write(s)
+      013E3D39  mov dword ptr [rbx + 0x5a8], edi
+UWorld::RealTimeSeconds  0x5A8  FUN_0140E0C0 (size 0x298)  2 write(s)
+      0140E25D  mov byte ptr [rsi + 0x5a8], r13b
+      0140E322  mov byte ptr [rsi + 0x5a8], r13b
+UWorld::RealTimeSeconds  0x5A8  FUN_014B6C00 (size 0x14C)  1 write(s)
+      014B6C30  mov dword ptr [rdi + 0x5a8], 0xffffffff
+UWorld::RealTimeSeconds  0x5A8  FUN_0161DAC8 (size 0x168)  1 write(s)
+      0161DB46  mov dword ptr [rbp + 0x5a8], eax
+UWorld::RealTimeSeconds  0x5A8  FUN_0161DC30 (size 0x36A)  1 write(s)
+      0161DE1A  mov dword ptr [rbp + 0x5a8], eax
+UWorld::RealTimeSeconds  0x5A8  FUN_0161DF9A (size 0x1A4)  1 write(s)
+      0161E062  movss dword ptr [rbp + 0x5a8], xmm0
+UWorld::RealTimeSeconds  0x5A8  FUN_01734AB0 (size 0x214)  1 write(s)
+      01734C04  mov dword ptr [rbx + 0x5a8], r12d
+UWorld::RealTimeSeconds  0x5A8  FUN_01742050 (size 0x2B7F)  1 write(s)
+      017431D5  mov qword ptr [rbp + 0x5a8], r10
+UWorld::RealTimeSeconds  0x5A8  FUN_0179D69C (size 0xA0D)  1 write(s)
+      0179DD59  mov dword ptr [rbp + 0x5a8], edx
+UWorld::RealTimeSeconds  0x5A8  FUN_017A29B0 (size 0x2C80)  1 write(s)
+      017A4E74  mov dword ptr [rbp + 0x5a8], eax
+UWorld::RealTimeSeconds  0x5A8  FUN_017E9E6E (size 0x45A)  1 write(s)
+      017EA28D  movsd qword ptr [rbp + 0x5a8], xmm1
+UWorld::RealTimeSeconds  0x5A8  FUN_0181D4F0 (size 0x1C5)  1 write(s)
+      0181D609  mov dword ptr [rbx + 0x5a8], r15d
+UWorld::RealTimeSeconds  0x5A8  FUN_0181D6C0 (size 0x1D8)  1 write(s)
+      0181D7D2  mov dword ptr [rbx + 0x5a8], eax
+UWorld::RealTimeSeconds  0x5A8  FUN_0181E170 (size 0x239)  1 write(s)
+      0181E292  mov dword ptr [rbx + 0x5a8], r12d
+UWorld::RealTimeSeconds  0x5A8  FUN_0181E3B0 (size 0x416)  2 write(s)
+      0181E3D9  mov qword ptr [rbp + 0x5a8], rax
+      0181E6F7  mov dword ptr [rbx + 0x5a8], eax
+UWorld::RealTimeSeconds  0x5A8  FUN_0181E7D0 (size 0x2D)  1 write(s)
+      0181E7F3  mov qword ptr [rbp + 0x5a8], rax
+UWorld::RealTimeSeconds  0x5A8  FUN_0181E7FD (size 0x15E)  1 write(s)
+      0181E91B  mov dword ptr [rbx + 0x5a8], eax
+UWorld::RealTimeSeconds  0x5A8  FUN_0181E9D8 (size 0x2DB)  1 write(s)
+      0181EBF7  mov dword ptr [rbx + 0x5a8], eax
+UWorld::RealTimeSeconds  0x5A8  FUN_0181ECE0 (size 0x1E2)  1 write(s)
+      0181EE02  mov dword ptr [rbx + 0x5a8], r12d
+UWorld::RealTimeSeconds  0x5A8  FUN_0181EEDD (size 0x227)  2 write(s)
+      0181EFF0  mov dword ptr [rbx + 0x5a8], r15d
+      0181F0B1  mov dword ptr [rbx + 0x5a8], r12d
+UWorld::RealTimeSeconds  0x5A8  FUN_0181F450 (size 0x1E2)  1 write(s)
+      0181F572  mov dword ptr [rbx + 0x5a8], r12d
+UWorld::RealTimeSeconds  0x5A8  FUN_0181F640 (size 0x1E2)  1 write(s)
+      0181F762  mov dword ptr [rbx + 0x5a8], r12d
+UWorld::RealTimeSeconds  0x5A8  FUN_0181F830 (size 0x1C5)  1 write(s)
+      0181F949  mov dword ptr [rbx + 0x5a8], r15d
+UWorld::RealTimeSeconds  0x5A8  FUN_0181FA00 (size 0x1D8)  1 write(s)
+      0181FB12  mov dword ptr [rbx + 0x5a8], eax
+UWorld::RealTimeSeconds  0x5A8  FUN_0181FBE0 (size 0x1E2)  1 write(s)
+      0181FD02  mov dword ptr [rbx + 0x5a8], r12d
+UWorld::RealTimeSeconds  0x5A8  FUN_0181FDD0 (size 0x1C5)  1 write(s)
+      0181FEE9  mov dword ptr [rbx + 0x5a8], r15d
+UWorld::RealTimeSeconds  0x5A8  FUN_0181FFA0 (size 0x1E2)  1 write(s)
+      018200C2  mov dword ptr [rbx + 0x5a8], r12d
+UWorld::RealTimeSeconds  0x5A8  FUN_01820190 (size 0x1E2)  1 write(s)
+      018202B2  mov dword ptr [rbx + 0x5a8], r12d
+UWorld::RealTimeSeconds  0x5A8  FUN_01820380 (size 0x1E2)  1 write(s)
+      018204A2  mov dword ptr [rbx + 0x5a8], r12d
+UWorld::RealTimeSeconds  0x5A8  FUN_018618A0 (size 0x2C5)  1 write(s)
+      01861A4A  mov qword ptr [rbx + 0x5a8], rdi
+UWorld::RealTimeSeconds  0x5A8  FUN_0186C2F0 (size 0x416)  2 write(s)
+      0186C319  mov qword ptr [rbp + 0x5a8], rax
+      0186C637  mov dword ptr [rbx + 0x5a8], eax
+UWorld::RealTimeSeconds  0x5A8  FUN_018D7620 (size 0x4D4)  1 write(s)
+      018D79DC  mov dword ptr [rbx + 0x5a8], eax
+UWorld::RealTimeSeconds  0x5A8  FUN_018E3880 (size 0x3700)  1 write(s)
+      018E3E28  mov dword ptr [rbp + 0x5a8], 0x10001
+UWorld::RealTimeSeconds  0x5A8  FUN_0192C2B8 (size 0x2235)  1 write(s)
+      0192CF33  mov byte ptr [rbp + 0x5a8], 0
+UWorld::RealTimeSeconds  0x5A8  FUN_019366E5 (size 0x172)  1 write(s)
+      019366E5  mov qword ptr [rsp + 0x5a8], r12
+UWorld::RealTimeSeconds  0x5A8  FUN_0196BCA0 (size 0x2D8A)  1 write(s)
+      0196BE41  mov qword ptr [rbp + 0x5a8], r12
+UWorld::RealTimeSeconds  0x5A8  FUN_019A00C6 (size 0x1506)  1 write(s)
+      019A1025  mov qword ptr [rbp + 0x5a8], rax
+UWorld::RealTimeSeconds  0x5A8  FUN_01E427B0 (size 0x203)  1 write(s)
+      01E428A5  mov qword ptr [rbx + 0x5a8], r8
+UWorld::RealTimeSeconds  0x5A8  FUN_01EFCA50 (size 0x610)  1 write(s)
+      01EFCD4E  mov qword ptr [r14 + 0x5a8], r15
+UWorld::RealTimeSeconds  0x5A8  FUN_01F91CD0 (size 0x1312)  1 write(s)
+      01F925AC  mov qword ptr [r12 + 0x5a8], rax
+UWorld::RealTimeSeconds  0x5A8  FUN_01FBFDA0 (size 0x22DA)  1 write(s)
+      01FC114B  mov dword ptr [rbp + 0x5a8], eax
+UWorld::RealTimeSeconds  0x5A8  FUN_01FE68D2 (size 0x4A06)  1 write(s)
+      01FEAFEE  movups xmmword ptr [rbp + 0x5a8], xmm0
+UWorld::RealTimeSeconds  0x5A8  FUN_0202FE70 (size 0x362)  1 write(s)
+      0202FEE0  mov qword ptr [rsi + 0x5a8], rbp
+UWorld::RealTimeSeconds  0x5A8  FUN_0209E770 (size 0x4AA)  1 write(s)
+      0209EA96  mov qword ptr [rbx + 0x5a8], rdi
+UWorld::RealTimeSeconds  0x5A8  FUN_0209F2C0 (size 0x30C)  1 write(s)
+      0209F40F  mov qword ptr [rbx + 0x5a8], rax
+UWorld::RealTimeSeconds  0x5A8  FUN_0209FDB0 (size 0x53F)  1 write(s)
+      020A0164  mov qword ptr [rbx + 0x5a8], rdi
+UWorld::RealTimeSeconds  0x5A8  FUN_022FD780 (size 0x755)  1 write(s)
+      022FDC5A  mov qword ptr [rbx + 0x5a8], rdi
+UWorld::RealTimeSeconds  0x5A8  FUN_023BF426 (size 0x6E3)  1 write(s)
+      023BF4E5  mov qword ptr [rbp + 0x5a8], rax
+UWorld::RealTimeSeconds  0x5A8  FUN_023C4447 (size 0x1231)  2 write(s)
+      023C49A4  movdqu xmmword ptr [rbp + 0x5a8], xmm0
+      023C4A75  mov qword ptr [rbp + 0x5a8], rax
+UWorld::RealTimeSeconds  0x5A8  FUN_02431B50 (size 0x7DC)  1 write(s)
+      02431B79  mov qword ptr [rsp + 0x5a8], rax
+UWorld::RealTimeSeconds  0x5A8  FUN_0249F590 (size 0x27F)  1 write(s)
+      0249F68D  mov qword ptr [rdi + 0x5a8], r12
+UWorld::RealTimeSeconds  0x5A8  FUN_02533270 (size 0xC84)  1 write(s)
+      0253350C  mov qword ptr [r15 + 0x5a8], rsi
+UWorld::RealTimeSeconds  0x5A8  FUN_0266B8E0 (size 0x24D)  1 write(s)
+      0266BB1D  mov qword ptr [rbx + 0x5a8], rax
+UWorld::RealTimeSeconds  0x5A8  FUN_027096F0 (size 0x749)  1 write(s)
+      02709CFF  mov qword ptr [rdi + 0x5a8], rsi
+UWorld::RealTimeSeconds  0x5A8  FUN_028C6780 (size 0x69C6)  2 write(s)
+      028CAC30  mov qword ptr [rbp + 0x5a8], r15
+      028CAC45  mov dword ptr [rbp + 0x5a8], eax
+UWorld::RealTimeSeconds  0x5A8  FUN_02902090 (size 0x1A2)  1 write(s)
+      0290214A  mov qword ptr [rbx + 0x5a8], 0
+UWorld::RealTimeSeconds  0x5A8  FUN_02905350 (size 0x296)  1 write(s)
+      02905376  mov dword ptr [rcx + 0x5a8], r13d
+UWorld::RealTimeSeconds  0x5A8  FUN_02906A61 (size 0x348)  1 write(s)
+      02906A85  mov dword ptr [rdi + 0x5a8], r8d
+UWorld::RealTimeSeconds  0x5A8  FUN_02907270 (size 0x20B)  1 write(s)
+      02907366  mov qword ptr [rsi + 0x5a8], 0
+UWorld::RealTimeSeconds  0x5A8  FUN_0290C135 (size 0x1FC)  1 write(s)
+      0290C22B  mov qword ptr [rbx + 0x5a8], 0
+UWorld::RealTimeSeconds  0x5A8  FUN_02914DAA (size 0x2445)  1 write(s)
+      02916483  mov qword ptr [rbp + 0x5a8], r14
+UWorld::RealTimeSeconds  0x5A8  FUN_0294AC27 (size 0x73)  1 write(s)
+      0294AC2F  mov qword ptr [rsp + 0x5a8], rdi
+UWorld::RealTimeSeconds  0x5A8  FUN_029AEEC0 (size 0xF69)  1 write(s)
+      029AF1FA  movss dword ptr [rdi + 0x5a8], xmm0
+UWorld::RealTimeSeconds  0x5A8  FUN_02A66040 (size 0x59)  1 write(s)
+      02A66087  mov byte ptr [rsi + 0x5a8], dil
+UWorld::RealTimeSeconds  0x5A8  FUN_02A8EBD4 (size 0xDC0)  1 write(s)
+      02A8F277  mov qword ptr [rbp + 0x5a8], r12
+UWorld::RealTimeSeconds  0x5A8  FUN_02B7B440 (size 0x49B)  1 write(s)
+      02B7B6EF  mov dword ptr [rbx + 0x5a8], edi
+UWorld::RealTimeSeconds  0x5A8  FUN_02B7D320 (size 0x3C6)  1 write(s)
+      02B7D5BA  mov dword ptr [rbx + 0x5a8], ebp
+UWorld::RealTimeSeconds  0x5A8  FUN_02C42200 (size 0x13E)  1 write(s)
+      02C42286  mov dword ptr [rbx + 0x5a8], ecx
+UWorld::RealTimeSeconds  0x5A8  FUN_02C77620 (size 0x84C)  1 write(s)
+      02C778B9  mov qword ptr [r14 + 0x5a8], r13
+UWorld::RealTimeSeconds  0x5A8  FUN_02C9A480 (size 0x5C3A)  2 write(s)
+      02C9DBA2  mov qword ptr [rbp + 0x5a8], rsi
+      02C9DBB7  mov dword ptr [rbp + 0x5a8], eax
+UWorld::RealTimeSeconds  0x5A8  FUN_02CB7D50 (size 0x84F)  1 write(s)
+      02CB81B3  mov qword ptr [rcx + 0x5a8], rax
+UWorld::RealTimeSeconds  0x5A8  FUN_02D2D490 (size 0x304)  1 write(s)
+      02D2D746  mov dword ptr [rcx + 0x5a8], eax
+UWorld::RealTimeSeconds  0x5A8  FUN_02D391C0 (size 0x643)  1 write(s)
+      02D39216  mov qword ptr [rdi + 0x5a8], rsi
+UWorld::RealTimeSeconds  0x5A8  FUN_02EFC7B0 (size 0x1C38)  1 write(s)
+      02EFD73B  mov qword ptr [rbx + 0x5a8], rax
+UWorld::RealTimeSeconds  0x5A8  FUN_0302DF54 (size 0xF45)  1 write(s)
+      0302E1AB  mov byte ptr [rbp + 0x5a8], 1
+UWorld::RealTimeSeconds  0x5A8  FUN_030CB812 (size 0x4D0)  1 write(s)
+      030CB9E0  mov qword ptr [rdi + 0x5a8], rax
+UWorld::RealTimeSeconds  0x5A8  FUN_030CCDF0 (size 0x41B)  1 write(s)
+      030CCFEB  mov byte ptr [rdi + 0x5a8], r14b
+UWorld::RealTimeSeconds  0x5A8  FUN_030CF3E0 (size 0x192)  1 write(s)
+      030CF4BB  mov qword ptr [rdi + 0x5a8], rbp
+UWorld::RealTimeSeconds  0x5A8  FUN_0336CF13 (size 0x47E)  1 write(s)
+      0336D293  mov dword ptr [rbx + 0x5a8], esi
+UWorld::RealTimeSeconds  0x5A8  FUN_0336FE09 (size 0x29)  1 write(s)
+      0336FE09  mov dword ptr [rdi + 0x5a8], 0x47
+UWorld::RealTimeSeconds  0x5A8  FUN_03371B0A (size 0x1B7)  1 write(s)
+      03371C4A  mov dword ptr [rbx + 0x5a8], eax
+UWorld::RealTimeSeconds  0x5A8  FUN_03374B00 (size 0xBD)  1 write(s)
+      03374B94  mov dword ptr [rbx + 0x5a8], edx
+UWorld::RealTimeSeconds  0x5A8  FUN_033752A0 (size 0x320)  1 write(s)
+      033755B5  mov dword ptr [rbx + 0x5a8], edx
+UWorld::RealTimeSeconds  0x5A8  FUN_03648CA0 (size 0x1F94)  1 write(s)
+      0364986F  mov qword ptr [rbx + 0x5a8], rax
+UWorld::DeltaTimeSeconds  0x5B0  FUN_0079BF58 (size 0x4B2)  1 write(s)
+      0079BF58  mov qword ptr [rsp + 0x5b0], r15
+UWorld::DeltaTimeSeconds  0x5B0  FUN_0080D590 (size 0x2D61)  1 write(s)
+      008101EF  mov qword ptr [rbp + 0x5b0], rax
+UWorld::DeltaTimeSeconds  0x5B0  FUN_00810300 (size 0x2CBB)  1 write(s)
+      0081269E  mov qword ptr [rbp + 0x5b0], r12
+UWorld::DeltaTimeSeconds  0x5B0  FUN_00817CC0 (size 0x7161)  1 write(s)
+      0081DB23  mov qword ptr [rbp + 0x5b0], rsi
+UWorld::DeltaTimeSeconds  0x5B0  FUN_008509B0 (size 0x5953)  1 write(s)
+      00851E18  mov qword ptr [rbp + 0x5b0], r12
+UWorld::DeltaTimeSeconds  0x5B0  FUN_00857080 (size 0x5B46)  1 write(s)
+      008582F9  mov qword ptr [rbp + 0x5b0], r12
+UWorld::DeltaTimeSeconds  0x5B0  FUN_008E7BE0 (size 0x3300)  1 write(s)
+      008EA780  mov dword ptr [rbp + 0x5b0], eax
+UWorld::DeltaTimeSeconds  0x5B0  FUN_00939DF3 (size 0x226F)  2 write(s)
+      0093B829  movaps xmmword ptr [rbp + 0x5b0], xmm11
+      0093B912  movaps xmmword ptr [rbp + 0x5b0], xmm11
+UWorld::DeltaTimeSeconds  0x5B0  FUN_0096F880 (size 0x798)  1 write(s)
+      0096FD53  movups xmmword ptr [rdi + 0x5b0], xmm0
+UWorld::DeltaTimeSeconds  0x5B0  FUN_00A74F30 (size 0x273)  1 write(s)
+      00A7502A  mov qword ptr [rdi + 0x5b0], rax
+UWorld::DeltaTimeSeconds  0x5B0  FUN_00A79E70 (size 0x49C)  1 write(s)
+      00A7A1A7  mov qword ptr [rbx + 0x5b0], rax
+UWorld::DeltaTimeSeconds  0x5B0  FUN_00A8CE25 (size 0x15B)  1 write(s)
+      00A8CE25  mov qword ptr [rsp + 0x5b0], r13
+UWorld::DeltaTimeSeconds  0x5B0  FUN_00B88D9F (size 0x81B)  1 write(s)
+      00B88DDB  movaps xmmword ptr [rsp + 0x5b0], xmm10
+UWorld::DeltaTimeSeconds  0x5B0  FUN_00BBA93B (size 0x17F)  1 write(s)
+      00BBA93B  mov qword ptr [rsp + 0x5b0], rdi
+UWorld::DeltaTimeSeconds  0x5B0  FUN_00D0DC03 (size 0x69D)  1 write(s)
+      00D0DD44  mov qword ptr [rbp + 0x5b0], r15
+UWorld::DeltaTimeSeconds  0x5B0  FUN_00D0E8B0 (size 0x8C8)  1 write(s)
+      00D0EE8A  mov dword ptr [rbp + 0x5b0], r9d
+UWorld::DeltaTimeSeconds  0x5B0  FUN_00D1060F (size 0x1052)  1 write(s)
+      00D1073D  mov qword ptr [rbp + 0x5b0], r14
+UWorld::DeltaTimeSeconds  0x5B0  FUN_00D11661 (size 0x5F7)  1 write(s)
+      00D119F3  mov dword ptr [rbp + 0x5b0], r10d
+UWorld::DeltaTimeSeconds  0x5B0  FUN_00D1AE40 (size 0xE3)  1 write(s)
+      00D1AEEE  movaps xmmword ptr [rbx + 0x5b0], xmm0
+UWorld::DeltaTimeSeconds  0x5B0  FUN_00D1DDB4 (size 0x1F7)  1 write(s)
+      00D1DE49  movsd qword ptr [rbp + 0x5b0], xmm0
+UWorld::DeltaTimeSeconds  0x5B0  FUN_00D1F143 (size 0x1F0)  1 write(s)
+      00D1F1C6  movsd qword ptr [rbp + 0x5b0], xmm0
+UWorld::DeltaTimeSeconds  0x5B0  FUN_00D24330 (size 0x17D)  1 write(s)
+      00D24387  mov dword ptr [rbx + 0x5b0], 0x42480000
+UWorld::DeltaTimeSeconds  0x5B0  FUN_00D2AD90 (size 0x1C3)  1 write(s)
+      00D2AEEB  movups xmmword ptr [rbx + 0x5b0], xmm0
+UWorld::DeltaTimeSeconds  0x5B0  FUN_00DC8D40 (size 0x311)  1 write(s)
+      00DC8EDE  mov qword ptr [rbx + 0x5b0], rax
+UWorld::DeltaTimeSeconds  0x5B0  FUN_00E1DAA0 (size 0x1A9)  1 write(s)
+      00E1DB72  mov qword ptr [r14 + 0x5b0], rax
+UWorld::DeltaTimeSeconds  0x5B0  FUN_00E1E550 (size 0x11C)  1 write(s)
+      00E1E5C7  mov qword ptr [rdi + 0x5b0], rax
+UWorld::DeltaTimeSeconds  0x5B0  FUN_00E62D30 (size 0x7A2)  1 write(s)
+      00E6321D  mov byte ptr [rbx + 0x5b0], r12b
+UWorld::DeltaTimeSeconds  0x5B0  FUN_00FAC1C0 (size 0x2EF4)  1 write(s)
+      00FAD282  movdqa xmmword ptr [rbp + 0x5b0], xmm0
+UWorld::DeltaTimeSeconds  0x5B0  FUN_00FD7E3E (size 0x803)  1 write(s)
+      00FD7E51  mov qword ptr [rsp + 0x5b0], r15
+UWorld::DeltaTimeSeconds  0x5B0  FUN_0100BA60 (size 0x6CB)  1 write(s)
+      0100BE2B  mov dword ptr [rbx + 0x5b0], r13d
+UWorld::DeltaTimeSeconds  0x5B0  FUN_01117BB0 (size 0x2A749)  1 write(s)
+      0111FFE1  mov dword ptr [rsp + 0x5b0], eax
+UWorld::DeltaTimeSeconds  0x5B0  FUN_011CE570 (size 0x22667)  1 write(s)
+      011D779A  mov qword ptr [rsp + 0x5b0], rax
+UWorld::DeltaTimeSeconds  0x5B0  FUN_0124F080 (size 0x2140E)  2 write(s)
+      0125C96E  mov qword ptr [rsp + 0x5b0], rax
+      0125C97B  mov qword ptr [rsp + 0x5b0], rax
+UWorld::DeltaTimeSeconds  0x5B0  FUN_01277CC0 (size 0x711E)  1 write(s)
+      0127A8D7  mov byte ptr [rbp + 0x5b0], 1
+UWorld::DeltaTimeSeconds  0x5B0  FUN_01290450 (size 0x60A)  1 write(s)
+      012908A6  mov qword ptr [rbx + 0x5b0], rax
+UWorld::DeltaTimeSeconds  0x5B0  FUN_01293FA0 (size 0xA06)  1 write(s)
+      012946DC  mov dword ptr [rbx + 0x5b0], 0x42000000
+UWorld::DeltaTimeSeconds  0x5B0  FUN_01294CA0 (size 0x3AD)  1 write(s)
+      01294FE0  mov qword ptr [rbx + 0x5b0], rcx
+UWorld::DeltaTimeSeconds  0x5B0  FUN_01295A70 (size 0x53D)  1 write(s)
+      01295E21  mov qword ptr [rdi + 0x5b0], rsi
+UWorld::DeltaTimeSeconds  0x5B0  FUN_012CA1A0 (size 0xA02)  1 write(s)
+      012CA77B  mov qword ptr [rsi + 0x5b0], rdi
+UWorld::DeltaTimeSeconds  0x5B0  FUN_0130AE10 (size 0x26C)  1 write(s)
+      0130AEF9  mov qword ptr [rbx + 0x5b0], rax
+UWorld::DeltaTimeSeconds  0x5B0  FUN_0130E230 (size 0x574)  1 write(s)
+      0130E613  mov qword ptr [rbx + 0x5b0], rax
+UWorld::DeltaTimeSeconds  0x5B0  FUN_01325108 (size 0x15B)  1 write(s)
+      01325108  mov qword ptr [rsp + 0x5b0], r13
+UWorld::DeltaTimeSeconds  0x5B0  FUN_01367410 (size 0x1FA9)  1 write(s)
+      01367776  mov qword ptr [r13 + 0x5b0], rax
+UWorld::DeltaTimeSeconds  0x5B0  FUN_0136A6B0 (size 0x2836)  1 write(s)
+      0136A9E4  mov qword ptr [rbp + 0x5b0], r15
+UWorld::DeltaTimeSeconds  0x5B0  FUN_01393A70 (size 0x26C)  1 write(s)
+      01393B59  mov qword ptr [rbx + 0x5b0], rax
+UWorld::DeltaTimeSeconds  0x5B0  FUN_01393CE0 (size 0x22A)  1 write(s)
+      01393EED  mov dword ptr [rbx + 0x5b0], eax
+UWorld::DeltaTimeSeconds  0x5B0  FUN_01394CF0 (size 0x51D)  1 write(s)
+      013950CA  mov word ptr [rdi + 0x5b0], 0x100
+UWorld::DeltaTimeSeconds  0x5B0  FUN_01395E70 (size 0x1B7)  1 write(s)
+      01395F49  mov dword ptr [rdi + 0x5b0], esi
+UWorld::DeltaTimeSeconds  0x5B0  FUN_013990F0 (size 0x85E)  1 write(s)
+      01399152  mov dword ptr [rbx + 0x5b0], esi
+UWorld::DeltaTimeSeconds  0x5B0  FUN_013DD0F8 (size 0x6C)  1 write(s)
+      013DD14B  mov qword ptr [rdi + 0x5b0], 0
+UWorld::DeltaTimeSeconds  0x5B0  FUN_013E0510 (size 0x21E)  1 write(s)
+      013E06EA  mov qword ptr [rdi + 0x5b0], 0x3f800000
+UWorld::DeltaTimeSeconds  0x5B0  FUN_013E08D0 (size 0x181)  1 write(s)
+      013E09B2  mov byte ptr [rdi + 0x5b0], sil
+UWorld::DeltaTimeSeconds  0x5B0  FUN_013E0C00 (size 0x276)  1 write(s)
+      013E0C9C  mov qword ptr [rdi + 0x5b0], 0x3f800000
+UWorld::DeltaTimeSeconds  0x5B0  FUN_013EB270 (size 0x763)  1 write(s)
+      013EB2A7  mov qword ptr [rbp + 0x5b0], rax
+UWorld::DeltaTimeSeconds  0x5B0  FUN_013EE0C0 (size 0x7BA)  1 write(s)
+      013EE24F  mov byte ptr [r14 + 0x5b0], al
+UWorld::DeltaTimeSeconds  0x5B0  FUN_0140E360 (size 0x2663)  1 write(s)
+      01410222  movups xmmword ptr [rbp + 0x5b0], xmm1
+UWorld::DeltaTimeSeconds  0x5B0  FUN_014A59F0 (size 0x1EA)  1 write(s)
+      014A5AA9  mov qword ptr [rsp + 0x5b0], rax
+UWorld::DeltaTimeSeconds  0x5B0  FUN_014C1459 (size 0x815)  1 write(s)
+      014C1469  mov qword ptr [rsp + 0x5b0], r15
+UWorld::DeltaTimeSeconds  0x5B0  FUN_0155D12F (size 0x5DE)  1 write(s)
+      0155D12F  movaps xmmword ptr [rsp + 0x5b0], xmm15
+UWorld::DeltaTimeSeconds  0x5B0  FUN_016010F0 (size 0x51F)  1 write(s)
+      0160131E  movups xmmword ptr [rbx + 0x5b0], xmm0
+UWorld::DeltaTimeSeconds  0x5B0  FUN_0161DAC8 (size 0x168)  1 write(s)
+      0161DB11  movaps xmmword ptr [rbp + 0x5b0], xmm0
+UWorld::DeltaTimeSeconds  0x5B0  FUN_0161DC30 (size 0x36A)  1 write(s)
+      0161DE3F  movaps xmmword ptr [rbp + 0x5b0], xmm0
+UWorld::DeltaTimeSeconds  0x5B0  FUN_0161DF9A (size 0x1A4)  1 write(s)
+      0161E079  movss dword ptr [rbp + 0x5b0], xmm1
+UWorld::DeltaTimeSeconds  0x5B0  FUN_01737C0B (size 0x32F4)  1 write(s)
+      0173A579  mov qword ptr [rbp + 0x5b0], r14
+UWorld::DeltaTimeSeconds  0x5B0  FUN_01742050 (size 0x2B7F)  4 write(s)
+      017431DF  mov dword ptr [rbp + 0x5b0], r10d
+      01743274  mov dword ptr [rbp + 0x5b0], eax
+      017432C9  mov dword ptr [rbp + 0x5b0], eax
+      01743300  mov dword ptr [rbp + 0x5b0], eax
+UWorld::DeltaTimeSeconds  0x5B0  FUN_0175E210 (size 0x96E)  1 write(s)
+      0175E22C  movaps xmmword ptr [rsp + 0x5b0], xmm6
+UWorld::DeltaTimeSeconds  0x5B0  FUN_0179D69C (size 0xA0D)  1 write(s)
+      0179DD6C  mov dword ptr [rbp + 0x5b0], r9d
+UWorld::DeltaTimeSeconds  0x5B0  FUN_017A29B0 (size 0x2C80)  3 write(s)
+      017A377B  mov byte ptr [rbp + 0x5b0], sil
+      017A3954  mov byte ptr [rbp + 0x5b0], 1
+      017A4E8C  mov dword ptr [rbp + 0x5b0], eax
+UWorld::DeltaTimeSeconds  0x5B0  FUN_017E9E6E (size 0x45A)  1 write(s)
+      017EA231  mov qword ptr [rbp + 0x5b0], rsi
+UWorld::DeltaTimeSeconds  0x5B0  FUN_0183D070 (size 0xE17)  1 write(s)
+      0183D83B  movaps xmmword ptr [rbp + 0x5b0], xmm1
+UWorld::DeltaTimeSeconds  0x5B0  FUN_018618A0 (size 0x2C5)  1 write(s)
+      01861A51  mov qword ptr [rbx + 0x5b0], rdi
+UWorld::DeltaTimeSeconds  0x5B0  FUN_018764D0 (size 0x1B31)  1 write(s)
+      01876EB1  movdqa xmmword ptr [rbp + 0x5b0], xmm1
+UWorld::DeltaTimeSeconds  0x5B0  FUN_018D7620 (size 0x4D4)  1 write(s)
+      018D79F4  mov dword ptr [rbx + 0x5b0], eax
+UWorld::DeltaTimeSeconds  0x5B0  FUN_018E3880 (size 0x3700)  1 write(s)
+      018E3B56  movups xmmword ptr [rbp + 0x5b0], xmm0
+UWorld::DeltaTimeSeconds  0x5B0  FUN_01933875 (size 0x285)  1 write(s)
+      019338F6  movups xmmword ptr [rdi + 0x5b0], xmm0
+UWorld::DeltaTimeSeconds  0x5B0  FUN_01936661 (size 0x84)  1 write(s)
+      01936661  mov qword ptr [rsp + 0x5b0], rbx
+UWorld::DeltaTimeSeconds  0x5B0  FUN_01936A40 (size 0x1341)  1 write(s)
+      01936AF2  movups xmmword ptr [rsi + 0x5b0], xmm0
+UWorld::DeltaTimeSeconds  0x5B0  FUN_0195AAD0 (size 0x17BE)  1 write(s)
+      0195AD8E  mov qword ptr [rbp + 0x5b0], 0xffffffffffffffff
+UWorld::DeltaTimeSeconds  0x5B0  FUN_0196BCA0 (size 0x2D8A)  1 write(s)
+      0196BE48  mov dword ptr [rbp + 0x5b0], 0xffffffff
+UWorld::DeltaTimeSeconds  0x5B0  FUN_019A0030 (size 0x4C)  1 write(s)
+      019A004E  mov qword ptr [rbp + 0x5b0], rax
+UWorld::DeltaTimeSeconds  0x5B0  FUN_01A4FF87 (size 0x5D4)  1 write(s)
+      01A4FFBC  movaps xmmword ptr [rsp + 0x5b0], xmm15
+UWorld::DeltaTimeSeconds  0x5B0  FUN_01A5187B (size 0x371)  1 write(s)
+      01A51888  movaps xmmword ptr [rsp + 0x5b0], xmm15
+UWorld::DeltaTimeSeconds  0x5B0  FUN_01A51E28 (size 0x6B6)  1 write(s)
+      01A51E63  movaps xmmword ptr [rsp + 0x5b0], xmm15
+UWorld::DeltaTimeSeconds  0x5B0  FUN_01A52D88 (size 0x682)  1 write(s)
+      01A52DBD  movaps xmmword ptr [rsp + 0x5b0], xmm15
+UWorld::DeltaTimeSeconds  0x5B0  FUN_01A55BB8 (size 0x6C2)  1 write(s)
+      01A55BF3  movaps xmmword ptr [rsp + 0x5b0], xmm15
+UWorld::DeltaTimeSeconds  0x5B0  FUN_01A56B27 (size 0x6BD)  1 write(s)
+      01A56B62  movaps xmmword ptr [rsp + 0x5b0], xmm15
+UWorld::DeltaTimeSeconds  0x5B0  FUN_01A57A97 (size 0x5C6)  1 write(s)
+      01A57ACC  movaps xmmword ptr [rsp + 0x5b0], xmm15
+UWorld::DeltaTimeSeconds  0x5B0  FUN_01A59938 (size 0x683)  1 write(s)
+      01A5996D  movaps xmmword ptr [rsp + 0x5b0], xmm15
+UWorld::DeltaTimeSeconds  0x5B0  FUN_01A5A877 (size 0x6B1)  1 write(s)
+      01A5A8B2  movaps xmmword ptr [rsp + 0x5b0], xmm15
+UWorld::DeltaTimeSeconds  0x5B0  FUN_01E427B0 (size 0x203)  1 write(s)
+      01E428AC  mov qword ptr [rbx + 0x5b0], r8
+UWorld::DeltaTimeSeconds  0x5B0  FUN_01EFCA50 (size 0x610)  1 write(s)
+      01EFCD55  mov qword ptr [r14 + 0x5b0], r15
+UWorld::DeltaTimeSeconds  0x5B0  FUN_01F090A7 (size 0x22DF)  1 write(s)
+      01F090A7  movaps xmmword ptr [rsp + 0x5b0], xmm6
+UWorld::DeltaTimeSeconds  0x5B0  FUN_01F91CD0 (size 0x1312)  1 write(s)
+      01F925D7  mov qword ptr [r12 + 0x5b0], rax
+UWorld::DeltaTimeSeconds  0x5B0  FUN_01F9F4D5 (size 0x42FA)  1 write(s)
+      01FA2634  movups xmmword ptr [rbp + 0x5b0], xmm1
+UWorld::DeltaTimeSeconds  0x5B0  FUN_01FE3709 (size 0x28CA)  1 write(s)
+      01FE435F  movups xmmword ptr [rbp + 0x5b0], xmm1
+UWorld::DeltaTimeSeconds  0x5B0  FUN_0200F288 (size 0x251C)  1 write(s)
+      0200F55E  mov qword ptr [rbp + 0x5b0], r12
+UWorld::DeltaTimeSeconds  0x5B0  FUN_0202FE70 (size 0x362)  1 write(s)
+      0202FEE7  mov qword ptr [rsi + 0x5b0], rbp
+UWorld::DeltaTimeSeconds  0x5B0  FUN_0203B8C9 (size 0x86A)  1 write(s)
+      0203B8C9  movaps xmmword ptr [rsp + 0x5b0], xmm6
+UWorld::DeltaTimeSeconds  0x5B0  FUN_0209E770 (size 0x4AA)  1 write(s)
+      0209EA9D  mov dword ptr [rbx + 0x5b0], edi
+UWorld::DeltaTimeSeconds  0x5B0  FUN_0209F2C0 (size 0x30C)  1 write(s)
+      0209F416  mov dword ptr [rbx + 0x5b0], eax
+UWorld::DeltaTimeSeconds  0x5B0  FUN_0209FDB0 (size 0x53F)  1 write(s)
+      020A016B  mov qword ptr [rbx + 0x5b0], rdi
+UWorld::DeltaTimeSeconds  0x5B0  FUN_020A2A20 (size 0xCEA)  1 write(s)
+      020A3503  movsd qword ptr [rbx + 0x5b0], xmm1
+UWorld::DeltaTimeSeconds  0x5B0  FUN_0219F860 (size 0xF3C)  1 write(s)
+      0219FB2A  mov qword ptr [rsi + 0x5b0], rbp
+UWorld::DeltaTimeSeconds  0x5B0  FUN_023B6C98 (size 0x17B9)  1 write(s)
+      023B7BF2  movdqu xmmword ptr [rbp + 0x5b0], xmm0
+UWorld::DeltaTimeSeconds  0x5B0  FUN_023BF426 (size 0x6E3)  3 write(s)
+      023BF4DB  mov dword ptr [rbp + 0x5b0], r12d
+      023BF4FA  mov dword ptr [rbp + 0x5b0], ebx
+      023BF541  mov dword ptr [rbp + 0x5b0], ebx
+UWorld::DeltaTimeSeconds  0x5B0  FUN_023C1D5B (size 0xB4)  1 write(s)
+      023C1D70  mov dword ptr [rbp + 0x5b0], ebx
+UWorld::DeltaTimeSeconds  0x5B0  FUN_023C4447 (size 0x1231)  1 write(s)
+      023C4AB5  mov qword ptr [rbp + 0x5b0], rax
+UWorld::DeltaTimeSeconds  0x5B0  FUN_02431B50 (size 0x7DC)  1 write(s)
+      02431B67  movaps xmmword ptr [rsp + 0x5b0], xmm6
+UWorld::DeltaTimeSeconds  0x5B0  FUN_024346BF (size 0x4F1)  1 write(s)
+      024346D4  mov qword ptr [rsp + 0x5b0], r15
+UWorld::DeltaTimeSeconds  0x5B0  FUN_0249F590 (size 0x27F)  1 write(s)
+      0249F694  mov qword ptr [rdi + 0x5b0], r12
+UWorld::DeltaTimeSeconds  0x5B0  FUN_024D3A20 (size 0x324)  1 write(s)
+      024D3C1C  mov qword ptr [rdi + 0x5b0], rsi
+UWorld::DeltaTimeSeconds  0x5B0  FUN_02533270 (size 0xC84)  1 write(s)
+      02533513  mov qword ptr [r15 + 0x5b0], rsi
+UWorld::DeltaTimeSeconds  0x5B0  FUN_027096F0 (size 0x749)  1 write(s)
+      02709D06  mov dword ptr [rdi + 0x5b0], esi
+UWorld::DeltaTimeSeconds  0x5B0  FUN_02731835 (size 0x2A49)  1 write(s)
+      0273306F  movss dword ptr [rbp + 0x5b0], xmm2
+UWorld::DeltaTimeSeconds  0x5B0  FUN_02766000 (size 0x17A)  2 write(s)
+      0276607B  mov qword ptr [rsi + 0x5b0], rbp
+      0276612B  movsd qword ptr [rsi + 0x5b0], xmm0
+UWorld::DeltaTimeSeconds  0x5B0  FUN_0278CAE0 (size 0x1FA)  1 write(s)
+      0278CC7A  mov qword ptr [rbx + 0x5b0], rax
+UWorld::DeltaTimeSeconds  0x5B0  FUN_027DAD26 (size 0x99E)  1 write(s)
+      027DAD51  movaps xmmword ptr [rsp + 0x5b0], xmm6
+UWorld::DeltaTimeSeconds  0x5B0  FUN_02824C70 (size 0x75)  1 write(s)
+      02824CBD  mov dword ptr [rbx + 0x5b0], eax
+UWorld::DeltaTimeSeconds  0x5B0  FUN_02859E40 (size 0x170)  1 write(s)
+      02859EA2  movups xmmword ptr [rbx + 0x5b0], xmm0
+UWorld::DeltaTimeSeconds  0x5B0  FUN_028791A0 (size 0xBE)  1 write(s)
+      028791F5  movups xmmword ptr [rdi + 0x5b0], xmm1
+UWorld::DeltaTimeSeconds  0x5B0  FUN_028C6780 (size 0x69C6)  1 write(s)
+      028CACAF  mov qword ptr [rbp + 0x5b0], r15
+UWorld::DeltaTimeSeconds  0x5B0  FUN_02905350 (size 0x296)  1 write(s)
+      02905556  movups xmmword ptr [rdi + 0x5b0], xmm0
+UWorld::DeltaTimeSeconds  0x5B0  FUN_02906A61 (size 0x348)  1 write(s)
+      02906CD5  movups xmmword ptr [rdi + 0x5b0], xmm0
+UWorld::DeltaTimeSeconds  0x5B0  FUN_02907270 (size 0x20B)  1 write(s)
+      029073D9  movsd qword ptr [rsi + 0x5b0], xmm0
+UWorld::DeltaTimeSeconds  0x5B0  FUN_02914DAA (size 0x2445)  2 write(s)
+      0291551E  mov dword ptr [rbp + 0x5b0], r14d
+      0291648A  mov qword ptr [rbp + 0x5b0], 0
+UWorld::DeltaTimeSeconds  0x5B0  FUN_02922F71 (size 0x92)  1 write(s)
+      02922FE4  movups xmmword ptr [rsi + 0x5b0], xmm0
+UWorld::DeltaTimeSeconds  0x5B0  FUN_0292D318 (size 0x46C)  2 write(s)
+      0292D5BA  movss dword ptr [rbx + 0x5b0], xmm0
+      0292D623  movups xmmword ptr [rbx + 0x5b0], xmm0
+UWorld::DeltaTimeSeconds  0x5B0  FUN_029AEEC0 (size 0xF69)  1 write(s)
+      029AF245  movss dword ptr [rdi + 0x5b0], xmm6
+UWorld::DeltaTimeSeconds  0x5B0  FUN_02A1A385 (size 0x98D)  1 write(s)
+      02A1AAB6  mov qword ptr [rbp + 0x5b0], r12
+UWorld::DeltaTimeSeconds  0x5B0  FUN_02A22660 (size 0x72C)  1 write(s)
+      02A22AE9  mov qword ptr [rdi + 0x5b0], rbp
+UWorld::DeltaTimeSeconds  0x5B0  FUN_02A8EBD4 (size 0xDC0)  1 write(s)
+      02A8F27E  mov qword ptr [rbp + 0x5b0], r12
+UWorld::DeltaTimeSeconds  0x5B0  FUN_02B3458E (size 0x373)  1 write(s)
+      02B3470A  mov dword ptr [rbp + 0x5b0], edi
+UWorld::DeltaTimeSeconds  0x5B0  FUN_02B6A750 (size 0x6B)  1 write(s)
+      02B6A771  mov qword ptr [rbp + 0x5b0], rax
+UWorld::DeltaTimeSeconds  0x5B0  FUN_02B7B440 (size 0x49B)  1 write(s)
+      02B7B6F5  mov qword ptr [rbx + 0x5b0], rdi
+UWorld::DeltaTimeSeconds  0x5B0  FUN_02BCD520 (size 0x18B8)  1 write(s)
+      02BCDBFE  movups xmmword ptr [rdx + 0x5b0], xmm0
+UWorld::DeltaTimeSeconds  0x5B0  FUN_02BCF741 (size 0x7A)  1 write(s)
+      02BCF749  mov qword ptr [rsp + 0x5b0], r15
+UWorld::DeltaTimeSeconds  0x5B0  FUN_02C59E57 (size 0xF3)  1 write(s)
+      02C59E71  movss dword ptr [rcx + 0x5b0], xmm7
+UWorld::DeltaTimeSeconds  0x5B0  FUN_02C9A480 (size 0x5C3A)  1 write(s)
+      02C9DC21  mov qword ptr [rbp + 0x5b0], rsi
+UWorld::DeltaTimeSeconds  0x5B0  FUN_02CB7D50 (size 0x84F)  1 write(s)
+      02CB81BA  mov qword ptr [rcx + 0x5b0], rax
+UWorld::DeltaTimeSeconds  0x5B0  FUN_02DBFE10 (size 0x30B)  1 write(s)
+      02DC00B0  movaps xmmword ptr [rbp + 0x5b0], xmm0
+UWorld::DeltaTimeSeconds  0x5B0  FUN_02EFC7B0 (size 0x1C38)  1 write(s)
+      02EFD758  mov qword ptr [rbx + 0x5b0], rax
+UWorld::DeltaTimeSeconds  0x5B0  FUN_0302DF54 (size 0xF45)  1 write(s)
+      0302E307  mov dword ptr [rbp + 0x5b0], 4
+UWorld::DeltaTimeSeconds  0x5B0  FUN_030CB812 (size 0x4D0)  1 write(s)
+      030CBA03  mov dword ptr [rdi + 0x5b0], r12d
+UWorld::DeltaTimeSeconds  0x5B0  FUN_030CCDF0 (size 0x41B)  1 write(s)
+      030CCFF9  mov dword ptr [rdi + 0x5b0], 0x3f800000
+UWorld::DeltaTimeSeconds  0x5B0  FUN_030D0513 (size 0x2AAB)  1 write(s)
+      030D2035  movaps xmmword ptr [rbp + 0x5b0], xmm14
+UWorld::DeltaTimeSeconds  0x5B0  FUN_03579BA0 (size 0x30A)  1 write(s)
+      03579E15  mov qword ptr [rbx + 0x5b0], rbp
+UWorld::DeltaTimeSeconds  0x5B0  FUN_03579EB0 (size 0x6FA)  1 write(s)
+      0357A545  mov qword ptr [rdi + 0x5b0], rax
+UWorld::DeltaTimeSeconds  0x5B0  FUN_03648CA0 (size 0x1F94)  1 write(s)
+      03649314  mov dword ptr [rbx + 0x5b0], eax
+UWorld::DeltaTimeSeconds  0x5B0  FUN_0364F960 (size 0x8B)  1 write(s)
+      0364F984  mov qword ptr [rbp + 0x5b0], rax
+
+wrote _field_writes.json

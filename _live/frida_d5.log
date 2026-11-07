@@ -1,0 +1,3 @@
+# frida d5 hooks 21:00:45
+{"ready": true, "base": "0x7ff75d670000"}
+{"hook": "StoreEnemySaveState", "at": 1793995373637, "worldctx": "0x1dec2e67290", "guid": "24a91c68-4aef015a-68950798-f4d6e852", "respawn": 0, "hp": 0, "respawn_raw": "0x0", "hp_raw": "0x0", "lr": "0x7ff75e4d2146"}

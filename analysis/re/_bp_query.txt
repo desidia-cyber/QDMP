@@ -1,0 +1,404 @@
+﻿### every function this build binds that matches the pause/modal vocabulary
+  CutsceneEnded                              1
+         Cutscenes/RitualCutscene/RitualCutsceneManager.uasset
+  CutsceneFinished__DelegateSignature        3
+         Blueprints/SecretSkullRitual_BP.uasset
+         Enemies/Queen/Queen_BP.uasset
+         Enemies/Sipeha/Sipeha_NPC.uasset
+  EquipmentChanged__DelegateSignature        3
+         Player/Assets/Blueprints/DaggerChargeLogic.uasset
+         Player/Player_EquipmentLight.uasset
+         UI/HUD/Widgets/WeaponChargeBar/WeaponChargeHUD.uasset
+  FullyRefreshInventoryTagCount              4
+         Blueprints/SaveSystem/SaveFunctions.uasset
+         LD45/Blueprints/Base_LD45_GM.uasset
+         Player/FS_PlayerChar.uasset
+         Props/Chest_00/Chest.uasset
+  GetGlobalTimeDilation                      12
+         Blueprints/ItemPickupAnimationComp.uasset
+         Blueprints/SuperCubeAltar/SuperCubeAltar.uasset
+         Items/Consumables/Grimoire/Grimoire_UI_Projector.uasset
+         Items/KeyItems/Memento_Content/Memento_Pickup_Base.uasset
+         Items/KeyItems/TridentKeys/TridentKey_02_BP.uasset
+         Items/Upgrades/SharedContent/Food_Pedestal_Base.uasset
+         Items/Weapons/JarHammer/JarHammer_WeaponVisuals.uasset
+         Items/Weapons/TridentKeyTrident/TridentKeyTrident_WeaponVisuals.uasset
+         LD45/Blueprints/Base_LD45_GM.uasset
+         LD45/Blueprints/FS_CommonGM.uasset
+         NPCs/Shared/ItemGiveAnimationComp.uasset
+         Player/WeaponEvoAnimation.uasset
+  GetInventoryCount                          6
+         Blueprints/Shop/ShopFunctions.uasset
+         Player/Assets/Blueprints/PlayerMathFunctions.uasset
+         Tools/3DWidgetAdjustTool/Assets/Item3DView_RWM.uasset
+         UI/Menus/KeyUseMenu/KeyUseMenu.uasset
+         UI/Menus/SaveMenu/SaveSlotWidget.uasset
+         UI/Menus/SaveMenu/SaveSlot_ItemDisplay.uasset
+  GetInventoryItemCount                      19
+         Blueprints/Door_Base.uasset
+         Blueprints/FS_GameInstance.uasset
+         Blueprints/IntroSplashRead.uasset
+         Blueprints/Shop/ShopMenu.uasset
+         Blueprints/UpgradeMachine/WeaponUpgrade_UI.uasset
+         Items/Weapons/GunBase_WeaponScript.uasset
+         Items/Weapons/VampireKnife/VampireKnife_WeaponScript.uasset
+         NPCs/Raider/Raider_TurnInNecklace.uasset
+         NPCs/Scientist/Scientist_CheckForFinished.uasset
+         NPCs/Scientist/Scientist_SelectTurnedInDialog.uasset
+         NPCs/Scientist/Scientist_TurninAction.uasset
+         Player/Assets/Blueprints/DaggerChargeLogic.uasset
+         Player/FS_PlayerChar.uasset
+         Player/ItemmergeAnim/RuneVisionMask_ItemMergeActor.uasset
+         RuinsLevel/AquaRuins/AQR_KeyRecepticle_BP.uasset
+         UI/HUD/Widgets/ConsumableHUD.uasset
+         UI/Menus/GameMenu.uasset
+         UI/Menus/KeyUseMenu/KeyUseMenuEntry.uasset
+         UI/Menus/StatusMenu/EquipDisplay.uasset
+  GetInventoryItemCountSoft                  39
+         Blueprints/ItemSystem/SpawnItemDrop.uasset
+         Blueprints/SaveSystem/SaveFunctions.uasset
+         Blueprints/SecretSwordAltar/SecretSword_Altar_BP.uasset
+         Blueprints/Shop/ShopEntry.uasset
+         Blueprints/Shop/ShopMenu.uasset
+         Blueprints/SuperCubeAltar/SuperCubeAltar.uasset
+         Blueprints/UpgradeMachine/WeaponUpgradeEntry.uasset
+         Blueprints/UpgradeMachine/WeaponUpgrade_UI.uasset
+         Items/Weapons/Daggers/Default/DefaultDagger_Projectile_BP.uasset
+         Items/Weapons/Daggers/Default/Default_Dagger_Visuals.uasset
+         Items/Weapons/FlyingSword/FlyingSwordWeaponVisuals.uasset
+         Items/Weapons/FlyingSword/Shop/FlyingSword_ShopWeaponVisuals.uasset
+         Items/Weapons/FlyingSwordEvolved/FlyingSwordEvolvedWeaponVisuals.uasset
+         Items/Weapons/Scythe/Scythe_WeaponScript.uasset
+         LD45/Blueprints/Checkpoint/Checkpoint.uasset
+         NPCs/Chef/Chef_Do_Ghost_CrowCaw.uasset
+         NPCs/Chef/Chef_Do_PQ_CrowCaw.uasset
+         NPCs/Chef/Chef_TurnInAction.uasset
+         NPCs/FishWife/FishWife_EggPlacementFadeAction.uasset
+         NPCs/FishWife/FishWife_TurnInAction.uasset
+         NPCs/FishWife/Fishwife_NPC_BP.uasset
+         NPCs/Knight/Knight_Ekonta/Knight_RustySwordPickup.uasset
+         NPCs/Merchant/Merchant_CheckForDucks.uasset
+         NPCs/Scientist/Scientist_Install_WeaponUpgrades.uasset
+         NPCs/Scientist/Scientist_Install_WeaponUpgrades_Final.uasset
+         NPCs/Scientist/Scientist_TurninAction.uasset
+         NPCs/SecretSkullDoor/SecretSkullDoor_NPC_BP.uasset
+         NPCs/SecretSkullDoor/SecretSkullDoor_TurnInAction.uasset
+         OtherWorld/OW_MK/NodeKit/ElecPuzzleTerminalUI.uasset
+         Player/FS_PlayerChar.uasset
+         Player/ItemmergeAnim/FlyingSword_ItemMergeActor.uasset
+         Player/ItemmergeAnim/ItemMergeAnim_Comp_RV.uasset
+         Player/PlayerStatsAndUtils.uasset
+         UI/HUD/Widgets/EnergyBar/EnergyHUD.uasset
+         UI/HUD/Widgets/FSChargeHUD.uasset
+         UI/HUD/Widgets/StatusCluster.uasset
+         UI/ItemDescriptionGetter.uasset
+         UI/Menus/Challenges/Challenges_Menu.uasset
+         UI/Menus/StatusMenu/ItemDisplay.uasset
+  GetItemTagCountInInventory                 1
+         Player/Assets/Blueprints/PlayerMathFunctions.uasset
+  Internal_StartCutscene                     1
+         Cutscenes/RitualCutscene/RitualCutsceneManager.uasset
+  InventoryChanged__DelegateSignature        3
+         Blueprints/WorldEventReceiver.uasset
+         Player/FS_PlayerChar.uasset
+         UI/HUD/Widgets/ConsumableHUD.uasset
+  InventoryUpdated__DelegateSignature        2
+         Player/Assets/Blueprints/DaggerChargeLogic.uasset
+         UI/HUD/Widgets/FoodGetAnims.uasset
+  IsGamePaused                               8
+         Blueprints/FS_GameInstance.uasset
+         Cutscenes/AwakenTextWidget.uasset
+         Cutscenes/EndingTextWidget.uasset
+         Cutscenes/RitualCutscene/RitualText.uasset
+         LD45/Blueprints/Base_LD45_GM.uasset
+         Player/FS_PlayerChar.uasset
+         Player/ItemmergeAnim/ItemMergeAnim_Comp.uasset
+         RuinsLevel/Intro/IntroTextWidget.uasset
+  K2_PauseTimerHandle                        2
+         Cutscenes/EndingTextWidget.uasset
+         Cutscenes/RitualCutscene/RitualText.uasset
+  K2_UnPauseTimerHandle                      2
+         Cutscenes/EndingTextWidget.uasset
+         Cutscenes/RitualCutscene/RitualText.uasset
+  Pause                                      2
+         Player/FS_PlayerChar.uasset
+         UI/Menus/DemoEndSplash.uasset
+  Paused                                     1
+         Cutscenes/RitualCutscene/RitualCutsceneManager.uasset
+  PlayerDidItemTeleport__DelegateSignature   3
+         Enemies/EnemySpawner.uasset
+         OtherWorld/OW_TP/OW_TP_Building_00_BP.uasset
+         Player/FS_PlayerChar.uasset
+  PlayerTeleportedOutOfBossArena             20
+         Enemies/BlackRobotDuo/LargeRobot_Miniboss_Spawner.uasset
+         Enemies/BloodPoolDuo/BloodPool_EnemySpawner.uasset
+         Enemies/Boner_00/Skeletons24/Black/Mage/Boner_Black_Mage_Spawner.uasset
+         Enemies/Boner_00/Skeletons24/ShrineBoss/Boner_ShrineBoss_Spawner.uasset
+         Enemies/Boner_00/Skeletons24/ShrineBoss/Demo/Boner_Shrineboss_Demo_Spawner.uasset
+         Enemies/Boner_00/Skeletons24/Standard/ExecutionerMiniboss_Spawner.uasset
+         Enemies/DemonBosses/DemonSpider/DemonSpider_Spawner.uasset
+         Enemies/Dragon/Dragon_ROS/ROSDragon_Spawner.uasset
+         Enemies/Dragon/GreenDragon_Spawner.uasset
+         Enemies/FishWifeEvil/FishWifeEvil_Spawner.uasset
+         Enemies/JosamiKnight_00/DesBoss/Josami_Des_BloodPoolSpawner.uasset
+         Enemies/JosamiLord/BloodSisters/JosamiBloodLord_Sword_Spawner.uasset
+         Enemies/JosamiLord/DragonLord/JosamiLord_Green_Spawner.uasset
+         Enemies/JosamiLord/JosamiLord_Spawner.uasset
+         Enemies/LargeRobot/LargeRobot_Rusted_Spawner.uasset
+         Enemies/Necronomicon/Necronomicon_Boss_Spawner.uasset
+         Enemies/Queen/Queen_Spawner_BP.uasset
+         Enemies/RoyalDuo/Fated_Wheeler_MinibossSpawner.uasset
+         Enemies/Sipeha/Sipeha_Spawner.uasset
+         Enemies/WhaleKing/WhaleKing_Spawner.uasset
+  ReadInventoryItemCount                     1
+         Blueprints/FS_GameInstance.uasset
+  RefreshEquipmentTagCount                   2
+         Player/FS_PlayerChar.uasset
+         Player/PlayerStatsAndUtils.uasset
+  SetGamePaused                              3
+         Blueprints/UpgradeMachine/WeaponUpgradeMachine.uasset
+         Player/FS_PlayerChar.uasset
+         UI/PhotoMode/Photomode_Pawn.uasset
+  SetGlobalTimeDilation                      2
+         Blueprints/Utils/ShaderCompileManager.uasset
+         LD45/Blueprints/Base_LD45_GM.uasset
+  SetNiagaraTickWhenPaused                   2
+         Items/Consumables/Grimoire/Grimoire_Logic.uasset
+         UI/Menus/OptionsMenu/OptionLists/Video_OptionsList.uasset
+  SetTickableWhenPaused                      3
+         LD45/Blueprints/Checkpoint/Checkpoint.uasset
+         UI/Menus/Journal/Journal3DVisualizer.uasset
+         UI/Menus/Journal/Journal_RWM_BP.uasset
+  TeleportTo__DelegateSignature              2
+         UI/Menus/Teleporter/SaveTeleportUI.uasset
+         UI/Menus/Teleporter/TeleporterUI.uasset
+  Teleport__DelegateSignature                2
+         Blueprints/Teleporter/Teleporter.uasset
+         Player/FS_PlayerChar.uasset
+
+### custom helpers: who declares, who calls
+  SetPauseTimeDilation           decl=['Enemies/EnemyBase.uasset', 'LD45/Blueprints/Base_LD45_GM.uasset', 'LD45/Blueprints/TimeDilationManager.uasset']
+                                 call=-
+  Set Pause Time Dilation        decl=['LD45/Blueprints/TimeDilationManagement.uasset']
+                                 call=-
+  SetPausedEnemyTimeDilation     decl=['LD45/Blueprints/Base_LD45_GM.uasset', 'LD45/Blueprints/TimeDilationManagement.uasset', 'LD45/Blueprints/TimeDilationManager.uasset']
+                                 call=-
+  IsTimeDilationPaused           decl=['LD45/Blueprints/TimeDilationManagement.uasset']
+                                 call=-
+  Set BaseTimeDilation           decl=['LD45/Blueprints/Base_LD45_GM.uasset', 'LD45/Blueprints/TimeDilationManager.uasset']
+                                 call=-
+  IsPausedTimeDilationEnabled    decl=['LD45/Blueprints/Base_LD45_GM.uasset', 'LD45/Blueprints/TimeDilationManager.uasset']
+                                 call=-
+  IsEnemyPauseTDLEnabled         decl=['LD45/Blueprints/Base_LD45_GM.uasset', 'LD45/Blueprints/TimeDilationManager.uasset']
+                                 call=-
+  Bind To Enemy Pause TDL        decl=['LD45/Blueprints/TimeDilationManagement.uasset']
+                                 call=-
+  OpenPauseMenu                  decl=['Player/FS_PlayerChar.uasset']
+                                 call=-
+  TryAutoPause                   decl=['Player/FS_PlayerChar.uasset']
+                                 call=-
+  CheckForOverlayPause           decl=['Player/FS_PlayerChar.uasset']
+                                 call=-
+  Paused                         decl=['Cutscenes/CutsceneManagerBase.uasset', 'Cutscenes/RitualCutscene/RitualCutsceneManager.uasset']
+                                 call=['Cutscenes/RitualCutscene/RitualCutsceneManager.uasset']
+  Pause                          decl=['Cutscenes/EndingTextWidget.uasset', 'Cutscenes/RitualCutscene/RitualText.uasset']
+                                 call=['Player/FS_PlayerChar.uasset', 'UI/Menus/DemoEndSplash.uasset']
+  SetEnemiesPaused               decl=['Enemies/EnemySpawner.uasset']
+                                 call=-
+  DoItemPickupPause              decl=['Blueprints/ItemPickup_Base.uasset', 'RuinsLevel/AquaRuins/AQR_KeyRecepticle_BP.uasset']
+                                 call=-
+  StartPickupPause               decl=['Blueprints/ItemPickupAnimationComp.uasset', 'Items/KeyItems/ShopProgressionKey/StoneDuck_UnlockMovement.uasset', 'NPCs/Shared/ItemGiveAnimationComp.uasset', 'Player/ItemmergeAnim/ItemMergeActorAnim.uasset']
+                                 call=-
+  EndPickupPause                 decl=['Blueprints/ItemPickupAnimationComp.uasset', 'Items/KeyItems/ShopProgressionKey/StoneDuck_UnlockMovement.uasset', 'NPCs/Shared/ItemGiveAnimationComp.uasset', 'Player/ItemmergeAnim/ItemMergeActorAnim.uasset']
+                                 call=-
+  EndItemPickupPause             decl=['Blueprints/ItemPickup_Base.uasset', 'RuinsLevel/AquaRuins/AQR_KeyRecepticle_BP.uasset']
+                                 call=-
+
+### exports of the timing / menu packages
+
+-- Blueprints/FS_GameInstance.uasset  (117 exports)
+     InventoryChanged__DelegateSignature, WorldStateChanged__DelegateSignature, BindingsChanged__DelegateSignature, OptionsChanged__DelegateSignature, EnemyWasDamaged__DelegateSignature, EnteredHiddenWorld__DelegateSignature
+     ExitedHiddenWorld__DelegateSignature, PickedUpItem__DelegateSignature, OnWorldRefresh__DelegateSignature, ItemPutAway__DelegateSignature, PlayerDidItemTeleport__DelegateSignature, QuestStateRefresh__DelegateSignature
+     ExecuteUbergraph_FS_GameInstance, SetMenuCheapRenderFlag, ExitCutsceneMode, EnterCutsceneMode, GI_UpdateTextureStreaming, SetInputLockType
+     BlockSuspendSaves, UnBlockSuspendSaves, DelayedFontUpdate, GI_UpdateFontOverride, SuspendSaveLoop, GI_StartSuspendSaveLoop
+     GI_WriteSuspendSaveImmediately, GI_DeleteSuspendSaves, CancelSuspendSaveLoop, StartSuspendSaveLoop, SystemSaveDelayTick, GI_UpdateQuestState
+     ResetInputBindings, SetCurrentOptionsList, ApplyOptionSettings, SetMuteMenuSelectSounds, SetFocusChangeReasonIsHover, SetActiveSave
+     InitSave, GI_NotifyItemPutAway, GI_SetRuneVisionState, GI_NotifyAreaChanged, GI_QueueSystemSave, GI_SaveSystemSaveToDisk
+     GI_NotifyWorldStateChanged, GI_SaveGameToDisk, GI_NotifyInventoryChanged, NotifyGotItem, CheckScreen%, ForceLoadNewSlot
+     ReceiveShutdown, QueueSystemSave, Load Game, ReceiveInit, OnSuccess_C7F3671C46DFDF85DFF5FEAD47359117, OnFailure_C7F3671C46DFDF85DFF5FEAD47359117
+     GetActiveSave, InitializeSave, GetActiveSaveSlotIndex, Save Game to Disk, GetENVController, GetMusicController
+     ShouldAutoLoad, GetActiveSystemSave, InitializeSystemSave, Save System Save to Disk, SetVolumeSettings, InitializeCoinSave
+     ApplyOptions, Apply Res Options, Apply All Input Bindings, Set Input Axis Binding, Set Input Action Binding, ResetInputBindingsToDefault
+     ApplyStickSwapInputs, Get Current Bindings For Action, Get Current Bindings For Axis, SolveConflicts, GetGlobalPP, Enemy Took Hit
+     DebugSave, ErrorCheckSave, GetBackupSave, UpdateScreen%, ReadInventoryItemCount, ReadNamedSaveData
+     NewFunction, CompareAreaNames, LoadSaveSynch, WriteSuspendSave, AsyncSuspendSaveFinished, UnsafeDeleteSuspendSavesOnSlot
+     GetSpecificAxisBindingSet, BindFullAxis, BindFullAction, SetSpecificAxisBindingSet, SetSpecificActionBinding, CheckActionBindingForConflict
+     CheckAxisBindingForConflict, GetFullActionBindingsSet, Check UI Event Against Full Axis Set, IsBindingValid, TryToBindActionMapping, Try to Bind Axis Mapping
+     UnbindAllActions, UnbindFullAction, UnbindAllAxes, UnbindFullAxis, RebuildMouseBindings, FixUpTriggerKeys
+     GetPlatformNonRetroResScale, GetRealRenderPixelHeight, UpdateSequenceRTSize, GI_GetActiveSave, GI_GetActiveSystemSave, GI_IsRuneVisionEnabled
+     GetFocusChangeReasonIsHover, GetMuteMenuSelectSounds, GetCurrentOptionsList
+
+-- Blueprints/UpgradeMachine/WeaponUpgradeMachine.uasset  (6 exports)
+     ExecuteUbergraph_WeaponUpgradeMachine, ChangeSelection, closed, Interact, GetScreenMat, GetInteractInfo
+
+-- Cutscenes/CutsceneManagerBase.uasset  (12 exports)
+     CutsceneFinished__DelegateSignature, ExecuteUbergraph_CutsceneManagerBase, Resumed, Paused, ShowEndingCutsceneText, CutsceneEnded
+     CutsceneSequenceFinished, TryEndCutscene, Internal_StartCutscene, SkipCutscene, BeginCutscene, GetSequencePlayer
+
+-- Cutscenes/Ending1/Ending1CutsceneManager.uasset  (0 exports)
+
+-- Cutscenes/Ending2/Ending2CutsceneManager.uasset  (0 exports)
+
+-- Cutscenes/Ending3/Ending3CutsceneManager.uasset  (0 exports)
+
+-- Cutscenes/Ending4/Ending4CutsceneManager.uasset  (0 exports)
+
+-- Cutscenes/RitualCutscene/RitualCutsceneManager.uasset  (11 exports)
+     ExecuteUbergraph_RitualCutsceneManager, Resumed, Paused, ShowEatText, CutsceneEnded, Internal_StartCutscene
+     ShowText, AdvanceCords, UpdateCordBreaks, UserConstructionScript, DoCordAdvance
+
+-- Cutscenes/SipehaTransition/SipehaTransitionCutsceneManager.uasset  (0 exports)
+
+-- LD45/Blueprints/Base_LD45_GM.uasset  (38 exports)
+     FadeOutDirectionalAmbientLight__DelegateSignature, FadeInDirectionalAmbientLight__DelegateSignature, ExecuteUbergraph_Base_LD45_GM, FadeInDirLight, FadeOutDirLight, BndEvt__Base_LD45_GM_TickGroup_K2Node_ComponentBoundEvent_0_Tick__DelegateSignature
+     SetPausedEnemyTimeDilation, ReceiveEndPlay, TabulateEnemyTypes, Set Time Dilation Modifier, Recalculate Global TD, Cancel HitStop
+     TriggerHitStop, SetPauseTimeDilation, Set BaseTimeDilation, ReceiveBeginPlay, TickTitleTime, TickTime
+     ReceiveTick, Completed_FFD496794F7F04289D4139BE561F70BA, Completed_6B130C014399797247DFB48DA23DEFD5, Completed_567A55DF443952B15B4E4E89E30AD172, HitStopTL__UpdateFunc, HitStopTL__FinishedFunc
+     SpawnDropActor, Calculate and Apply Full TD, Register Loaded Enemies and List Loads Needed, RegisterEnemyData, RecacheStats, Recache Attack Defense And Light Radius
+     GetPlayerStatsComp, SortEnemies, SpawnDefaultPawnAtTransform, RecreateItemDrops, TickPlayTime, GetDirLightToControl
+     IsPausedTimeDilationEnabled, IsEnemyPauseTDLEnabled
+
+-- LD45/Blueprints/FS_CommonGM.uasset  (6 exports)
+     ExecuteUbergraph_FS_CommonGM, BndEvt__FS_CommonGM_ChallengeSystemComp_K2Node_ComponentBoundEvent_0_ChallengeCompletedEvent__DelegateSignature, TickTitleTime, PlayerReady, ReceiveBeginPlay, ReceiveTick
+
+-- LD45/Blueprints/TimeDilationManagement.uasset  (9 exports)
+     SetBaseTime Dilation, Set Pause Time Dilation, Trigger Hit Stop, Get Time Dilation Manager, Cancel Hit Stop, Set Time Dilation Modifier
+     IsTimeDilationPaused, SetPausedEnemyTimeDilation, Bind To Enemy Pause TDL
+
+-- LD45/Blueprints/TimeDilationManager.uasset  (8 exports)
+     TriggerHitStop, Cancel HitStop, SetPauseTimeDilation, Set BaseTimeDilation, Set Time Dilation Modifier, IsPausedTimeDilationEnabled
+     SetPausedEnemyTimeDilation, IsEnemyPauseTDLEnabled
+
+-- LD45/Blueprints/TimeDilationModifierType.uasset  (0 exports)
+
+-- Player/FS_PlayerChar.uasset  (605 exports)
+     OnDiedEvent__DelegateSignature, PoisonDamageTicked__DelegateSignature, UpdateStatusEffects__DelegateSignature, LevelledUp__DelegateSignature, UsedConsumable__DelegateSignature, DidSecretTeleport__DelegateSignature
+     Damaged__DelegateSignature, WeaponLevelledUp__DelegateSignature, InventoryUpdated__DelegateSignature, PlayerLanded__DelegateSignature, PlayerJumped__DelegateSignature, ResourcesWereGenerated__DelegateSignature
+     EquipmentChanged__DelegateSignature, OnKnockdown__DelegateSignature, XPGained__DelegateSignature, UpdateDebugResourceGen__DelegateSignature, LowHealthPulse__DelegateSignature, HealthChanged__DelegateSignature
+     PlayerLeftGround__DelegateSignature, PlayerBecameGrounded__DelegateSignature, OnReadMessageClosed__DelegateSignature, ExecuteUbergraph_FS_PlayerChar, StartIntroCutscene, FadeinCrosshair
+     Intro_WakeOnBeach, Intro_PlacePlayerOnBeach, Intro_StartSequence, SkipIntroCutscene, WakeOnBeachAnim, DoWakeUpOnSpot
+     K2_OnMovementModeChanged, OnJumped, InpAxisEvt_LookUpMouse_K2Node_InputAxisEvent, InpAxisEvt_TurnMouse_K2Node_InputAxisEvent, AddRightAnalogueInput, AddMovementInputAxes
+     DebugRawRightXStickInput, DebugRawRightYStickInput, Cancel Run Hold, OnLanded, TempDisablePlayerJump, StartBecomingGrounded
+     CancelGrounded, RunTapPressed, RunHoldPressed, RunHoldReleased, UpdateSolidlygrounded, FellInDeathPit
+     BeginTeleport, DoSecretTeleport, MovePlayerToTempTeleporter, CancelTP, CleanUpTeleportProcess, TriggerPitInvincibility
+     TeleportBackFromShop, TeleportToShop, WingCrystalToLocation, FadeInQuickTPOverlay, FadeOutQuickTPOverlay, DoTeleporterWingStone
+     ExitedTeleportWingStoneUI, TeleportWingStoneTargetChosen, PlayEndOfTeleport, StartQucikTPLightFade, EndQuickTPLightFade, FadeInSecretTPOverlay
+     FadeOutSecretTPOverlay, FinishTeleport, OpenSaveTPUI, ExitSaveTPUI, TeleportToSave, DoSafeZoneResetTeleport
+     TeleportToLocation, SetTeleportedRecently, Tick Liquid Stuff, Entered Water, Exited Water, IterateWaterSlosh
+     ReadMessageClosed, EnterUIMode, ExitUIMode, OpenSaveMenu, ClosedSaveMenu, OpenShopmenu
+     ClosedShopmenu, OpenKeymenu, KeymenuClosed, HideHUD, UnhideHUD, OpenStatus
+     StartDialogue, DialogueEnded, OpenPauseMenu, TempBlockItems, PrepareForDialogue, TryAutoPause
+     DoSimpleAttackBlockDuration, ActivateHitbox, DeactivateHitbox, CancelDash, SwordBonk, UltraAttack
+     CancelCurrentAttacks, ShowQuickDashSword, HideQuickDashSwrod, EquippedGun, UnequippedGun, DaggerThrowAction
+     ConfigureNormalMeleeHitbox, SwapDagger, DoWeaponEvolution, CancelSwordBonk, UltraAttackTickLoop, StartUltraAttackHitboxTick
+     StopUltraAttackHitboxTick, HandleAdvancedAttackActivation, CancelAdvancedAttackActivation, BeginWindDash, WaitForSwap, FakeSwordBonk
+     TickAttackKey, ApplyPoison, ApplyHeavyEffect, ApplyWeakenEffect, ApplyStickyEffect, ApplyDiseaseEffect
+     CurePoison, CureHeavy, CureWeaken, CureSticky, CureDisease, CureAllNegativeEffects
+     HealForPercent, TickPoison, TryTeleportingBackToLastSave, CountUsedConsumable, ApplyPanacea, ApplyHerb
+     ApplyHealingPotion, PutWeaponsAway, TakeOutWeapons, TriggerKnockdown, ApplyMagicFire, BndEvt__FS_PlayerChar_MagicFireEffectLogic_K2Node_ComponentBoundEvent_4_MagicFireStarted__DelegateSignature
+     BndEvt__FS_PlayerChar_MagicFireEffectLogic_K2Node_ComponentBoundEvent_5_MagicFireStopped__DelegateSignature, BndEvt__FS_PlayerChar_MagicFireEffectLogic_K2Node_ComponentBoundEvent_6_MagicFireDamageTick__DelegateSignature, BndEvt__FS_PlayerChar_MagicPoisonDebuffLogic_K2Node_ComponentBoundEvent_3_Updated__DelegateSignature, ApplyMagicPoison, PanaceaCure, HealForAmount
+     TickSticky, ApplyBinding, CureBinding, RemoveAllPositiveEffects, BndEvt__FS_PlayerChar_RadiantFruitStatusEffect_K2Node_ComponentBoundEvent_5_Updated__DelegateSignature, ApplyWeaponXPOrb
+     ConfirmCrystalTp, CancelCrystalTP, ApplyWounds, CurePoisonNoFX, CureHeavyNoFX, CureWeakenNoFX
+     CureDisease_NoFX, CureBindingNoFX, CureSticky_NoFX, TriggerGrabAttack, EndGrabAttack, SlightDelayEnableInput
+     PostLoadRefreshStats, OnHealthChanged, DamagedHitFX, HideHUDNextFrame, CustomEvent, EndingWakeOnBeach
+     TeleportToSipehaArena, PostEndingWakeOnBeach, GrantFinalSword, Player_GiveXP, CancelLockInPlaceForLoad, LockInPlaceForLoad
+     PostRuneVisionUpgradeRefresh, FakeEnvBonk, BndEvt__FS_PlayerChar_EnergyChargeLogic_K2Node_ComponentBoundEvent_4_FailedConsumption__DelegateSignature, TriggerWeaponTickRefresh, Player_SkipCutscene, StartGameInitStats
+     EditorSkipInitLoadSetup, StartGameWaitForLoadingScreenToFinish, TogglePhotoMode, EnterPhotoMode, B33smentDeath, RestoreSuspend
+     Player_RecapHP, Player Update Aspect Ratio, Player_WriteStatusToSave, CheckForOverlayPause, Cache Consumable Items, SteamOverlayStatusChanged
+     LoadIntoPosition, Cache Input States, Restore Cached Input States, EnemyRegistered, Player Grant Guide, LoadWeaponClassAsync
+     PreLoadWeapons, CheckUltSound, Player Open Keymenu, Player Closed KeyMenu, PlayerReadMessage, CameraEvent
+     LowHealthHeartbeat, EndedLowHealth, EnteredLowHealth, BndEvt__FS_PlayerChar_WeaponSelection_K2Node_ComponentBoundEvent_3_PostWeaponSwap__DelegateSignature, SetPlayerDoingQuickInteraction, LoadAndAddDagger
+     ChangedDaggerEquip, GotAcidVialAnim, AddAmountTOHealth, DoLoadFadeIn, Start Game, CancelInitialFadeIn
+     BndEvt__FS_PlayerChar_WeaponSelection_K2Node_ComponentBoundEvent_2_SwappedWeapon__DelegateSignature, TickCombos, CheckForNeededPickupAnimsOnItemAcquisition, RegisterDaggerComponent, BndEvt__FS_PlayerChar_GunPowerLogic_K2Node_ComponentBoundEvent_1_FullCellsConsumed__DelegateSignature, SuperFastTeleport
+     BndEvt__FS_PlayerChar_CharacterMovement_K2Node_ComponentBoundEvent_0_CharacterStuckEvent__DelegateSignature, DeactivateBossHPbar, ActivateBossHPbar, ItemEquipChanged, Generate on Hit Resources, ShowGameOverScreen
+     DeathAnim, RefreshEquippedItemEffects, RefreshEquippedAccessory, ReceivePossessed, DoFlyingSwordGetAnim, SetSaveCheckpoint
+     ReceiveTick, ReceiveBeginPlay, OnCompleted_5547E9E94E2CFFC92396CF86896E92FB, OnBlendOut_5547E9E94E2CFFC92396CF86896E92FB, OnInterrupted_5547E9E94E2CFFC92396CF86896E92FB, OnNotifyBegin_5547E9E94E2CFFC92396CF86896E92FB
+     OnNotifyEnd_5547E9E94E2CFFC92396CF86896E92FB, OnCompleted_3B01FD28479042401871EBB16C80F2E6, OnBlendOut_3B01FD28479042401871EBB16C80F2E6, OnInterrupted_3B01FD28479042401871EBB16C80F2E6, OnNotifyBegin_3B01FD28479042401871EBB16C80F2E6, OnNotifyEnd_3B01FD28479042401871EBB16C80F2E6
+     OnCompleted_CFD32B764518AC94C62D3CA15F18832F, OnBlendOut_CFD32B764518AC94C62D3CA15F18832F, OnInterrupted_CFD32B764518AC94C62D3CA15F18832F, OnNotifyBegin_CFD32B764518AC94C62D3CA15F18832F, OnNotifyEnd_CFD32B764518AC94C62D3CA15F18832F, OnCompleted_16DC167B4920651AF81D879915A06B4A
+     OnBlendOut_16DC167B4920651AF81D879915A06B4A, OnInterrupted_16DC167B4920651AF81D879915A06B4A, OnNotifyBegin_16DC167B4920651AF81D879915A06B4A, OnNotifyEnd_16DC167B4920651AF81D879915A06B4A, InpActEvt_Jump_K2Node_InputActionEvent, InpActEvt_Jump_K2Node_InputActionEvent
+     InpActEvt_Status_K2Node_InputActionEvent, InpActEvt_Pause_K2Node_InputActionEvent, InpActEvt_Attack_K2Node_InputActionEvent, InpActEvt_Attack_K2Node_InputActionEvent, InpActEvt_NextDagger_K2Node_InputActionEvent, InpActEvt_LastDagger_K2Node_InputActionEvent
+     InpActEvt_NormalDaggerThrow_K2Node_InputActionEvent, InpActEvt_UltraAttack_K2Node_InputActionEvent, InpActEvt_NextWeapon_K2Node_InputActionEvent, InpActEvt_LastWeapon_K2Node_InputActionEvent, InpActEvt_SecondaryAttack_K2Node_InputActionEvent, InpActEvt_SecondaryAttack_K2Node_InputActionEvent
+     OnCompleted_95293251429181A7DDAAA0AE8788A50A, OnBlendOut_95293251429181A7DDAAA0AE8788A50A, OnInterrupted_95293251429181A7DDAAA0AE8788A50A, OnNotifyBegin_95293251429181A7DDAAA0AE8788A50A, OnNotifyEnd_95293251429181A7DDAAA0AE8788A50A, InpActEvt_WindDash_K2Node_InputActionEvent
+     OnCompleted_598820254B23ABCB4EFD01A2C1DA3DE3, OnBlendOut_598820254B23ABCB4EFD01A2C1DA3DE3, OnInterrupted_598820254B23ABCB4EFD01A2C1DA3DE3, OnNotifyBegin_598820254B23ABCB4EFD01A2C1DA3DE3, OnNotifyEnd_598820254B23ABCB4EFD01A2C1DA3DE3, OnCompleted_03F7C7CB46E94A61B83E91A0887EA124
+     OnBlendOut_03F7C7CB46E94A61B83E91A0887EA124, OnInterrupted_03F7C7CB46E94A61B83E91A0887EA124, OnNotifyBegin_03F7C7CB46E94A61B83E91A0887EA124, OnNotifyEnd_03F7C7CB46E94A61B83E91A0887EA124, OnCompleted_2FA246A24B2B24C383C3D79130EFE154, OnBlendOut_2FA246A24B2B24C383C3D79130EFE154
+     OnInterrupted_2FA246A24B2B24C383C3D79130EFE154, OnNotifyBegin_2FA246A24B2B24C383C3D79130EFE154, OnNotifyEnd_2FA246A24B2B24C383C3D79130EFE154, InpActEvt_EquipThrowWeapon1_K2Node_InputActionEvent, InpActEvt_EquipThrowWeapon2_K2Node_InputActionEvent, InpActEvt_EquipThrowWeapon3_K2Node_InputActionEvent
+     InpActEvt_EquipWeapon1_K2Node_InputActionEvent, InpActEvt_EquipWeapon2_K2Node_InputActionEvent, InpActEvt_EquipWeapon3_K2Node_InputActionEvent, InpActEvt_UseItem_K2Node_InputActionEvent, OnCompleted_43888E0646BE4D77FD8EDB9703D355B8, OnBlendOut_43888E0646BE4D77FD8EDB9703D355B8
+     OnInterrupted_43888E0646BE4D77FD8EDB9703D355B8, OnNotifyBegin_43888E0646BE4D77FD8EDB9703D355B8, OnNotifyEnd_43888E0646BE4D77FD8EDB9703D355B8, OnCompleted_B20D37D8411F49D3F3200E9533E7E695, OnBlendOut_B20D37D8411F49D3F3200E9533E7E695, OnInterrupted_B20D37D8411F49D3F3200E9533E7E695
+     OnNotifyBegin_B20D37D8411F49D3F3200E9533E7E695, OnNotifyEnd_B20D37D8411F49D3F3200E9533E7E695, OnCompleted_CC8502F44ECFB71A6FE3A7ACFBD296DA, OnBlendOut_CC8502F44ECFB71A6FE3A7ACFBD296DA, OnInterrupted_CC8502F44ECFB71A6FE3A7ACFBD296DA, OnNotifyBegin_CC8502F44ECFB71A6FE3A7ACFBD296DA
+     OnNotifyEnd_CC8502F44ECFB71A6FE3A7ACFBD296DA, OnCompleted_8B0C88354A18CA1F8136A9BDB6E1183F, OnBlendOut_8B0C88354A18CA1F8136A9BDB6E1183F, OnInterrupted_8B0C88354A18CA1F8136A9BDB6E1183F, OnNotifyBegin_8B0C88354A18CA1F8136A9BDB6E1183F, OnNotifyEnd_8B0C88354A18CA1F8136A9BDB6E1183F
+     InpActEvt_PhotoMode_K2Node_InputActionEvent, OnCompleted_9389B4314A401AA556B558A0E323CCB0, OnBlendOut_9389B4314A401AA556B558A0E323CCB0, OnInterrupted_9389B4314A401AA556B558A0E323CCB0, OnNotifyBegin_9389B4314A401AA556B558A0E323CCB0, OnNotifyEnd_9389B4314A401AA556B558A0E323CCB0
+     Completed_19C391584C20E145010C188D6516D6F0, OnLoaded_F484A0484937B7C6D9D023B689C20B7E, Completed_2EAA3364499E8077EB6C6FAAFF8B95A8, OnLoaded_2E4AA6BA497BE3746CCA86BC5D425250, OnCompleted_4F59CC3440887F4576B316B67166D9F8, OnBlendOut_4F59CC3440887F4576B316B67166D9F8
+     OnInterrupted_4F59CC3440887F4576B316B67166D9F8, OnNotifyBegin_4F59CC3440887F4576B316B67166D9F8, OnNotifyEnd_4F59CC3440887F4576B316B67166D9F8, OnCompleted_B63C92DB4A03EFB5750C54972BC7A9A5, OnBlendOut_B63C92DB4A03EFB5750C54972BC7A9A5, OnInterrupted_B63C92DB4A03EFB5750C54972BC7A9A5
+     OnNotifyBegin_B63C92DB4A03EFB5750C54972BC7A9A5, OnNotifyEnd_B63C92DB4A03EFB5750C54972BC7A9A5, InpActEvt_LastItem_K2Node_InputActionEvent, InpActEvt_NextItem_K2Node_InputActionEvent, InpActEvt_Interact_K2Node_InputActionEvent, InpActEvt_Interact_K2Node_InputActionEvent
+     introcrosshairfade__UpdateFunc, introcrosshairfade__FinishedFunc, QuickFadeTL__UpdateFunc, QuickFadeTL__FinishedFunc, QuickTPFakeLightFade__UpdateFunc, QuickTPFakeLightFade__FinishedFunc
+     TPSecretFadeIn__UpdateFunc, TPSecretFadeIn__FinishedFunc, TPSecretFadeOut__UpdateFunc, TPSecretFadeOut__FinishedFunc, Timeline_3__UpdateFunc, Timeline_3__FinishedFunc
+     HitFlash__UpdateFunc, HitFlash__FinishedFunc, Timeline_5__UpdateFunc, Timeline_5__FinishedFunc, Timeline_4__UpdateFunc, Timeline_4__FinishedFunc
+     Timeline_2__UpdateFunc, Timeline_2__FinishedFunc, LowHealthBlend__UpdateFunc, LowHealthBlend__FinishedFunc, Timeline_1__UpdateFunc, Timeline_1__FinishedFunc
+     Timeline_0__UpdateFunc, Timeline_0__FinishedFunc, ProcessDamageDealing, GetMaxHP, HealToFull, Kill
+     CalculateLevel, GetXPUpToLevel, AddXP, Get Defense Damage Mult, Respawn, Tick Camera
+     Get Base Damage, Get Power Meter %, Calculate And Apply Melee Damage Properties, Get Current Weapon Power Meter Duration, ClearAllWeaponCombos, SelectDaggerTypeAndDamage
+     Select Next Dagger Type, Select Previous DaggerType, UpdateSelectedDagger, GetFlyingSwordChargeCount, Refresh Selected Weapon, ApplyStatusEffectsFromDamageTick
+     Flying Sword Move Is Unlocked, TickMoveSpeed, InitalizeComponents, SetToInitialState, RefreshSelectedConsumable, SelectNextConsumable
+     RefreshChargeCounts, SelectLastConsumable, GetDashTurnRateMult, ClampControlRotationVert, GetCurrentUltraCharge, FireDagger
+     GetWingSlashAnim, Calculate Charge Multiplier, HandleHitboxTraceResult, UpdateSafeLocation, CheckPostDashGrounded, CheckPreDashGrounded
+     TeleportToTeleporterData, Do Seamless Relative Teleport, DoJumpSound, GetVerticalInputMultiplier, GetStrength, GetFloorPhysMat
+     ResetPowerMeter, EquipItemWeapon, GetLevelForStats, GetDamageForCurrentAttack, DoSpecialAttackLookClamp, Get Horizontal Input Multiplier
+     Set Input Mode to UIOnly with Mouselock Setting, UpdateFloor, AreAllConsumablesDisabled, ResolveEnemyHitLocation, PostLoadRefreshState, LoadGameAndPrepareForGameplay
+     Initialize Weapon Systems, Refresh Secret Vision Effects, CanInteract, GetNegativeEffectDurationMultiplier, CanUsePanacea, ScriptUseItem
+     AreWeaponsDisabled, ApplyPitDamage, GetPitDamage, UseFallbackCheckpoint, ApplyTeleportSkyRotation, Grant XP Via Resource Gen to Weapon
+     Grant Ultra Charge Via Resource Gen, EquipItem, UnequipItem, GetCurrentlySelectedDaggerType, GetDaggerChargeComp, AutoEquipItem
+     GetDaggerChargeCompFromItem, CalculateEquipmentDefenseMult, CheckPreChargeAttack, Restore Status from Save, WriteStatusToSave, UpdateCurrentDashMove
+     TryToUnstickCharacter, FindCheckpointWithGUID, Find Mini Teleporter with Location, CorrectDashDistance, SetUpDashParameters, ShouldUseOffhandFSDash
+     GetBestFLyingSword, Get Best FS Stats, Prepare To Fire Dagger, InventoryChanged, DoMovingPlatformCollisionHack, UpdateLightRadius
+     DoHitboxTrace, EquipFirstEquippedItem, GrantXPDirectlyToWeapon, GetAnimBP, GetAnimBP_Fast, RestoreToSavePoint
+     TeleportCrystalGoToTarget, SetUpTeleportVFX, Get Poison Resist, GetHeavyResistDurationReduction, GetWeakenResistDurationReduction, GetStickyResistDurationReduction
+     GetDiseaseResistDurationReduction, GetXPMultiplier, GetWeaponXPMultiplier, SeamlessMoveTeleporterFX, InitPickupSpline, GetDashFX
+     Check Attack Flags, HandlePitchInput, HandleYawInput, DoUltraHitbox, ConfigureUltraVFX, DoDaggerEquipChargeTimeSwap
+     TickRunning, GetDashDist, SpawnDaggerVisuals, GetHealingEffectMult, Calc Current FLying Sword Dir, Init Daggers
+     TeleportControlRotation, Teleport to Loc, SetTeleporterFakeLightParamsForTP, SetUpTPFakeLight, Cache Shop Return Location, HandleAutoEquipEdgeCase
+     Reset Dagger Charges On Equip, Handle Replacing Equipped Dagger, RefreshRuneVisionEffect, CalculateTurnRateCap, Apply Turn Rate Cap, Disable Turn Rate Cap
+     FindSavedCheckpoint, Should Do Normal Position Load, DoIntro, GetFSMoveDirection, UpdateJumpStats, LoadDaggerBLocking
+     GetWeaponScriptFromWeaponItem, CursedChargeConsumed, ToggleQuickSlotItem, RemoveItemFromQuickSlots, AddItemToQuickSlots, UseHealingItem
+     Cache Important Refs, ItemSortOrderComparator, Cap HP, Update Binding Ultra Degen, Handle Hit Vampirism, CanInteractFlags
+     Calculate And Apply Melee Damage PropertiesFromWeaponStats, GetPowerMeterSecondsToSpendOnUpcomingAttack, UpdateElevatorRumble, Set Health Points, SetUpStatusEffectComps, StatusEffectUpdated
+     UpdateAttachments, SetUpOptimizeAttachments, PostTPUpdateCamera, EnemyWasDamaged, CancelActiveCustomDash, CalculateChargeMultiplier_Impure
+     ModifyBaseStaggerDamage, TryApplyWeaponXPPotion, TryApplyRejuvPotion, ApplyRejuvenatingPotion, UpdateGuideNotifs, ReadMessage
+     FindTeleporterActorFromData, QueueTeleportLevelLoad, FindCheckpointWithLocationData, SnapToSafeLoc, Select Specified Dagger, Update Camera Aspect Ratio Options
+     RefillAllCooldowns, EnsureValidSafeZone, CanUseTeleportItem, SafeZoneProject, UpdateCaputRing, TickFallWind
+     UpdateAchievementItemTotals, TriggerMeleeHitstopBasedOnDamage, CheckCanUseHitForMelee, InitPhotoMode, LockInputForLoadingOrCutscene, UnlockInputForLoadingOrCutscene
+     UpdateWaterType, CheckWeaponEquipTicks, Grant Grimoire Ink Points Via Resource Gen, DoUltRegen, CalculatePoisonTickDamage, CalcStartupMagicPoisonDamageTotal
+     IsFinalSwordEquipped, CurDashIsJosamiSword, CheckedLaunch, TotalAchievementTreasures, BeginCutsceneWithManager, EndManagerCutscene
+     IsUseItemDisabled, TryApplyDamage, GetOptimalTargetNearRay, GetLOSCheckPos, ShouldNotBeTargetedByHoming, IsPlayerPoisoned
+     IsPlayerDiseased, IsPlayerHeavy, IsPlayerWeakened, IsPlayerBerserking, IsPlayerIron, GetPlayerDoingQuickInteraction
+     IsPlayerBindinged, IsPlayerTeleporting, GetFirstPersonCamera, GetPickupSpline, GetEquippedWeaponItems, DidRecentlyTeleport
+     IsSupposedToBeInvulnerable, IsPlayerResting, IsPlayerDashing, Player_GetSafeLocationInfo, GetActiveAttackInfo, GetInHandWeapon
+     IsInModalMenu, Is Player Grounded, GetPhotoModeData, IsPlayerRotResisting, IsInReadTextMenu
+
+-- UI/Menus/PauseMenu.uasset  (42 exports)
+     ExitGameDialogueCancel__DelegateSignature, ExitGameDialogueConfirm__DelegateSignature, ExecuteUbergraph_PauseMenu, DontSkipCutscene, SkipCutscene, BndEvt__PauseMenu_SkipCutsceneButton_K2Node_ComponentBoundEvent_14_CommonButtonBaseClicked__DelegateSignature
+     BndEvt__PauseMenu_PhotoMode_K2Node_ComponentBoundEvent_11_CommonButtonBaseClicked__DelegateSignature, BndEvt__PauseMenu_Challenges_K2Node_ComponentBoundEvent_8_CommonButtonBaseClicked__DelegateSignature, CustomEvent, OpenChallenges, ConfirmSuspendToTitle, PreConstruct
+     Construct, ConfirmSuspendToDesktop, Tick, CustomEvent, OpenGuides, BndEvt__PauseMenu_Guides_K2Node_ComponentBoundEvent_5_CommonButtonBaseClicked__DelegateSignature
+     LockOutFade, BndEvt__PauseMenu_JournalButton_K2Node_ComponentBoundEvent_4_CommonButtonBaseClicked__DelegateSignature, OpenJournal, JournalClosed, CustomEvent, BndEvt__PauseMenu_OptionsButton_1_K2Node_ComponentBoundEvent_3_CommonButtonBaseClicked__DelegateSignature
+     OpenOptions, OpenDebugMenu, BndEvt__PauseMenu_Button_0_K2Node_ComponentBoundEvent_2_OnButtonClickedEvent__DelegateSignature, BackFromOptions, BndEvt__PauseMenu_OptionsButton_K2Node_ComponentBoundEvent_10_CommonButtonBaseClicked__DelegateSignature, BndEvt__PauseMenu_ContinueButton_K2Node_ComponentBoundEvent_9_CommonButtonBaseClicked__DelegateSignature
+     ConfirmExitToMenu, ConfirmExitToDesktop, BndEvt__PauseMenu_QuitTomenuButton_K2Node_ComponentBoundEvent_8_CommonButtonBaseClicked__DelegateSignature, BndEvt__PauseMenu_QuitToDesktopButton_K2Node_ComponentBoundEvent_7_CommonButtonBaseClicked__DelegateSignature, BndEvt__OptionsMenu_ModalConfirmButton_K2Node_ComponentBoundEvent_1_CommonButtonBaseClicked__DelegateSignature, BndEvt__OptionsMenu_modalCancelButton_K2Node_ComponentBoundEvent_0_CommonButtonBaseClicked__DelegateSignature
+     OpenExitDialogue, Close, OnPreviewKeyDown, CloseModalDialogue, GetQuitMenuText, CheckDebugMenuPassword
+
+-- UI/PhotoMode/Photomode_Pawn.uasset  (45 exports)
+     ExecuteUbergraph_Photomode_Pawn, CustomEvent, RefreshHUDHidden, TakeConsoleScreenshot, ConsoleScreenshotFinished, ReceiveBeginPlay
+     MouseMove, HandleInput, ToggleHUDHidden, EnterPhotoMode, EndPhotoMode, TakeScreenshot
+     SetOptionsState, ReceiveTick, InpAxisKeyEvt_MouseWheelAxis_K2Node_InputAxisKeyEvent, InpActEvt_Gamepad_FaceButton_Right_K2Node_InputKeyEvent, InpActEvt_Pause_K2Node_InputActionEvent, InpActEvt_R_K2Node_InputKeyEvent
+     InpActEvt_Gamepad_RightThumbstick_K2Node_InputKeyEvent, InpActEvt_Gamepad_FaceButton_Top_K2Node_InputKeyEvent, InpActEvt_C_K2Node_InputKeyEvent, InpActEvt_Gamepad_RightShoulder_K2Node_InputKeyEvent, InpActEvt_Gamepad_RightShoulder_K2Node_InputKeyEvent, InpActEvt_Gamepad_LeftShoulder_K2Node_InputKeyEvent
+     InpActEvt_Gamepad_LeftShoulder_K2Node_InputKeyEvent, InpActEvt_E_K2Node_InputKeyEvent, InpActEvt_E_K2Node_InputKeyEvent, InpActEvt_Q_K2Node_InputKeyEvent, InpActEvt_Q_K2Node_InputKeyEvent, InpActEvt_F_K2Node_InputKeyEvent
+     InpActEvt_Gamepad_FaceButton_Left_K2Node_InputKeyEvent, InpActEvt_Gamepad_RightTrigger_K2Node_InputKeyEvent, InpActEvt_Gamepad_RightTrigger_K2Node_InputKeyEvent, InpActEvt_Gamepad_LeftTrigger_K2Node_InputKeyEvent, InpActEvt_Gamepad_LeftTrigger_K2Node_InputKeyEvent, InpActEvt_Gamepad_FaceButton_Bottom_K2Node_InputKeyEvent
+     InpActEvt_SpaceBar_K2Node_InputKeyEvent, AdjustZoom, UpdateCam, Photomode_Pawn_AutoGenFunc, SetUpTravelLimit, SetFilter
+     UpdateColor, Initial Cache Global Data, Deadzone

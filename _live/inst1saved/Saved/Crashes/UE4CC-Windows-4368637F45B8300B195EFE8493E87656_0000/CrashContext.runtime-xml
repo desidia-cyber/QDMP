@@ -1,0 +1,1294 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FGenericCrashContext>
+<RuntimeProperties>
+<CrashVersion>3</CrashVersion>
+<ExecutionGuid>29C83451419BF037CA4DBA8B2C85206D</ExecutionGuid>
+<CrashGUID>UE4CC-Windows-4368637F45B8300B195EFE8493E87656_0000</CrashGUID>
+<IsEnsure>false</IsEnsure>
+<IsAssert>false</IsAssert>
+<CrashType>Crash</CrashType>
+<ErrorMessage>Unhandled Exception: EXCEPTION_ACCESS_VIOLATION reading address 0x0000001200000012</ErrorMessage>
+<CrashReporterMessage></CrashReporterMessage>
+<ProcessId>24928</ProcessId>
+<SecondsSinceStart>497</SecondsSinceStart>
+<IsInternalBuild>false</IsInternalBuild>
+<IsPerforceBuild>false</IsPerforceBuild>
+<IsSourceDistribution>false</IsSourceDistribution>
+<GameName>UE4-QueensDomain</GameName>
+<ExecutableName>QueensDomain-Win64-Shipping</ExecutableName>
+<BuildConfiguration>Shipping</BuildConfiguration>
+<GameSessionID></GameSessionID>
+<Symbols>**UE4*Release-4.27-CL-0-Win64-Shipping</Symbols>
+<PlatformName>WindowsNoEditor</PlatformName>
+<PlatformNameIni>Windows</PlatformNameIni>
+<EngineMode>Game</EngineMode>
+<EngineModeEx>Unset</EngineModeEx>
+<DeploymentName></DeploymentName>
+<EngineVersion>4.27.2-0+++UE4+Release-4.27</EngineVersion>
+<CommandLine> -UserDir=G:\Freespace\Queens_Domain\_live\inst1saved -SaveToUserDir -windowed -nosplash</CommandLine>
+<LanguageLCID>0</LanguageLCID>
+<AppDefaultLocale>uk-UA</AppDefaultLocale>
+<BuildVersion>++UE4+Release-4.27-CL-0</BuildVersion>
+<IsUE4Release>true</IsUE4Release>
+<IsRequestingExit>false</IsRequestingExit>
+<UserName></UserName>
+<BaseDir>G:/Freespace/Queens_Domain/QueensDomain/QueensDomain/Binaries/Win64/</BaseDir>
+<RootDir>G:/Freespace/Queens_Domain/QueensDomain/</RootDir>
+<MachineId>1A58F92940D4292625FDEB94006ABB71</MachineId>
+<LoginId>1a58f92940d4292625fdeb94006abb71</LoginId>
+<EpicAccountId>0a2c1dbfabc94308bd0bfab9864f0d49</EpicAccountId>
+<SourceContext></SourceContext>
+<UserDescription></UserDescription>
+<UserActivityHint></UserActivityHint>
+<CrashDumpMode>0</CrashDumpMode>
+<GameStateName></GameStateName>
+<Misc.NumberOfCores>8</Misc.NumberOfCores>
+<Misc.NumberOfCoresIncludingHyperthreads>16</Misc.NumberOfCoresIncludingHyperthreads>
+<Misc.Is64bitOperatingSystem>1</Misc.Is64bitOperatingSystem>
+<Misc.CPUVendor>AuthenticAMD</Misc.CPUVendor>
+<Misc.CPUBrand>AMD Ryzen 7 5800H with Radeon Graphics         </Misc.CPUBrand>
+<Misc.PrimaryGPUBrand>NVIDIA GeForce RTX 3070 Laptop GPU</Misc.PrimaryGPUBrand>
+<Misc.OSVersionMajor>Windows 10 (Release 2009)</Misc.OSVersionMajor>
+<Misc.OSVersionMinor></Misc.OSVersionMinor>
+<MemoryStats.TotalPhysical>68564348928</MemoryStats.TotalPhysical>
+<MemoryStats.TotalVirtual>140737488224256</MemoryStats.TotalVirtual>
+<MemoryStats.PageSize>4096</MemoryStats.PageSize>
+<MemoryStats.TotalPhysicalGB>64</MemoryStats.TotalPhysicalGB>
+<MemoryStats.AvailablePhysical>0</MemoryStats.AvailablePhysical>
+<MemoryStats.AvailableVirtual>0</MemoryStats.AvailableVirtual>
+<MemoryStats.UsedPhysical>0</MemoryStats.UsedPhysical>
+<MemoryStats.PeakUsedPhysical>0</MemoryStats.PeakUsedPhysical>
+<MemoryStats.UsedVirtual>0</MemoryStats.UsedVirtual>
+<MemoryStats.PeakUsedVirtual>0</MemoryStats.PeakUsedVirtual>
+<MemoryStats.bIsOOM>0</MemoryStats.bIsOOM>
+<MemoryStats.OOMAllocationSize>0</MemoryStats.OOMAllocationSize>
+<MemoryStats.OOMAllocationAlignment>0</MemoryStats.OOMAllocationAlignment>
+<NumMinidumpFramesToIgnore>0</NumMinidumpFramesToIgnore>
+<CallStack></CallStack>
+<PCallStack>
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 11a2dcc         
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 2649a3d         
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 114ab90         
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 1145d9f         
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 10662b3         
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 2cd5299         
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 29afbcd         
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 28c506d         
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 775b80          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 77c49c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 77c51a          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 77d7b4          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 786534          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 36b003e         
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</PCallStack>
+<PCallStackHash>A17E381448073384113039E6E9A3AB961ABED1C3</PCallStackHash>
+<Threads><Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fb69f0          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 36b88ce         
+VCRUNTIME140                 0x00007ffcb76f0000 + 1a9c0           
+ntdll                        0x00007ffcd9af0000 + a28bf           
+ntdll                        0x00007ffcd9af0000 + 52554           
+ntdll                        0x00007ffcd9af0000 + a13ce           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 11a2dcc         
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 2649a3d         
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 114ab90         
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 1145d9f         
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 10662b3         
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 2cd5299         
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 29afbcd         
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 28c506d         
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 775b80          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 77c49c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 77c51a          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 77d7b4          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 786534          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 36b003e         
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>true</IsCrashed>
+<Registers></Registers>
+<ThreadID>49244</ThreadID>
+<ThreadName>GameThread</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>19436</ThreadID>
+<ThreadName>TaskGraphThreadNP 0</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>49108</ThreadID>
+<ThreadName>TaskGraphThreadNP 1</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>49324</ThreadID>
+<ThreadName>TaskGraphThreadNP 2</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>46240</ThreadID>
+<ThreadName>TaskGraphThreadNP 3</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>17252</ThreadID>
+<ThreadName>TaskGraphThreadNP 4</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>44964</ThreadID>
+<ThreadName>TaskGraphThreadNP 5</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>30656</ThreadID>
+<ThreadName>TaskGraphThreadNP 6</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>15468</ThreadID>
+<ThreadName>TaskGraphThreadNP 7</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>27392</ThreadID>
+<ThreadName>TaskGraphThreadNP 8</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>50628</ThreadID>
+<ThreadName>TaskGraphThreadNP 9</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>50320</ThreadID>
+<ThreadName>TaskGraphThreadNP 10</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>50808</ThreadID>
+<ThreadName>TaskGraphThreadNP 11</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>47372</ThreadID>
+<ThreadName>TaskGraphThreadNP 12</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>48744</ThreadID>
+<ThreadName>TaskGraphThreadNP 13</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>51752</ThreadID>
+<ThreadName>TaskGraphThreadHP 14</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>51864</ThreadID>
+<ThreadName>TaskGraphThreadHP 15</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>22944</ThreadID>
+<ThreadName>TaskGraphThreadHP 16</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>42860</ThreadID>
+<ThreadName>TaskGraphThreadHP 17</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>8240</ThreadID>
+<ThreadName>TaskGraphThreadHP 18</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>49672</ThreadID>
+<ThreadName>TaskGraphThreadHP 19</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>51224</ThreadID>
+<ThreadName>TaskGraphThreadHP 20</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>50396</ThreadID>
+<ThreadName>TaskGraphThreadHP 21</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>49656</ThreadID>
+<ThreadName>TaskGraphThreadHP 22</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>44000</ThreadID>
+<ThreadName>TaskGraphThreadHP 23</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>20048</ThreadID>
+<ThreadName>TaskGraphThreadHP 24</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>47432</ThreadID>
+<ThreadName>TaskGraphThreadHP 25</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>22444</ThreadID>
+<ThreadName>TaskGraphThreadHP 26</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>51808</ThreadID>
+<ThreadName>TaskGraphThreadHP 27</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>44408</ThreadID>
+<ThreadName>TaskGraphThreadBP 28</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>47172</ThreadID>
+<ThreadName>TaskGraphThreadBP 29</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>12384</ThreadID>
+<ThreadName>TaskGraphThreadBP 30</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>39996</ThreadID>
+<ThreadName>TaskGraphThreadBP 31</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>28584</ThreadID>
+<ThreadName>TaskGraphThreadBP 32</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>37192</ThreadID>
+<ThreadName>TaskGraphThreadBP 33</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>40556</ThreadID>
+<ThreadName>TaskGraphThreadBP 34</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>27168</ThreadID>
+<ThreadName>TaskGraphThreadBP 35</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>51192</ThreadID>
+<ThreadName>TaskGraphThreadBP 36</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>27756</ThreadID>
+<ThreadName>TaskGraphThreadBP 37</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>40836</ThreadID>
+<ThreadName>TaskGraphThreadBP 38</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>51440</ThreadID>
+<ThreadName>TaskGraphThreadBP 39</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>38560</ThreadID>
+<ThreadName>TaskGraphThreadBP 40</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e72981          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e74c0c          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>50504</ThreadID>
+<ThreadName>TaskGraphThreadBP 41</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + ec121f          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>46816</ThreadID>
+<ThreadName>PoolThread 0</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + ec121f          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>50288</ThreadID>
+<ThreadName>PoolThread 1</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + ec121f          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>41972</ThreadID>
+<ThreadName>PoolThread 2</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + ec121f          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>23964</ThreadID>
+<ThreadName>PoolThread 3</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + ec121f          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>48480</ThreadID>
+<ThreadName>PoolThread 4</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + ec121f          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>23052</ThreadID>
+<ThreadName>PoolThread 5</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + ec121f          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>3888</ThreadID>
+<ThreadName>PoolThread 6</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + ec121f          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>49860</ThreadID>
+<ThreadName>PoolThread 7</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + ec121f          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>34828</ThreadID>
+<ThreadName>PoolThread 8</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + ec121f          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>37428</ThreadID>
+<ThreadName>PoolThread 9</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + ec121f          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>32512</ThreadID>
+<ThreadName>PoolThread 10</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + ec121f          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>39616</ThreadID>
+<ThreadName>PoolThread 11</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + ec121f          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>40928</ThreadID>
+<ThreadName>PoolThread 12</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + ec121f          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>41772</ThreadID>
+<ThreadName>PoolThread 13</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + ec121f          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>7704</ThreadID>
+<ThreadName>PoolThread 14</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + ec121f          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>41268</ThreadID>
+<ThreadName>PoolThread 15</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9db74           
+KERNELBASE                   0x00007ffcd72b0000 + 4d64e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 1f7c0f5         
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>51568</ThreadID>
+<ThreadName>HttpManagerThread</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + b48226          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>49696</ThreadID>
+<ThreadName>OnlineAsyncTaskThreadNull DefaultInstance(1)</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9db74           
+KERNELBASE                   0x00007ffcd72b0000 + 4d64e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc918a          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 25cd8f4         
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>47020</ThreadID>
+<ThreadName>FMediaTicker</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + ec121f          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>37944</ThreadID>
+<ThreadName>PoolThread 16</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + ec121f          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>9124</ThreadID>
+<ThreadName>PoolThread 17</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + ec121f          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>48448</ThreadID>
+<ThreadName>PoolThread 18</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + ec121f          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>7648</ThreadID>
+<ThreadName>PoolThread 19</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e7283b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 213adf2         
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 213beb3         
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>37784</ThreadID>
+<ThreadName>RenderThread 1</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9db74           
+KERNELBASE                   0x00007ffcd72b0000 + 4d64e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc918a          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 213bfd7         
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>42700</ThreadID>
+<ThreadName>RTHeartBeat 1</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + ec121f          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>31440</ThreadID>
+<ThreadName>PoolThread 20</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + ec121f          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>46072</ThreadID>
+<ThreadName>PoolThread 21</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + ec121f          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>28176</ThreadID>
+<ThreadName>PoolThread 22</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + ec121f          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>36368</ThreadID>
+<ThreadName>PoolThread 23</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + ec121f          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>49332</ThreadID>
+<ThreadName>PoolThread 24</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + ec121f          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>40532</ThreadID>
+<ThreadName>PoolThread 25</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + ec121f          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>48544</ThreadID>
+<ThreadName>PoolThread 26</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + ec121f          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>22184</ThreadID>
+<ThreadName>PoolThread 27</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9db74           
+KERNELBASE                   0x00007ffcd72b0000 + 4d64e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc918a          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 2cee091         
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>37632</ThreadID>
+<ThreadName>ScreenSaverInhibitor</ThreadName>
+</Thread>
+<Thread><CallStack>VCRUNTIME140                 0x00007ffcb76f0000 + 1dd46           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 24bb66e         
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 9f0335          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 9eef00          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 9edd5b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 2c576fe         
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 24e76a3         
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 24f8775         
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 24f8139         
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 24f6b67         
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 24c821b         
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 24c8978         
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>31424</ThreadID>
+<ThreadName>AudioMixerRenderThread(1)</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + e7283b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 273ff10         
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>39756</ThreadID>
+<ThreadName>AudioThread</ThreadName>
+</Thread>
+<Thread><CallStack>ntdll                        0x00007ffcd9af0000 + 9d574           
+KERNELBASE                   0x00007ffcd72b0000 + 28a9e           
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fca06b          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + 11438a2         
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc8427          
+QueensDomain-Win64-Shipping  0x00007ff75d670000 + fc2681          
+KERNEL32                     0x00007ffcd99e0000 + 17374           
+ntdll                        0x00007ffcd9af0000 + 4cc91           
+</CallStack>
+<IsCrashed>false</IsCrashed>
+<Registers></Registers>
+<ThreadID>48592</ThreadID>
+<ThreadName>FAsyncPurge</ThreadName>
+</Thread>
+</Threads>
+</RuntimeProperties>
+<PlatformProperties>
+<PlatformIsRunningWindows>1</PlatformIsRunningWindows>
+<IsRunningOnBattery>false</IsRunningOnBattery>
+<PlatformCallbackResult>0</PlatformCallbackResult>
+</PlatformProperties>
+<EngineData>
+<RHI.IsGPUOverclocked>false</RHI.IsGPUOverclocked>
+<RHI.RHIName>D3D11</RHI.RHIName>
+<RHI.AdapterName>NVIDIA GeForce RTX 3070 Laptop GPU</RHI.AdapterName>
+<RHI.UserDriverVersion>596.21</RHI.UserDriverVersion>
+<RHI.InternalDriverVersion>32.0.15.9621</RHI.InternalDriverVersion>
+<RHI.DriverDate>4-13-2026</RHI.DriverDate>
+<RHI.FeatureLevel>SM5</RHI.FeatureLevel>
+<DeviceProfile.Name>WindowsNoEditor</DeviceProfile.Name>
+</EngineData>
+<GameData>
+</GameData>
+</FGenericCrashContext>

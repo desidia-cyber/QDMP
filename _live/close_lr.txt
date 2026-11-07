@@ -1,0 +1,378 @@
+﻿ATTACH 47396
+READY [{"ready": true, "base": "0x7ff75d670000", "manager": "0x1a8388c5100"}]
+>>> tpplayer -48756 60432 -33300
+{
+ "ok": true,
+ "v": {
+  "after": {
+   "x": -48756,
+   "y": 60432,
+   "z": -33300
+  }
+ }
+}
+>>> sleep 4
+... slept 4
+>>> actors LargeRobot
+[
+ {
+  "cls": "FlyingRobot_Rusted_Add_Spawner_C",
+  "name": "LargeRobotAddSpawner1",
+  "addr": "0x1a8eac012c0",
+  "loc": {
+   "x": -49541.3359375,
+   "y": 56981.484375,
+   "z": -30345.263671875
+  }
+ },
+ {
+  "cls": "FlyingRobot_Rusted_Add_Spawner_C",
+  "name": "LargeRobotAddSpawner2",
+  "addr": "0x1a8eac00e30",
+  "loc": {
+   "x": -49541.3359375,
+   "y": 56981.484375,
+   "z": -30345.263671875
+  }
+ },
+ {
+  "cls": "FlyingRobot_Rusted_Add_Spawner_C",
+  "name": "LargeRobotAddSpawner3",
+  "addr": "0x1a8eac009a0",
+  "loc": {
+   "x": -49541.3359375,
+   "y": 60672.0703125,
+   "z": -30345.263671875
+  }
+ },
+ {
+  "cls": "LargeRobot_Aut_TrapDecoy_C",
+  "name": "LargeRobot_Aut_TrapDecoy2",
+  "addr": "0x1a8eb638580",
+  "loc": {
+   "x": -49275.59765625,
+   "y": 72486.0390625,
+   "z": -35132.2734375
+  }
+ },
+ {
+  "cls": "LargeRobot_Aut_TrapDecoy_C",
+  "name": "LargeRobot_Aut_TrapDecoy3",
+  "addr": "0x1a8eb638900",
+  "loc": {
+   "x": -51773.078125,
+   "y": 72898.59375,
+   "z": -33952.79296875
+  }
+ },
+ {
+  "cls": "LargeRobot_Aut_TrapDecoy_C",
+  "name": "LargeRobot_Aut_TrapDecoy4",
+  "addr": "0x1a84a33a880",
+  "loc": {
+   "x": -46737.265625,
+   "y": 72239.4765625,
+   "z": -35093.28125
+  }
+ },
+ {
+  "cls": "LargeRobot_Aut_TrapDecoy_C",
+  "name": "LargeRobot_Aut_TrapDecoy5",
+  "addr": "0x1a8d3465800",
+  "loc": {
+   "x": -48413.28515625,
+   "y": 72030.6328125,
+   "z": -35403.82421875
+  }
+ },
+ {
+  "cls": "LargeRobot_Aut_TrapDecoy_C",
+  "name": "LargeRobot_Aut_TrapDecoy6",
+  "addr": "0x1a8eb638200",
+  "loc": {
+   "x": -47638.4140625,
+   "y": 72716.671875,
+   "z": -35403.82421875
+  }
+ },
+ {
+  "cls": "LargeRobot_Aut_TrapDecoy_C",
+  "name": "LargeRobot_Aut_TrapDecoy7",
+  "addr": "0x1a8eb637e80",
+  "loc": {
+   "x": -49102.70703125,
+   "y": 74609.8046875,
+   "z": -34971.2109375
+  }
+ },
+ {
+  "cls": "LargeRobot_Aut_TrapDecoy_C",
+  "name": "LargeRobot_Aut_TrapDecoy8",
+  "addr": "0x1a8eb637b00",
+  "loc": {
+   "x": -51896.76953125,
+   "y": 60240.34765625,
+   "z": -32010.88671875
+  }
+ },
+ {
+  "cls": "LargeRobot_Aut_TrapDecoy_C",
+  "name": "LargeRobot_Aut_TrapDecoy",
+  "addr": "0x1a8eb637780",
+  "loc": {
+   "x": -45899.62109375,
+   "y": 70934.1796875,
+   "z": -35292.0859375
+  }
+ },
+ {
+  "cls": "LargeRobot_Rusted_Spawner_C",
+  "name": "LargeRobot_Rusted_Spawner",
+  "addr": "0x1a8eb32cdd0",
+  "loc": {
+   "x": -48756.7890625,
+   "y": 60032.48828125,
+   "z": -33470.14453125
+  }
+ },
+ {
+  "cls": "LargeRobot_Base_Spawner_C",
+  "name": "LargeRobot_Base_Spawner2",
+  "addr": "0x1a875602990",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_Base_Spawner_C",
+  "name": "LargeRobot_Base_Spawner3",
+  "addr": "0x1a875602500",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_Base_Spawner_C",
+  "name": "LargeRobot_Base_Spawner4",
+  "addr": "0x1a875602070",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_Base_Spawner_C",
+  "name": "LargeRobot_Base_Spawner5",
+  "addr": "0x1a875601be0",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_Base_Spawner_C",
+  "name": "LargeRobot_Base_Spawner6",
+  "addr": "0x1a875601750",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_Base_Spawner_C",
+  "name": "LargeRobot_Base_Spawner",
+  "addr": "0x1a8756012c0",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_CA_00_TrapDecoy_C",
+  "name": "LargeRobot_CA_00_TrapDecoy10",
+  "addr": "0x1a8754f5b80",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_CA_00_TrapDecoy_C",
+  "name": "LargeRobot_CA_00_TrapDecoy11",
+  "addr": "0x1a8754f5800",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_CA_00_TrapDecoy_C",
+  "name": "LargeRobot_CA_00_TrapDecoy12",
+  "addr": "0x1a8754f5480",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_CA_00_TrapDecoy_C",
+  "name": "LargeRobot_CA_00_TrapDecoy13",
+  "addr": "0x1a8754f5100",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_CA_00_TrapDecoy_C",
+  "name": "LargeRobot_CA_00_TrapDecoy14",
+  "addr": "0x1a8754f4d80",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_CA_00_TrapDecoy_C",
+  "name": "LargeRobot_CA_00_TrapDecoy15",
+  "addr": "0x1a8754f4a00",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_CA_00_TrapDecoy_C",
+  "name": "LargeRobot_CA_00_TrapDecoy16",
+  "addr": "0x1a8754f4680",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_CA_00_TrapDecoy_C",
+  "name": "LargeRobot_CA_00_TrapDecoy17",
+  "addr": "0x1a8754f4300",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_CA_00_TrapDecoy_C",
+  "name": "LargeRobot_CA_00_TrapDecoy2",
+  "addr": "0x1a8754f3f80",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_CA_00_TrapDecoy_C",
+  "name": "LargeRobot_CA_00_TrapDecoy3",
+  "addr": "0x1a8754f3c00",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_CA_00_TrapDecoy_C",
+  "name": "LargeRobot_CA_00_TrapDecoy4",
+  "addr": "0x1a8754f3880",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_CA_00_TrapDecoy_C",
+  "name": "LargeRobot_CA_00_TrapDecoy5",
+  "addr": "0x1a8754f3500",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_CA_00_TrapDecoy_C",
+  "name": "LargeRobot_CA_00_TrapDecoy6",
+  "addr": "0x1a8754f3180",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_CA_00_TrapDecoy_C",
+  "name": "LargeRobot_CA_00_TrapDecoy7",
+  "addr": "0x1a8754f2e00",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_CA_00_TrapDecoy_C",
+  "name": "LargeRobot_CA_00_TrapDecoy8",
+  "addr": "0x1a8754f2a80",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_CA_00_TrapDecoy_C",
+  "name": "LargeRobot_CA_00_TrapDecoy9",
+  "addr": "0x1a8754f2700",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_CA_00_TrapDecoy_C",
+  "name": "LargeRobot_CA_00_TrapDecoy",
+  "addr": "0x1a8754f2380",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_Miniboss_Spawner_C",
+  "name": "LargeRobot_Miniboss_Spawner",
+  "addr": "0x1a875600e30",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ }
+]

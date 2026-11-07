@@ -1,0 +1,3048 @@
+﻿ATTACH 47396
+READY [{"ready": true, "base": "0x7ff75d670000", "manager": "0x1a8388c5100"}]
+>>> tpplayer -48756 60132 -33370
+{
+ "ok": true,
+ "v": {
+  "after": {
+   "x": -48756,
+   "y": 60132,
+   "z": -33370
+  }
+ }
+}
+>>> sleep 6
+... slept 6
+>>> actors Robot
+[
+ {
+  "cls": "Boner_TrapDecoy_C",
+  "name": "FlyingRobot_Decoy",
+  "addr": "0x1a8d346d600",
+  "loc": {
+   "x": -35637.38671875,
+   "y": 697.239501953125,
+   "z": -38825.5703125
+  }
+ },
+ {
+  "cls": "Boner_TrapDecoy_C",
+  "name": "FlyingRobot_Decoy3",
+  "addr": "0x1a8d3959700",
+  "loc": {
+   "x": -46785.81640625,
+   "y": 70165.5859375,
+   "z": -35356.23828125
+  }
+ },
+ {
+  "cls": "Boner_TrapDecoy_C",
+  "name": "FlyingRobot_Decoy",
+  "addr": "0x1a8d3959e00",
+  "loc": {
+   "x": -35018.0234375,
+   "y": 780.9227294921875,
+   "z": -38825.5703125
+  }
+ },
+ {
+  "cls": "Boner_TrapDecoy_C",
+  "name": "FlyingRobot_Decoy",
+  "addr": "0x1a8d3be9000",
+  "loc": {
+   "x": -36426.85546875,
+   "y": 998.529052734375,
+   "z": -38825.5703125
+  }
+ },
+ {
+  "cls": "DrillRobot_Aut_TrapDecoy_C",
+  "name": "DrillRobot_Aut_TrapDecoy",
+  "addr": "0x1a8da69d980",
+  "loc": {
+   "x": -45851.67578125,
+   "y": 70007.9921875,
+   "z": -35403.82421875
+  }
+ },
+ {
+  "cls": "DrillRobot_Aut_TrapDecoy_C",
+  "name": "DrillRobot_Aut_TrapDecoy10",
+  "addr": "0x1a8da69d600",
+  "loc": {
+   "x": -51950.02734375,
+   "y": 59258.2265625,
+   "z": -31783.404296875
+  }
+ },
+ {
+  "cls": "DrillRobot_Aut_TrapDecoy_C",
+  "name": "DrillRobot_Aut_TrapDecoy2",
+  "addr": "0x1a8da69d280",
+  "loc": {
+   "x": -70584.625,
+   "y": 20853.84765625,
+   "z": -32759.171875
+  }
+ },
+ {
+  "cls": "DrillRobot_Aut_TrapDecoy_C",
+  "name": "DrillRobot_Aut_TrapDecoy3",
+  "addr": "0x1a8da69cf00",
+  "loc": {
+   "x": -71073.8828125,
+   "y": 19330.64453125,
+   "z": -32747.125
+  }
+ },
+ {
+  "cls": "DrillRobot_Aut_TrapDecoy_C",
+  "name": "DrillRobot_Aut_TrapDecoy4",
+  "addr": "0x1a8da69cb80",
+  "loc": {
+   "x": -70463.7265625,
+   "y": 21199.658203125,
+   "z": -32773.41796875
+  }
+ },
+ {
+  "cls": "DrillRobot_Aut_TrapDecoy_C",
+  "name": "DrillRobot_Aut_TrapDecoy8",
+  "addr": "0x1a8da69c800",
+  "loc": {
+   "x": -44565.046875,
+   "y": 74713.578125,
+   "z": -36102.34375
+  }
+ },
+ {
+  "cls": "DrillRobot_Aut_TrapDecoy_C",
+  "name": "DrillRobot_Aut_TrapDecoy9",
+  "addr": "0x1a8da69c480",
+  "loc": {
+   "x": -50437.91796875,
+   "y": 71652.40625,
+   "z": -35403.82421875
+  }
+ },
+ {
+  "cls": "DrillRobot_Rusted_Spawner_C",
+  "name": "DrillRobot_Rusted_Spawner10",
+  "addr": "0x1a8d780fb70",
+  "loc": {
+   "x": -20329.658203125,
+   "y": 16885.6484375,
+   "z": -33519.2890625
+  }
+ },
+ {
+  "cls": "DrillRobot_Rusted_Spawner_C",
+  "name": "DrillRobot_Rusted_Spawner11",
+  "addr": "0x1a8d780f6e0",
+  "loc": {
+   "x": -23634.748046875,
+   "y": 12858.6962890625,
+   "z": -32382.095703125
+  }
+ },
+ {
+  "cls": "DrillRobot_Rusted_Spawner_C",
+  "name": "DrillRobot_Rusted_Spawner12",
+  "addr": "0x1a8d780f250",
+  "loc": {
+   "x": -48118.8515625,
+   "y": 71703.9453125,
+   "z": -35403.82421875
+  }
+ },
+ {
+  "cls": "DrillRobot_Rusted_Spawner_C",
+  "name": "DrillRobot_Rusted_Spawner13",
+  "addr": "0x1a8d780edc0",
+  "loc": {
+   "x": -70253.4296875,
+   "y": 19884.236328125,
+   "z": -32744.212890625
+  }
+ },
+ {
+  "cls": "DrillRobot_Rusted_Spawner_C",
+  "name": "DrillRobot_Rusted_Spawner14",
+  "addr": "0x1a8d780e930",
+  "loc": {
+   "x": -52331.375,
+   "y": 57648.56640625,
+   "z": -42787.88671875
+  }
+ },
+ {
+  "cls": "DrillRobot_Rusted_Spawner_C",
+  "name": "DrillRobot_Rusted_Spawner15",
+  "addr": "0x1a8d780e4a0",
+  "loc": {
+   "x": -52337.63671875,
+   "y": 57317.20703125,
+   "z": -42787.88671875
+  }
+ },
+ {
+  "cls": "DrillRobot_Rusted_Spawner_C",
+  "name": "DrillRobot_Rusted_Spawner16",
+  "addr": "0x1a8d780e010",
+  "loc": {
+   "x": -51322.2265625,
+   "y": 57535.46875,
+   "z": -42787.88671875
+  }
+ },
+ {
+  "cls": "DrillRobot_Rusted_Spawner_C",
+  "name": "DrillRobot_Rusted_Spawner17",
+  "addr": "0x1a8d780db80",
+  "loc": {
+   "x": -51103.328125,
+   "y": 56972.4140625,
+   "z": -42787.88671875
+  }
+ },
+ {
+  "cls": "DrillRobot_Rusted_Spawner_C",
+  "name": "DrillRobot_Rusted_Spawner18",
+  "addr": "0x1a8d780d6f0",
+  "loc": {
+   "x": -40620.48046875,
+   "y": 20970.529296875,
+   "z": -36723.58203125
+  }
+ },
+ {
+  "cls": "DrillRobot_Rusted_Spawner_C",
+  "name": "DrillRobot_Rusted_Spawner19",
+  "addr": "0x1a8d780d260",
+  "loc": {
+   "x": -44360.96484375,
+   "y": 74336.8203125,
+   "z": -36146.9140625
+  }
+ },
+ {
+  "cls": "DrillRobot_Rusted_Spawner_C",
+  "name": "DrillRobot_Rusted_Spawner2",
+  "addr": "0x1a8d780cdd0",
+  "loc": {
+   "x": -32646.0546875,
+   "y": 925.836181640625,
+   "z": -38818.7109375
+  }
+ },
+ {
+  "cls": "DrillRobot_Rusted_Spawner_C",
+  "name": "DrillRobot_Rusted_Spawner20",
+  "addr": "0x1a8d780c940",
+  "loc": {
+   "x": -47162.20703125,
+   "y": 73594.1796875,
+   "z": -35453.90234375
+  }
+ },
+ {
+  "cls": "DrillRobot_Rusted_Spawner_C",
+  "name": "DrillRobot_Rusted_Spawner21",
+  "addr": "0x1a8d780c4b0",
+  "loc": {
+   "x": -51015.58203125,
+   "y": 73860.6953125,
+   "z": -34237.078125
+  }
+ },
+ {
+  "cls": "DrillRobot_Rusted_Spawner_C",
+  "name": "DrillRobot_Rusted_Spawner22",
+  "addr": "0x1a8d780c020",
+  "loc": {
+   "x": -52513.08984375,
+   "y": 61069.484375,
+   "z": -31960.689453125
+  }
+ },
+ {
+  "cls": "DrillRobot_Rusted_Spawner_C",
+  "name": "DrillRobot_Rusted_Spawner23",
+  "addr": "0x1a8d780bb90",
+  "loc": {
+   "x": -50700.8984375,
+   "y": 11476.5380859375,
+   "z": -39551.3046875
+  }
+ },
+ {
+  "cls": "DrillRobot_Rusted_Spawner_C",
+  "name": "DrillRobot_Rusted_Spawner24",
+  "addr": "0x1a8d780b700",
+  "loc": {
+   "x": -32001.39453125,
+   "y": 3282.92724609375,
+   "z": -33376.078125
+  }
+ },
+ {
+  "cls": "DrillRobot_Rusted_Spawner_C",
+  "name": "DrillRobot_Rusted_Spawner25",
+  "addr": "0x1a8d780b270",
+  "loc": {
+   "x": -69942.65625,
+   "y": 15522.0673828125,
+   "z": -33446.546875
+  }
+ },
+ {
+  "cls": "DrillRobot_Rusted_Spawner_C",
+  "name": "DrillRobot_Rusted_Spawner26",
+  "addr": "0x1a8d780ade0",
+  "loc": {
+   "x": -77059.3828125,
+   "y": 14596.2470703125,
+   "z": -30772.95703125
+  }
+ },
+ {
+  "cls": "DrillRobot_Rusted_Spawner_C",
+  "name": "DrillRobot_Rusted_Spawner27",
+  "addr": "0x1a8d780a950",
+  "loc": {
+   "x": -74238.546875,
+   "y": 15987.34375,
+   "z": -33470.14453125
+  }
+ },
+ {
+  "cls": "DrillRobot_Rusted_Spawner_C",
+  "name": "DrillRobot_Rusted_Spawner3",
+  "addr": "0x1a8d780a4c0",
+  "loc": {
+   "x": -25188.416015625,
+   "y": 17144.37109375,
+   "z": -26857.91015625
+  }
+ },
+ {
+  "cls": "DrillRobot_Rusted_Spawner_C",
+  "name": "DrillRobot_Rusted_Spawner4",
+  "addr": "0x1a8d780a030",
+  "loc": {
+   "x": -24626.06640625,
+   "y": 15837.3798828125,
+   "z": -26857.91015625
+  }
+ },
+ {
+  "cls": "DrillRobot_Rusted_Spawner_C",
+  "name": "DrillRobot_Rusted_Spawner5",
+  "addr": "0x1a8d7809ba0",
+  "loc": {
+   "x": -49910.86328125,
+   "y": 49.76153564453125,
+   "z": -39569.37109375
+  }
+ },
+ {
+  "cls": "DrillRobot_Rusted_Spawner_C",
+  "name": "DrillRobot_Rusted_Spawner6",
+  "addr": "0x1a8d7809710",
+  "loc": {
+   "x": -43836.09375,
+   "y": -5486.65478515625,
+   "z": -39003.17578125
+  }
+ },
+ {
+  "cls": "DrillRobot_Rusted_Spawner_C",
+  "name": "DrillRobot_Rusted_Spawner7",
+  "addr": "0x1a8de8d9280",
+  "loc": {
+   "x": -26378.564453125,
+   "y": 13345.4375,
+   "z": -33435.05859375
+  }
+ },
+ {
+  "cls": "DrillRobot_Rusted_Spawner_C",
+  "name": "DrillRobot_Rusted_Spawner8",
+  "addr": "0x1a8de8d8df0",
+  "loc": {
+   "x": -25915.03515625,
+   "y": 18016.71875,
+   "z": -33470.140625
+  }
+ },
+ {
+  "cls": "DrillRobot_Rusted_Spawner_C",
+  "name": "DrillRobot_Rusted_Spawner9",
+  "addr": "0x1a8de8d8960",
+  "loc": {
+   "x": -23982.498046875,
+   "y": 14902.361328125,
+   "z": -33470.14453125
+  }
+ },
+ {
+  "cls": "DrillRobot_Rusted_Spawner_C",
+  "name": "DrillRobot_Rusted_Spawner",
+  "addr": "0x1a8de8d84d0",
+  "loc": {
+   "x": -32477.201171875,
+   "y": 1074.0260009765625,
+   "z": -38818.7109375
+  }
+ },
+ {
+  "cls": "FlyingRobot_Aut_TrapDecoy_C",
+  "name": "FlyingRobot_Aut_TrapDecoy2",
+  "addr": "0x1a8d3a6c100",
+  "loc": {
+   "x": -44222.640625,
+   "y": 74635.2890625,
+   "z": -36146.9140625
+  }
+ },
+ {
+  "cls": "FlyingRobot_Aut_TrapDecoy_C",
+  "name": "FlyingRobot_Aut_TrapDecoy3",
+  "addr": "0x1a8d3430b00",
+  "loc": {
+   "x": -50675.62890625,
+   "y": 71126.734375,
+   "z": -35403.82421875
+  }
+ },
+ {
+  "cls": "FlyingRobot_Aut_TrapDecoy_C",
+  "name": "FlyingRobot_Aut_TrapDecoy4",
+  "addr": "0x1a8d3362700",
+  "loc": {
+   "x": -50882.375,
+   "y": 70466.34375,
+   "z": -35403.82421875
+  }
+ },
+ {
+  "cls": "FlyingRobot_Aut_TrapDecoy_C",
+  "name": "FlyingRobot_Aut_TrapDecoy",
+  "addr": "0x1a8d3432000",
+  "loc": {
+   "x": -44876.62109375,
+   "y": 74631.4609375,
+   "z": -36018.08984375
+  }
+ },
+ {
+  "cls": "FlyingRobot_Rusted_Add_Spawner_C",
+  "name": "LargeRobotAddSpawner1",
+  "addr": "0x1a8eac012c0",
+  "loc": {
+   "x": -49541.3359375,
+   "y": 56981.484375,
+   "z": -30345.263671875
+  }
+ },
+ {
+  "cls": "FlyingRobot_Rusted_Add_Spawner_C",
+  "name": "LargeRobotAddSpawner2",
+  "addr": "0x1a8eac00e30",
+  "loc": {
+   "x": -49541.3359375,
+   "y": 56981.484375,
+   "z": -30345.263671875
+  }
+ },
+ {
+  "cls": "FlyingRobot_Rusted_Add_Spawner_C",
+  "name": "LargeRobotAddSpawner3",
+  "addr": "0x1a8eac009a0",
+  "loc": {
+   "x": -49541.3359375,
+   "y": 60672.0703125,
+   "z": -30345.263671875
+  }
+ },
+ {
+  "cls": "FlyingRobot_Rusted_Spawner_C",
+  "name": "FlyingRobot_Rusted_Spawner10",
+  "addr": "0x1a8eac00510",
+  "loc": {
+   "x": -50155.2265625,
+   "y": 70807.9453125,
+   "z": -35397.8359375
+  }
+ },
+ {
+  "cls": "FlyingRobot_Rusted_Spawner_C",
+  "name": "FlyingRobot_Rusted_Spawner11",
+  "addr": "0x1a8eac00080",
+  "loc": {
+   "x": -52865.265625,
+   "y": 60094.515625,
+   "z": -42143.1875
+  }
+ },
+ {
+  "cls": "FlyingRobot_Rusted_Spawner_C",
+  "name": "FlyingRobot_Rusted_Spawner12",
+  "addr": "0x1a8eac0fb70",
+  "loc": {
+   "x": -53276.99609375,
+   "y": 60094.515625,
+   "z": -42143.1875
+  }
+ },
+ {
+  "cls": "FlyingRobot_Rusted_Spawner_C",
+  "name": "FlyingRobot_Rusted_Spawner13",
+  "addr": "0x1a8eac0f6e0",
+  "loc": {
+   "x": -50588.0703125,
+   "y": 57471.21875,
+   "z": -41914.91015625
+  }
+ },
+ {
+  "cls": "FlyingRobot_Rusted_Spawner_C",
+  "name": "FlyingRobot_Rusted_Spawner14",
+  "addr": "0x1a8eac0f250",
+  "loc": {
+   "x": -40986.16015625,
+   "y": 20924.5859375,
+   "z": -36550.5546875
+  }
+ },
+ {
+  "cls": "FlyingRobot_Rusted_Spawner_C",
+  "name": "FlyingRobot_Rusted_Spawner15",
+  "addr": "0x1a8eac0edc0",
+  "loc": {
+   "x": -52297.203125,
+   "y": 73711.6328125,
+   "z": -33587.9296875
+  }
+ },
+ {
+  "cls": "FlyingRobot_Rusted_Spawner_C",
+  "name": "FlyingRobot_Rusted_Spawner16",
+  "addr": "0x1a8eac0e930",
+  "loc": {
+   "x": -50541,
+   "y": 73711.6328125,
+   "z": -33695.359375
+  }
+ },
+ {
+  "cls": "FlyingRobot_Rusted_Spawner_C",
+  "name": "FlyingRobot_Rusted_Spawner17",
+  "addr": "0x1a8eac0e4a0",
+  "loc": {
+   "x": -48406.30859375,
+   "y": 73711.6328125,
+   "z": -33695.359375
+  }
+ },
+ {
+  "cls": "FlyingRobot_Rusted_Spawner_C",
+  "name": "FlyingRobot_Rusted_Spawner18",
+  "addr": "0x1a8eac0e010",
+  "loc": {
+   "x": -46823.50390625,
+   "y": 74060.078125,
+   "z": -34560.03125
+  }
+ },
+ {
+  "cls": "FlyingRobot_Rusted_Spawner_C",
+  "name": "FlyingRobot_Rusted_Spawner19",
+  "addr": "0x1a8eac0db80",
+  "loc": {
+   "x": -46625.68359375,
+   "y": 61890.6953125,
+   "z": -31171.837890625
+  }
+ },
+ {
+  "cls": "FlyingRobot_Rusted_Spawner_C",
+  "name": "FlyingRobot_Rusted_Spawner20",
+  "addr": "0x1a8eac0d6f0",
+  "loc": {
+   "x": -59514.5625,
+   "y": 17365.27734375,
+   "z": -34499.6171875
+  }
+ },
+ {
+  "cls": "FlyingRobot_Rusted_Spawner_C",
+  "name": "FlyingRobot_Rusted_Spawner21",
+  "addr": "0x1a8eac0d260",
+  "loc": {
+   "x": -77098.921875,
+   "y": 19203.240234375,
+   "z": -32544.134765625
+  }
+ },
+ {
+  "cls": "FlyingRobot_Rusted_Spawner_C",
+  "name": "FlyingRobot_Rusted_Spawner22",
+  "addr": "0x1a8eac0cdd0",
+  "loc": {
+   "x": -73134.6015625,
+   "y": 20814.962890625,
+   "z": -32544.134765625
+  }
+ },
+ {
+  "cls": "FlyingRobot_Rusted_Spawner_C",
+  "name": "FlyingRobot_Rusted_Spawner23",
+  "addr": "0x1a8eac0c940",
+  "loc": {
+   "x": -73226.25,
+   "y": 17383.5078125,
+   "z": -31939.763671875
+  }
+ },
+ {
+  "cls": "FlyingRobot_Rusted_Spawner_C",
+  "name": "FlyingRobot_Rusted_Spawner24",
+  "addr": "0x1a8eac0c4b0",
+  "loc": {
+   "x": -74084.609375,
+   "y": 15449.0966796875,
+   "z": -31117.8828125
+  }
+ },
+ {
+  "cls": "FlyingRobot_Rusted_Spawner_C",
+  "name": "FlyingRobot_Rusted_Spawner25",
+  "addr": "0x1a8eac0c020",
+  "loc": {
+   "x": -70406.4140625,
+   "y": 16600.70703125,
+   "z": -30769.33203125
+  }
+ },
+ {
+  "cls": "FlyingRobot_Rusted_Spawner_C",
+  "name": "FlyingRobot_Rusted_Spawner2",
+  "addr": "0x1a8eac0bb90",
+  "loc": {
+   "x": -36073.0234375,
+   "y": 1269.2891845703125,
+   "z": -38786.57421875
+  }
+ },
+ {
+  "cls": "FlyingRobot_Rusted_Spawner_C",
+  "name": "FlyingRobot_Rusted_Spawner3",
+  "addr": "0x1a8eac0b700",
+  "loc": {
+   "x": -35341.84765625,
+   "y": 716.2092895507812,
+   "z": -38786.57421875
+  }
+ },
+ {
+  "cls": "FlyingRobot_Rusted_Spawner_C",
+  "name": "FlyingRobot_Rusted_Spawner4",
+  "addr": "0x1a8eac0b270",
+  "loc": {
+   "x": -49526.05078125,
+   "y": -402.60626220703125,
+   "z": -38720.640625
+  }
+ },
+ {
+  "cls": "FlyingRobot_Rusted_Spawner_C",
+  "name": "FlyingRobot_Rusted_Spawner5",
+  "addr": "0x1a8eac0ade0",
+  "loc": {
+   "x": -40354.6875,
+   "y": -2424.781005859375,
+   "z": -38634.70703125
+  }
+ },
+ {
+  "cls": "FlyingRobot_Rusted_Spawner_C",
+  "name": "FlyingRobot_Rusted_Spawner6",
+  "addr": "0x1a8eac0a950",
+  "loc": {
+   "x": -20497.853515625,
+   "y": 16654.244140625,
+   "z": -32523.109375
+  }
+ },
+ {
+  "cls": "FlyingRobot_Rusted_Spawner_C",
+  "name": "FlyingRobot_Rusted_Spawner7",
+  "addr": "0x1a8eac0a4c0",
+  "loc": {
+   "x": -17056.130859375,
+   "y": 15937.017578125,
+   "z": -32523.109375
+  }
+ },
+ {
+  "cls": "FlyingRobot_Rusted_Spawner_C",
+  "name": "FlyingRobot_Rusted_Spawner8",
+  "addr": "0x1a8eac0a030",
+  "loc": {
+   "x": -50259.15625,
+   "y": 71615.8984375,
+   "z": -35385.28515625
+  }
+ },
+ {
+  "cls": "FlyingRobot_Rusted_Spawner_C",
+  "name": "FlyingRobot_Rusted_Spawner9",
+  "addr": "0x1a8eac09ba0",
+  "loc": {
+   "x": -50656.4453125,
+   "y": 71419.59375,
+   "z": -35392.05078125
+  }
+ },
+ {
+  "cls": "FlyingRobot_Rusted_Spawner_C",
+  "name": "FlyingRobot_Rusted_Spawner",
+  "addr": "0x1a8eac09710",
+  "loc": {
+   "x": -32926.91796875,
+   "y": 1098.0545654296875,
+   "z": -38143.46484375
+  }
+ },
+ {
+  "cls": "LargeRobot_Aut_TrapDecoy_C",
+  "name": "LargeRobot_Aut_TrapDecoy2",
+  "addr": "0x1a8eb638580",
+  "loc": {
+   "x": -49275.59765625,
+   "y": 72486.0390625,
+   "z": -35132.2734375
+  }
+ },
+ {
+  "cls": "LargeRobot_Aut_TrapDecoy_C",
+  "name": "LargeRobot_Aut_TrapDecoy3",
+  "addr": "0x1a8eb638900",
+  "loc": {
+   "x": -51773.078125,
+   "y": 72898.59375,
+   "z": -33952.79296875
+  }
+ },
+ {
+  "cls": "LargeRobot_Aut_TrapDecoy_C",
+  "name": "LargeRobot_Aut_TrapDecoy4",
+  "addr": "0x1a84a33a880",
+  "loc": {
+   "x": -46737.265625,
+   "y": 72239.4765625,
+   "z": -35093.28125
+  }
+ },
+ {
+  "cls": "LargeRobot_Aut_TrapDecoy_C",
+  "name": "LargeRobot_Aut_TrapDecoy5",
+  "addr": "0x1a8d3465800",
+  "loc": {
+   "x": -48413.28515625,
+   "y": 72030.6328125,
+   "z": -35403.82421875
+  }
+ },
+ {
+  "cls": "LargeRobot_Aut_TrapDecoy_C",
+  "name": "LargeRobot_Aut_TrapDecoy6",
+  "addr": "0x1a8eb638200",
+  "loc": {
+   "x": -47638.4140625,
+   "y": 72716.671875,
+   "z": -35403.82421875
+  }
+ },
+ {
+  "cls": "LargeRobot_Aut_TrapDecoy_C",
+  "name": "LargeRobot_Aut_TrapDecoy7",
+  "addr": "0x1a8eb637e80",
+  "loc": {
+   "x": -49102.70703125,
+   "y": 74609.8046875,
+   "z": -34971.2109375
+  }
+ },
+ {
+  "cls": "LargeRobot_Aut_TrapDecoy_C",
+  "name": "LargeRobot_Aut_TrapDecoy8",
+  "addr": "0x1a8eb637b00",
+  "loc": {
+   "x": -51896.76953125,
+   "y": 60240.34765625,
+   "z": -32010.88671875
+  }
+ },
+ {
+  "cls": "LargeRobot_Aut_TrapDecoy_C",
+  "name": "LargeRobot_Aut_TrapDecoy",
+  "addr": "0x1a8eb637780",
+  "loc": {
+   "x": -45899.62109375,
+   "y": 70934.1796875,
+   "z": -35292.0859375
+  }
+ },
+ {
+  "cls": "LargeRobot_Rusted_Spawner_C",
+  "name": "LargeRobot_Rusted_Spawner",
+  "addr": "0x1a8eb32cdd0",
+  "loc": {
+   "x": -48756.7890625,
+   "y": 60032.48828125,
+   "z": -33470.14453125
+  }
+ },
+ {
+  "cls": "OW_Tower_RobotShutter_BP_C",
+  "name": "OW_Tower_RobotShutter_00_SM2",
+  "addr": "0x1a8eddc7c00",
+  "loc": {
+   "x": -49558.1953125,
+   "y": 57229.234375,
+   "z": -30258.12109375
+  }
+ },
+ {
+  "cls": "OW_Tower_RobotShutter_BP_C",
+  "name": "OW_Tower_RobotShutter_00_SM",
+  "addr": "0x1a8eddc7940",
+  "loc": {
+   "x": -49558.1953125,
+   "y": 60457.81640625,
+   "z": -30258.12109375
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner10",
+  "addr": "0x1a8f283db80",
+  "loc": {
+   "x": -20317.939453125,
+   "y": 17417.462890625,
+   "z": -33507.4921875
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner11",
+  "addr": "0x1a8f283d6f0",
+  "loc": {
+   "x": -21357.765625,
+   "y": 17961.982421875,
+   "z": -33398.1796875
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner12",
+  "addr": "0x1a8f283d260",
+  "loc": {
+   "x": -22142.064453125,
+   "y": 12643.8193359375,
+   "z": -32377.380859375
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner13",
+  "addr": "0x1a8f283cdd0",
+  "loc": {
+   "x": -46774.22265625,
+   "y": 57441.2890625,
+   "z": -42787.88671875
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner14",
+  "addr": "0x1a8f283c940",
+  "loc": {
+   "x": -46774.22265625,
+   "y": 57820.8515625,
+   "z": -42787.88671875
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner15",
+  "addr": "0x1a8f283c4b0",
+  "loc": {
+   "x": -46774.22265625,
+   "y": 58249.6796875,
+   "z": -42787.88671875
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner16",
+  "addr": "0x1a8f283c020",
+  "loc": {
+   "x": -47517.37890625,
+   "y": 71903.3515625,
+   "z": -35403.82421875
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner17",
+  "addr": "0x1a8f283bb90",
+  "loc": {
+   "x": -50449.359375,
+   "y": 70868.34375,
+   "z": -35403.82421875
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner18",
+  "addr": "0x1a8f283b700",
+  "loc": {
+   "x": -51033.00390625,
+   "y": 70885.1953125,
+   "z": -35403.82421875
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner19",
+  "addr": "0x1a8f283b270",
+  "loc": {
+   "x": -50373.26953125,
+   "y": 56888.4296875,
+   "z": -42787.88671875
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner2",
+  "addr": "0x1a8f283ade0",
+  "loc": {
+   "x": -35841.0390625,
+   "y": 816.1549682617188,
+   "z": -38822.98828125
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner20",
+  "addr": "0x1a8f283a950",
+  "loc": {
+   "x": -40681.55078125,
+   "y": 20915.94921875,
+   "z": -37063.78125
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner21",
+  "addr": "0x1a8f283a4c0",
+  "loc": {
+   "x": -44809.640625,
+   "y": 74124.15625,
+   "z": -35999.125
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner22",
+  "addr": "0x1a8f283a030",
+  "loc": {
+   "x": -47510.18359375,
+   "y": 74173.3671875,
+   "z": -35428.30078125
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner23",
+  "addr": "0x1a8f2839ba0",
+  "loc": {
+   "x": -49735.44921875,
+   "y": 74267.8125,
+   "z": -34699.5859375
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner24",
+  "addr": "0x1a8f2839710",
+  "loc": {
+   "x": -52752.0703125,
+   "y": 72992.453125,
+   "z": -33836.48046875
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner25",
+  "addr": "0x1a8f3eb9280",
+  "loc": {
+   "x": -52659.58984375,
+   "y": 60442.48046875,
+   "z": -31960.689453125
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner26",
+  "addr": "0x1a8f3eb8df0",
+  "loc": {
+   "x": -47489.05859375,
+   "y": 61925.16015625,
+   "z": -31960.69140625
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner27",
+  "addr": "0x1a8f3eb8960",
+  "loc": {
+   "x": -45530.91796875,
+   "y": 57586.56640625,
+   "z": -33457.40234375
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner28",
+  "addr": "0x1a8f3eb84d0",
+  "loc": {
+   "x": -32060.15234375,
+   "y": 2581.43212890625,
+   "z": -33354.92578125
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner29",
+  "addr": "0x1a8f3eb8040",
+  "loc": {
+   "x": -77280.984375,
+   "y": 18814.791015625,
+   "z": -33063.234375
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner3",
+  "addr": "0x1a8f3eb7bb0",
+  "loc": {
+   "x": -35699.67578125,
+   "y": 1297.4095458984375,
+   "z": -38822.98828125
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner30",
+  "addr": "0x1a8f3eb7720",
+  "loc": {
+   "x": -76992.4765625,
+   "y": 18307.130859375,
+   "z": -33042.078125
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner31",
+  "addr": "0x1a8f3eb7290",
+  "loc": {
+   "x": -57824.40625,
+   "y": 17511.81640625,
+   "z": -35278.85546875
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner32",
+  "addr": "0x1a8f3eb6e00",
+  "loc": {
+   "x": -58103.56640625,
+   "y": 14254.80859375,
+   "z": -35335.7109375
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner33",
+  "addr": "0x1a8f3eb6970",
+  "loc": {
+   "x": -74268.8671875,
+   "y": 12771.8525390625,
+   "z": -30779.921875
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner34",
+  "addr": "0x1a8f3eb64e0",
+  "loc": {
+   "x": -73967.109375,
+   "y": 17670.74609375,
+   "z": -33470.14453125
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner4",
+  "addr": "0x1a8f3eb6050",
+  "loc": {
+   "x": -48536.265625,
+   "y": -656.230712890625,
+   "z": -39558.0625
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner5",
+  "addr": "0x1a8f3eb5bc0",
+  "loc": {
+   "x": -43223.7109375,
+   "y": -5365.287109375,
+   "z": -39008.3828125
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner6",
+  "addr": "0x1a8f3eb5730",
+  "loc": {
+   "x": -66003.5078125,
+   "y": 4467.984375,
+   "z": -33634.6953125
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner8",
+  "addr": "0x1a8f3eb52a0",
+  "loc": {
+   "x": -26263.353515625,
+   "y": 12953.3154296875,
+   "z": -33450.96875
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner9",
+  "addr": "0x1a8f3eb4e10",
+  "loc": {
+   "x": -26947.1953125,
+   "y": 13133.876953125,
+   "z": -33450.96875
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner",
+  "addr": "0x1a8f3eb4980",
+  "loc": {
+   "x": -35421.3984375,
+   "y": 1017.57666015625,
+   "z": -38822.98828125
+  }
+ },
+ {
+  "cls": "SmallRobot_ScrapDecoy_C",
+  "name": "SmallRobot_Decoy",
+  "addr": "0x1a8d3437780",
+  "loc": {
+   "x": -35174.45703125,
+   "y": 1007.566162109375,
+   "z": -38822.98828125
+  }
+ },
+ {
+  "cls": "SmallRobot_ScrapDecoy_C",
+  "name": "SmallRobot_Decoy2",
+  "addr": "0x1a8d3437e80",
+  "loc": {
+   "x": -35742.77734375,
+   "y": 1072.08642578125,
+   "z": -38822.98828125
+  }
+ },
+ {
+  "cls": "SmallRobot_ScrapDecoy_C",
+  "name": "SmallRobot_Decoy",
+  "addr": "0x1a8d3438580",
+  "loc": {
+   "x": -35914.91796875,
+   "y": 1533.2197265625,
+   "z": -38822.98828125
+  }
+ },
+ {
+  "cls": "SmallRobot_ScrapDecoy_C",
+  "name": "SmallRobot_ScrapDecoy11",
+  "addr": "0x1a8d3438c80",
+  "loc": {
+   "x": -45628.47265625,
+   "y": 74612.1484375,
+   "z": -35772.9609375
+  }
+ },
+ {
+  "cls": "SmallRobot_ScrapDecoy_C",
+  "name": "SmallRobot_ScrapDecoy12",
+  "addr": "0x1a8d3439380",
+  "loc": {
+   "x": -45765.6796875,
+   "y": 74739.21875,
+   "z": -35756.88671875
+  }
+ },
+ {
+  "cls": "SmallRobot_ScrapDecoy_C",
+  "name": "SmallRobot_ScrapDecoy13",
+  "addr": "0x1a8d3439a80",
+  "loc": {
+   "x": -51190.3203125,
+   "y": 70760.6953125,
+   "z": -35418.421875
+  }
+ },
+ {
+  "cls": "SmallRobot_ScrapDecoy_C",
+  "name": "SmallRobot_ScrapDecoy14",
+  "addr": "0x1a8d343a180",
+  "loc": {
+   "x": -49993.671875,
+   "y": 70934.6796875,
+   "z": -35403.82421875
+  }
+ },
+ {
+  "cls": "SmallRobot_ScrapDecoy_C",
+  "name": "SmallRobot_ScrapDecoy15",
+  "addr": "0x1a8d343a880",
+  "loc": {
+   "x": -50531.26953125,
+   "y": 71840.3203125,
+   "z": -35409.8125
+  }
+ },
+ {
+  "cls": "SmallRobot_ScrapDecoy_C",
+  "name": "SmallRobot_ScrapDecoy16",
+  "addr": "0x1a8d343af80",
+  "loc": {
+   "x": -52168.4140625,
+   "y": 59479.92578125,
+   "z": -31951.654296875
+  }
+ },
+ {
+  "cls": "SmallRobot_ScrapDecoy_C",
+  "name": "SmallRobot_ScrapDecoy",
+  "addr": "0x1a8d343b680",
+  "loc": {
+   "x": -46049.90234375,
+   "y": 70163.1875,
+   "z": -35408.58984375
+  }
+ },
+ {
+  "cls": "DrillRobot_Aut_TrapDecoy_C",
+  "name": "DrillRobot_Aut_TrapDecoy2",
+  "addr": "0x1a8fb104680",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "DrillRobot_Aut_TrapDecoy_C",
+  "name": "DrillRobot_Aut_TrapDecoy3",
+  "addr": "0x1a8d57fb300",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "DrillRobot_Aut_TrapDecoy_C",
+  "name": "DrillRobot_Aut_TrapDecoy4",
+  "addr": "0x1a8d57f9380",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "DrillRobot_Aut_TrapDecoy_C",
+  "name": "DrillRobot_Aut_TrapDecoy5",
+  "addr": "0x1a8d57f9a80",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "DrillRobot_Aut_TrapDecoy_C",
+  "name": "DrillRobot_Aut_TrapDecoy6",
+  "addr": "0x1a8d57fa500",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "DrillRobot_Aut_TrapDecoy_C",
+  "name": "DrillRobot_Aut_TrapDecoy7",
+  "addr": "0x1a8d57fc480",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "DrillRobot_CA_00_TrapDecoy_C",
+  "name": "DrillRobot_CA_00_TrapDecoy10",
+  "addr": "0x1a8d57fd280",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "DrillRobot_CA_00_TrapDecoy_C",
+  "name": "DrillRobot_CA_00_TrapDecoy11",
+  "addr": "0x1a8d57fd980",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "DrillRobot_CA_00_TrapDecoy_C",
+  "name": "DrillRobot_CA_00_TrapDecoy12",
+  "addr": "0x1a8d57f0080",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "DrillRobot_CA_00_TrapDecoy_C",
+  "name": "DrillRobot_CA_00_TrapDecoy2",
+  "addr": "0x1a8d57f0780",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "DrillRobot_CA_00_TrapDecoy_C",
+  "name": "DrillRobot_CA_00_TrapDecoy3",
+  "addr": "0x1a8d57f0e80",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "DrillRobot_CA_00_TrapDecoy_C",
+  "name": "DrillRobot_CA_00_TrapDecoy4",
+  "addr": "0x1a8d57f2000",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "DrillRobot_CA_00_TrapDecoy_C",
+  "name": "DrillRobot_CA_00_TrapDecoy5",
+  "addr": "0x1a8d57f2380",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "DrillRobot_CA_00_TrapDecoy_C",
+  "name": "DrillRobot_CA_00_TrapDecoy6",
+  "addr": "0x1a8d57f2700",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "DrillRobot_CA_00_TrapDecoy_C",
+  "name": "DrillRobot_CA_00_TrapDecoy7",
+  "addr": "0x1a8d5a3d280",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "DrillRobot_CA_00_TrapDecoy_C",
+  "name": "DrillRobot_CA_00_TrapDecoy8",
+  "addr": "0x1a8d57fdd00",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "DrillRobot_CA_00_TrapDecoy_C",
+  "name": "DrillRobot_CA_00_TrapDecoy9",
+  "addr": "0x1a8d57fe400",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "DrillRobot_CA_00_TrapDecoy_C",
+  "name": "DrillRobot_CA_00_TrapDecoy",
+  "addr": "0x1a8d57fc800",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "DrillRobot_Miniboss_Spawner_C",
+  "name": "DrillRobot_Miniboss_Spawner",
+  "addr": "0x1a87449ade0",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "DrillRobot_Regular_Spawner_C",
+  "name": "DrillRobot_Regular_Spawner10",
+  "addr": "0x1a87449a950",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "DrillRobot_Regular_Spawner_C",
+  "name": "DrillRobot_Regular_Spawner11",
+  "addr": "0x1a87449a4c0",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "DrillRobot_Regular_Spawner_C",
+  "name": "DrillRobot_Regular_Spawner12",
+  "addr": "0x1a87449a030",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "DrillRobot_Regular_Spawner_C",
+  "name": "DrillRobot_Regular_Spawner13",
+  "addr": "0x1a874499ba0",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "DrillRobot_Regular_Spawner_C",
+  "name": "DrillRobot_Regular_Spawner14",
+  "addr": "0x1a874499710",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "DrillRobot_Regular_Spawner_C",
+  "name": "DrillRobot_Regular_Spawner15",
+  "addr": "0x1a8746d9280",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "DrillRobot_Regular_Spawner_C",
+  "name": "DrillRobot_Regular_Spawner2",
+  "addr": "0x1a8746d8df0",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "DrillRobot_Regular_Spawner_C",
+  "name": "DrillRobot_Regular_Spawner3",
+  "addr": "0x1a8746d8960",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "DrillRobot_Regular_Spawner_C",
+  "name": "DrillRobot_Regular_Spawner4",
+  "addr": "0x1a8746d84d0",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "DrillRobot_Regular_Spawner_C",
+  "name": "DrillRobot_Regular_Spawner5",
+  "addr": "0x1a8746d8040",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "DrillRobot_Regular_Spawner_C",
+  "name": "DrillRobot_Regular_Spawner6",
+  "addr": "0x1a8746d7bb0",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "DrillRobot_Regular_Spawner_C",
+  "name": "DrillRobot_Regular_Spawner7",
+  "addr": "0x1a8746d7720",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "DrillRobot_Regular_Spawner_C",
+  "name": "DrillRobot_Regular_Spawner8",
+  "addr": "0x1a8746d7290",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "DrillRobot_Regular_Spawner_C",
+  "name": "DrillRobot_Regular_Spawner9",
+  "addr": "0x1a8746d6e00",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "DrillRobot_Regular_Spawner_C",
+  "name": "DrillRobot_Regular_Spawner",
+  "addr": "0x1a8746d6970",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "DrillRobot_Rusted_Spawner_C",
+  "name": "DrillRobot_Rusted_Spawner10",
+  "addr": "0x1a8746d64e0",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "DrillRobot_Rusted_Spawner_C",
+  "name": "DrillRobot_Rusted_Spawner7",
+  "addr": "0x1a8746d6050",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "DrillRobot_Rusted_Spawner_C",
+  "name": "DrillRobot_Rusted_Spawner8",
+  "addr": "0x1a8746d5bc0",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "DrillRobot_Rusted_Spawner_C",
+  "name": "DrillRobot_Rusted_Spawner9",
+  "addr": "0x1a8746d5730",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "FlyingRobot_CA_01_TrapDecoy_C",
+  "name": "FlyingRobot_CA_01_TrapDecoy10",
+  "addr": "0x1a8d57fcb80",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "FlyingRobot_CA_01_TrapDecoy_C",
+  "name": "FlyingRobot_CA_01_TrapDecoy12",
+  "addr": "0x1a8d57ff200",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "FlyingRobot_CA_01_TrapDecoy_C",
+  "name": "FlyingRobot_CA_01_TrapDecoy13",
+  "addr": "0x1a8d5a31580",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "FlyingRobot_CA_01_TrapDecoy_C",
+  "name": "FlyingRobot_CA_01_TrapDecoy14",
+  "addr": "0x1a8d5a31900",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "FlyingRobot_CA_01_TrapDecoy_C",
+  "name": "FlyingRobot_CA_01_TrapDecoy15",
+  "addr": "0x1a8d5a32a80",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "FlyingRobot_CA_01_TrapDecoy_C",
+  "name": "FlyingRobot_CA_01_TrapDecoy17",
+  "addr": "0x1a8d5a33500",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "FlyingRobot_CA_01_TrapDecoy_C",
+  "name": "FlyingRobot_CA_01_TrapDecoy18",
+  "addr": "0x1a8d5a33f80",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "FlyingRobot_CA_01_TrapDecoy_C",
+  "name": "FlyingRobot_CA_01_TrapDecoy19",
+  "addr": "0x1a8d5a35480",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "FlyingRobot_CA_01_TrapDecoy_C",
+  "name": "FlyingRobot_CA_01_TrapDecoy2",
+  "addr": "0x1a8d5a35f00",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "FlyingRobot_CA_01_TrapDecoy_C",
+  "name": "FlyingRobot_CA_01_TrapDecoy20",
+  "addr": "0x1a8d5a36980",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "FlyingRobot_CA_01_TrapDecoy_C",
+  "name": "FlyingRobot_CA_01_TrapDecoy21",
+  "addr": "0x1a8d5a36d00",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "FlyingRobot_CA_01_TrapDecoy_C",
+  "name": "FlyingRobot_CA_01_TrapDecoy22",
+  "addr": "0x1a8d5a34300",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "FlyingRobot_CA_01_TrapDecoy_C",
+  "name": "FlyingRobot_CA_01_TrapDecoy23",
+  "addr": "0x1a8d57ff580",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "FlyingRobot_CA_01_TrapDecoy_C",
+  "name": "FlyingRobot_CA_01_TrapDecoy3",
+  "addr": "0x1a8d57fa180",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "FlyingRobot_CA_01_TrapDecoy_C",
+  "name": "FlyingRobot_CA_01_TrapDecoy4",
+  "addr": "0x1a8d57f1200",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "FlyingRobot_CA_01_TrapDecoy_C",
+  "name": "FlyingRobot_CA_01_TrapDecoy5",
+  "addr": "0x1a8d57f0b00",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "FlyingRobot_CA_01_TrapDecoy_C",
+  "name": "FlyingRobot_CA_01_TrapDecoy6",
+  "addr": "0x1a8d5b6e400",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "FlyingRobot_CA_01_TrapDecoy_C",
+  "name": "FlyingRobot_CA_01_TrapDecoy7",
+  "addr": "0x1a8d5a3dd00",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "FlyingRobot_CA_01_TrapDecoy_C",
+  "name": "FlyingRobot_CA_01_TrapDecoy8",
+  "addr": "0x1a8d57f3f80",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "FlyingRobot_CA_01_TrapDecoy_C",
+  "name": "FlyingRobot_CA_01_TrapDecoy9",
+  "addr": "0x1a8d57f4680",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "FlyingRobot_Spawner_C",
+  "name": "FlyingRobot_Spawner10",
+  "addr": "0x1a875118040",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "FlyingRobot_Spawner_C",
+  "name": "FlyingRobot_Spawner11",
+  "addr": "0x1a875117bb0",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "FlyingRobot_Spawner_C",
+  "name": "FlyingRobot_Spawner12",
+  "addr": "0x1a875117720",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "FlyingRobot_Spawner_C",
+  "name": "FlyingRobot_Spawner13",
+  "addr": "0x1a875117290",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "FlyingRobot_Spawner_C",
+  "name": "FlyingRobot_Spawner14",
+  "addr": "0x1a875116e00",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "FlyingRobot_Spawner_C",
+  "name": "FlyingRobot_Spawner2",
+  "addr": "0x1a875116970",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "FlyingRobot_Spawner_C",
+  "name": "FlyingRobot_Spawner3",
+  "addr": "0x1a8751164e0",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "FlyingRobot_Spawner_C",
+  "name": "FlyingRobot_Spawner4",
+  "addr": "0x1a875116050",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "FlyingRobot_Spawner_C",
+  "name": "FlyingRobot_Spawner5",
+  "addr": "0x1a875115bc0",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "FlyingRobot_Spawner_C",
+  "name": "FlyingRobot_Spawner6",
+  "addr": "0x1a875115730",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "FlyingRobot_Spawner_C",
+  "name": "FlyingRobot_Spawner7",
+  "addr": "0x1a8751152a0",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "FlyingRobot_Spawner_C",
+  "name": "FlyingRobot_Spawner8",
+  "addr": "0x1a875114e10",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "FlyingRobot_Spawner_C",
+  "name": "FlyingRobot_Spawner9",
+  "addr": "0x1a875114980",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "FlyingRobot_Spawner_C",
+  "name": "FlyingRobot_Spawner",
+  "addr": "0x1a8751144f0",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_Base_Spawner_C",
+  "name": "LargeRobot_Base_Spawner2",
+  "addr": "0x1a875602990",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_Base_Spawner_C",
+  "name": "LargeRobot_Base_Spawner3",
+  "addr": "0x1a875602500",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_Base_Spawner_C",
+  "name": "LargeRobot_Base_Spawner4",
+  "addr": "0x1a875602070",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_Base_Spawner_C",
+  "name": "LargeRobot_Base_Spawner5",
+  "addr": "0x1a875601be0",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_Base_Spawner_C",
+  "name": "LargeRobot_Base_Spawner6",
+  "addr": "0x1a875601750",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_Base_Spawner_C",
+  "name": "LargeRobot_Base_Spawner",
+  "addr": "0x1a8756012c0",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_CA_00_TrapDecoy_C",
+  "name": "LargeRobot_CA_00_TrapDecoy10",
+  "addr": "0x1a8754f5b80",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_CA_00_TrapDecoy_C",
+  "name": "LargeRobot_CA_00_TrapDecoy11",
+  "addr": "0x1a8754f5800",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_CA_00_TrapDecoy_C",
+  "name": "LargeRobot_CA_00_TrapDecoy12",
+  "addr": "0x1a8754f5480",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_CA_00_TrapDecoy_C",
+  "name": "LargeRobot_CA_00_TrapDecoy13",
+  "addr": "0x1a8754f5100",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_CA_00_TrapDecoy_C",
+  "name": "LargeRobot_CA_00_TrapDecoy14",
+  "addr": "0x1a8754f4d80",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_CA_00_TrapDecoy_C",
+  "name": "LargeRobot_CA_00_TrapDecoy15",
+  "addr": "0x1a8754f4a00",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_CA_00_TrapDecoy_C",
+  "name": "LargeRobot_CA_00_TrapDecoy16",
+  "addr": "0x1a8754f4680",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_CA_00_TrapDecoy_C",
+  "name": "LargeRobot_CA_00_TrapDecoy17",
+  "addr": "0x1a8754f4300",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_CA_00_TrapDecoy_C",
+  "name": "LargeRobot_CA_00_TrapDecoy2",
+  "addr": "0x1a8754f3f80",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_CA_00_TrapDecoy_C",
+  "name": "LargeRobot_CA_00_TrapDecoy3",
+  "addr": "0x1a8754f3c00",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_CA_00_TrapDecoy_C",
+  "name": "LargeRobot_CA_00_TrapDecoy4",
+  "addr": "0x1a8754f3880",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_CA_00_TrapDecoy_C",
+  "name": "LargeRobot_CA_00_TrapDecoy5",
+  "addr": "0x1a8754f3500",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_CA_00_TrapDecoy_C",
+  "name": "LargeRobot_CA_00_TrapDecoy6",
+  "addr": "0x1a8754f3180",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_CA_00_TrapDecoy_C",
+  "name": "LargeRobot_CA_00_TrapDecoy7",
+  "addr": "0x1a8754f2e00",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_CA_00_TrapDecoy_C",
+  "name": "LargeRobot_CA_00_TrapDecoy8",
+  "addr": "0x1a8754f2a80",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_CA_00_TrapDecoy_C",
+  "name": "LargeRobot_CA_00_TrapDecoy9",
+  "addr": "0x1a8754f2700",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_CA_00_TrapDecoy_C",
+  "name": "LargeRobot_CA_00_TrapDecoy",
+  "addr": "0x1a8754f2380",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "LargeRobot_Miniboss_Spawner_C",
+  "name": "LargeRobot_Miniboss_Spawner",
+  "addr": "0x1a875600e30",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_CA_01_TrapDecoy_C",
+  "name": "SmallRobot_CA_01_TrapDecoy10",
+  "addr": "0x1a8eb5b5f00",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_CA_01_TrapDecoy_C",
+  "name": "SmallRobot_CA_01_TrapDecoy11",
+  "addr": "0x1a8eb5b5b80",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_CA_01_TrapDecoy_C",
+  "name": "SmallRobot_CA_01_TrapDecoy12",
+  "addr": "0x1a8eb5b5800",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_CA_01_TrapDecoy_C",
+  "name": "SmallRobot_CA_01_TrapDecoy13",
+  "addr": "0x1a8eb5b5480",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_CA_01_TrapDecoy_C",
+  "name": "SmallRobot_CA_01_TrapDecoy14",
+  "addr": "0x1a8eb5b5100",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_CA_01_TrapDecoy_C",
+  "name": "SmallRobot_CA_01_TrapDecoy15",
+  "addr": "0x1a8eb5b4d80",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_CA_01_TrapDecoy_C",
+  "name": "SmallRobot_CA_01_TrapDecoy16",
+  "addr": "0x1a8eb5b4a00",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_CA_01_TrapDecoy_C",
+  "name": "SmallRobot_CA_01_TrapDecoy17",
+  "addr": "0x1a8eb5b4680",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_CA_01_TrapDecoy_C",
+  "name": "SmallRobot_CA_01_TrapDecoy2",
+  "addr": "0x1a8eb5b4300",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_CA_01_TrapDecoy_C",
+  "name": "SmallRobot_CA_01_TrapDecoy3",
+  "addr": "0x1a8eb5b3f80",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_CA_01_TrapDecoy_C",
+  "name": "SmallRobot_CA_01_TrapDecoy4",
+  "addr": "0x1a8eb5b3c00",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_CA_01_TrapDecoy_C",
+  "name": "SmallRobot_CA_01_TrapDecoy5",
+  "addr": "0x1a8eb5b3880",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_CA_01_TrapDecoy_C",
+  "name": "SmallRobot_CA_01_TrapDecoy6",
+  "addr": "0x1a8eb5b3500",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_CA_01_TrapDecoy_C",
+  "name": "SmallRobot_CA_01_TrapDecoy7",
+  "addr": "0x1a8eb5b3180",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_CA_01_TrapDecoy_C",
+  "name": "SmallRobot_CA_01_TrapDecoy8",
+  "addr": "0x1a8eb5b2e00",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_CA_01_TrapDecoy_C",
+  "name": "SmallRobot_CA_01_TrapDecoy9",
+  "addr": "0x1a8eb5b2a80",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_CA_01_TrapDecoy_C",
+  "name": "SmallRobot_CA_01_TrapDecoy",
+  "addr": "0x1a8eb5b2700",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_Default_Spawner_C",
+  "name": "SmallRobot_Default_Spawner10",
+  "addr": "0x1a8ecf36e00",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_Default_Spawner_C",
+  "name": "SmallRobot_Default_Spawner11",
+  "addr": "0x1a8ecf36970",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_Default_Spawner_C",
+  "name": "SmallRobot_Default_Spawner12",
+  "addr": "0x1a8ecf364e0",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_Default_Spawner_C",
+  "name": "SmallRobot_Default_Spawner13",
+  "addr": "0x1a8ecf36050",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_Default_Spawner_C",
+  "name": "SmallRobot_Default_Spawner14",
+  "addr": "0x1a8ecf35bc0",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_Default_Spawner_C",
+  "name": "SmallRobot_Default_Spawner15",
+  "addr": "0x1a8ecf35730",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_Default_Spawner_C",
+  "name": "SmallRobot_Default_Spawner16",
+  "addr": "0x1a8ecf352a0",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_Default_Spawner_C",
+  "name": "SmallRobot_Default_Spawner17",
+  "addr": "0x1a8ecf34e10",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_Default_Spawner_C",
+  "name": "SmallRobot_Default_Spawner18",
+  "addr": "0x1a8ecf34980",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_Default_Spawner_C",
+  "name": "SmallRobot_Default_Spawner19",
+  "addr": "0x1a8ecf344f0",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_Default_Spawner_C",
+  "name": "SmallRobot_Default_Spawner2",
+  "addr": "0x1a8ecf34060",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_Default_Spawner_C",
+  "name": "SmallRobot_Default_Spawner3",
+  "addr": "0x1a8ecf33bd0",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_Default_Spawner_C",
+  "name": "SmallRobot_Default_Spawner4",
+  "addr": "0x1a8ecf33740",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_Default_Spawner_C",
+  "name": "SmallRobot_Default_Spawner5",
+  "addr": "0x1a8ecf332b0",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_Default_Spawner_C",
+  "name": "SmallRobot_Default_Spawner6",
+  "addr": "0x1a8ecf32e20",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_Default_Spawner_C",
+  "name": "SmallRobot_Default_Spawner7",
+  "addr": "0x1a8ecf32990",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_Default_Spawner_C",
+  "name": "SmallRobot_Default_Spawner8",
+  "addr": "0x1a8ecf32500",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_Default_Spawner_C",
+  "name": "SmallRobot_Default_Spawner9",
+  "addr": "0x1a8ecf32070",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_Default_Spawner_C",
+  "name": "SmallRobot_Default_Spawner",
+  "addr": "0x1a8ecf31be0",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner10",
+  "addr": "0x1a8ecf31750",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner11",
+  "addr": "0x1a8ecf312c0",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner12",
+  "addr": "0x1a8ecf30e30",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner13",
+  "addr": "0x1a8ecf309a0",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner14",
+  "addr": "0x1a8ecf30510",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner15",
+  "addr": "0x1a8ecf30080",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner7",
+  "addr": "0x1a8ecf3fb70",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner8",
+  "addr": "0x1a8ecf3f6e0",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner9",
+  "addr": "0x1a8ecf3f250",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_ScrapDecoy_C",
+  "name": "SmallRobot_ScrapDecoy10",
+  "addr": "0x1a8eb5b2380",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_ScrapDecoy_C",
+  "name": "SmallRobot_ScrapDecoy2",
+  "addr": "0x1a8eb5b2000",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_ScrapDecoy_C",
+  "name": "SmallRobot_ScrapDecoy3",
+  "addr": "0x1a8eb5b1c80",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_ScrapDecoy_C",
+  "name": "SmallRobot_ScrapDecoy4",
+  "addr": "0x1a8eb5b1900",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_ScrapDecoy_C",
+  "name": "SmallRobot_ScrapDecoy5",
+  "addr": "0x1a8eb5b1580",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_ScrapDecoy_C",
+  "name": "SmallRobot_ScrapDecoy6",
+  "addr": "0x1a8eb5b1200",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_ScrapDecoy_C",
+  "name": "SmallRobot_ScrapDecoy7",
+  "addr": "0x1a8eb5b0e80",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_ScrapDecoy_C",
+  "name": "SmallRobot_ScrapDecoy8",
+  "addr": "0x1a8eb5b0b00",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "SmallRobot_ScrapDecoy_C",
+  "name": "SmallRobot_ScrapDecoy9",
+  "addr": "0x1a8eb5b0780",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ },
+ {
+  "cls": "DrillRobot_Aut_TrapDecoy_C",
+  "name": "DrillRobot_Aut_TrapDecoy2",
+  "addr": "0x1a8efa8f580",
+  "loc": {
+   "x": -22723.728515625,
+   "y": 18172.708984375,
+   "z": -36602.24609375
+  }
+ },
+ {
+  "cls": "DrillRobot_Aut_TrapDecoy_C",
+  "name": "DrillRobot_Aut_TrapDecoy",
+  "addr": "0x1a8fb10a180",
+  "loc": {
+   "x": -18762.51953125,
+   "y": 20583.611328125,
+   "z": -18166.6328125
+  }
+ },
+ {
+  "cls": "DrillRobot_Rusted_Spawner_C",
+  "name": "DrillRobot_Rusted_Spawner",
+  "addr": "0x1a900920e30",
+  "loc": {
+   "x": -20447.9453125,
+   "y": 19101.375,
+   "z": -16590.40625
+  }
+ },
+ {
+  "cls": "DrillRobot_Rusted_Spawner_C",
+  "name": "DrillRobot_Rusted_Spawner2",
+  "addr": "0x1a9009209a0",
+  "loc": {
+   "x": -18503.1015625,
+   "y": 20992.08984375,
+   "z": -18166.6328125
+  }
+ },
+ {
+  "cls": "DrillRobot_Rusted_Spawner_C",
+  "name": "DrillRobot_Rusted_Spawner3",
+  "addr": "0x1a900920510",
+  "loc": {
+   "x": -19906.275390625,
+   "y": 25360.287109375,
+   "z": -17928.357421875
+  }
+ },
+ {
+  "cls": "FlyingRobot_Aut_TrapDecoy_C",
+  "name": "Boner_TrapDecoy344",
+  "addr": "0x1a8d5b67780",
+  "loc": {
+   "x": -21875.416015625,
+   "y": 20462.248046875,
+   "z": -16589.625
+  }
+ },
+ {
+  "cls": "FlyingRobot_Aut_TrapDecoy_C",
+  "name": "Boner_TrapDecoy347",
+  "addr": "0x1a8fc43bd80",
+  "loc": {
+   "x": -22274.173828125,
+   "y": 18857.115234375,
+   "z": -16590.40625
+  }
+ },
+ {
+  "cls": "FlyingRobot_Aut_TrapDecoy_C",
+  "name": "Boner_TrapDecoy348",
+  "addr": "0x1a8fc43ba00",
+  "loc": {
+   "x": -22204.724609375,
+   "y": 18333.99609375,
+   "z": -16590.40625
+  }
+ },
+ {
+  "cls": "FlyingRobot_Rusted_Spawner_C",
+  "name": "FlyingRobot_Rusted_Spawner",
+  "addr": "0x1a900830080",
+  "loc": {
+   "x": -22359.97265625,
+   "y": 19745.572265625,
+   "z": -16191.203125
+  }
+ },
+ {
+  "cls": "FlyingRobot_Rusted_Spawner_C",
+  "name": "FlyingRobot_Rusted_Spawner2",
+  "addr": "0x1a90083fb70",
+  "loc": {
+   "x": -23997.822265625,
+   "y": 20933.263671875,
+   "z": -16191.203125
+  }
+ },
+ {
+  "cls": "FlyingRobot_Rusted_Spawner_C",
+  "name": "FlyingRobot_Rusted_Spawner4",
+  "addr": "0x1a90083f6e0",
+  "loc": {
+   "x": -22330.30859375,
+   "y": 18467.2890625,
+   "z": -16552.349609375
+  }
+ },
+ {
+  "cls": "FlyingRobot_Rusted_Spawner_C",
+  "name": "FlyingRobot_Rusted_Spawner5",
+  "addr": "0x1a90083f250",
+  "loc": {
+   "x": -18946.203125,
+   "y": 22998.978515625,
+   "z": -17784.875
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner",
+  "addr": "0x1a90018f6e0",
+  "loc": {
+   "x": -19110.60546875,
+   "y": 19893.5546875,
+   "z": -18182.2109375
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner2",
+  "addr": "0x1a90018f250",
+  "loc": {
+   "x": -25862.9296875,
+   "y": 20822.150390625,
+   "z": -16590.40625
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner3",
+  "addr": "0x1a90018edc0",
+  "loc": {
+   "x": -26576.341796875,
+   "y": 18360.939453125,
+   "z": -16367.4296875
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner4",
+  "addr": "0x1a90018e930",
+  "loc": {
+   "x": -26742.615234375,
+   "y": 18208.921875,
+   "z": -16367.4296875
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner5",
+  "addr": "0x1a90018e4a0",
+  "loc": {
+   "x": -26441.935546875,
+   "y": 21149.5703125,
+   "z": -16590.40625
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner6",
+  "addr": "0x1a90018e010",
+  "loc": {
+   "x": -22313.669921875,
+   "y": 18720.0703125,
+   "z": -16596.353515625
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner7",
+  "addr": "0x1a90018db80",
+  "loc": {
+   "x": -22208.978515625,
+   "y": 18545.36328125,
+   "z": -16596.353515625
+  }
+ },
+ {
+  "cls": "SmallRobot_Rusted_Spawner_C",
+  "name": "SmallRobot_Rusted_Spawner8",
+  "addr": "0x1a90018d6f0",
+  "loc": {
+   "x": -30110.109375,
+   "y": 18528.732421875,
+   "z": -16694.724609375
+  }
+ },
+ {
+  "cls": "SmallRobot_ScrapDecoy_C",
+  "name": "Boner_TrapDecoy350",
+  "addr": "0x1a90019f580",
+  "loc": {
+   "x": -22105.369140625,
+   "y": 18673.36328125,
+   "z": -16565.271484375
+  }
+ },
+ {
+  "cls": "SmallRobot_ScrapDecoy_C",
+  "name": "Boner_TrapDecoy351",
+  "addr": "0x1a90019f200",
+  "loc": {
+   "x": -22452.646484375,
+   "y": 18827.515625,
+   "z": -16565.271484375
+  }
+ },
+ {
+  "cls": "SmallRobot_ScrapDecoy_C",
+  "name": "Boner_TrapDecoy352",
+  "addr": "0x1a90019ee80",
+  "loc": {
+   "x": -22051.107421875,
+   "y": 18471.703125,
+   "z": -16549.791015625
+  }
+ },
+ {
+  "cls": "SmallRobot_ScrapDecoy_C",
+  "name": "Boner_TrapDecoy353",
+  "addr": "0x1a90019eb00",
+  "loc": {
+   "x": -22114.2890625,
+   "y": 18626.09765625,
+   "z": -16565.271484375
+  }
+ },
+ {
+  "cls": "SmallRobot_ScrapDecoy_C",
+  "name": "SmallRobot_ScrapDecoy2",
+  "addr": "0x1a90019e780",
+  "loc": {
+   "x": -17829.48046875,
+   "y": 25508.36328125,
+   "z": -18166.634765625
+  }
+ },
+ {
+  "cls": "SmallRobot_ScrapDecoy_C",
+  "name": "SmallRobot_ScrapDecoy3",
+  "addr": "0x1a9009e6d00",
+  "loc": {
+   "x": -23144.32421875,
+   "y": 19075.03125,
+   "z": -36602.24609375
+  }
+ },
+ {
+  "cls": "SmallRobot_ScrapDecoy_C",
+  "name": "SmallRobot_ScrapDecoy",
+  "addr": "0x1a9009e6980",
+  "loc": {
+   "x": -24913.828125,
+   "y": 22749.4375,
+   "z": -16590.40625
+  }
+ },
+ {
+  "cls": "DrillRobot_Brass_Spawner_C",
+  "name": "DrillRobot_Brass_Spawner",
+  "addr": "0x1a901266970",
+  "loc": {
+   "x": 26138.88671875,
+   "y": 215.54537963867188,
+   "z": 21011.72265625
+  }
+ },
+ {
+  "cls": "Robo_Mechaknight_TrapDecoy_Axes_C",
+  "name": "FlyingRobot_Decoy2",
+  "addr": "0x1a8d3bedd00",
+  "loc": {
+   "x": -45663.2734375,
+   "y": 70036.3125,
+   "z": -35344.0546875
+  }
+ }
+]

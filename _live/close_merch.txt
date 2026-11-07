@@ -1,0 +1,45 @@
+﻿ATTACH 47396
+READY [{"ready": true, "base": "0x7ff75d670000", "manager": "0x1a8388c5100"}]
+>>> actors merchant
+[
+ {
+  "cls": "Chest_Merchant_C",
+  "name": "Chest_Merchant2",
+  "addr": "0x1a8d3fe8c80",
+  "loc": {
+   "x": -80.13330078125,
+   "y": 36170.03515625,
+   "z": 2920.68701171875
+  }
+ },
+ {
+  "cls": "Merchant_NPC_BP_C",
+  "name": "Merchant_Idle_Shop",
+  "addr": "0x1a8fa1ef580",
+  "loc": {
+   "x": 5891.51513671875,
+   "y": 46214.140625,
+   "z": 2340.865478515625
+  }
+ },
+ {
+  "cls": "Chest_Merchant_C",
+  "name": "Chest_Merchant",
+  "addr": "0x1a8d6765f00",
+  "loc": {
+   "x": 6638.27001953125,
+   "y": 7747.689453125,
+   "z": -20078.05859375
+  }
+ },
+ {
+  "cls": "Chest_Merchant_C",
+  "name": "Chest_Merchant2",
+  "addr": "0x1a8e8d09700",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ }
+]

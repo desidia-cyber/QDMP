@@ -1,0 +1,15 @@
+﻿ATTACH 37840
+READY [{"ready": true, "base": "0x7ff75d670000", "manager": "0x28703d8cf00"}]
+>>> findobj Dragon_Green_BP_C
+[
+ {
+  "cls": "BlueprintGeneratedClass",
+  "name": "Dragon_Green_BP_C",
+  "addr": "0x287df381c80"
+ },
+ {
+  "cls": "Dragon_Green_BP_C",
+  "name": "Default__Dragon_Green_BP_C",
+  "addr": "0x2877873f010"
+ }
+]

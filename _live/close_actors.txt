@@ -1,0 +1,1079 @@
+﻿ATTACH 47396
+READY [{"ready": true, "base": "0x7ff75d670000", "manager": "0x1a8388c5100"}]
+>>> actors merchant
+[
+ {
+  "cls": "Chest_Merchant_C",
+  "name": "Chest_Merchant2",
+  "addr": "0x1a8d3fe8c80",
+  "loc": {
+   "x": -80.13330078125,
+   "y": 36170.03515625,
+   "z": 2920.68701171875
+  }
+ },
+ {
+  "cls": "Merchant_NPC_BP_C",
+  "name": "Merchant_Idle_Shop",
+  "addr": "0x1a8fa1ef580",
+  "loc": {
+   "x": 5891.51513671875,
+   "y": 46214.140625,
+   "z": 2340.865478515625
+  }
+ },
+ {
+  "cls": "Chest_Merchant_C",
+  "name": "Chest_Merchant",
+  "addr": "0x1a8d6765f00",
+  "loc": {
+   "x": 6638.27001953125,
+   "y": 7747.689453125,
+   "z": -20078.05859375
+  }
+ },
+ {
+  "cls": "Chest_Merchant_C",
+  "name": "Chest_Merchant2",
+  "addr": "0x1a8e8d09700",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ }
+]
+>>> actors shop
+[
+ {
+  "cls": "Shop_Door_00_BP_C",
+  "name": "Shop_Door_00_SM",
+  "addr": "0x1a8ec027bb0",
+  "loc": {
+   "x": 5150.2451171875,
+   "y": 44044.24609375,
+   "z": 2343.181640625
+  }
+ },
+ {
+  "cls": "NiagaraActor",
+  "name": "ShopChimney2",
+  "addr": "0x1a872878440",
+  "loc": {
+   "x": -11715.3916015625,
+   "y": 12909.6328125,
+   "z": 4064.6806640625
+  }
+ },
+ {
+  "cls": "AudioVolume",
+  "name": "ShopAudioVolume",
+  "addr": "0x1a901a0d600",
+  "loc": {
+   "x": 5532.37158203125,
+   "y": 45304.26953125,
+   "z": 2888.894287109375
+  }
+ },
+ {
+  "cls": "AudioVolume",
+  "name": "ShopIslandCave_AudioVolume",
+  "addr": "0x1a901a0d300",
+  "loc": {
+   "x": 2997.47607421875,
+   "y": 38156.87109375,
+   "z": 371.930419921875
+  }
+ },
+ {
+  "cls": "MechaKnight_DualAxe_ShopSpawner_C",
+  "name": "MechaKnight_DualAxe_ShopSpawner",
+  "addr": "0x1a902e1c020",
+  "loc": {
+   "x": 3808.2255859375,
+   "y": 40206.76171875,
+   "z": 2361.9150390625
+  }
+ },
+ {
+  "cls": "Merchant_NPC_BP_C",
+  "name": "Merchant_Idle_Shop",
+  "addr": "0x1a8fa1ef580",
+  "loc": {
+   "x": 5891.51513671875,
+   "y": 46214.140625,
+   "z": 2340.865478515625
+  }
+ },
+ {
+  "cls": "MiniTeleporter_C",
+  "name": "ShopTeleportDestination",
+  "addr": "0x1a902d8ef80",
+  "loc": {
+   "x": 5706.72607421875,
+   "y": 44269.91015625,
+   "z": 2339.653076171875
+  }
+ },
+ {
+  "cls": "NiagaraActor",
+  "name": "ShopChimney",
+  "addr": "0x1a9028ede40",
+  "loc": {
+   "x": 4729.1484375,
+   "y": 46650.75,
+   "z": 4218.8486328125
+  }
+ },
+ {
+  "cls": "Shopkeeper_C",
+  "name": "Shopkeeper",
+  "addr": "0x1a9012a3a80",
+  "loc": {
+   "x": 5815.615234375,
+   "y": 45970.95703125,
+   "z": 2420.32080078125
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor10",
+  "addr": "0x1a9012a3800",
+  "loc": {
+   "x": 5451.31689453125,
+   "y": 46239.8671875,
+   "z": 2582.381591796875
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor11",
+  "addr": "0x1a9012a3580",
+  "loc": {
+   "x": 5644.302734375,
+   "y": 46284.78125,
+   "z": 2441.608642578125
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor12",
+  "addr": "0x1a9012a3300",
+  "loc": {
+   "x": 6698.6318359375,
+   "y": 45801.29296875,
+   "z": 2625.91650390625
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor13",
+  "addr": "0x1a9012a3080",
+  "loc": {
+   "x": 6384.03515625,
+   "y": 46268.7734375,
+   "z": 2765.2646484375
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor14",
+  "addr": "0x1a9012a2e00",
+  "loc": {
+   "x": 6662.7109375,
+   "y": 45929.53125,
+   "z": 2465.602783203125
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor15",
+  "addr": "0x1a9012a2b80",
+  "loc": {
+   "x": 6640.57080078125,
+   "y": 45962.484375,
+   "z": 2465.092529296875
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor16",
+  "addr": "0x1a9012a2900",
+  "loc": {
+   "x": 6573.9912109375,
+   "y": 46023.91015625,
+   "z": 2466.55810546875
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor17",
+  "addr": "0x1a9012a2680",
+  "loc": {
+   "x": 6553.6513671875,
+   "y": 46052.75,
+   "z": 2467.07177734375
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor18",
+  "addr": "0x1a9012a2400",
+  "loc": {
+   "x": 6492.57177734375,
+   "y": 46136.75390625,
+   "z": 2732.3896484375
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor19",
+  "addr": "0x1a9012a2180",
+  "loc": {
+   "x": 6423.02734375,
+   "y": 46230.81640625,
+   "z": 2744.029052734375
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor2",
+  "addr": "0x1a9012a1f00",
+  "loc": {
+   "x": 6835.15966796875,
+   "y": 45302.01953125,
+   "z": 2590.661376953125
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor20",
+  "addr": "0x1a9012a1c80",
+  "loc": {
+   "x": 6456.02734375,
+   "y": 46183.69140625,
+   "z": 2747.913818359375
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor21",
+  "addr": "0x1a9012a1a00",
+  "loc": {
+   "x": 4793.71728515625,
+   "y": 46151.3828125,
+   "z": 2702.272216796875
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor22",
+  "addr": "0x1a9012a1780",
+  "loc": {
+   "x": 4914.2275390625,
+   "y": 46242.28125,
+   "z": 2672.8203125
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor23",
+  "addr": "0x1a9012a1500",
+  "loc": {
+   "x": 4836.27734375,
+   "y": 46180.24609375,
+   "z": 2682.882080078125
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor24",
+  "addr": "0x1a9012a1280",
+  "loc": {
+   "x": 4875.7138671875,
+   "y": 46208.1796875,
+   "z": 2686.428955078125
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor25",
+  "addr": "0x1a9012a1000",
+  "loc": {
+   "x": 4505.98046875,
+   "y": 45685.48828125,
+   "z": 2460.478515625
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor27",
+  "addr": "0x1a9012a0d80",
+  "loc": {
+   "x": 6440.23193359375,
+   "y": 46209.75390625,
+   "z": 2463.548828125
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor28",
+  "addr": "0x1a9012a0b00",
+  "loc": {
+   "x": 6414.9892578125,
+   "y": 46244.15234375,
+   "z": 2464.908447265625
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor29",
+  "addr": "0x1a9012a0880",
+  "loc": {
+   "x": 6381.65234375,
+   "y": 46277.41015625,
+   "z": 2464.891845703125
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor3",
+  "addr": "0x1a9012a0600",
+  "loc": {
+   "x": 6826.896484375,
+   "y": 45382.71484375,
+   "z": 2598.478515625
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor30",
+  "addr": "0x1a9012a0380",
+  "loc": {
+   "x": 6664.783203125,
+   "y": 45913.734375,
+   "z": 2547.57763671875
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor31",
+  "addr": "0x1a9012a0100",
+  "loc": {
+   "x": 6642.28857421875,
+   "y": 45950.19140625,
+   "z": 2568.1640625
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor32",
+  "addr": "0x1a9012aa380",
+  "loc": {
+   "x": 6607.77880859375,
+   "y": 45984.66015625,
+   "z": 2550.91015625
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor33",
+  "addr": "0x1a9012aa100",
+  "loc": {
+   "x": 4365.7412109375,
+   "y": 45852.109375,
+   "z": 2560.310546875
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor34",
+  "addr": "0x1a9012a9e80",
+  "loc": {
+   "x": 4596.42578125,
+   "y": 45590.140625,
+   "z": 2461.69677734375
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor35",
+  "addr": "0x1a9012a9c00",
+  "loc": {
+   "x": 4300.22314453125,
+   "y": 45119.23828125,
+   "z": 2395.97509765625
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor36",
+  "addr": "0x1a9012a9980",
+  "loc": {
+   "x": 5945.28369140625,
+   "y": 46337.41015625,
+   "z": 2780.737548828125
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor37",
+  "addr": "0x1a9012a9700",
+  "loc": {
+   "x": 4726.3330078125,
+   "y": 45691.80859375,
+   "z": 2458.3935546875
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor38",
+  "addr": "0x1a9012a9480",
+  "loc": {
+   "x": 4771.8671875,
+   "y": 45649.3671875,
+   "z": 2455.40869140625
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor39",
+  "addr": "0x1a9012a9200",
+  "loc": {
+   "x": 4706.68505859375,
+   "y": 45557.1796875,
+   "z": 2448.818603515625
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor4",
+  "addr": "0x1a9012a8f80",
+  "loc": {
+   "x": 6828.36767578125,
+   "y": 45344.13671875,
+   "z": 2601.545166015625
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor40",
+  "addr": "0x1a9012a8d00",
+  "loc": {
+   "x": 4415.580078125,
+   "y": 45599.09375,
+   "z": 2489.456787109375
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor41",
+  "addr": "0x1a9012a8a80",
+  "loc": {
+   "x": 4392.78271484375,
+   "y": 45927.5234375,
+   "z": 2536.54443359375
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor42",
+  "addr": "0x1a9012a8800",
+  "loc": {
+   "x": 4520.94677734375,
+   "y": 45436.07421875,
+   "z": 2448.818603515625
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor43",
+  "addr": "0x1a9012a8580",
+  "loc": {
+   "x": 5694.11572265625,
+   "y": 46459.515625,
+   "z": 2441.608642578125
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor44",
+  "addr": "0x1a9012a8300",
+  "loc": {
+   "x": 6174.46533203125,
+   "y": 46458.71875,
+   "z": 2574.816650390625
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor45",
+  "addr": "0x1a9012a8080",
+  "loc": {
+   "x": 5866.314453125,
+   "y": 46588.62109375,
+   "z": 2574.816650390625
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor46",
+  "addr": "0x1a9012a7e00",
+  "loc": {
+   "x": 6493.49853515625,
+   "y": 46144.5625,
+   "z": 2550.29443359375
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor47",
+  "addr": "0x1a9012a7b80",
+  "loc": {
+   "x": 6153.60009765625,
+   "y": 45935.49609375,
+   "z": 2517.346435546875
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor48",
+  "addr": "0x1a9012a7900",
+  "loc": {
+   "x": 6459.0810546875,
+   "y": 46180.6015625,
+   "z": 2552.55859375
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor49",
+  "addr": "0x1a9012a7680",
+  "loc": {
+   "x": 6665.4697265625,
+   "y": 45917.94140625,
+   "z": 2369.05615234375
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor5",
+  "addr": "0x1a9012a7400",
+  "loc": {
+   "x": 4553.99609375,
+   "y": 45722.75390625,
+   "z": 2448.818603515625
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor50",
+  "addr": "0x1a9012a7180",
+  "loc": {
+   "x": 6623.9716796875,
+   "y": 45944.72265625,
+   "z": 2369.05615234375
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor51",
+  "addr": "0x1a9012a6f00",
+  "loc": {
+   "x": 6610.333984375,
+   "y": 45991.640625,
+   "z": 2369.05615234375
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor52",
+  "addr": "0x1a9012a6c80",
+  "loc": {
+   "x": 6571.6025390625,
+   "y": 46017.41796875,
+   "z": 2369.05615234375
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor53",
+  "addr": "0x1a9012a6a00",
+  "loc": {
+   "x": 6559.14599609375,
+   "y": 46060.9296875,
+   "z": 2369.05615234375
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor54",
+  "addr": "0x1a9012a6780",
+  "loc": {
+   "x": 6735.67333984375,
+   "y": 44963.1328125,
+   "z": 2493.9970703125
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor55",
+  "addr": "0x1a9012a6500",
+  "loc": {
+   "x": 6266.9208984375,
+   "y": 44314.26953125,
+   "z": 2580.6982421875
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor56",
+  "addr": "0x1a9012a6280",
+  "loc": {
+   "x": 6484.2099609375,
+   "y": 46139.5390625,
+   "z": 2369.05615234375
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor57",
+  "addr": "0x1a9012a6000",
+  "loc": {
+   "x": 6461.48583984375,
+   "y": 46186.45703125,
+   "z": 2369.05615234375
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor58",
+  "addr": "0x1a9012a5d80",
+  "loc": {
+   "x": 6419.29541015625,
+   "y": 46215.9140625,
+   "z": 2369.05615234375
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor59",
+  "addr": "0x1a9012a5b00",
+  "loc": {
+   "x": 6675.6416015625,
+   "y": 44817.1171875,
+   "z": 2401.6982421875
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor6",
+  "addr": "0x1a9012a5880",
+  "loc": {
+   "x": 4547.59765625,
+   "y": 45690.99609375,
+   "z": 2448.818603515625
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor60",
+  "addr": "0x1a9012a5600",
+  "loc": {
+   "x": 6458.9033203125,
+   "y": 44460.953125,
+   "z": 2495.0556640625
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor61",
+  "addr": "0x1a9012a5380",
+  "loc": {
+   "x": 6250.80859375,
+   "y": 44311.63671875,
+   "z": 2495.0556640625
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor62",
+  "addr": "0x1a9012af600",
+  "loc": {
+   "x": 6215.474609375,
+   "y": 44273.67578125,
+   "z": 2495.0556640625
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor63",
+  "addr": "0x1a9012af380",
+  "loc": {
+   "x": 6192.74658203125,
+   "y": 44259.890625,
+   "z": 2401.5625
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor64",
+  "addr": "0x1a9012af100",
+  "loc": {
+   "x": 6157.22021484375,
+   "y": 44229.77734375,
+   "z": 2580.267578125
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor65",
+  "addr": "0x1a9012aee80",
+  "loc": {
+   "x": 6314.67041015625,
+   "y": 44341.82421875,
+   "z": 2494.357421875
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor66",
+  "addr": "0x1a9012aec00",
+  "loc": {
+   "x": 6608.1689453125,
+   "y": 44671.90625,
+   "z": 2579.721923828125
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor67",
+  "addr": "0x1a9012ae980",
+  "loc": {
+   "x": 6660.20166015625,
+   "y": 44776.68359375,
+   "z": 2412.875732421875
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor68",
+  "addr": "0x1a9012ae700",
+  "loc": {
+   "x": 6561.15869140625,
+   "y": 46049.87109375,
+   "z": 2638.787841796875
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor69",
+  "addr": "0x1a9012ae480",
+  "loc": {
+   "x": 6592.82861328125,
+   "y": 46012.1171875,
+   "z": 2639.34521484375
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor70",
+  "addr": "0x1a9012ae200",
+  "loc": {
+   "x": 6622.76318359375,
+   "y": 45971.41015625,
+   "z": 2638.96484375
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor71",
+  "addr": "0x1a9012adf80",
+  "loc": {
+   "x": 6565.01953125,
+   "y": 46055.1796875,
+   "z": 2550.923583984375
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor72",
+  "addr": "0x1a9012add00",
+  "loc": {
+   "x": 6361.2353515625,
+   "y": 44399.03125,
+   "z": 2529.219970703125
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor73",
+  "addr": "0x1a9012ada80",
+  "loc": {
+   "x": 6416.54541015625,
+   "y": 44435.59765625,
+   "z": 2495.967529296875
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor74",
+  "addr": "0x1a9012ad800",
+  "loc": {
+   "x": 6249.2001953125,
+   "y": 44283.296875,
+   "z": 2426.836181640625
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor75",
+  "addr": "0x1a9012ad580",
+  "loc": {
+   "x": 6286.98291015625,
+   "y": 44326.4296875,
+   "z": 2401.5625
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor76",
+  "addr": "0x1a9012ad300",
+  "loc": {
+   "x": 6317.5166015625,
+   "y": 44350.0078125,
+   "z": 2580.267578125
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor77",
+  "addr": "0x1a9012ad080",
+  "loc": {
+   "x": 6168.02587890625,
+   "y": 44225.94921875,
+   "z": 2530.04443359375
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor78",
+  "addr": "0x1a9012ace00",
+  "loc": {
+   "x": 6350.82666015625,
+   "y": 45925.0625,
+   "z": 2472.968505859375
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor79",
+  "addr": "0x1a9012acb80",
+  "loc": {
+   "x": 6298.81591796875,
+   "y": 45882.76953125,
+   "z": 2472.968505859375
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor7",
+  "addr": "0x1a9012ac900",
+  "loc": {
+   "x": 5498.60888671875,
+   "y": 46164.66015625,
+   "z": 2472.95654296875
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor8",
+  "addr": "0x1a9012ac680",
+  "loc": {
+   "x": 6165.109375,
+   "y": 45926.54296875,
+   "z": 2507.60888671875
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor80",
+  "addr": "0x1a9012ac400",
+  "loc": {
+   "x": 6639.43505859375,
+   "y": 44721.44921875,
+   "z": 2606.298095703125
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor81",
+  "addr": "0x1a9012ac180",
+  "loc": {
+   "x": 5440.32177734375,
+   "y": 46195.5078125,
+   "z": 2472.926513671875
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor82",
+  "addr": "0x1a9012abf00",
+  "loc": {
+   "x": 4750.1376953125,
+   "y": 45599.01953125,
+   "z": 2452.765380859375
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor83",
+  "addr": "0x1a9012abc80",
+  "loc": {
+   "x": 4311.82958984375,
+   "y": 45009.5859375,
+   "z": 2402.378173828125
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor84",
+  "addr": "0x1a9012aba00",
+  "loc": {
+   "x": 4605.77587890625,
+   "y": 45742.234375,
+   "z": 2448.818603515625
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor85",
+  "addr": "0x1a9012ab780",
+  "loc": {
+   "x": 4552.634765625,
+   "y": 45417.73046875,
+   "z": 2460.478515625
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor86",
+  "addr": "0x1a9012ab500",
+  "loc": {
+   "x": 5389.82861328125,
+   "y": 46258.99609375,
+   "z": 2498.173095703125
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor87",
+  "addr": "0x1a9012ab280",
+  "loc": {
+   "x": 5616.14013671875,
+   "y": 46293.1171875,
+   "z": 2441.608642578125
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor88",
+  "addr": "0x1a9012ab000",
+  "loc": {
+   "x": 5582.26513671875,
+   "y": 46311.11328125,
+   "z": 2441.608642578125
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor89",
+  "addr": "0x1a9012aad80",
+  "loc": {
+   "x": 6117.01123046875,
+   "y": 45960.24609375,
+   "z": 2472.95751953125
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor9",
+  "addr": "0x1a9012aab00",
+  "loc": {
+   "x": 6243.08349609375,
+   "y": 45906,
+   "z": 2581.265380859375
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor90",
+  "addr": "0x1a9012aa880",
+  "loc": {
+   "x": 5716.982421875,
+   "y": 46530.86328125,
+   "z": 2439.507080078125
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor91",
+  "addr": "0x1a9012aa600",
+  "loc": {
+   "x": 4420.26904296875,
+   "y": 45985.9609375,
+   "z": 2536.99365234375
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor92",
+  "addr": "0x1a9012afd80",
+  "loc": {
+   "x": 4344.5126953125,
+   "y": 45795.9140625,
+   "z": 2560.310546875
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor93",
+  "addr": "0x1a9012afb00",
+  "loc": {
+   "x": 4916.9658203125,
+   "y": 44299.59375,
+   "z": 2423.000732421875
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor94",
+  "addr": "0x1a9012af880",
+  "loc": {
+   "x": 5718.4443359375,
+   "y": 46174.7265625,
+   "z": 2480.91357421875
+  }
+ },
+ {
+  "cls": "ShopTreasureActor_C",
+  "name": "ShopTreasureActor",
+  "addr": "0x1a8fa305100",
+  "loc": {
+   "x": 6817.67578125,
+   "y": 45417.40625,
+   "z": 2615.24365234375
+  }
+ },
+ {
+  "cls": "Shop_Door_00_BP_C",
+  "name": "Shop_Door_00_SM",
+  "addr": "0x1a8db0bd6f0",
+  "loc": {
+   "x": 0,
+   "y": 0,
+   "z": 0
+  }
+ }
+]
+>>> actors LargeRobot
