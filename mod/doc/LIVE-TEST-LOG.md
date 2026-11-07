@@ -242,3 +242,50 @@ appear once a save is actually loaded.
   to stealing focus. Replaced by `tools/capture-hidden.ps1` (`PrintWindow` with
   `PW_RENDERFULLCONTENT`), which renders the window wherever it sits.
 - The process tree teardown above, which is why `tools/live-session.ps1` exists.
+
+### R17. The menu is reachable by a posted click
+
+`tools/send-input.ps1` posts `WM_MOUSEMOVE` then `WM_LBUTTONDOWN/UP` at a **fractional**
+client coordinate. Measured: clicking at (0.5, 0.744) of the client leaves the main menu
+and the window goes black (the level-load transition) — captured in
+`_test/shot-after-click.png`. Absolute pixels are not usable: the same launch arguments
+produced a 1920x1080 client once and 1280x720 the next time, so a fixed (960,803) missed
+the button entirely on the second run.
+
+### R18. The save object must be re-resolved, not cached
+
+The main menu already hands back a transient `FS_SaveSlot_C`; the save a level load uses
+is a different object. Caching the first one made the mirror report the main-menu state
+(`1/13 known keys present`) for two minutes after the world had loaded. It now re-resolves
+every 2 s, and the re-init is visible in the log (`TryInitSaveLayer: calling SaveInit`
+recurring).
+
+### R19. OPEN — gameplay was not reached within the session
+
+Clicking Play reliably leaves the menu, but no run got far enough for the loaded save to
+answer with the eleven keys the analysis measured: the mirror still reported
+`1/13` at the end of every attempt, and one launch exited before the probe at all.
+
+Two candidates, not yet distinguished:
+
+1. **Play opens a save-select screen.** The screenshot after the click is a black
+   loading frame, which is consistent with a load, but a second menu may follow.
+2. **The instance's save is not being loaded.** `_test\inst1` was seeded by copying
+   `World0.sav` etc.; if the game's slot bookkeeping lives in `System0.sav` and the
+   instance was seeded inconsistently, "Play" would start a new game.
+
+**Next probe:** capture the screen 20 s after the click and look at it, then click the
+obvious next control. That is one run, and it needs a screenshot rather than a guess.
+
+### Where this leaves the mod
+
+Working and measured live: build verification, the substrate, all three hooks, the frame
+pump on the game thread, save-object resolution, and **reads through the native getter**
+returning real values from the running game.
+
+Not working yet: the progression mirror at full fidelity (needs either map enumeration or
+a UFunction, both blocked — see R11/R13), the write path (same blocker), and everything
+downstream of a live session (player rows, puppet, enemy sync).
+
+`ObjectScan` is off by default and the write paths refuse rather than guess, so the mod
+currently does nothing to the game's state. The game directory is left clean.

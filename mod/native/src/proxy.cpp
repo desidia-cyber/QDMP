@@ -294,21 +294,21 @@ void RunApiProbe()
 bool TryInitSaveLayer(uint32_t now)
 {
     SaveLayer& s = Save();
-    // Re-resolve when the world changes, not on an ObjectIsLive probe: that probe
-    // compares the object-array slot back to the object, and on this build the slot for
-    // a live save object does not always read back as the same pointer, so trusting it
-    // made the layer re-initialise every other second.
-    if (s.readOk && s.save) {
-        void* world = *(void**)Ptr<void*>(0x04BA86B0u);
-        if (world != nullptr && world == s.world) return true;
-    }
-
-    // Do not hammer SaveInit: it walks the object graph and does the property search.
-    if (g_lastSaveInitMs != 0 && (now - g_lastSaveInitMs) < 2000) return false;
-    g_lastSaveInitMs = now;
-
     void* world = *(void**)Ptr<void*>(0x04BA86B0u);
-    if (!world) return false;
+    if (world == nullptr) return false;
+
+    // Re-resolve every two seconds even when the world pointer is unchanged.
+    //
+    // MEASURED: resolving once and caching is wrong. At the main menu the game already
+    // hands back a transient FS_SaveSlot_C, and the save that a level load actually uses
+    // is a DIFFERENT object -- so the cached one kept reporting the main-menu state
+    // (1 of 13 known flags present) for two minutes after the world had loaded. Two
+    // seconds is cheap: the resolve is a player lookup plus one call.
+    if (s.readOk && s.save && world == s.world &&
+        (now - g_lastSaveInitMs) < 2000) {
+        return true;
+    }
+    g_lastSaveInitMs = now;
 
     QDLOG(LOG_DEBUG, "  TryInitSaveLayer: calling SaveInit");
     if (!SaveInit(world)) {
