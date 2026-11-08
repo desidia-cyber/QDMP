@@ -323,5 +323,144 @@ inline void ShortLevelName(const char* path, char* out, int cap)
     out[k] = 0;
 }
 
+inline bool HasNamePrefix(const char* s, const char* prefix)
+{
+    int i = 0;
+    for (; prefix[i]; ++i) if (s[i] != prefix[i]) return false;
+    return true;
+}
+
+// A level name the union may publish.  The refusal is as load-bearing as the
+// acceptance: the WorldAsset soft path at +0x10 is unverified, so its read can be
+// an empty string, "None", or the ULevelStreaming wrapper's own object name.  Any
+// of those published in the union makes the partner protect a level that does not
+// exist, and that failure looks exactly like "the level did not stream".  Only the
+// characters that occur in cooked package short names are allowed, so a whole path
+// that escaped ShortLevelName is refused rather than sent.
+inline bool PlausibleLevelName(const char* name)
+{
+    if (!name || !name[0]) return false;
+    if (name[0] == '/' || name[0] == '.') return false;
+    if (HasNamePrefix(name, "Default__")) return false;
+    if (HasNamePrefix(name, "LevelStreaming")) return false;
+    if (HasNamePrefix(name, "None") && !name[4]) return false;
+    int n = 0;
+    for (; name[n]; ++n) {
+        if (n >= kMaxNameLen - 1) return false;
+        char c = name[n];
+        bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                  (c >= '0' && c <= '9') || c == '_' || c == '-';
+        if (!ok) return false;
+    }
+    return n > 0;
+}
+
+// ---------------------------------------------------------------------------
+// MapBoard -- which world each machine is in (SYNC-GAPS G6).
+// ---------------------------------------------------------------------------
+// A hard transition (a cutscene map, `900_SipehaWorld`, `990_B33sment`) loads a
+// different UWorld.  While the two machines are in different worlds every ABSOLUTE
+// body means something different: a level name from the partner's map matches
+// nothing here, an enemy row addresses an actor that does not exist here, and a
+// dialogue cursor points into another conversation.  Applying any of them is worse
+// than dropping it, so the rule is ANNOUNCEMENT PLUS REFUSAL, not travel.
+//
+// API-GAPS 4 is explicit that hard travel is refused in co-op v1, so this class
+// deliberately has no "make the partner follow" path.  It detects the split, the
+// caller logs it once, and the application sites ask PeerStateApplies() before
+// touching cross-world state.  The session is never torn down: a cutscene can load
+// and return, and a transition is not instantaneous.
+//
+// The debounce is load-bearing.  During an ordinary level load the old world is
+// current for a frame or two and the new world's name is already known, so the two
+// names disagree briefly on every transition.  kDivergeMs is 3 s: measured streamed
+// sublevel loads are under a second, and the cutscene hand-off is a handful of
+// frames; three seconds is past both and still far below the point where a player
+// would call the session broken.
+class MapBoard {
+public:
+    static const uint32_t kDivergeMs = 3000;
+
+    MapBoard() { Reset(); }
+
+    void Reset()
+    {
+        local_[0] = 0;
+        peer_[0] = 0;
+        differing_ = false;
+        since_ms_ = 0;
+    }
+
+    // Returns true when the name changed.  The caller announces a change at once;
+    // the heartbeat covers an announcement that was lost.
+    bool OnLocal(const char* map, uint32_t now_ms)
+    {
+        bool changed = Copy(local_, map);
+        if (changed && Differs()) since_ms_ = now_ms;   // a new mismatch restarts the clock
+        Recompute(now_ms);
+        return changed;
+    }
+
+    bool OnPeer(const char* map, uint32_t now_ms)
+    {
+        bool changed = Copy(peer_, map);
+        if (changed && Differs()) since_ms_ = now_ms;
+        Recompute(now_ms);
+        return changed;
+    }
+
+    // True once the two names have disagreed for kDivergeMs.  A difference that
+    // clears inside the window was a load, not a split.
+    bool Diverged(uint32_t now_ms) const
+    {
+        if (!differing_ || !Differs()) return false;
+        return (uint32_t)(now_ms - since_ms_) >= kDivergeMs;
+    }
+
+    // The question every application site asks.  False means the partner's body
+    // describes the other world and must be dropped, never "converted".
+    bool PeerStateApplies(uint32_t now_ms) const { return !Diverged(now_ms); }
+
+    bool BothKnown() const { return local_[0] != 0 && peer_[0] != 0; }
+    bool NamesDiffer() const { return Differs(); }
+    const char* Local() const { return local_; }
+    const char* Peer() const { return peer_; }
+
+private:
+    static bool Same(const char* a, const char* b)
+    {
+        int i = 0;
+        for (; a[i] || b[i]; ++i) if (a[i] != b[i]) return false;
+        return true;
+    }
+
+    static bool Copy(char* dst, const char* src)
+    {
+        bool changed = false;
+        int i = 0;
+        if (!src) src = "";
+        for (; src[i] && i < kMaxNameLen - 1; ++i) {
+            if (dst[i] != src[i]) changed = true;
+            dst[i] = src[i];
+        }
+        if (dst[i] != 0) changed = true;
+        dst[i] = 0;
+        return changed;
+    }
+
+    bool Differs() const { return local_[0] && peer_[0] && !Same(local_, peer_); }
+
+    void Recompute(uint32_t now_ms)
+    {
+        if (!Differs()) { differing_ = false; since_ms_ = 0; }
+        else if (!differing_) { differing_ = true; since_ms_ = now_ms; }
+    }
+
+    char     local_[kMaxNameLen];
+    char     peer_[kMaxNameLen];
+    bool     differing_;
+    uint32_t since_ms_;
+};
+
 } // namespace stream
 } // namespace qd

@@ -75,7 +75,12 @@ remote player is the same problem as G4.
 travels, the two are in different worlds. The union, the enemy table and the dialogue
 board all reset on a world change, and nothing brings the other player along. SYNC-DESIGN
 §3 specifies host-announced, acknowledged travel; the travel API itself is still an open
-item (API-GAPS §4).
+item (API-GAPS §4). **Announcement plus refusal is implemented** (`K_TRAVEL`, sent by
+both machines, tracked by `stream::MapBoard`): each machine announces its short map name
+on change and every ~2 s; a difference that persists 3 s is logged once, and cross-world
+state is dropped — the partner's `LEVEL_UNION` names are not installed and
+`K_ENEMY`/`K_DIALOGUE` are not applied — until the names match again. Hard travel itself
+stays refused in co-op v1; the session is not torn down.
 
 ## 2. Gaps inside the three systems just built
 
@@ -119,16 +124,20 @@ item (API-GAPS §4).
   arguments, they are passed as zero.
 
 **Level streaming**
-- **Only visibility is guarded.** If the manager also unloads levels
-  (`SetShouldBeLoaded(false)`), that path is not vetoed. The measured behaviour
-  (21 → 11 left GreenRuins *loaded-hidden*) suggests the manager only hides, but this is
-  not proven.
+- **Both setters are guarded.** `SetShouldBeVisible` (`0x029ACB20`) and the virtual
+  `SetShouldBeLoaded` (body `0x029ACAC0`, reached through vtable `+0x270`) are vetoed
+  for a level the partner needs. The measured manager path only calls the visibility
+  setter, so the unload hook is inert unless the game calls it.
 - **Loading cost.** A partner's levels are shown at most two per 500 ms, so a hitch is
   possible when the players separate. Forced levels stay *loaded* after release (only
-  visibility is released), which costs memory.
-- **`bShouldBeVisible` at +0xBA bit 3** is verified by the setter's own bytes. The
-  `WorldAsset` soft path at +0x10, used for level names, is not, and the code falls back
-  to `PackageNameToLoad` and then the object name.
+  visibility is released), which costs memory; that is deliberate because it avoids a
+  re-load and a re-spawn when the partner crosses the boundary again.
+- **`bShouldBeVisible` at +0xBA bit 3 and `bShouldBeLoaded` at +0xBA bit 4** are
+  verified by the setters' own bytes (and `ShouldBeLoaded` at vtable `+0x278` reads bit
+  4). The `WorldAsset` soft path at +0x10 used for level names is still unverified; the
+  resolver now logs which source produced each name once and refuses empty/implausible
+  names (preferring `PackageNameToLoad` when the two disagree) rather than publishing
+  them into the union.
 
 ## 3. Not synced, lower stakes
 
