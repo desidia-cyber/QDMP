@@ -609,6 +609,20 @@ public:
 
     LocalDetector() { Reset(); }
 
+    // The last value this machine observed for a GUID.  The apply path asks this before
+    // writing: the host sends its whole set every second, and rewriting seven unchanged
+    // values per second through the game's own SavableActor setter is seven needless
+    // Map_Add / Array_Set calls per second on the peer (measured on the rig: applied=7
+    // every second, indefinitely).
+    bool Known(const uint32_t g[4], int32_t* out) const
+    {
+        if (!have_) return false;
+        int j = seen_.Find(g);
+        if (j < 0) return false;
+        if (out) *out = seen_.At(j)->value;
+        return true;
+    }
+
     void Reset()
     {
         seen_.Clear();

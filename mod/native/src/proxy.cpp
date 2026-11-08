@@ -185,6 +185,9 @@ uint32_t          g_flagsRevision = 1;
 bool              g_flagsDirty = true;
 uint32_t          g_lastFlagsPushMs = 0;
 uint32_t          g_lastPlayerPushMs = 0;
+// False until the mirror has read the save once.  Until then every key looks new, and a
+// peer that treated that as news would push its whole save at the host (see MirrorPump).
+bool              g_mirrorBaseline = false;
 
 // The probe runs once per process.  It is guarded separately from the save layer's own
 // readiness because the two become ready at different times: the engine exists long
@@ -380,6 +383,9 @@ bool TryInitSaveLayer(uint32_t now)
     g_mirrorCount = 0;
     g_lastFlagCount = -1;
     g_flagsDirty = true;
+    // A new save has to be re-baselined: its whole container is "new" to the mirror, and
+    // that is a load, not the player earning anything.
+    g_mirrorBaseline = false;
     // The queue refers to values in the save that was just replaced (and to echoes the
     // old container produced), so carrying it over would send progress for a save the
     // player is no longer in.
@@ -424,6 +430,9 @@ bool TryInitSaveLayer(uint32_t now)
 void QueueFlagIntent(const char* key, int32_t value)
 {
     if (!Cfg().flag_sync || !g_net.IsPeer() || !g_net.Connected()) return;
+    // The baseline pass is not a change the player made.  Without this gate the peer
+    // sent an intent for every non-zero key in its save the moment it joined.
+    if (!g_mirrorBaseline) return;
 
     switch (g_pendingFlags.Observe(key, value)) {
     case pending::IntentQueue::kQueued:
@@ -528,6 +537,13 @@ void MirrorPump(uint32_t now)
             QDLOG(LOG_INFO, "flag container size ", dec(n));
             g_lastFlagCount = n;
         }
+        // The first pass is the BASELINE, not news.  Every key is "new" to an empty
+        // mirror, and without this the peer uploaded its whole save as intents the
+        // moment it joined -- measured on the rig as a run of
+        // "intent refused (regressive or stale)" for keys the host already held, and,
+        // when the peer's save was AHEAD on any key, a silent overwrite of the host's
+        // world by the joining player.  From here on, a rise is the peer's own doing.
+        g_mirrorBaseline = true;
         return;
     }
 
@@ -546,6 +562,9 @@ void MirrorPump(uint32_t now)
         QDLOG(LOG_INFO, "flag probe: ", dec(found), "/", dec(kSeedCount), " known keys present");
         lastFound = found;
     }
+    // The same rule on the probe path: the first sweep establishes what the save already
+    // holds, and only a later change is the player's doing.
+    g_mirrorBaseline = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -3190,6 +3209,7 @@ struct EnemyRec {
     void*    pubMon;
     uint8_t  pubSeq;
     uint16_t pubStatus;
+    bool     pubInit;        // the first observation is the baseline, not a change
     uint8_t  gotSeq;
     uint16_t gotStatus;
     char     gotPath[wire::kEnemyPathCap];
@@ -3950,6 +3970,17 @@ void TrySendEnemyDamage(EnemyRec& r, uint32_t seq, uint8_t anim, uint32_t now)
     }
 }
 
+// At most this many enemy details per second across all enemies.  The reliable table has
+// 16 slots and a loaded level holds ~78 enemies: measured on the rig, publishing the
+// first observation of every enemy filled the table in one frame and the socket then
+// dropped everything else with "no free reliable slot" -- travel and intents included.
+// Detail is cosmetic (a dropped animation is re-sent on the next change), so it is the
+// lane that yields.
+static const uint32_t kEnemyDetailPerSec = 10;
+uint32_t g_detailTokens = kEnemyDetailPerSec;
+uint32_t g_detailRefillMs = 0;
+uint32_t g_detailDropped = 0;
+
 // The owner publishes what the enemy is doing.  Sent on change only: a montage is an
 // event, not a sample, and a status mask only changes when a debuff lands or expires.
 void SendEnemyDetail(EnemyRec& r, uint32_t now)
@@ -3957,11 +3988,23 @@ void SendEnemyDetail(EnemyRec& r, uint32_t now)
     void* mesh = EnemyMesh(r.actor);
     void* mon = mesh ? MeshActiveMontage(mesh) : nullptr;
     uint16_t mask = EnemyStatusMask(r.actor);
+
+    if (now - g_detailRefillMs >= 1000) { g_detailRefillMs = now; g_detailTokens = kEnemyDetailPerSec; }
+
+    // The first sight of an enemy is its BASELINE, not news.  At level load every enemy
+    // in range is already playing something, so treating the first observation as a
+    // change sent one packet per enemy at once.
+    if (!r.pubInit) {
+        r.pubInit = true;
+        r.pubMon = mon;
+        r.pubStatus = mask;
+        r.pubSeq = mon ? 1 : 0;
+        return;
+    }
+
     bool monChanged = (mon != r.pubMon);
-    // Nothing to say on the first tick of an idle enemy: pubMon is null and pubStatus 0
-    // already, so an unchanged idle enemy sends nothing rather than one packet per
-    // enemy per session.
-    if (!monChanged && mask == r.pubStatus) return;
+    bool statusChanged = (mask != r.pubStatus);
+    if (!monChanged && !statusChanged) return;
 
     wire::EnemyDetailBody d;
     memset(&d, 0, sizeof(d));
@@ -3974,6 +4017,19 @@ void SendEnemyDetail(EnemyRec& r, uint32_t now)
         if (avatar::AssetPath(mon, d.path, sizeof(d.path)) <= 0)
             QDLOG(LOG_WARN, "enemy detail: montage ", nm, " has no asset path");
     }
+    // A montage that classifies to nothing (an idle, trap or locomotion animation) has
+    // no meaning for the copy: it is recorded without spending a packet, unless the
+    // status mask changed in the same frame.
+    if (!(mon && d.anim != wire::E_NONE) && !statusChanged) { r.pubMon = mon; return; }
+
+    if (g_detailTokens == 0) {
+        // Left unrecorded on purpose: the change is retried on the next pump, when a
+        // token is free, instead of being lost.
+        ++g_detailDropped;
+        return;
+    }
+    --g_detailTokens;
+
     // The counter bumps per NEW montage.  A status-only change keeps it, so the copy
     // does not restart a one-shot animation because poison ticked.
     if (monChanged && mon) { if (++r.pubSeq == 0) r.pubSeq = 1; }
@@ -3982,13 +4038,21 @@ void SendEnemyDetail(EnemyRec& r, uint32_t now)
     uint8_t body[wire::kMaxBody];
     wire::Writer w(body, sizeof(body));
     wire::WriteEnemyDetail(w, d);
-    if (w.ok) g_net.SendReliable(wire::K_ENEMY_DETAIL, body, w.len);
+    bool sent = w.ok && g_net.SendReliable(wire::K_ENEMY_DETAIL, body, w.len);
+
     // A new attack montage is also the moment to describe the hit to the partner: the
     // owner is the only machine that saw the swing, and the peer is the only machine
     // that can apply it to its own pawn.  Keyed by the same seq, so it is one per
-    // occurrence rather than one per pump.
+    // occurrence rather than one per pump -- including when the detail itself had to be
+    // retried.
     if (monChanged && mon && (d.anim == wire::E_ATTACK || d.anim == wire::E_CAST))
         TrySendEnemyDamage(r, d.seq, d.anim, now);
+
+    if (!sent) {
+        QDLOG(LOG_WARN, "enemy detail dropped (no reliable slot) guid=", hex32(r.guid[0]),
+              " anim=", dec((int)d.anim), "; retried next pump, drops=", dec((int)g_detailDropped));
+        return;
+    }
     r.pubMon = mon;
     r.pubStatus = mask;
     QDLOG(LOG_INFO, "enemy detail sent guid=", hex32(r.guid[0]), " anim=", dec((int)d.anim),
@@ -5113,6 +5177,12 @@ void PeerApplyActorStates(wire::Reader& r, uint32_t now)
         if (res == actorstate::IntentQueue::kConfirmed) ++confirmed;
         if (!apply) { ++held; continue; }
 
+        // Already the value we hold: the 1 Hz heartbeat re-sends the whole set, and
+        // writing an unchanged value through the game's own setter is a Map_Add and an
+        // Array_Set per entry per second for nothing.
+        int32_t have = 0;
+        if (g_actorMirror.Known(g, &have) && have == v) continue;
+
         if (ownerCount < 0) {
             ownerCount = BuildActorStateOwners(owners, actorstate::kMaxEntries);
         }
@@ -5148,8 +5218,13 @@ void PeerApplyActorStates(wire::Reader& r, uint32_t now)
     if (rev > g_peerActorRev) g_peerActorRev = rev;
     g_actorHostRev = g_peerActorRev;
     if (seen) {
-        QDLOG((failed ? LOG_WARN : LOG_DEBUG), "actor states applied=", dec(applied),
-              " held=", dec(held), " confirmed=", dec(confirmed), " failed=", dec(failed),
+        // INFO only when the body changed something.  The 1 Hz heartbeat carries the same
+        // seven values every second, and logging that at INFO buries the one line a live
+        // run is looking for: the moment a door or chest actually converged.
+        int acted = applied + held + confirmed + failed;
+        QDLOG(failed ? LOG_WARN : (acted ? LOG_INFO : LOG_DEBUG),
+              "actor states applied=", dec(applied), " held=", dec(held),
+              " confirmed=", dec(confirmed), " failed=", dec(failed),
               " rev=", dec(rev), " n=", dec((int)n));
     }
 }
@@ -6419,6 +6494,11 @@ void HK_StoreEnemySaveState(void* self, const QdGuid* guid, float respawn, float
     // GUID (D5 closed live: a kill is hp 0).
     if (!Cfg().enemy_sync || !guid || !g_net.Connected()) return;
     uint32_t g[4] = {guid->a, guid->b, guid->c, guid->d};
+    // A NEGATIVE hp is the game saying "this spawner has no record" -- measured at level
+    // load as -1 on every spawner with no live enemy, which is most of them.  Treating
+    // that as a death recorded 123 kills in one frame and forwarded them as records, so
+    // the host would have been told that the whole level's enemies were dead.
+    if (hp < 0.0f) return;
     // Whichever machine RAN the enemy re-broadcasts the death, as dead rows
     // (qdenemy.h KillLog), so the machine that did not kill it learns it.  A death
     // being applied FROM the other machine's row is not re-broadcast: that would echo

@@ -130,6 +130,15 @@ public:
 
         Pref p = P_HOLD;
         if (haveEnemy && haveMine && haveTheirs) p = Preference(mine, theirs, enemy);
+        // Inside the margin neither distance resolves.  P_HOLD used to mean "both keep
+        // running", which is fine when the players are far apart and WRONG when they
+        // stand together -- which is the ordinary way to play co-op.  Measured on the rig
+        // with the two players 460 cm apart: zero ownership hand-offs with 66-160 enemies
+        // alive, i.e. every enemy simulated twice, with two independent AI outcomes and
+        // two health pools to converge.  So the tie is broken by role: the host owns, the
+        // peer follows.  With the partner's position unknown there is nothing to compare
+        // and nothing to follow, so P_HOLD still holds there.
+        if (p == P_HOLD && haveMine && haveTheirs) p = host_ ? P_ME : P_THEM;
         if (p != (Pref)r->pref) { r->pref = (uint8_t)p; r->prefSince = now; }
         // The dispute latch only suppresses a reversal while the contradiction is still
         // present; a genuine change of distances clears it.
@@ -164,7 +173,13 @@ public:
             }
             break;
         case O_FROZEN:
-            if (!r->sawRemote || now - r->lastRemoteMs >= kReleaseMs) {
+            // Release when the partner goes quiet, or when OUR own preference now says we
+            // should run it.  The second half matters because the role tie-break above
+            // makes the host prefer ownership everywhere: a host that is frozen must be
+            // able to take an enemy back, or it deadlocks against a peer that is handing
+            // the same enemy over.
+            if (!r->sawRemote || now - r->lastRemoteMs >= kReleaseMs ||
+                (p == P_ME && held >= kHoldMs)) {
                 r->state = O_LOCAL; r->stateSince = now; r->disputed = 0;
             }
             break;

@@ -57,6 +57,22 @@ enum IntentKind {
     I_ENEMY_RECORD  = 8,   // peer wrote a persistence record for an enemy it ran itself
 };
 
+// Which kinds the receiver acks and the sender retransmits (WIRE.md 2).  This is the
+// one list both sides consult: qdnet.h acks exactly these and only these, and the Rust
+// `Kind::is_reliable` mirrors it.
+//
+// It exists as a function because a hard-coded pair of case labels in the socket loop is
+// how three kinds added later (ENEMY_DETAIL, TRAVEL, DAMAGE) ended up being sent
+// reliably, never acked, retransmitted until the sender gave up, and logged as
+// "reliable send abandoned" twice a second -- measured on the rig on 2026-11-08, with the
+// travel heartbeat alone producing 5 attempts every 2 s for the life of the session.
+inline bool IsReliableKind(uint8_t kind)
+{
+    return kind == K_HELLO || kind == K_WELCOME || kind == K_INTENT ||
+           kind == K_EFFECT || kind == K_ENEMY_DETAIL || kind == K_TRAVEL ||
+           kind == K_DAMAGE;
+}
+
 // --------------------------------------------------------------------------
 // Writer
 // --------------------------------------------------------------------------

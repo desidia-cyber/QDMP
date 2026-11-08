@@ -1,4 +1,4 @@
-﻿// qdnet.h -- UDP transport, session state, and the game-thread handoff.
+// qdnet.h -- UDP transport, session state, and the game-thread handoff.
 //
 // SHAPE, AND WHY
 // --------------
@@ -370,21 +370,24 @@ private:
         case wire::K_KEEPALIVE:
             if (role_ == ROLE_NONE) SendHello();
             break;
-        case wire::K_INTENT:
-        case wire::K_EFFECT: {
-            // Reliable kinds (WIRE.md 1): ack every copy -- the ack for the first may
+        default:
+            // Reliable kinds (WIRE.md 2): ack every copy -- the ack for the first may
             // have been lost -- and deliver only the first.  Without this the sender
             // retransmitted until it gave up and the receiver applied every copy
             // (measured: one thrown fireball arrived and spawned six times).
-            uint8_t ack[4];
-            wire::Writer aw(ack, sizeof(ack));
-            aw.U32(e.seq);
-            SendUnreliableRaw(wire::K_ACK, ack, aw.len);
-            if (SeenReliable(e.seq)) break;
-            QueuePacket(e, r);
-            break;
-        }
-        default:
+            //
+            // The list lives in qdwire.h rather than in a pair of case labels here: it
+            // did not, and every kind added afterwards was retransmitted forever because
+            // nothing acked it.
+            if (wire::IsReliableKind(e.kind)) {
+                uint8_t ack[4];
+                wire::Writer aw(ack, sizeof(ack));
+                aw.U32(e.seq);
+                SendUnreliableRaw(wire::K_ACK, ack, aw.len);
+                if (SeenReliable(e.seq)) break;
+                QueuePacket(e, r);
+                break;
+            }
             // Everything else is for the game thread.  A full queue is a drop, not a
             // block: a stalled consumer must never stall the socket.
             QueuePacket(e, r);

@@ -86,7 +86,9 @@ resolves *its own* copy of the carrier and drives only its own pawn through
 unresolvable destination is refused once, logged, and never retried.
 
 **Earlier rounds, still standing:** enemies fight the player who can reach them (ownership
-by proximity, `ENEMY` bidirectional); enemy damage goes through `TryApplyDamage`, which is
+by proximity, `ENEMY` bidirectional — inside the 800 cm margin the tie is now broken by
+role, so co-located players do not both simulate every enemy, measured live as R45 in
+`LIVE-TEST-LOG`); enemy damage goes through `TryApplyDamage`, which is
 the real path, not the inert `ApplyDamage`; enemy montages, status and projectiles are
 synced; the dialogue block writes `NPC_Base.BlockInteract`, a bool property the old
 code called as a function and therefore never blocked anything; the streaming union vetoes

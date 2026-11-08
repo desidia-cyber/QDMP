@@ -89,25 +89,30 @@ static void TestHoldPreventsAnEarlySwitch()
     CHECK(p.State(kGuid) == enemyown::O_FROZEN, "own/the switch happens once the hold passes");
 }
 
-static void TestMarginPreventsFlapping()
+static void TestMarginBreaksByRole()
 {
-    // Both players are inside the margin of each other, so neither preference resolves
-    // and both keep the current owner.  This is the case the margin exists for; it is
-    // also why both may simulate at once instead of one freezing for no reason.
+    // Both players are inside the margin of each other, so no distance resolves.  This is
+    // the ordinary co-op case (players stand together), and the rule is the role: the host
+    // owns, the peer freezes.  Before this, both machines kept their own AI for every
+    // enemy in the area -- measured on the rig as zero hand-offs with 66-160 enemies
+    // alive, i.e. two independent simulations of the same fight.
     enemyown::OwnerSet h(true), p(false);
     const float hostPos[3] = {1000.0f, 0.0f, 0.0f};
     const float peerPos[3] = {1500.0f, 0.0f, 0.0f};
     uint32_t now = 0;
-    int flips = 0;
-    int prev = Kind(h);
+    int peerFlips = 0;
+    int prev = Kind(p);
+    int flipsAfterSettling = 0;
     for (int i = 0; i < 5000; ++i) {
         now += 16;
         Step(h, p, now, hostPos, peerPos, true, true);
-        if (Kind(h) != prev) { ++flips; prev = Kind(h); }
+        if (Kind(p) != prev) { ++peerFlips; prev = Kind(p); }
+        if (i > 4000 && Kind(p) != prev) ++flipsAfterSettling;
     }
-    CHECK(flips == 0, "own/inside the margin nothing switches");
-    CHECK(h.State(kGuid) == enemyown::O_LOCAL && p.State(kGuid) == enemyown::O_LOCAL,
-          "own/inside the margin both keep their AI");
+    CHECK(h.State(kGuid) == enemyown::O_LOCAL, "own/inside the margin the host runs it");
+    CHECK(p.State(kGuid) == enemyown::O_FROZEN, "own/inside the margin the peer follows");
+    CHECK(peerFlips <= 3, "own/inside the margin it settles in a few transitions");
+    CHECK(flipsAfterSettling == 0, "own/inside the margin it does not flap afterwards");
 }
 
 static void TestExactTieGoesToTheHost()
@@ -344,7 +349,7 @@ int main()
     printf("=== qd enemy-ownership tests ===\n");
     TestNearerMachineWins();
     TestHoldPreventsAnEarlySwitch();
-    TestMarginPreventsFlapping();
+    TestMarginBreaksByRole();
     TestExactTieGoesToTheHost();
     TestClaimIsHonouredBeforeDistanceAgrees();
     TestHandoffKeepsSimulatingUntilConfirmed();

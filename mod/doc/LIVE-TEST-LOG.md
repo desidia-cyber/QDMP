@@ -433,3 +433,73 @@ in this rig a death means game over on the test save).
   no world visual in the game.
 - Charged attack, thrust, use-item and cast montages have not been triggered live; the
   death pose has not been seen on screen.
+
+---
+
+## Session 4 — 2026-11-08 (the four remaining gaps)
+
+Two instances, `_test\inst1`/`inst2`, `QDCOOP_AUTOLOAD=0`, all switches on, relay rebuilt
+from this branch. Both reached gameplay in ~10 s and stayed for minutes. Six defects were
+found and fixed; every one of them was invisible off-target.
+
+### R41. FIXED — reliable kinds added later were never acked
+`Ingest` acked exactly `K_INTENT` and `K_EFFECT`. `ENEMY_DETAIL`, `TRAVEL` and `DAMAGE`
+were sent reliably, retransmitted, never acked and abandoned: measured as
+`reliable send abandoned: kind=00000023` every 2 s for the life of the session, and
+`no free reliable slot; dropping kind=00000019` under enemy load. The ack and dedup
+branch is now driven by `wire::IsReliableKind`, one list shared with the Rust
+`Kind::is_reliable`.
+
+### R42. FIXED — the peer uploaded its whole save on join
+The mirror's first pass sees every key as NEW, and `QueueFlagIntent` fired on each one.
+Measured as `intent refused (regressive or stale): CompletedChallenges=2` repeatedly, and
+— when the peer's save is ahead on any key — it would have silently overwritten the
+host's progression. The first pass is now a baseline (`g_mirrorBaseline`), reset with the
+mirror when the save is replaced.
+
+### R43. FIXED — the enemy detail lane exhausted the reliable table
+At level load every enemy in range is already playing something, so the first
+observation went out as a change: 78 enemies -> 78 reliable bodies in one frame -> 16
+slots full -> everything else dropped. Detail now baselines per enemy, sends only when
+something is playable (`anim != none`) or the status mask changed, is bounded to 10/s,
+and reports a real `SendReliable` failure instead of logging "sent".
+
+### R44. FIXED — the game's "no record" was read as a death
+`StoreEnemySaveState` fires at load for every spawner with `hp = -1` (no entity), which
+`hp <= 0` treated as a kill: 123 death records in one frame, forwarded to the host as
+persistence records. A negative hp now returns early, before the kill log and the send.
+
+### R45. FIXED — two players standing together double-simulated every enemy
+Ownership resolves by distance with an 800 cm margin, and inside the margin the rule was
+"both keep running". That margin is wider than the distance between two players playing
+together, so it was the *normal* case: measured as zero hand-offs with 66-160 enemies
+alive, i.e. every enemy simulated twice with two AI outcomes and two health pools. The
+tie is now broken by role — the host owns, the peer freezes — and a frozen host can take
+an enemy back rather than deadlock against a peer handing the same enemy over. Verified:
+the peer froze 64 copies and followed them.
+
+### R46. FIXED — the peer rewrote unchanged actor states every second
+The 1 Hz `ACTOR_STATES` heartbeat was applied entry by entry, each through the game's own
+`SavableActor` setter: `actor states applied=7` every second, indefinitely. The apply path
+now skips an entry whose value it already holds (`LocalDetector::Known`), so the heartbeat
+costs a comparison and the log line appears only when something changed.
+
+### Working live in this session
+- Load: substrate, four hooks including `SetShouldBeLoaded`, roles, save layer, and the
+  reflected `SavableActorStates` offset (704) with no geometry refusal.
+- Two players in one world, puppet at **0.0 cm** error on both machines, held weapon
+  mirrored.
+- `ACTOR_STATES`: host publishes 7 entries; peer applies once, then holds.
+- `INVENTORY`: host publishes (124 entries on one instance); peer applies.
+- Enemies: scan (66-161 live), ownership hand-off, freeze through `Paused` (`ok=1`), rows
+  flowing both ways.
+- `TRAVEL`: both machines announce `TempTeleporter/Ruins_Level_00` at load; the receiver
+  reported "busy" rather than fighting the local transition.
+- `FLAGS`: 0 refused intents after R42; 0 abandoned sends after R41; 0 dropped slots.
+
+### Still not exercised live
+Nothing induced a *change* on the new lanes: no door/chest interaction, no pickup, no
+enemy attack (therefore no `DAMAGE`), no travel follow. Those need gameplay input this rig
+cannot drive reliably. `SYNC-GAPS` §5 lists the exact log lines to look for when a player
+does them.
+
