@@ -356,6 +356,30 @@ transform follows the target within 1 cm, no AV, and the actor is still alive af
 **Fail:** any AV, the actor is `PendingKill`/absent on the next tick, the mesh stays null,
 or the process loses a frame (> 500 ms) during construction.
 
+**Status: implemented behind `PlayerBody=1`, unproven.** The code path exists
+(`proxy.cpp`: `SpawnPlayerBodyActor` / `SpawnPlayerBody`, `qdplayerbody.h`), and it departs
+from the probe above in three ways, each with a reason:
+
+- it spawns `FS_PlayerChar_C` (the class the enemy's cast gate names) and falls back to
+  `FS_Full_PlayerChar_C`, because the "Full" class is the one the live game possesses but
+  the gate is written against the base name;
+- the visual body is **not** taken from `CharacterMesh0`: a poseable component carrying
+  `Player_FullChar_2026` is attached to the capsule and posed every frame by the same code
+  the mesh-actor puppet uses, so the appearance the live pass already accepted does not
+  depend on this spawn at all. The Blueprint's own `Arms`/`CharacterMesh0`/`Mesh` are made
+  invisible;
+- `AutoPossessPlayer` and `AutoPossessAI` are cleared between `BeginDeferred` and
+  `FinishSpawning`. That is the one catastrophic failure mode: if the CDO auto-possessed
+  player 0, the host's own player would be unpossessed and the mod would read the proxy as
+  "local" in every lane. A post-spawn `LocalPawn() == actor` check destroys the body and
+  logs if it happened anyway.
+
+The actor is unpossessed, tickless, non-colliding and has its movement disabled. What the
+live run has to prove is the part no test can: that the engine's construction of a full
+gameplay Blueprint (its `ReceiveBeginPlay`) neither faults nor damages the session, that
+the two cast gates now pass, and that a hit on it arrives at `TryApplyDamage` where the mod
+can forward it. `SYNC-GAPS` §5.1 lists the exact log lines, in order.
+
 ### C10 — level-union end-to-end
 
 **Known.** The full manager chain is pinned (`AddLevelListToStack` `0x00E215E0` → worker

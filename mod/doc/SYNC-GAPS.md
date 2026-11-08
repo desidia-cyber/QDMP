@@ -15,8 +15,8 @@ Two documents belong beside this one:
 
 "Built" still means **not proven live**. Every write path is behind a switch in
 `qdcoop.ini` and every one of those is `0` except `FlagSync`. Nothing here has run on two
-machines; §5 lists what a first live session has to show. The module passes 3 598
-assertions across 12 off-target test suites, which proves the state machines and the wire
+machines; §5 lists what a first live session has to show. The module passes 3 629
+assertions across 13 off-target test suites, which proves the state machines and the wire
 encoding — not the game.
 
 ## 0. What the module sends today
@@ -75,6 +75,9 @@ resolution degrades to `Data.BaseDamage × multiplier`, and only then to a state
 carrying `kDamageGuessed` — never an estimate presented as measured. This also fixed the
 pre-existing struct lookup that asked for the parameter name `DamageToApply` instead of the
 type `FB_DamageAttributeSet`, which would have disabled all enemy damage again.
+That is the *described* lane, for a hit the host cannot apply. With `PlayerBody=1` the hit
+is no longer described at all: the game resolves it against the partner's player-class body
+and the mod forwards the game's own `FB_DamageAttributeSet` (see §2 and §5.1).
 
 **G6 — the partner follows a travel.** `LocationData` is an `ObjectProperty` on the placed
 carrier; checkpoints happen to also have a `GUID` but teleporters have none, so a GUID
@@ -113,14 +116,42 @@ indistinguishable and the intent settles as already-satisfied. The host's own co
 is a high-water floor, so it is never re-granted to the peer, who keeps its copy until it
 uses it.
 
-**G4's real fix is still blocked, and G5 with it.** The damage lane covers an enemy the host
-runs attacking the partner. What it does *not* do is make the Blueprint *target* the remote
-body: `TargetPlayer` is a Blueprint variable the AI reads directly (so the `ProcessEvent`
-post-hook idea is refuted), and two cast gates admit only an `FS_PlayerChar_C` implementing
-`FB_DamageableInterface`, which the puppet is not. That is the unproven spawn proof
-(`API-GAPS` §5, B7), and it also blocks G5: `PlayerIsInActivationRange` and
-`PlayerDistanceDespawnCheck` read the local player, so when the host walks up to an enemy
-the peer was running, the host's spawner spawns a **fresh** enemy and ownership moves to it.
+**G4's targeting half and G5 are now built behind one switch, and nothing about them is
+proven.** The damage lane covers an enemy the host runs attacking the partner, but the
+Blueprint still *chose* the host every time: `TargetPlayer` is a Blueprint variable the AI
+reads directly (so the `ProcessEvent` post-hook idea is refuted), and two cast gates admit
+only an `FS_PlayerChar_C` implementing `FB_DamageableInterface`, which the puppet is not.
+`PlayerBody=1` now spawns the partner's body as that class (unpossessed, tickless) and
+drives it with the same poseable/animation/weapon mirroring, which makes both levers
+available:
+
+- the host writes `TargetPlayer` to whichever of the two players is nearer, but only when
+  the AI's own perception has already picked one of them (`qdplayerbody.h`), so an enemy
+  chasing an NPC keeps its decision;
+- a hit the game itself resolves on that body is read out of its own
+  `FB_DamageAttributeSet`, sent to the machine that owns the player through `K_DAMAGE`, and
+  the local application is suppressed — one authority per player's HP, as before.
+
+**G5 is fixed at the state, not at the range check.** `PlayerIsInActivationRange` and
+`PlayerDistanceDespawnCheck` are Blueprint functions on the spawner that read
+`GetPlayerCharacter` — player 0 of *this* machine — so the host's spawner cannot see that
+the partner is standing next to the enemy. The mod cannot change that answer, and does not
+pretend to: when the host's spawner re-creates an enemy the partner is already fighting,
+the partner's own row for that GUID carries the HP it has taken off, and the difference is
+applied as the game's own damage, so the fight continues instead of restarting. A spawner
+that despawns while the partner is near is still the game's decision; ownership has
+already moved to the partner's machine by then, so its copy keeps running.
+
+What is unproven is the whole of B7: the engine constructing a full gameplay Blueprint.
+Everything above is off until that is answered (`API-GAPS` §5, B7), and `SYNC-GAPS` §5
+now lists the exact log lines that answer it.
+
+**The arrow still only points one way.** A body exists for the partner on *both* machines,
+but `DAMAGE` is host → peer. So a peer-run enemy that picks the host's body hurts nothing:
+the hit is applied to the dummy on the peer's machine and is not forwarded. In practice
+ownership keeps that case rare (an enemy with the host nearest is run by the host), and the
+described lane never covered it either, so it is not a regression — but it is the next
+arrow to add if a live run shows the host being attacked by an enemy the partner runs.
 
 **G6 cannot cross a hard map switch.** Following works inside one persistent world, where
 both machines run the same cooked world. After a transition to a different `UWorld`
@@ -206,12 +237,72 @@ Ordered, because each one makes the next diagnosable.
    on the partner; a hard map switch produces one `WORLD DIVERGENCE` and one explicit
    `cannot follow … recorded`, and the session survives.
 
+### 5.1 B7 / G4 / G5 — the exact lines a run with `PlayerBody=1` must show
+
+`PlayerBody=1` needs `PuppetSync=1` and `EnemySync=1`; the load line warns if either is
+missing (`PlayerBody=1 needs PuppetSync=1 and EnemySync=1`). Prefix every line with the
+machine it came from. **Order matters: 1 and 2 decide whether the rest can happen at
+all.**
+
+1. **The class resolves, and only once.**
+   `player body: class FS_PlayerChar_C resolved`
+   (or `… class FS_Full_PlayerChar_C resolved (FS_PlayerChar_C is not in this build)`).
+   If instead: `player body: neither FS_PlayerChar_C nor FS_Full_PlayerChar_C resolved;
+   PlayerBody cannot work on this build` — the switch cannot work here; stop and re-read
+   the class names. No further `player body:` line appears until the peer is present.
+2. **The engine constructs it.** `player body: possession cleared (AutoPossessPlayer 0,
+   AutoPossessAI 0)` then `player body: spawned unpossessed at x,y,z (tick off, movement
+   off/mode set, controller none, collision off, own meshes hidden); the poseable body is
+   the visible one`, then `puppet spawned as FS_PlayerChar_C at x,y,z`. A `MISSING` in that
+   parenthesis is a real finding, not noise: the property is absent on this build.
+   On the first hit only: `player body: damage hook armed on the proxy (DamageToApply
+   size=…, amount -> DamageAmount @…, applier Applier)`.
+   Failures, each fatal to the proof: `player body: spawn of the player class failed;
+   falling back to the mesh body`, `player body: the engine's own spawn pair faulted on the
+   player class (B7 fails on this build)`, `player body: the spawn took over THIS machine's
+   player slot (AutoPossessPlayer was not honoured); destroying it`, or
+   `player body: the hit payload is not buildable (…); hits on the proxy will be applied
+   locally`.
+3. **The AI is steered, and only when it already picked a player.**
+   `enemy <guid>: TargetPlayer local player -> the remote body (read back) dLocal=… dRemote=…`
+   when the partner is nearer, and the matching `… remote body -> the local player (read
+   back) …` on the way back. Both must be `read back`; `WRITE FAILED` means the property
+   offset is wrong for that Blueprint class. **No line at all is the correct result for an
+   enemy chasing an NPC** — the mod never rewrites such a target.
+4. **The game's own hit reaches the partner.** On the host:
+   `player body hit guid=… amount=… centi=… (melee|ranged) -> sent to the machine that owns
+   the player; local damage suppressed`; on the partner the existing receiver line:
+   `damage from enemy <guid> (melee|ranged): N applied hp a -> b`. No
+   `player damage had NO effect`, and — the new invariant — **no** `damage sent guid=… seq=…`
+   for the same swing, because the game's own hit supersedes the described one. If both
+   appear for one swing the partner was hit twice; that is the double-description guard
+   failing.
+   A `player body: hit not forwarded (…)` line names why a hit was applied to the proxy
+   instead (no session, no enemy to attribute it to, unbuildable payload); it is DEBUG and
+   rate-limited, so it is only expected in a run at `LogLevel=3`.
+5. **G5's adoption.** Host walks up to an enemy the partner has been fighting:
+   `enemy spawn adopted guid=… hp a -> b: the partner was already fighting it (local Ncm,
+   partner Mcm; the spawner's range check reads the local player only)` on the host, with
+   `b < a` and `M` well under `N` — those two numbers are the evidence that the spawner's
+   decision and the partner's body disagreed. Without the adoption the line is absent and
+   the host's copy starts at full HP, which is the old bug.
+6. **Nothing regressed.** The puppet lines stay as they were: `puppet at x,y,z … err=0.0cm`,
+   `peer action kind …`, `body: hand R now holds <path>`, and no
+   `player damage had NO effect` / `enemy damage had NO effect` anywhere.
+
+The proof fails if any of these is missing: the class line, the spawn line, at least one
+`TargetPlayer … (read back)` in each direction, one `player body hit … -> sent`, and one
+`enemy spawn adopted`. A run that shows them but where the partner's HP does not move is a
+`FB_DamageAttributeSet` fill problem, and the `damage from enemy … hp a -> b` line is where
+the amount and the result are both visible.
+
 ## 6. Suggested order from here
 
 1. **Run §5.** Every correction so far came from measurement rather than from play, and the
    four systems added this round have never touched the game.
-2. **B7, the player-class spawn.** It is now the single blocker for enemy targeting, for
-   spawner activation, and for the puppet's appearance.
+2. **B7's live answer** (`PlayerBody=1`, §5.1). It is now the single blocker for enemy
+   targeting, for spawner activation, and for the puppet's appearance — and the code path
+   exists, so the run is a decision rather than a piece of work.
 3. **G2's visual refresh**, if the live pass shows the in-level actor does not follow the
    container.
 4. **Boss bar and arena exit** — two reflective calls, both measured.

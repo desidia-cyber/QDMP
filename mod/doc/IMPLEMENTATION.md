@@ -48,7 +48,7 @@ against the level manager.
 | 2 probe | `RunApiProbe()` in `proxy.cpp` | reads, plus one **no-op write** | `Enabled` |
 | 3 mirror | `MirrorPump()` | reads | `Enabled` |
 | 4 flag sync | `HostPushFlags()` / `PeerApplyFlags()` | **writes** | `FlagSync` |
-| 5 body | `PuppetPump()` / `SpawnPuppetOnce()` | **writes** | `PuppetSync` |
+| 5 body | `PuppetPump()` / `SpawnPuppetOnce()` | **writes** | `PuppetSync`, `PlayerBody` |
 | 6 world | `StreamPump()`, `DialoguePump()` | **writes** | `StreamUnion`, `DialogueSync` |
 
 Layer 2's no-op write is the exception that makes the ordering work: it is a write to
