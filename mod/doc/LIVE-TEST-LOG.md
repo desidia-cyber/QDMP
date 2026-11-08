@@ -760,3 +760,250 @@ needle (which both defeated a guard and crashed the game), and the interaction c
 verb was on the wrong object. The pattern is consistent with every earlier round -- the
 defect is never in the state machine, it is in the assumption about the game.
 
+---
+
+## Session 7 - 2026-11-08 (the new switches, the new lanes, and five more ways to die)
+
+This branch is `sync-fix` at 3e61107, which merges B7 (the partner body as
+`FS_PlayerChar_C`), G2's one-shot `RestoreFromSave` refresh, G3 consumption intents, and the
+hard-map travel / cutscene / loot / mover / dialogue / suspend work. Every write path was
+on, including the new ones: `FlagSync=1 InventorySync=1 ActorStateSync=1 EnemySync=1
+PuppetSync=1 PlayerBody=1 DialogueSync=1 StreamUnion=1 TravelSync=1 CutsceneSync=1
+MoverSync=1 LootSync=1 SuspendGuard=1`.
+
+`tools/session7.ps1` is the whole session in one process (relay, two instances, driving,
+collection, teardown), and it reads the roles from `session established`: **host=inst1,
+peer=inst2** in every run below. The scenario takes the pair through a real hard-map round
+trip and then drives the lanes; the load lines are quoted rather than paraphrased.
+
+### R56. The full switch set loads and survives five minutes
+
+Both instances, all switches on (the probe and the final full run agree):
+
+```
+INFO switches: flags=1 inventory=1 actors=1 enemy=1 puppet=1 playerBody=1 dialogue=1
+     stream=1 travel=1 cutscene=1 movers=1 loot=1 suspend=1 pause=0
+INFO NAMED-SAVE ORACLE PASS: GetNamedSaveData frame = {FName@0 size 8, object@8 size 8, i32@16 size 4, bool@20 size 1}
+INFO container offsets: NamedSaveData=1000 SavableActorStates=704 InventoryContents=40
+INFO enemy sync: FS_EnemyCharacterBase found
+INFO hooked ULevelStreaming::SetShouldBeLoaded @ 029ACAC0
+```
+
+`IDLE 300s` -- `PASS [1] alive after 300s idle`, `PASS [2] alive after 300s idle`,
+`error/fault lines: 0` on both. This is the first run with `PlayerBody=1` and the six new
+write paths together that survived the idle window.
+
+### R57. B7: the body is the game's own player class, unpossessed, and the AI targets it
+
+The spawn pair, on each machine (each spawns the OTHER player's body, which is why the two
+positions are swapped):
+
+```
+INFO player body: class FS_PlayerChar_C resolved
+INFO player body: possession cleared (AutoPossessPlayer 0, AutoPossessAI 0)
+INFO player body: spawned unpossessed at -1586,-130,-41 (tick off, movement off/mode set,
+     controller none, collision off, own meshes hidden); the poseable body is the visible one
+```
+
+and after a map return, the puppet path reports the class by name:
+
+```
+INFO puppet spawned as FS_PlayerChar_C at -1586,-130,-41
+```
+
+The target lane, both directions, on the host with the peer's body as the nearer player:
+
+```
+INFO enemy 68BD16CA: TargetPlayer local player -> the remote body (read back) dLocal=5462 dRemote=3554
+INFO enemy 4253860F: TargetPlayer remote body -> the local player (read back) dLocal=9823 dRemote=10402
+```
+
+`(read back)` is the write being observed, not the call returning. The second line came from
+the deliberate swap (host nearer, peer farther); ownership stayed on the host because the
+distance difference stayed inside the 800 cm margin.
+
+### R58. A kill now produces a death record (Session 6's gap, closed)
+
+The hit is the module's own `TryApplyDamage`; the death is the game's. Measured on the peer:
+
+```
+INFO rig: hit enemy guid=0ADA5B25 amount=400 ran=1 hp 25.0 -> -375.0 (local-run)
+INFO enemy death detected guid=0ADA5B25 (bDead/IsDead, hp -375.0); recording it through StoreEnemySaveState
+INFO enemy death recorded guid=0ADA5B25 respawn=0.0
+INFO enemy record sent to host guid=0ADA5B25 hp=0.0
+```
+
+and on the host the persistence intent lands:
+
+```
+INFO enemy record applied guid=383AE655 hp=0.0 respawn=0.0
+```
+
+**Root cause.** `StoreEnemySaveState` is called by the spawner's own death path, not by the
+damage message. A direct `TryApplyDamage` kill (the rig's) therefore never wrote a record,
+which is exactly what Session 6 saw (`hp 34.9 -> -165`, no lines). The fix polls the actor
+(`bDead` / `IsDead` / HP <= 0) for enemies this machine runs and records the death THROUGH
+the game's own `StoreEnemySaveState`, so the save, the kill log and the peer intent keep one
+path. Detection requires the actor to have been seen ALIVE first: a spawner's enemy exists
+at HP 0 before activation, and a map load leaves actors mid-teardown reading 0.
+
+Two bugs fell out of proving it: a map load produced 30+ invented deaths in one frame
+(`enemy record sent` for every unspawned enemy), and the first full run died inside
+`EnemyOwnPump` -- `EXCEPTION_ACCESS_VIOLATION`, `WINMM+0x26805` (`EnemyOwnPump+0x265`),
+mapped from the WER CrashContext. Both are fixed in R64.
+
+### R59. The hard-map handshake works both ways
+
+Only `Ruins_Level_00` carries a `PlayerStart`; the area maps are sublevels, so a hard switch
+to one lands in a `DefaultPawn`. The round trip therefore goes to `990_B33sment` and back,
+which is a real UWorld switch, and the area content is reached by streaming the sublevel
+into the hub.
+
+```
+host: rig: hard lever -> 990_B33sment LoadMapWithLoadingScreen ran=1
+host: travel: HARD transition to 990_B33sment -- announcing it so the partner loads the same world
+peer: signature LoadMapWithLoadingScreen props=2 parms=24 ret@-1  Map: NameProperty  MapPackage: StrProperty
+peer: travel: hard transition: loading 990_B33sment through GameInstance.LoadMapWithLoadingScreen
+host: travel: the partner arrived in 990_B33sment (both there)
+host: travel: both machines arrived in 990_B33sment; host releasing the pair to resume
+peer: travel: host released the pair; resuming in 990_B33sment
+host: travel: HARD transition to Ruins_Level_00 -- announcing it so the partner loads the same world
+peer: travel: hard transition: loading Ruins_Level_00 through GameInstance.LoadMapWithLoadingScreen
+host: travel: both machines arrived in Ruins_Level_00; host releasing the pair to resume
+```
+
+`PASS` for all 14 checks (BEGIN, the load on both sides, ARRIVED, RESUME, and the same again
+on the way home); both processes alive afterwards, and gameplay returns on the home map.
+Four defects had to be fixed before that was true (R64): a busy peer dropped the one-shot
+BEGIN and never saw the transition again; the boot race put the home map in the gave-up
+ring so the return was refused; a machine with no gameplay pawn was treated as busy, which
+made a DefaultPawn world a trap; and a lost `HARD_BEGIN` was never re-announced.
+
+### R60. G2's chest half is NOT reached: the interact found a flag chest
+
+`near:chest` resolved a real savable and ran its own verb, but the class was
+`SG_Chest_BP_C`, a quest chest whose state is a `NamedSaveData` flag, not a
+`SavableActorStates` body:
+
+```
+INFO dev interact: resolved 'Chest' -> SG_Chest_BP2 at 6185,-18108,-14047 dist=23877
+INFO dev interact: target=SG_Chest_BP2 [SG_Chest_BP_C] component=found verb=Interact
+INFO flag CHANGE TotalChestsOpened : 1 -> 2
+INFO flag intent sent TotalChestsOpened=2 rev=867 try 1/5
+INFO flag intent confirmed TotalChestsOpened=2 rev=868
+INFO intent applied: TotalChestsOpened=2
+```
+
+That is a G1 proof, not G2: there is no `actor-state local change`, so the §5.2
+`actor-state refresh ok ... opened=1` lines did not appear on either machine, and the verdict
+is FAIL for the G2 half. The same chest also passed the "second interact is not a second
+open" check only trivially (no new intent). The level-stream lever
+(`rig: level lever -> 200_AQ forced loaded and visible (pinned...)`) worked, but the chest
+that got picked was the first savable matching "chest" anywhere in the graph.
+
+### R61. The in-world teleport follow fails at the second resolution
+
+The lever found a teleporter and read its `LocationData`, then the follower's own resolver
+refused the SAME name:
+
+```
+INFO rig: travel near 'teleport' -> Teleporter_GR at 13415,-1321,4237 dist=12058
+WARN rig: travel lever -> Teleporter_GR/Ruins_Level_00 (LocationData resolved,
+     dest field CurrentTeleporterTarget) TeleportToLocation ran=0: no live actor named Teleporter_GR
+```
+
+`RigFindNear` found the actor by a class walk; `FindTravelActor` then applies the
+world/outer test and rejects it (its level is streamed but not the world the follower is
+in, or its outer chain does not reach the current world). The announcement therefore never
+crossed, and `travel: followed` did not appear. Not fixed: it needs the resolver to keep the
+actor it already found instead of re-resolving by name (recorded for the next round).
+
+### R62. Loot: the lane cannot key this build's drops
+
+The drop actors exist and are marked drops, but they expose no source/index:
+
+```
+WARN loot: a drop actor exposes no source/item property; it is not represented on the wire (first occurrence)
+INFO rig: drop probe HealingPotion_Item_BP_C [HealingPotion_Item_BP_C] dist=895 isADrop=1
+     hasGUID=? lootKey=no | itemData=- itemRef=- owner=- inst=- dropper=-
+```
+
+`IsDropClass` and the actor's `IsADrop` agree (the spawned loot is an `ItemPickup_Base`
+subclass, the same family as placed pickups), but `LootKeyOf` finds neither the game's drop
+source nor an item object on it. The wire identity is therefore missing, not the lane:
+`loot: drop`, `loot: merged`, `loot: local pickup` and `loot: hiding local drop` were all
+absent. This is a content-layout gap in the lane's assumption, not a transport failure.
+
+### R63. G4's effect half: no hit was provoked in this run
+
+No `player body hit ... -> sent` and no `damage from enemy ... applied` in the window; the
+`player damage had NO effect` count is 0, so the lane was silent rather than refused. The
+B7 target lines were present, which is the precondition; the attack itself did not land in
+the 90 s window with ~240 enemies being re-owned constantly. (The other agent is working the
+`TryApplyDamage returned 0` root cause offline; this run only records that the provocation
+did not fire.)
+
+### R64. What was fixed, and what is left
+
+Fixed and verified live:
+
+* **PuppetPump crash.** `ObjectIsLive(g_puppetActor)` across a map load is a read of freed
+  memory: `WINMM+0x44691` (`PuppetPump+0x71`) after `LoadMapWithLoadingScreen`. The world
+  identity is now compared first and the stale pointer is dropped without a read.
+* **EnemyOwnPump crash.** `WINMM+0x26805` (`EnemyOwnPump+0x265`) after four minutes of
+  combat with ~190 enemies. Each enemy record's body is now fault-contained (and liveness
+  is re-checked after a damage application); `EnemyTargetPump` and `EnemySendPump` got the
+  same guard.
+* **Death detection** (R58) plus the load-window suppression that stops a world switch
+  inventing a level's worth of deaths, and the "seen alive" rule that stops unspawned
+  enemies being recorded as dead.
+* **Hard-travel robustness** (R59): re-announce `HARD_BEGIN` until the peer arrives; a map
+  the machine is IN clears its gave-up entry and a same-map deadline does not poison it; a
+  machine with no gameplay pawn is not "busy" for a hard switch (the check now names its
+  reason, which is how the trap was found).
+* **Rig**: `Set-Control $null` wrote an EMPTY file, and an empty `qd.hit` means "the default
+  200 damage" in `DevLever` -- so "clear the lever" armed it (the first full run killed
+  enemies unasked). `qd.near` is now per-machine (needed for the target swap), `qd.level`
+  pins a sublevel, `qd.hard`/`qd.travel` are the travel origins, `qd.drops` is the drop
+  probe, and repeated `qd.tp`/`qd.act` instructions vary their yaw/case so they are not
+  deduped away.
+
+Open, recorded rather than fixed:
+
+* **A hard switch to an area sublevel has no player.** All of `100_GR`, `200_AQ`,
+  `990_B33sment` and `900_SipehaWorld` have no `PlayerStart`; only `Ruins_Level_00` does.
+  The rig streams the sublevel instead, which is why the chest step ran in the hub.
+* **Menus pause by two mechanisms.** The world's `SetGamePaused` is declined during a
+  session, but `GameMenu_C` also sets global time dilation below 0.5, which our hook does not
+  touch: one player opening the inventory can still freeze the shared world. That is a
+  finding from a working third-party mod's surface, not yet measured here -- measure it
+  before fixing, and keep the exception (Escape's PauseMenu_C).
+* The in-world travel resolver re-resolves by name (R61) and the loot identity needs a
+  property this build does not put on the drop actor (R62).
+
+### Verdicts, item by item
+
+| Item | Verdict | Key line |
+|---|---|---|
+| 1. Load, all switches, 5 min idle | **PASS** | `PASS [1] alive after 300s idle` / `PASS [2] ...` |
+| 2. B7 body + target gates | **PASS** | `player body: spawned unpossessed` / `TargetPlayer ... (read back)` both ways |
+| 3. Enemy death record | **PASS** | `enemy death detected` -> `enemy death recorded` -> `enemy record sent to host` -> `enemy record applied` |
+| 4. G2 chest refresh | **FAIL (NOT REACHED)** | `dev interact: target=SG_Chest_BP2 [SG_Chest_BP_C] ... verb=Interact` then a flag change, no `actor-state` line |
+| 5a. Hard handshake | **PASS** | 14 checks incl. `both machines arrived ... host releasing the pair to resume`, twice |
+| 5b. In-world teleport follow | **FAIL** | `TeleportToLocation ran=0: no live actor named Teleporter_GR` |
+| 6. Loot drop disappears on the other | **FAIL** | `loot: a drop actor exposes no source/item property; it is not represented on the wire` |
+| 7. Enemy attacks the partner body | **FAIL (no hit)** | no `player body hit ... -> sent`; `player damage had NO effect` count 0 |
+| Session survival | **PASS** | `process alive=True` on both |
+
+### What this session cost
+
+Six defects, all in the class this log keeps naming: the assumption about the game, not the
+state machine. Two were use-after-free crashes that the previous switch set had never
+exposed (`PuppetPump` on a map load, `EnemyOwnPump` after minutes of combat); one was a
+one-shot protocol phase that a busy peer silently swallowed; one was the boot race poisoning
+the map it was standing in; one was the rig's own "clear" writing an armed lever; and one was
+death detection waiting for an event the damage path never sends. The two lanes that remain
+unproven -- G2's chest refresh and the in-world travel follow -- are both a resolver/identity
+problem now, not a transport one.
+
+

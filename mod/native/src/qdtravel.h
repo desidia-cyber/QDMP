@@ -419,6 +419,12 @@ public:
         bool had = local_[0] != 0;
         CopyText(local_, kDestCap, map);
 
+        // A map this machine is IN is reachable.  A previous failure must not block a
+        // return to it: measured (Session 7), the boot race where both machines announce
+        // the same transition left `Ruins_Level_00` in the peer's gave-up ring, and the
+        // deliberate return home was then refused for the rest of the session.
+        RemoveGaveUp(map);
+
         // The load this board asked for: it is an arrival, not a new transition.
         if (active_ && SameText(map, target_)) {
             localArrived_ = true;
@@ -521,7 +527,12 @@ public:
     {
         if (!active_ || startedMs_ == 0) return false;
         if ((uint32_t)(now - startedMs_) < kHardDeadlineMs) return false;
-        AddGaveUp(target_);
+        // A transition whose target is the map this machine is ALREADY IN is not a failed
+        // load: the boot race arms exactly that (both machines observe the same start
+        // transition and announce it).  Remembering it would refuse the next deliberate
+        // journey to that map for the rest of the session -- measured live, Session 7,
+        // where the return home was refused after the boot announcement timed out.
+        if (!SameText(target_, local_)) AddGaveUp(target_);
         active_ = false;
         localArrived_ = false;
         return true;
@@ -568,6 +579,17 @@ private:
         } else {
             CopyText(gaveUp_[gaveUpNext_], kDestCap, map);
             gaveUpNext_ = (gaveUpNext_ + 1) % kHardMaxGaveUp;
+        }
+    }
+
+    void RemoveGaveUp(const char* map)
+    {
+        if (!map || !map[0]) return;
+        for (int i = 0; i < gaveUpN_; ++i) {
+            if (!SameText(gaveUp_[i], map)) continue;
+            for (int k = i; k + 1 < gaveUpN_; ++k) CopyText(gaveUp_[k], kDestCap, gaveUp_[k + 1]);
+            --gaveUpN_;
+            return;
         }
     }
 
