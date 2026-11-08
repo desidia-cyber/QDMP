@@ -234,7 +234,14 @@ public:
     TalkBoard() { Reset(); }
     void Reset()
     {
-        for (int i = 0; i < kSlots; ++i) { s_[i].present = false; s_[i].seq = 0; s_[i].talking = false; s_[i].rx_ms = 0; }
+        for (int i = 0; i < kSlots; ++i) {
+            s_[i].present = false;
+            s_[i].seq = 0;
+            s_[i].talking = false;
+            s_[i].rx_ms = 0;
+            res_[i].used = false;
+            res_[i].ms = 0;
+        }
     }
 
     // Remote publish.  Returns false (discarded) for an older or repeated seq; a repeat
@@ -287,13 +294,88 @@ public:
         return true;
     }
 
+    // ---- same-NPC arbitration ---------------------------------------------
+    // The measured failure is a start on both machines inside one round trip: both run
+    // the same talk Blueprint and a turn-in pays out twice.  Detecting it after the
+    // fact is a log, not a fix.  Two mechanisms, both local and cheap:
+    //
+    //   * a reservation is taken BEFORE the local start is applied.  If the partner
+    //     already reserved the same NPC, the start is refused instead of racing.
+    //   * if both still start (the reservations crossed), the lower slot keeps it and
+    //     the higher slot is the loser and must end its conversation.  The host is
+    //     slot 0, so the host's progression is the one that survives.
+    bool Reserve(uint8_t slot, const uint8_t npc[16], uint32_t now_ms)
+    {
+        if (slot >= kSlots) return false;
+        // The partner is already in this conversation: refuse the local start.
+        if (OtherTalkingTo(slot, npc, now_ms)) return false;
+        // The partner has reserved it, even if it has not started yet.  Checked
+        // independently of the partner's talk state: an absent talk state is not an
+        // absent reservation.
+        for (int i = 0; i < kSlots; ++i) {
+            if (i == slot) continue;
+            if (res_[i].used && SameId(res_[i].npc, npc) && Live(res_[i], now_ms) && i < slot)
+                return false;          // a lower slot's reservation outranks ours
+        }
+        for (int i = 0; i < kSlots; ++i) {
+            if (i == slot) continue;
+            const TalkState& t = s_[i];
+            if (!t.present || Stale(t, now_ms)) continue;
+            if (t.talking && SameId(t.npc, npc)) return false;
+        }
+        res_[slot].used = true;
+        for (int i = 0; i < 16; ++i) res_[slot].npc[i] = npc ? npc[i] : 0;
+        res_[slot].ms = now_ms;
+        return true;
+    }
+
+    void ReleaseReservation(uint8_t slot)
+    {
+        if (slot < kSlots) res_[slot].used = false;
+    }
+
+    // The crossed case: both slots are talking to the same NPC.  The higher slot is the
+    // loser and the caller must end its conversation.  Returns true for the loser.
+    bool LosesConflict(uint8_t self, const uint8_t npc[16], uint32_t now_ms) const
+    {
+        if (self >= kSlots) return false;
+        const TalkState& mine = s_[self];
+        if (!mine.present || !mine.talking || Stale(mine, now_ms)) return false;
+        if (!SameId(mine.npc, npc)) return false;
+        for (int i = 0; i < kSlots; ++i) {
+            if (i == self) continue;
+            const TalkState& t = s_[i];
+            if (!t.present || !t.talking || Stale(t, now_ms)) continue;
+            if (!SameId(t.npc, npc)) continue;
+            return self > i;              // the higher slot yields
+        }
+        return false;
+    }
+
+    bool SameConversation(uint8_t self, const uint8_t npc[16], uint32_t now_ms) const
+    {
+        const TalkState& mine = s_[self];
+        if (!mine.present || !mine.talking || Stale(mine, now_ms)) return false;
+        if (!SameId(mine.npc, npc)) return false;
+        return OtherTalkingTo(self, npc, now_ms);
+    }
+
 private:
+    struct Reservation { bool used; uint8_t npc[16]; uint32_t ms; };
+
+    static bool Live(const Reservation& r, uint32_t now_ms)
+    {
+        uint32_t age = (now_ms > r.ms) ? now_ms - r.ms : 0;
+        return age <= kStaleMs;
+    }
+
     static bool Stale(const TalkState& t, uint32_t now_ms)
     {
         uint32_t age = (now_ms > t.rx_ms) ? now_ms - t.rx_ms : 0;
         return age > kStaleMs;
     }
-    TalkState s_[kSlots];
+    TalkState   s_[kSlots];
+    Reservation res_[kSlots] = {};
 };
 
 // Stable 128-bit id for an actor placed in a cooked level: FNV-1a over its path

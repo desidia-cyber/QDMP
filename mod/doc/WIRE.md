@@ -67,6 +67,10 @@ arrives late is still correct.
 | `0x22` | `LEVEL_UNION` | both | unreliable, latest wins | 2 Hz + on change |
 | `0x23` | `TRAVEL` | both | reliable | on change + 0.5 Hz |
 | `0x24` | `DAMAGE` | host → peer | reliable | event |
+| `0x25` | `CUTSCENE` | both | unreliable, latest wins | on change + 1 Hz |
+| `0x26` | `MOVERS` | owner → follower | unreliable, latest wins | 10 Hz |
+| `0x27` | `LOOT` | both | unreliable, latest wins | on change + 1 Hz |
+| `0x28` | `SUSPEND` | both | reliable | event |
 | `0x30` | `LOG` | both | unreliable | event |
 
 The design rule being followed (DollsMP 12 §4.6 E8): **the event channel is a
@@ -466,6 +470,7 @@ mesh-free look in the game's content; the buffs (7-9) have no world visual in th
 ```
 u32  seq             bumps on every change
 u8   role            1 = host, 2 = peer
+u8   phase           0 = in-world, 1 = hard begin, 2 = arrived, 3 = resume
 str  map             short map name, e.g. `100_GR`
 str  dest            the destination the sender just took, "" when not travelling
 ```
@@ -489,12 +494,33 @@ the sender teleporting somebody else's pawn. Empty when the sender is not travel
 
 The measured entry point is `FS_PlayerChar.TeleportToLocation(LocationData, GreenFX)`,
 with `EnemySpawner_C.PlayerTeleported()` as the world notification. `OpenLevel` is **not**
-the travel path: only menus, death and cheats import it.
+the in-world travel path: only menus, death and cheats import it.
 
-There is deliberately no "follow me" command in v1: the only measured travel entry
-point is `UGameplayStatics::OpenLevel`, and driving it from the mod is unproven
-(`API-GAPS.md` §4). Refusing to cross-apply state is the honest outcome — a silent
-half-applied world is worse than a named warning.
+**Hard transitions are a handshake, not a teleport.** A hard switch to a different
+`UWorld` (`900_SipehaWorld`, `990_B33sment`, the `997/998/999_*` cutscene maps) cannot be
+followed with `TeleportToLocation`: the destination actor does not exist in the
+follower's world. The game's own entry for that is the native
+`UFS_GameInstanceBase.LoadMapWithLoadingScreen(MapPackage)` UFunction (RVA `0x00E58F70`,
+registration table `0x03950090`; it sets `bLoadingMap`, records
+`CurrentlyLoadingMapPackage`, and starts an async world load). The mod calls it on the
+follower when the sender's `phase` is `HARD_BEGIN`; `dest` is then the destination map
+package path (`/Game/RuinsLevel/Maps/900_SipehaWorld.900_SipehaWorld`).
+
+The `phase` field is what makes the handshake explicit:
+
+- `0 NONE` — the ordinary in-world announcement, and the 0.5 Hz heartbeat.
+- `1 HARD_BEGIN` — one machine has just crossed a world boundary. The other loads the
+  same map. A machine that cannot load it refuses once, logs, and never retries that
+  map; the session survives.
+- `2 ARRIVED` — each machine sends this once its own `UWorld` is the announced map.
+- `3 RESUME` — the host releases the pair after both `ARRIVED`, and absolute state may
+  be applied again. Until then both machines hold their absolute bodies (the existing
+  `MapBoard` divergence gate).
+
+The host is authoritative on a collision (both machines cross to different maps at the
+same instant): the host's `HARD_BEGIN` wins and the peer re-follows once. A hard
+transition is not gated on `StreamUnion`; travel coordination has its own switch
+(`TravelSync`) so it works with the streaming union disabled.
 
 ### 3.15b `DAMAGE` (0x24)
 
@@ -513,6 +539,87 @@ it describes the hit and the peer performs it.
 `flags` bit2 is not decoration: when the host cannot resolve the attack's real damage
 value, it says so, and the peer logs a guessed hit as guessed. An estimate that is
 silently presented as measured is how a balance bug becomes a sync bug.
+
+### 3.16 `CUTSCENE` (0x25)
+
+```
+u32  seq             bumps on every change; an older state is discarded
+u8   slot            0 = host, 1 = peer, 0xFF = free
+u8   state           0 = none, 1 = playing, 2 = ended
+str  name            short name of the manager / sequence actor, "" when none
+```
+
+A cutscene is per-machine Blueprint state: there is no host-side switch that makes the
+other machine play one. Both machines publish the manager they are running (on change
+and at 1 Hz), so a lost datagram costs a beat. The receiver resolves the same manager in
+its own cooked world and calls the game's own cutscene entry
+(`FS_PlayerChar.BeginCutsceneWithManager`); if the manager cannot be resolved, it is held
+consistently with `FS_GameInstance.EnterCutsceneMode` until the sender reports `ENDED`,
+then released with `ExitCutsceneMode`. `ENDED` is sent explicitly rather than inferred,
+because the two machines' managers do not finish on the same frame.
+
+### 3.17 `MOVERS` (0x26)
+
+Moving world objects (elevators, platforms, `Activatable` movers). Owner-authoritative
+absolute state: the machine that runs the mover publishes its transform, and the other
+machine applies it.
+
+```
+u32  rev
+u16  n               rows in this body (never split across a datagram)
+n × { guid id, i32 x, i32 y, i32 z, i16 yaw, i16 pitch, u8 flags }
+```
+
+`id` is the stable FNV-1a identity of the placed actor (its object / level / world names),
+the same scheme `DIALOGUE` uses; a mover is a placed actor, so both machines compute the
+same id without negotiating. Positions are 1/8 cm and angles 1/65536 turn, as `PLAYER`.
+
+`flags` bit0 = moving (the owner moved it this frame), bit1 = owner (the sender is the
+authority). A row whose bit1 is clear is a follower's observation and is not applied.
+Ownership follows proximity exactly as `ENEMY` does: the nearer player's machine runs the
+mover, so the transform the other applies is the one the interacting player sees.
+
+### 3.18 `LOOT` (0x27)
+
+One shared drop set. The game's `UFS_ItemDropSystem::RollItemDrop` is keyed by
+`{sourceId, dropIndex}` with **no player dimension**, so a drop is shared by
+construction within one machine — but each machine rolls its own. The host publishes the
+set under that same key, so both machines spawn the same item for the same roll:
+
+```
+u32  rev
+u16  n
+n × { u32 source_hash, i32 drop_index, u8 taken, str item_path }
+```
+
+`source_hash` is FNV-1a of the drop source's object name; `drop_index` is the game's own
+per-source index. `item_path` is the soft object path the roll produced, never a pointer.
+`taken` is a tombstone and **wins over any non-taken entry**: a drop one player picked up
+must disappear for the other, and a tombstone is never removed by a later body from the
+sender that still lists the item.
+
+A peer's own rolls are sent as proposals and merged into the host's set; the host's body
+is the resolution. The body is absolute and re-sent at 1 Hz, so a lost datagram repairs
+itself. `n = 0` is a genuinely empty set.
+
+### 3.19 `SUSPEND` (0x28)
+
+The game writes a timed suspend save on its own schedule (measured: 120 s apart,
+alternating slots), gated by `BlockSuspendSaves`. In a live session the peer holds that
+gate so its save cannot advance past the host, and a suspend load it does take is
+announced so the host can re-apply its absolute state.
+
+```
+u32  seq
+u8   state           0 = clear, 1 = hold, 2 = loaded, 3 = re-applied
+str  slot            the suspend slot name when known, "" otherwise
+```
+
+`HOLD` is sent by the peer once it has called the game's own `BlockSuspendSaves`, and
+re-sent at 1 Hz as a heartbeat. `LOADED` means the peer took a suspend load anyway (the
+gate is not a lock). On `LOADED` the host re-applies `WORLD_FLAGS`, `ACTOR_STATES` and
+`INVENTORY` immediately rather than waiting for the 1 Hz cycle, then sends `REAPPLIED`.
+`CLEAR` releases the hold when the session ends.
 
 ### Reliable kinds: ack and duplicate suppression
 
@@ -533,6 +640,13 @@ copy was applied (measured: one Fireball spawned six times).
 - `DIALOGUE` and `LEVEL_UNION` are **unreliable, absolute, per sender** and
   re-sent periodically; a sender that goes quiet goes stale (5 s / 30 s) rather than
   leaving its last state in force.
+- `CUTSCENE`, `MOVERS` and `LOOT` are **unreliable and absolute**, re-sent on change and
+  at 1 Hz (10 Hz for `MOVERS`); a silent cutscene sender goes stale in 5 s so a crash
+  cannot leave the partner's input locked.
+- `TRAVEL` and `SUSPEND` are **reliable**: the hard-transition phases and the
+  suspend-load repair are events whose loss would leave the pair in different states
+  until the 0.5 Hz / 1 Hz heartbeat, and the handshake is short enough that a lost phase
+  is a stuck transition.
 - Nothing anywhere carries `x += d`. Every effect is a set insertion, an
   absolute assignment, or a transition guarded by a monotonic counter
   (E2). This is the rule that makes a lost or duplicated datagram change

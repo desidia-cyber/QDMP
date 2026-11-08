@@ -67,6 +67,10 @@
 #include "qdstream.h"
 #include "qdtravel.h"
 #include "qddialogue.h"
+#include "qdsequence.h"
+#include "qdmover.h"
+#include "qdloot.h"
+#include "qdsuspend.h"
 #include "qdenemy.h"
 #include "qdenemyown.h"
 #include "qdenemydmg.h"
@@ -131,8 +135,23 @@ stream::MapBoard   g_map;
 // whether this machine has already acted on it.  Separate from g_map because the
 // divergence debounce and the follow dedup reset for different reasons.
 travel::Board      g_travel;
+// The hard-transition handshake (qdtravel.h HardBoard).  Separate from `g_travel`: an
+// in-world follow and a world switch have different memory (one remembers a
+// destination actor, the other a map load and an arrival).
+travel::HardBoard  g_hard;
 uint32_t           g_travelSeq = 0;
 dialogue::DialogueLock g_dialogue;
+
+// Cutscenes, moving world objects, loot and suspend saves (qdsequence / qdmover /
+// qdloot / qdsuspend).  Each is behind its own switch.
+sequence::CutsceneBoard g_cutscene;
+mover::Board            g_movers;
+loot::Ledger            g_loot;
+suspend::Board          g_suspend;
+uint32_t                g_cutsceneSeq = 0;
+uint32_t                g_lootRev = 0;
+uint32_t                g_moverRev = 0;
+uint32_t                g_suspendSeq = 0;
 flags::FlagBank   g_flags;
 
 // The peer's outbound half of flag sync: rises the mirror observed, waiting for the
@@ -228,6 +247,11 @@ void LogConfig()
           " puppet=", dec(c.puppet_sync),
           " dialogue=", dec(c.dialogue_sync),
           " stream=", dec(c.stream_union),
+          " travel=", dec(c.travel_sync),
+          " cutscene=", dec(c.cutscene_sync),
+          " movers=", dec(c.mover_sync),
+          " loot=", dec(c.loot_sync),
+          " suspend=", dec(c.suspend_guard),
           " pause=", dec(c.suppress_pause));
 }
 
@@ -1044,6 +1068,10 @@ bool IsGameplayPawn(void* pawn)
 }
 
 bool g_peerInGameplay = false;   // from the peer's row flags (bit5 = menu)
+// The partner's last reported position, in world cm.  Ownership of a moving world
+// object follows the nearer player, and the partner has no pawn here, so its own row is
+// the only position available.
+float g_peerPos[3] = {0, 0, 0};
 
 // The engine spawn pair (B7: the game has no character-construction path of its own).
 typedef void* (*FnBeginDeferred)(void* worldContext, void* actorClass, const void* transform,
@@ -3057,9 +3085,128 @@ bool FollowTravelDest(const char* dest, void* pawn, char* err, int errCap)
     return true;
 }
 
-void MapPump(uint32_t now)
+// ---- hard map transition: the game's own world-load entry (G6) -------------
+// Measured (`analysis/re/travel_*_probe.*`): `LoadMapWithLoadingScreen` is a native
+// UFunction on the game instance -- registration table 0x03950090, exec thunk
+// 0x00E58F70, body 0x00E34F30.  The body sets `bLoadingMap = 1`, records
+// `CurrentlyLoadingMapPackage`, and starts an asynchronous world load with the game's
+// loading screen.  `OpenLevel` is imported only by menus, death and cheats; this is the
+// game's own hard-travel path.
+//
+// The call goes through ProcessEvent on the LIVE GameInstance, so no RVA is baked into
+// the call site and the parameter list is discovered from the UFunction.  The map asset
+// is resolved by the same `LoadAsset_Blocking` path the body uses (qdavatar.h).
+static const char* kMapPackageRoot = "/Game/RuinsLevel/Maps/";
+
+struct FStringArg { wchar_t* Data; int32_t Num; int32_t Max; };
+static wchar_t g_fstrBuf[2][512];
+static int     g_fstrNext = 0;
+
+bool MakeFString(const char* ascii, uint8_t* out)
 {
-    if (!Cfg().stream_union) return;
+    wchar_t* b = g_fstrBuf[g_fstrNext++ & 1];
+    int n = MultiByteToWideChar(CP_ACP, 0, ascii, -1, b, 511);
+    if (n <= 0) return false;
+    FStringArg a;
+    a.Data = b; a.Num = n; a.Max = n;
+    memcpy(out, &a, sizeof(a));
+    return true;
+}
+
+void MapPackagePath(const char* map, char* out, int cap)
+{
+    out[0] = 0;
+    if (!map || !map[0]) return;
+    int w = 0;
+    for (const char* s = kMapPackageRoot; *s && w < cap - 1; ++s) out[w++] = *s;
+    for (int i = 0; map[i] && w < cap - 1; ++i) out[w++] = map[i];
+    if (w < cap - 1) out[w++] = '.';
+    for (int i = 0; map[i] && w < cap - 1; ++i) out[w++] = map[i];
+    out[w] = 0;
+}
+
+bool FollowHardTravel(const char* map, char* err, int errCap)
+{
+    if (err && errCap > 0) err[0] = 0;
+    if (!map || !map[0] || !stream::PlausibleLevelName(map)) {
+        ErrSet(err, errCap, "not a plausible map name: ", map ? map : "?");
+        return false;
+    }
+    if (!ReflectionReady()) {
+        ErrSet(err, errCap, "property layout not validated: ", Lay().note);
+        return false;
+    }
+    void* world = GWorldPtr();
+    void* gi = world ? GameInstanceOf(world) : nullptr;
+    if (!gi) { ErrSet(err, errCap, "no game instance", ""); return false; }
+
+    static Fn fLoad = {};
+    static bool logged = false;
+    if (!fLoad.Resolve(gi, "LoadMapWithLoadingScreen")) {
+        ErrSet(err, errCap, "GameInstance.LoadMapWithLoadingScreen not found", "");
+        return false;
+    }
+    if (!logged) {
+        logged = true;
+        LogSignature("LoadMapWithLoadingScreen", fLoad.sig);
+    }
+
+    char pkg[192];
+    MapPackagePath(map, pkg, sizeof(pkg));
+    void* mapAsset = avatar::LoadAsset(pkg);
+    if (!mapAsset) {
+        // Loading the map asset is how the parameter is filled when it is an object.
+        // If the only parameters are names/strings the call can still succeed, so this
+        // is a warning, not a refusal; the unsupported-parameter check below decides.
+        QDLOG(LOG_WARN, "hard travel: could not load ", pkg, " (will try name/string parameters)");
+    }
+
+    Call c(fLoad);
+    int unsupported = 0;
+    bool needsMapObject = false;
+    for (int i = 0; i < fLoad.sig.props; ++i) {
+        const PropDesc& d = fLoad.sig.p[i];
+        if (d.flags & (CPF_OutParm | CPF_ReturnParm)) continue;
+        if (NameEquals(d.type, "ObjectProperty") || NameEquals(d.type, "ClassProperty")) {
+            bool ctx = strstr(d.name, "Context") != nullptr || strstr(d.name, "Outer") != nullptr;
+            if (!ctx && !mapAsset) needsMapObject = true;
+            c.Obj(d.name, ctx ? gi : mapAsset);
+        } else if (NameEquals(d.type, "StrProperty")) {
+            uint8_t tmp[16];
+            if (MakeFString(pkg, tmp)) c.Set(d.name, tmp, 16);
+            else ++unsupported;
+        } else if (NameEquals(d.type, "NameProperty")) {
+            QdName n;
+            if (FNameFromAnsi(map, &n)) c.Name(d.name, n);
+            else ++unsupported;
+        } else if (NameEquals(d.type, "BoolProperty")) {
+            c.U8(d.name, 1);
+        } else if (NameEquals(d.type, "SoftObjectProperty") && d.size >= 40) {
+            QdName n;
+            uint8_t* p = c.At(d.name, 40);
+            if (p && FNameFromAnsi(pkg, &n)) memcpy(p + 16, &n, 8);
+            else ++unsupported;
+        } else {
+            ++unsupported;
+        }
+    }
+    if (unsupported > 0) {
+        ErrSet(err, errCap, "unhandled parameter type in LoadMapWithLoadingScreen", "");
+        return false;
+    }
+    if (needsMapObject) {
+        ErrSet(err, errCap, "LoadMapWithLoadingScreen wants a map object that did not load: ", pkg);
+        return false;
+    }
+    if (!c.Run(gi)) { ErrSet(err, errCap, "LoadMapWithLoadingScreen faulted", ""); return false; }
+    return true;
+}
+
+void TravelPump(uint32_t now)
+{
+    // Travel is deliberately NOT gated on StreamUnion: a hard map switch changes the
+    // UWorld, not a streamed sublevel, and the follow must work with the union off.
+    if (!Cfg().travel_sync && !Cfg().stream_union) return;
     static uint32_t lastSend = 0;
     static bool     sent = false;
     static bool     wasDiverged = false;
@@ -3070,6 +3217,8 @@ void MapPump(uint32_t now)
         // must be judged on its own transitions, not on what this machine followed
         // before.  Without this a rejoin would suppress the first travel it should take.
         g_travel.Reset();
+        g_hard.Reset();
+        g_travelSeq = 0;
         sent = false;
         wasDiverged = false;
         return;
@@ -3078,6 +3227,11 @@ void MapPump(uint32_t now)
     char local[stream::kMaxNameLen];
     LocalMapName(local, sizeof(local));
     bool changed = g_map.OnLocal(local, now);
+    if (Cfg().travel_sync && g_hard.OnLocalMap(local, now)) {
+        ++g_travelSeq;
+        QDLOG(LOG_INFO, "travel: HARD transition to ", local,
+              " -- announcing it so the partner loads the same world");
+    }
 
     // The destination this machine is taking, if any.  "" is "not travelling", which is
     // the wire's own encoding (WIRE.md 3.15a): the partner must never have to infer a
@@ -3098,17 +3252,42 @@ void MapPump(uint32_t now)
               (g_travel.Announce()[0] ? g_travel.Announce() : "(none)"),
               " seq=", dec((int)g_travelSeq));
 
+    // ---- the hard handshake ------------------------------------------------
+    uint8_t hardPhase = 0;
+    const char* hardMap = "";
+    if (Cfg().travel_sync) {
+        if (g_hard.Tick(now))
+            QDLOG(LOG_WARN, "travel: hard transition to ", g_hard.TargetMap(),
+                  " missed its " , dec((int)(travel::kHardDeadlineMs / 1000)),
+                  " s deadline; abandoned and not retried");
+        if (g_hard.ReadyToResume() && g_net.IsHost()) {
+            g_hard.NoteAnnounce(3);          // RESUME
+            QDLOG(LOG_INFO, "travel: both machines arrived in ", g_hard.TargetMap(),
+                  "; host releasing the pair to resume");
+        }
+        hardPhase = g_hard.TakeAnnounce();
+        if (hardPhase) hardMap = g_hard.TargetMap();
+    }
+
     // On change at once, then every 2 s.  A change announcement can be lost with the
     // session; the heartbeat is what makes a rejoin converge without a new event.
-    if ((changed || destChanged || !sent || now - lastSend >= 2000) && local[0]) {
+    const bool hardSend = hardPhase != 0;
+    if ((changed || destChanged || hardSend || !sent || now - lastSend >= 2000) && local[0]) {
         wire::TravelBody t;
         memset(&t, 0, sizeof(t));
         t.seq = g_travelSeq;
         t.role = g_net.IsHost() ? 1 : 2;   // 1 = host, 2 = peer (WIRE.md travel)
+        t.phase = hardPhase;
+        const char* mapOut = (hardSend && hardMap[0]) ? hardMap : local;
         int i = 0;
-        for (; local[i] && i < (int)sizeof(t.map) - 1; ++i) t.map[i] = local[i];
+        for (; mapOut[i] && i < (int)sizeof(t.map) - 1; ++i) t.map[i] = mapOut[i];
         t.map[i] = 0;
+        char pkg[192];
         const char* d = g_travel.Announce();
+        if (hardPhase == wire::TP_HARD_BEGIN) {
+            MapPackagePath(g_hard.TargetMap(), pkg, sizeof(pkg));
+            d = pkg;
+        }
         i = 0;
         for (; d[i] && i < (int)sizeof(t.dest) - 1; ++i) t.dest[i] = d[i];
         t.dest[i] = 0;
@@ -3118,6 +3297,15 @@ void MapPump(uint32_t now)
         if (w.ok && g_net.SendReliable(wire::K_TRAVEL, body, w.len)) {
             lastSend = now;
             sent = true;
+            if (hardSend) {
+                QDLOG(LOG_INFO, "travel: hard phase ", dec((int)hardPhase),
+                      " map=", t.map, (t.dest[0] ? " dest=" : ""), t.dest);
+                if (hardPhase == wire::TP_RESUME) g_hard.MarkResumed();
+            }
+        } else if (hardSend) {
+            // The handshake phase must not be lost because the reliable lane was full;
+            // queue it for the next tick.
+            g_hard.NoteAnnounce(hardPhase);
         }
     }
 
@@ -3147,16 +3335,62 @@ void OnTravel(wire::Reader& r, uint32_t now)
         QDLOG(LOG_INFO, "travel: partner role ", dec((int)t.role), " is in ",
               (t.map[0] ? t.map : "(no map)"), " seq=", dec((int)t.seq));
 
+    // ---- hard transition handshake -----------------------------------------
+    if (Cfg().travel_sync && t.phase != wire::TP_NONE) {
+        // Read the current world NOW rather than from g_map: DispatchInbound runs
+        // before the pump, so g_map is one frame old during a load.
+        char cur[stream::kMaxNameLen];
+        LocalMapName(cur, sizeof(cur));
+        bool busy = LocalTravelBusy(g_localPawn);
+        switch (t.phase) {
+        case wire::TP_HARD_BEGIN: {
+            travel::HardVerdict v = g_hard.OnPeerBegin(t.seq, t.map, cur, busy);
+            if (v == travel::HV_LOAD) {
+                g_hard.Arm(now);
+                char err[160];
+                bool ok = FollowHardTravel(t.map, err, sizeof(err));
+                g_hard.OnLoadResult(ok, now);
+                if (ok)
+                    QDLOG(LOG_INFO, "travel: hard transition: loading ", t.map,
+                          " through GameInstance.LoadMapWithLoadingScreen");
+                else
+                    QDLOG(LOG_WARN, "travel: cannot follow hard transition to ", t.map,
+                          ": ", err, " (recorded; this map is not retried)");
+            } else if (v == travel::HV_ANNOUNCE_ARRIVE) {
+                g_hard.NoteAnnounce(2);       // ARRIVED
+                QDLOG(LOG_INFO, "travel: already in ", t.map, "; reporting arrival");
+            } else if (v == travel::HV_REFUSED) {
+                QDLOG(LOG_WARN, "travel: refused hard transition to ", t.map,
+                      " (implausible map or one that already failed); recorded, not retried");
+            }
+            break;
+        }
+        case wire::TP_ARRIVED: {
+            g_hard.OnPeerArrived(t.seq, t.map, cur);
+            QDLOG(LOG_INFO, "travel: the partner arrived in ", t.map,
+                  (travel::SameText(cur, t.map) ? " (both there)" : ""));
+            if (g_hard.ReadyToResume() && g_net.IsHost())
+                g_hard.NoteAnnounce(3);       // RESUME
+            break;
+        }
+        case wire::TP_RESUME: {
+            if (g_hard.OnPeerResume(t.seq, t.map) == travel::HV_RESUME)
+                QDLOG(LOG_INFO, "travel: host released the pair; resuming in ", t.map);
+            break;
+        }
+        default:
+            break;
+        }
+        return;
+    }
+
     // An empty dest is the heartbeat's "not travelling", not news.
     if (!t.dest[0]) return;
 
-    // The decision is pure (qdtravel.h).  This half only answers the questions the
-    // decision needs -- is the local player free, which world are we in -- and performs
-    // the drive.  Nothing here writes the partner's pawn: each machine moves its own.
-    //
-    // The local map is read NOW rather than from g_map: DispatchInbound runs before
-    // MapPump, so g_map.Local() is one frame old, and a one-frame-old world is exactly
-    // the "not this world" that would wrongly give up on a follow during a load.
+    // The in-world half.  The decision is pure (qdtravel.h).  This half only answers
+    // the questions the decision needs -- is the local player free, which world are we
+    // in -- and performs the drive.  Nothing here writes the partner's pawn: each
+    // machine moves its own.
     char cur[stream::kMaxNameLen];
     LocalMapName(cur, sizeof(cur));
     bool busy = LocalTravelBusy(g_localPawn);
@@ -3181,10 +3415,27 @@ void OnTravel(wire::Reader& r, uint32_t now)
         QDLOG(LOG_INFO, "travel: partner is travelling to ", t.dest,
               " but the local player is busy; skipped (not remembered)");
         break;
-    case travel::V_WRONG_WORLD:
-        QDLOG(LOG_WARN, "travel: cannot follow ", t.dest, ": its world is not this "
-              "machine's (", (cur[0] ? cur : "?"), "); recorded, not retried");
+    case travel::V_WRONG_WORLD: {
+        // The in-world follow cannot cross a UWorld.  Now that the game's own hard-load
+        // entry exists, take the world switch instead of ending in a refusal: the
+        // destination names the world the partner is in.
+        travel::DestParts dp;
+        if (Cfg().travel_sync && travel::SplitDest(t.dest, &dp)) {
+            char err[160];
+            if (FollowHardTravel(dp.world, err, sizeof(err))) {
+                g_hard.OnPeerBegin(t.seq, dp.world, cur, false);
+                g_hard.Arm(now);
+                QDLOG(LOG_INFO, "travel: following the partner's world switch to ",
+                      dp.world, " (an in-world destination cannot cross a map)");
+            } else {
+                QDLOG(LOG_WARN, "travel: cannot follow ", t.dest, ": ", err);
+            }
+        } else {
+            QDLOG(LOG_WARN, "travel: cannot follow ", t.dest, ": its world is not this "
+                  "machine's (", (cur[0] ? cur : "?"), ") and TravelSync is off");
+        }
         break;
+    }
     case travel::V_BAD_DEST:
         QDLOG(LOG_WARN, "travel: malformed destination '", t.dest,
               "' from the partner; ignored");
@@ -4471,6 +4722,7 @@ struct DlgLocal {
     uint32_t seq;
     uint32_t lastSend;
 } g_dlg = {};
+bool    g_dlgConflictSaid = false;
 void*   g_blockedNpc = nullptr;
 uint8_t g_blockedId[16];
 
@@ -4548,6 +4800,7 @@ void DialoguePump(uint32_t now)
     static uint32_t last = 0;
     if (now - last < 100) return;
     last = now;
+    const uint8_t slot = (uint8_t)LocalSlot();
 
     // ---- local state ---------------------------------------------------------
     bool talking = false;
@@ -4565,6 +4818,69 @@ void DialoguePump(uint32_t now)
             if (npcActor) { talking = true; NpcIdOf(npcActor, npc); }
         }
     }
+
+    // ---- a death ends the conversation -------------------------------------
+    // The measured failure: a dialogue left open at death leaves an invisible
+    // unanswered choice, and the partner's NPC stays blocked.  Release the lock and
+    // end the local talk explicitly rather than waiting for the 2-minute expiry.
+    {
+        uint8_t dead = 0;
+        bool localDead = IsGameplayPawn(g_localPawn) &&
+                         ((BytePropC(g_localPawn, "IsDead", &dead) && dead) ||
+                          (BytePropC(g_localPawn, "bDead", &dead) && dead));
+        if (localDead && g_dlg.talking) {
+            g_dialogue.OnPlayerDeath(slot);
+            static Fn fEnd = {}, fEnded = {};
+            void* dm = ObjPropC(g_localPawn, "DialogueManager");
+            bool a = dm && CallNoArgs(dm, fEnd, "End");
+            bool b = CallNoArgs(g_localPawn, fEnded, "DialogueEnded");
+            QDLOG(LOG_INFO, "dialogue: local death ended the conversation "
+                  "(end=", dec(a ? 1 : 0), " ended=", dec(b ? 1 : 0), "); lock released");
+            talking = false;
+            npcActor = nullptr;
+        }
+    }
+
+    // ---- concurrent start: prevent it, do not merely log it ------------------
+    // The reservation is taken before the conversation is published.  If the partner
+    // already reserved or is in this NPC, the local start is ended with the game's own
+    // `DialogueManager.End`.  If the reservations crossed, the lower slot (the host) is
+    // the winner and the higher slot yields -- logged as PREVENTED, not as a warning.
+    if (talking) {
+        bool ok = g_talk.Reserve(slot, npc, now);
+        if (!ok) {
+            // The crossed case.  The host (slot 0) keeps the conversation; the peer
+            // yields by ending its own.  `LosesConflict` cannot decide this on the
+            // local machine because the local slot's state is not published to itself,
+            // so the rule is the slot number -- which is also the documented rule.
+            if (slot != 0) {
+                static uint32_t lastPrevent = 0;
+                if (now - lastPrevent > 2000) {
+                    lastPrevent = now;
+                    static Fn fEnd = {}, fEnded = {};
+                    void* dm = ObjPropC(g_localPawn, "DialogueManager");
+                    bool a = dm && CallNoArgs(dm, fEnd, "End");
+                    bool b = CallNoArgs(g_localPawn, fEnded, "DialogueEnded");
+                    QDLOG(LOG_WARN, "dialogue: PREVENTED a concurrent start on the same NPC "
+                          "(the host holds it); ending the local conversation "
+                          "(end=", dec(a ? 1 : 0), " ended=", dec(b ? 1 : 0), ")");
+                }
+                talking = false;
+                npcActor = nullptr;
+            } else {
+                if (!g_dlgConflictSaid) {
+                    g_dlgConflictSaid = true;
+                    QDLOG(LOG_INFO, "dialogue: the partner also started this NPC within one "
+                          "round trip; the host keeps it and the peer yields");
+                }
+            }
+        }
+    }
+    if (!talking) {
+        g_talk.ReleaseReservation(slot);
+        g_dlgConflictSaid = false;
+    }
+
     bool changed = talking != g_dlg.talking || (talking && !dialogue::TalkBoard::SameId(npc, g_dlg.npc)) ||
                    line != g_dlg.line;
     if (changed) {
@@ -4572,9 +4888,6 @@ void DialoguePump(uint32_t now)
             char d[96] = "-";
             if (npcActor) ObjDescribe(npcActor, d, sizeof(d));
             QDLOG(LOG_INFO, "dialogue: local ", (talking ? "started with " : "ended"), (talking ? d : ""));
-            if (talking && g_talk.OtherTalkingTo((uint8_t)LocalSlot(), npc, now))
-                QDLOG(LOG_WARN, "dialogue: the partner is in the same conversation (started within one "
-                                "round trip); host progression decides");
         }
         g_dlg.talking = talking;
         memcpy(g_dlg.npc, npc, 16);
@@ -4620,8 +4933,653 @@ void OnDialogue(wire::Reader& r, uint32_t now)
 }
 
 // ===========================================================================
-// 6d. Inventory (qdinventory.h holds the model and the reasons)
+// 6c-bis. Cutscenes, moving world objects, loot, suspend saves
 // ===========================================================================
+// Four independent lanes, each behind its own switch.  They share the rules the rest
+// of the file obeys: validate every handle, write only your own machine's objects, and
+// make every refusal a named log line.
+
+void CopyText2(char* dst, int cap, const char* src)
+{
+    if (!dst || cap <= 0) return;
+    int i = 0;
+    if (src) for (; src[i] && i < cap - 1; ++i) dst[i] = src[i];
+    dst[i] = 0;
+}
+
+void NumText(int v, char* out, int cap)
+{
+    if (!out || cap <= 0) return;
+    char tmp[16];
+    int n = 0;
+    bool neg = v < 0;
+    unsigned u = neg ? (unsigned)(-(int64_t)v) : (unsigned)v;
+    do { tmp[n++] = (char)('0' + (u % 10)); u /= 10; } while (u && n < (int)sizeof(tmp));
+    int k = 0;
+    if (neg && k < cap - 1) out[k++] = '-';
+    while (n > 0 && k < cap - 1) out[k++] = tmp[--n];
+    out[k] = 0;
+}
+
+void StablePathOf(void* obj, char* out, int cap)
+{
+    if (!out || cap <= 0) return;
+    int k = 0;
+    void* o = obj;
+    for (int depth = 0; o && depth < 4; ++depth, o = ObjOuter(o)) {
+        char nm[80];
+        if (FNameToString(ObjNameRaw(o), nm, sizeof(nm)) <= 0) break;
+        for (int i = 0; nm[i] && k < cap - 2; ++i) out[k++] = nm[i];
+        out[k++] = '/';
+    }
+    out[k] = 0;
+}
+
+bool ContainsCI(const char* hay, const char* needle)
+{
+    if (!hay || !needle || !needle[0]) return false;
+    for (int i = 0; hay[i]; ++i) {
+        int k = 0;
+        for (; needle[k]; ++k) {
+            char a = hay[i + k];
+            char b = needle[k];
+            if (a >= 'A' && a <= 'Z') a = (char)(a + 32);
+            if (b >= 'A' && b <= 'Z') b = (char)(b + 32);
+            if (a != b) break;
+        }
+        if (!needle[k]) return true;
+    }
+    return false;
+}
+
+void* GameInstanceObj()
+{
+    void* w = GWorldPtr();
+    return w ? GameInstanceOf(w) : nullptr;
+}
+
+// A one-object UFunction call.  The parameter is located by type, never by a guessed
+// pin name: a Blueprint pin may be spelled with a space or a suffix.
+bool CallObject1(void* obj, Fn& f, const char* name, void* arg)
+{
+    if (!obj || !f.Resolve(obj, name)) return false;
+    const PropDesc* p = FindPropOfType(f.sig, "ObjectProperty", CPF_OutParm | CPF_ReturnParm);
+    if (!p && f.sig.props > 0) p = &f.sig.p[0];
+    Call c(f);
+    if (p) c.Obj(p->name, arg);
+    return c.Run(obj);
+}
+
+// A one-bool UFunction call, but only when the first parameter really is a bool: a
+// one-byte write into an object/struct parameter would hand the engine a pointer-shaped
+// value (the guarded ProcessEvent would catch a fault, but it would still be the wrong
+// call).  Functions with no parameters run unchanged.
+bool CallFlag1(void* obj, Fn& f, const char* name, bool v)
+{
+    if (!obj || !f.Resolve(obj, name)) return false;
+    Call c(f);
+    if (f.sig.props > 0 && NameEquals(f.sig.p[0].type, "BoolProperty"))
+        c.U8(f.sig.p[0].name, v ? 1 : 0);
+    return c.Run(obj);
+}
+
+// ---------------------------------------------------------------------------
+// Cutscenes
+// ---------------------------------------------------------------------------
+bool LocalCutscene(char* name, int cap)
+{
+    if (name && cap > 0) name[0] = 0;
+    if (!IsGameplayPawn(g_localPawn)) return false;
+    void* mgr = ObjPropC(g_localPawn, "CurrentCutsceneManager");
+    uint8_t b = 0;
+    if (mgr && ObjectIsLive(mgr)) {
+        if (FNameToString(ObjNameRaw(mgr), name, cap) <= 0) name[0] = 0;
+        return true;
+    }
+    if (BytePropC(g_localPawn, "InIntroCutscene", &b) && b) {
+        sequence::CutsceneBoard::Copy(name, cap, "IntroCutscene");
+        return true;
+    }
+    return false;
+}
+
+void CutsceneAct(sequence::Verdict v)
+{
+    void* gi = GameInstanceObj();
+    static Fn fEnter = {}, fExit = {}, fBegin = {}, fLock = {}, fUnlock = {};
+    if (v == sequence::CV_PLAY) {
+        void* mgr = FindTravelActor(g_cutscene.HeldName(), GWorldPtr());
+        bool played = mgr && IsGameplayPawn(g_localPawn) &&
+                      CallObject1(g_localPawn, fBegin, "BeginCutsceneWithManager", mgr);
+        if (played) {
+            QDLOG(LOG_INFO, "cutscene: playing the partner's sequence ",
+                  g_cutscene.HeldName(), " (resolved its manager locally)");
+            return;
+        }
+        v = sequence::CV_HOLD;      // no manager here: hold consistently instead
+    }
+    if (v == sequence::CV_HOLD) {
+        bool e = gi && CallFlag1(gi, fEnter, "EnterCutsceneMode", true);
+        bool l = IsGameplayPawn(g_localPawn) &&
+                 CallFlag1(g_localPawn, fLock, "LockInputForLoadingOrCutscene", true);
+        QDLOG(LOG_INFO, "cutscene: holding the local player for the partner's cutscene "
+              "(enter=", dec(e ? 1 : 0), " lock=", dec(l ? 1 : 0), ")");
+        if (!e && !l) g_cutscene.OnPlayFailed();
+    } else if (v == sequence::CV_RELEASE) {
+        bool e = gi && CallFlag1(gi, fExit, "ExitCutsceneMode", false);
+        bool u = IsGameplayPawn(g_localPawn) &&
+                 CallFlag1(g_localPawn, fUnlock, "UnlockInputForLoadingOrCutscene", false);
+        QDLOG(LOG_INFO, "cutscene: partner's cutscene ended; resuming together "
+              "(exit=", dec(e ? 1 : 0), " unlock=", dec(u ? 1 : 0), ")");
+    }
+}
+
+void CutscenePump(uint32_t now)
+{
+    if (!Cfg().cutscene_sync) return;
+    static uint32_t lastSend = 0;
+    static bool wasPlaying = false;
+    static char lastName[sequence::kMaxNameLen] = {0};
+
+    char name[sequence::kMaxNameLen];
+    bool playing = LocalCutscene(name, sizeof(name));
+    bool changed = playing != wasPlaying ||
+                   (playing && !sequence::CutsceneBoard::Same(name, lastName));
+    bool ended = wasPlaying && !playing;
+    if (playing) sequence::CutsceneBoard::Copy(lastName, sizeof(lastName), name);
+    if (changed || ended) {
+        ++g_cutsceneSeq;
+        QDLOG(LOG_INFO, "cutscene: local ", (playing ? "started " : "ended "),
+              ((playing ? name : lastName)[0] ? (playing ? name : lastName) : "(unnamed)"));
+        wasPlaying = playing;
+    }
+
+    if (g_net.Connected() && (changed || ended || now - lastSend >= 1000)) {
+        lastSend = now;
+        wire::CutsceneBody c;
+        memset(&c, 0, sizeof(c));
+        c.seq = g_cutsceneSeq;
+        c.slot = (uint8_t)LocalSlot();
+        c.state = playing ? wire::CS_PLAYING : (ended ? wire::CS_ENDED : wire::CS_NONE);
+        sequence::CutsceneBoard::Copy(c.name, sizeof(c.name), playing ? name : lastName);
+        uint8_t body[160];
+        wire::Writer w(body, sizeof(body));
+        wire::WriteCutscene(w, c);
+        if (w.ok) g_net.SendUnreliable(wire::K_CUTSCENE, body, w.len);
+    }
+
+    sequence::Verdict v = g_cutscene.Decide((uint8_t)LocalSlot(), playing, name, now);
+    if (v == sequence::CV_PLAY || v == sequence::CV_HOLD || v == sequence::CV_RELEASE)
+        CutsceneAct(v);
+}
+
+void OnCutscene(wire::Reader& r, uint32_t now)
+{
+    wire::CutsceneBody c;
+    if (!wire::ReadCutscene(r, &c)) return;
+    bool playing = c.state == wire::CS_PLAYING;
+    bool ended = c.state == wire::CS_ENDED;
+    if (g_cutscene.Accept((uint8_t)RemoteSlot(), c.seq, playing, ended, c.name, now))
+        QDLOG(LOG_INFO, "cutscene: partner ", (playing ? "started " : (ended ? "ended " : "idle ")),
+              (c.name[0] ? c.name : "(unnamed)"));
+}
+
+// ---------------------------------------------------------------------------
+// Moving world objects (owner-authoritative)
+// ---------------------------------------------------------------------------
+struct MoverActorRec {
+    void*    actor;
+    uint8_t  id[mover::kIdLen];
+};
+MoverActorRec g_moverActors[64];
+int           g_moverActorN = 0;
+int           g_moverScanCursor = 0;
+uint32_t      g_lastMoverSend = 0;
+int           g_moverDropped = 0;      // seen but not tracked (capacity), reported once
+
+bool IsMoverClass(void* cls)
+{
+    char cn[96];
+    if (FNameToString(ObjNameRaw(cls), cn, sizeof(cn)) <= 0) return false;
+    return ContainsCI(cn, "Elevator") || ContainsCI(cn, "Mover") ||
+           ContainsCI(cn, "Platform") || ContainsCI(cn, "Activatable");
+}
+
+void MoverScanStep()
+{
+    static void* actorBase = nullptr;
+    if (!actorBase || !ObjectIsLive(actorBase)) actorBase = FindClassByName("Actor");
+    if (!actorBase) return;
+    void* world = GWorldPtr();
+    if (!world) return;
+    int total = ObjectCount();
+    int budget = 4096;
+    while (budget-- > 0 && g_moverScanCursor < total) {
+        void* o = ObjectAt(g_moverScanCursor++);
+        if (!o || !LooksLikeUObject(o)) continue;
+        void* c = ObjClass(o);
+        if (!c || !IsMoverClass(c)) continue;
+        __try {
+            if (!IsSubclassOf(c, actorBase) || !ActorOuterReachesWorld(o, world)) continue;
+        } __except (EXCEPTION_EXECUTE_HANDLER) { continue; }
+        bool have = false;
+        for (int i = 0; i < g_moverActorN; ++i) if (g_moverActors[i].actor == o) { have = true; break; }
+        if (have) continue;
+        if (g_moverActorN >= (int)(sizeof(g_moverActors) / sizeof(g_moverActors[0]))) {
+            ++g_moverDropped;
+            continue;
+        }
+        char path[256];
+        StablePathOf(o, path, sizeof(path));
+        MoverActorRec& r = g_moverActors[g_moverActorN++];
+        r.actor = o;
+        mover::Board::IdFromPath(path, r.id);
+        uint32_t id0 = 0;
+        memcpy(&id0, r.id, 4);
+        QDLOG(LOG_INFO, "movers: tracking ", path, " id=", hex32(id0));
+    }
+    if (g_moverScanCursor >= total) g_moverScanCursor = 0;
+}
+
+void ToWireMover(const mover::Sample& s, wire::MoverRow* o)
+{
+    memcpy(o->id, s.id, mover::kIdLen);
+    o->px = s.x; o->py = s.y; o->pz = s.z;
+    o->yaw = s.yaw;
+    o->flags = s.flags;
+}
+
+void FromWireMover(const wire::MoverRow& r, mover::Sample* s)
+{
+    memset(s, 0, sizeof(*s));
+    memcpy(s->id, r.id, mover::kIdLen);
+    s->x = r.px; s->y = r.py; s->z = r.pz;
+    s->yaw = r.yaw;
+    s->flags = r.flags;
+}
+
+void MoverApply(const mover::Sample& s)
+{
+    for (int i = 0; i < g_moverActorN; ++i) {
+        if (!mover::Board::SameId(g_moverActors[i].id, s.id)) continue;
+        if (!ObjectIsLive(g_moverActors[i].actor)) return;
+        SetActorXform(g_moverActors[i].actor, wire::DequantizePos(s.x), wire::DequantizePos(s.y),
+                      wire::DequantizePos(s.z), wire::DequantizeAngle(s.yaw));
+        return;
+    }
+}
+
+void MoverPump(uint32_t now)
+{
+    if (!Cfg().mover_sync) return;
+    static void* lastWorld = nullptr;
+    void* world = GWorldPtr();
+    if (world != lastWorld) {
+        lastWorld = world;
+        g_movers.Reset();
+        g_moverActorN = 0;
+        g_moverScanCursor = 0;
+    }
+    // Incremental discovery, like the enemy scan: a full GObjects pass is ~500k slots,
+    // so a budget per frame keeps the cost invisible and still completes a pass in a
+    // few seconds.
+    MoverScanStep();
+    if (!EnsureActorApi()) return;
+
+    ActorXform me;
+    bool haveMe = IsGameplayPawn(g_localPawn) && ReadActorXform(g_localPawn, &me);
+    for (int i = 0; i < g_moverActorN;) {
+        void* a = g_moverActors[i].actor;
+        if (!a || !ObjectIsLive(a)) {
+            g_moverActors[i] = g_moverActors[--g_moverActorN];
+            continue;
+        }
+        ActorXform x;
+        if (ReadActorXform(a, &x)) {
+            mover::Sample s;
+            memset(&s, 0, sizeof(s));
+            memcpy(s.id, g_moverActors[i].id, mover::kIdLen);
+            s.x = wire::QuantizePos(x.px);
+            s.y = wire::QuantizePos(x.py);
+            s.z = wire::QuantizePos(x.pz);
+            s.yaw = wire::QuantizeAngle(x.yaw);
+            s.pitch = wire::QuantizeAngle(x.pitch);
+            float localD = 1.0e17f, peerD = 1.0e17f;   // < INT64_MAX, so the cast is defined
+            if (haveMe) {
+                float dx = me.px - x.px, dy = me.py - x.py, dz = me.pz - x.pz;
+                localD = dx * dx + dy * dy + dz * dz;
+            }
+            if (g_net.Connected()) {
+                float dx = g_peerPos[0] - x.px, dy = g_peerPos[1] - x.py, dz = g_peerPos[2] - x.pz;
+                peerD = dx * dx + dy * dy + dz * dz;
+                g_movers.ResolveOwner(s.id, (int64_t)localD, (int64_t)peerD, g_net.IsHost());
+            }
+            g_movers.ObserveLocal(s.id, s, false, 8);
+        }
+        ++i;
+    }
+
+    if (g_net.Connected() && now - g_lastMoverSend >= 100) {
+        g_lastMoverSend = now;
+        mover::Sample rows[20];
+        int n = g_movers.SnapshotDirty(rows, 20);
+        static uint32_t lastFull = 0;
+        if (n == 0 && now - lastFull >= 2000) { lastFull = now; n = g_movers.Snapshot(rows, 20, true); }
+        if (n > 0) {
+            wire::MoverRow out[20];
+            for (int k = 0; k < n; ++k) ToWireMover(rows[k], &out[k]);
+            uint8_t body[wire::kMaxBody];
+            wire::Writer w(body, sizeof(body));
+            wire::WriteMoversHeader(w, ++g_moverRev, (uint16_t)n);
+            wire::WriteMoversChunk(w, out, n, 0);
+            if (w.ok) g_net.SendUnreliable(wire::K_MOVERS, body, w.len);
+        }
+    }
+    static int lastDropped = -1;
+    if (g_moverDropped != lastDropped) {
+        lastDropped = g_moverDropped;
+        QDLOG(LOG_WARN, "movers: ", dec(g_moverDropped),
+              " candidate(s) not tracked (bounded table); they are not on the wire");
+    }
+}
+
+void OnMovers(wire::Reader& r, uint32_t now)
+{
+    static wire::MoversBody b;
+    if (!wire::ReadMovers(r, &b)) return;
+    int applied = 0;
+    for (int i = 0; i < b.n; ++i) {
+        mover::Sample s;
+        FromWireMover(b.row[i], &s);
+        if (g_movers.Accept(s, b.rev, now) && !g_movers.IsOwner(s.id)) {
+            MoverApply(s);
+            ++applied;
+        }
+    }
+    if (applied) QDLOG(LOG_DEBUG, "movers: applied ", dec(applied), " owner row(s) rev=", dec((int)b.rev));
+}
+
+// ---------------------------------------------------------------------------
+// Loot drops (one shared set)
+// ---------------------------------------------------------------------------
+struct LootActorRec {
+    void*    actor;
+    uint32_t source_hash;
+    int32_t  drop_index;
+    char     path[loot::kMaxPathLen];
+    bool     gone;
+};
+LootActorRec g_lootActors[64];
+int          g_lootActorN = 0;
+int          g_lootScanCursor = 0;
+uint32_t     g_lastLootSend = 0;
+bool         g_lootSaidUnrepresented = false;
+
+bool IsDropClass(void* cls)
+{
+    char cn[96];
+    if (FNameToString(ObjNameRaw(cls), cn, sizeof(cn)) <= 0) return false;
+    return ContainsCI(cn, "ItemDrop") || ContainsCI(cn, "SpawnItemDrop") ||
+           ContainsCI(cn, "DroppedItem");
+}
+
+// The game's own drop key, recovered from the drop actor where the class exposes it.
+// A class that names none of these is skipped and reported once: inventing an identity
+// would make two different drops address one slot.
+bool LootKeyOf(void* actor, uint32_t* hash, int32_t* index, char* path, int cap)
+{
+    static const char* kSources[] = {"DropSource", "SourceActor", "SourceObject", "Source",
+                                     "Owner", "Instigator"};
+    static const char* kItems[]   = {"ItemData", "DroppedItemData", "ItemObject", "Item",
+                                     "DroppedItem"};
+    static const char* kIndexes[] = {"DropIndex", "SourceDropIndex", "Index"};
+
+    void* src = nullptr;
+    for (unsigned i = 0; i < sizeof(kSources) / sizeof(kSources[0]) && !src; ++i)
+        src = ObjPropC(actor, kSources[i]);
+    if (!src) return false;
+    char sn[80];
+    if (FNameToString(ObjNameRaw(src), sn, sizeof(sn)) <= 0) return false;
+    *hash = loot::HashSource(sn);
+
+    *index = 0;
+    for (unsigned i = 0; i < sizeof(kIndexes) / sizeof(kIndexes[0]); ++i)
+        if (IntPropC(actor, kIndexes[i], index)) break;
+
+    void* item = nullptr;
+    for (unsigned i = 0; i < sizeof(kItems) / sizeof(kItems[0]) && !item; ++i)
+        item = ObjPropC(actor, kItems[i]);
+    if (!item) return false;
+    if (avatar::AssetPath(item, path, cap) <= 0) return false;
+    return true;
+}
+
+void LootScanStep()
+{
+    static void* actorBase = nullptr;
+    if (!actorBase || !ObjectIsLive(actorBase)) actorBase = FindClassByName("Actor");
+    if (!actorBase) return;
+    void* world = GWorldPtr();
+    if (!world) return;
+    int total = ObjectCount();
+    int budget = 4096;
+    while (budget-- > 0 && g_lootScanCursor < total) {
+        void* o = ObjectAt(g_lootScanCursor++);
+        if (!o || !LooksLikeUObject(o)) continue;
+        void* c = ObjClass(o);
+        if (!c || !IsDropClass(c)) continue;
+        __try {
+            if (!IsSubclassOf(c, actorBase) || !ActorOuterReachesWorld(o, world)) continue;
+        } __except (EXCEPTION_EXECUTE_HANDLER) { continue; }
+        bool have = false;
+        for (int i = 0; i < g_lootActorN; ++i) if (g_lootActors[i].actor == o) { have = true; break; }
+        if (have) continue;
+        if (g_lootActorN >= (int)(sizeof(g_lootActors) / sizeof(g_lootActors[0]))) continue;
+        uint32_t hash = 0;
+        int32_t index = 0;
+        char path[loot::kMaxPathLen];
+        if (!LootKeyOf(o, &hash, &index, path, sizeof(path))) {
+            if (!g_lootSaidUnrepresented) {
+                g_lootSaidUnrepresented = true;
+                QDLOG(LOG_WARN, "loot: a drop actor exposes no source/item property; "
+                                "it is not represented on the wire (first occurrence)");
+            }
+            continue;
+        }
+        LootActorRec& r = g_lootActors[g_lootActorN++];
+        r.actor = o;
+        r.source_hash = hash;
+        r.drop_index = index;
+        CopyText2(r.path, sizeof(r.path), path);
+        r.gone = false;
+        if (g_loot.Offer(hash, index, path)) {
+            QDLOG(LOG_INFO, "loot: drop ", hex32(hash), "#", dec((int)index), " = ", path);
+            g_lootRev = g_loot.Revision();
+        }
+    }
+    if (g_lootScanCursor >= total) g_lootScanCursor = 0;
+}
+
+// Hide the local copy of a drop the other player took.  Hiding rather than destroying:
+// destroying a Blueprint actor from native code is the AV the corpus warns about, and
+// the drop must be reversible if a message crossed.
+void LootHide(uint32_t hash, int32_t index)
+{
+    for (int i = 0; i < g_lootActorN; ++i) {
+        if (g_lootActors[i].source_hash != hash || g_lootActors[i].drop_index != index) continue;
+        if (g_lootActors[i].gone) continue;
+        g_lootActors[i].gone = true;
+        if (ObjectIsLive(g_lootActors[i].actor)) {
+            SetActorHidden(g_lootActors[i].actor, true);
+            QDLOG(LOG_INFO, "loot: hiding local drop ", hex32(hash), "#", dec((int)index),
+                  " -- the partner took it");
+        }
+    }
+}
+
+void LootPump(uint32_t now)
+{
+    if (!Cfg().loot_sync) return;
+    static void* lastWorld = nullptr;
+    void* world = GWorldPtr();
+    if (world != lastWorld) {
+        lastWorld = world;
+        g_loot.Reset();          // drops are per-world; a stale tombstone is not a fact
+        g_lootActorN = 0;
+        g_lootScanCursor = 0;
+    }
+    LootScanStep();
+
+    // A recorded drop that has gone from the world was picked up here.
+    for (int i = 0; i < g_lootActorN; ++i) {
+        if (g_lootActors[i].gone) continue;
+        if (ObjectIsLive(g_lootActors[i].actor)) continue;
+        g_lootActors[i].gone = true;
+        if (g_loot.Take(g_lootActors[i].source_hash, g_lootActors[i].drop_index)) {
+            QDLOG(LOG_INFO, "loot: local pickup ", hex32(g_lootActors[i].source_hash), "#",
+                  dec((int)g_lootActors[i].drop_index), " -- tombstoned for the partner");
+            g_lootRev = g_loot.Revision();
+        }
+    }
+
+    if (!g_net.Connected()) return;
+    static uint32_t lastState = 0;
+    bool due = g_loot.Revision() != lastState || now - g_lastLootSend >= 1000;
+    if (!due) return;
+    g_lastLootSend = now;
+    lastState = g_loot.Revision();
+
+    loot::Entry e[loot::kMaxDrops];
+    int n = g_loot.Snapshot(e, loot::kMaxDrops);
+    wire::LootEntry out[wire::kLootMax];
+    int m = 0;
+    for (int i = 0; i < n && m < wire::kLootMax; ++i) {
+        out[m].source_hash = e[i].source_hash;
+        out[m].drop_index = e[i].drop_index;
+        out[m].taken = e[i].taken ? 1 : 0;
+        CopyText2(out[m].item_path, sizeof(out[m].item_path), e[i].item_path);
+        ++m;
+    }
+    uint8_t body[wire::kMaxBody];
+    wire::Writer w(body, sizeof(body));
+    wire::WriteLootHeader(w, g_loot.Revision(), (uint16_t)m);
+    wire::WriteLootChunk(w, out, m, 0);
+    if (w.ok) g_net.SendUnreliable(wire::K_LOOT, body, w.len);
+}
+
+void OnLoot(wire::Reader& r)
+{
+    static wire::LootBody b;
+    if (!wire::ReadLoot(r, &b)) return;
+    loot::Entry in[wire::kLootMax];
+    int n = 0;
+    for (int i = 0; i < b.n && n < loot::kMaxDrops; ++i) {
+        in[n].used = true;
+        in[n].source_hash = b.entry[i].source_hash;
+        in[n].drop_index = b.entry[i].drop_index;
+        in[n].taken = b.entry[i].taken != 0;
+        CopyText2(in[n].item_path, sizeof(in[n].item_path), b.entry[i].item_path);
+        ++n;
+    }
+    int changed = g_loot.Merge(in, n, !g_net.IsHost());   // the peer's inbound body is the host's
+    if (changed) {
+        g_lootRev = g_loot.Revision();
+        for (int i = 0; i < b.n; ++i)
+            if (b.entry[i].taken) LootHide(b.entry[i].source_hash, b.entry[i].drop_index);
+        QDLOG(LOG_INFO, "loot: merged ", dec(changed), " entr",
+              (changed == 1 ? "y" : "ies"), " rev=", dec(g_loot.Revision()));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Suspend saves
+// ---------------------------------------------------------------------------
+int32_t g_lastSuspendSlot = -1;
+
+void SuspendPump(uint32_t now)
+{
+    if (!Cfg().suspend_guard) return;
+    const bool live = g_net.Connected();
+    const bool peer = g_net.IsPeer();
+
+    if (g_suspend.WantHold(live, peer)) {
+        if (peer) {
+            void* gi = GameInstanceObj();
+            static Fn fBlock = {};
+            bool ok = gi && CallNoArgs(gi, fBlock, "BlockSuspendSaves");
+            // A build that exposes it as a Blueprint bool rather than a function: the
+            // game's own volume/enemy callers are the same lever either way.
+            if (!ok && gi) ok = WriteBytePropC(gi, "BlockSuspendSaves", 1);
+            QDLOG(LOG_INFO, "suspend: peer holds BlockSuspendSaves=", dec(ok ? 1 : 0),
+                  " -- the game's timed suspend save must not advance past the host");
+        }
+        ++g_suspendSeq;
+    }
+
+    if (peer && Save().save) {
+        int32_t slot = -1;
+        if (IntPropC(Save().save, "ActiveSuspendSlot", &slot) && slot != g_lastSuspendSlot) {
+            bool first = g_lastSuspendSlot == -1;
+            g_lastSuspendSlot = slot;
+            if (!first && slot >= 0) {
+                char nm[32];
+                NumText(slot, nm, sizeof(nm));
+                if (g_suspend.OnLocalSuspendLoaded(nm, now)) {
+                    ++g_suspendSeq;
+                    QDLOG(LOG_WARN, "suspend: peer loaded a suspend save (slot ", nm,
+                          "); announcing it so the host re-applies its state");
+                }
+            }
+        }
+    }
+
+    if (g_net.IsHost() && g_suspend.TakeReapply()) {
+        g_flagsDirty = true;
+        g_invPub.ForceDirty();
+        g_actorPub.ForceDirty();
+        g_invForceObserve = true;
+        ++g_suspendSeq;
+        QDLOG(LOG_INFO, "suspend: host re-applying WORLD_FLAGS, ACTOR_STATES and "
+                        "INVENTORY after the peer's suspend load");
+    }
+
+    if (g_suspend.Tick(now))
+        QDLOG(LOG_WARN, "suspend: the peer's suspend load was not repaired within ",
+              dec((int)(suspend::kReapplyDeadlineMs / 1000)), " s; reported, not retried");
+
+    static uint32_t lastSend = 0;
+    static uint8_t  lastState = 0xFF;
+    uint8_t st = g_suspend.StateToSend();
+    if (g_net.Connected() && (st != lastState || now - lastSend >= 1000)) {
+        lastSend = now;
+        lastState = st;
+        wire::SuspendBody s;
+        memset(&s, 0, sizeof(s));
+        s.seq = g_suspend.Seq();
+        s.state = st;
+        CopyText2(s.slot, sizeof(s.slot), g_suspend.Slot());
+        uint8_t body[96];
+        wire::Writer w(body, sizeof(body));
+        wire::WriteSuspend(w, s);
+        if (w.ok) g_net.SendReliable(wire::K_SUSPEND, body, w.len);
+    }
+}
+
+void OnSuspend(wire::Reader& r, uint32_t now)
+{
+    wire::SuspendBody s;
+    if (!wire::ReadSuspend(r, &s)) return;
+    if (s.state == wire::SS_LOADED) {
+        if (g_suspend.OnPeerLoaded(s.seq, s.slot, now))
+            QDLOG(LOG_WARN, "suspend: the partner loaded a suspend save (slot ",
+                  (s.slot[0] ? s.slot : "?"), "); re-applying the host's state");
+    } else if (s.state == wire::SS_REAPPLIED) {
+        if (g_suspend.OnPeerReapplied(s.seq))
+            QDLOG(LOG_INFO, "suspend: partner re-applied the host's state after its suspend load");
+    }
+}
+
+
 // WHAT THIS MIRRORS
 // -----------------
 // `InventoryContents` is a TMap<UObject*, int32> at save+0x28 (measured; SYNC-DESIGN
@@ -5316,9 +6274,9 @@ void DispatchInbound(const InboundPacket& p, uint32_t now)
     // not stale but refers to something else.  The union refuses itself inside
     // OnLevelUnion; enemy rows, enemy detail and the dialogue cursor are refused here,
     // before they reach the enemy/dialogue regions.  K_TRAVEL is never filtered: it is how
-    // the split is detected and how it clears again.  Announcement plus refusal, never
-    // travel (API-GAPS 4).
-    if (Cfg().stream_union && !g_map.PeerStateApplies(now) &&
+    // the split is detected and how it clears again, and the hard handshake lives on it.
+    // The gate follows travel too, so the follow works with StreamUnion=0.
+    if ((Cfg().stream_union || Cfg().travel_sync) && !g_map.PeerStateApplies(now) &&
         (p.kind == wire::K_ENEMY || p.kind == wire::K_DIALOGUE ||
          p.kind == wire::K_ENEMY_DETAIL)) {
         return;
@@ -5335,6 +6293,9 @@ void DispatchInbound(const InboundPacket& p, uint32_t now)
         s.yaw = row.yaw;
         s.pitch = row.pitch;
         s.flags = row.flags;
+        g_peerPos[0] = s.px;
+        g_peerPos[1] = s.py;
+        g_peerPos[2] = s.pz;
         bool inGame = (row.flags & 0x20) == 0;
         if (inGame != g_peerInGameplay) {
             g_peerInGameplay = inGame;
@@ -5387,8 +6348,21 @@ void DispatchInbound(const InboundPacket& p, uint32_t now)
         break;
     case wire::K_TRAVEL:
         // Both machines announce; the comparison is what detects a split.  Reliable,
-        // so a transition that crosses a dropped packet is still seen.
-        if (Cfg().stream_union) OnTravel(r, now);
+        // so a transition that crosses a dropped packet is still seen.  Travel is not
+        // gated on the streaming union: a hard switch is a world change.
+        if (Cfg().travel_sync || Cfg().stream_union) OnTravel(r, now);
+        break;
+    case wire::K_CUTSCENE:
+        if (Cfg().cutscene_sync) OnCutscene(r, now);
+        break;
+    case wire::K_MOVERS:
+        if (Cfg().mover_sync) OnMovers(r, now);
+        break;
+    case wire::K_LOOT:
+        if (Cfg().loot_sync) OnLoot(r);
+        break;
+    case wire::K_SUSPEND:
+        if (Cfg().suspend_guard) OnSuspend(r, now);
         break;
     case wire::K_STATUS: {
         uint32_t rev = 0, mask = 0;
@@ -6177,21 +7151,8 @@ void DevAvatarTest(uint32_t now)
 // components.  QDCOOP_PE_TRACE=1: hook ProcessEvent; record every (object class,
 // function) pair silently for a baseline window, then log each NEW pair once, so the
 // functions an attack / jump / spell runs show up next to the key press that caused it.
-bool ContainsCI(const char* s, const char* k)
-{
-    for (int i = 0; s[i]; ++i) {
-        int j = 0;
-        for (; k[j]; ++j) {
-            char a = s[i + j], b = k[j];
-            if (!a) return false;
-            if (a >= 'A' && a <= 'Z') a = (char)(a + 32);
-            if (a != b) break;
-        }
-        if (!k[j]) return true;
-    }
-    return false;
-}
-
+// (`ContainsCI` is defined once, above, and used by both the world lanes and these
+// probes.)
 volatile int g_peTraceState = 0;     // 0 off, 1 baseline, 2 logging new pairs
 bool g_peWide = false;               // QDCOOP_PE_TRACE=2
 void* g_peSeen[16384];
@@ -6765,11 +7726,15 @@ bool HK_Tick(void* engineLoop)
     DevScanNearest(now);
     DevInteract(now);
     DevGod(now);
-    MapPump(now);
+    TravelPump(now);
     StreamPump(now);
     EnemyPump(now);
     ActorStatePump(now);
     DialoguePump(now);
+    CutscenePump(now);
+    MoverPump(now);
+    LootPump(now);
+    SuspendPump(now);
 
     if (tracing) QDLOG(LOG_DEBUG, "  frame ", dec(g_frame), " end");
     g_lastTickMs = now;

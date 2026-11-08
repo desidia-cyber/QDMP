@@ -349,5 +349,242 @@ private:
     char     announced_[kDestCap];
 };
 
+// ---------------------------------------------------------------------------
+// HardBoard -- a hard map switch: both arrive, then resume (SYNC-GAPS G6).
+// ---------------------------------------------------------------------------
+// `Board` above follows a travel INSIDE one UWorld.  A hard transition into another
+// UWorld (900_SipehaWorld, 990_B33sment, the 997/998/999 cutscene maps) is a different
+// problem: there is no destination actor to resolve on the follower, so the follower
+// must take the same map load.  The game's own entry for that is
+// `UFS_GameInstanceBase.LoadMapWithLoadingScreen` (measured; WIRE.md 3.15a), not
+// `OpenLevel`.
+//
+// The handshake exists because "both machines are in the same world" is not implied by
+// "one machine asked to load".  A load takes seconds, can fail, and can be followed by
+// a second transition.  Applying absolute state (flags, actor states, inventory, enemy
+// rows) while the two worlds differ is worse than dropping it, so:
+//
+//   HARD_BEGIN  one machine crossed; the other loads the named map.
+//   ARRIVED     each machine says "my world is now that map".
+//   RESUME      the host releases the pair once both have arrived.
+//
+// The host is authoritative on a collision: if both crossed to different maps at the
+// same instant, the host's map wins and the peer re-follows once.  Everything here is
+// pure; `test_travel.cpp` drives the cases.
+static const uint32_t kHardDeadlineMs = 60000;   // a load slower than this has failed
+static const int      kHardMaxGaveUp  = 8;
+
+enum HardVerdict {
+    HV_NONE = 0,          // nothing to do
+    HV_ANNOUNCE_BEGIN,    // the local world changed: send HARD_BEGIN
+    HV_LOAD,              // the peer began a hard switch: load the named map
+    HV_ANNOUNCE_ARRIVE,   // our world is the announced map: send ARRIVED
+    HV_RESUME,            // both arrived: the host may send RESUME
+    HV_REFUSED,           // implausible map, or one already given up on
+    HV_IGNORED            // an echo / a repeat / a different world's news
+};
+
+class HardBoard {
+public:
+    HardBoard() { Reset(); }
+
+    void Reset()
+    {
+        local_[0] = 0;
+        target_[0] = 0;
+        active_ = false;
+        localArrived_ = false;
+        peerArrived_ = false;
+        resuming_ = false;
+        startedMs_ = 0;
+        seq_ = 0;
+        announcePhase_ = 0;
+        suppressNextLocal_ = false;
+        for (int i = 0; i < kHardMaxGaveUp; ++i) gaveUp_[i][0] = 0;
+        gaveUpN_ = 0;
+        gaveUpNext_ = 0;
+    }
+
+    // ---- local observation ------------------------------------------------
+    // Feed the local world name.  Returns true when the LOCAL world changed to a
+    // different map: the caller must send HARD_BEGIN.  The change a follow caused is
+    // suppressed (otherwise the two machines would ping-pong).
+    bool OnLocalMap(const char* map, uint32_t now)
+    {
+        if (!map) map = "";
+        if (SameText(map, local_)) {
+            if (active_ && localArrived_ && !SameText(map, target_)) localArrived_ = false;
+            return false;
+        }
+        bool had = local_[0] != 0;
+        CopyText(local_, kDestCap, map);
+
+        // The load this board asked for: it is an arrival, not a new transition.
+        if (active_ && SameText(map, target_)) {
+            localArrived_ = true;
+            suppressNextLocal_ = true;
+            announcePhase_ = 2;               // ARRIVED (both machines must say it)
+            return false;
+        }
+        if (suppressNextLocal_) {
+            suppressNextLocal_ = false;
+            return false;
+        }
+        if (!had || !map[0]) return false;    // the first observation is a baseline
+
+        // A genuine local hard switch.  We are already in the new world, so this
+        // machine has "arrived"; the peer has not until it says so.  Announcing the
+        // begin is what lets it follow.
+        seq_ = 0;
+        CopyText(target_, kDestCap, map);
+        active_ = true;
+        localArrived_ = true;
+        peerArrived_ = false;
+        resuming_ = false;
+        startedMs_ = now;
+        announcePhase_ = 1;                   // HARD_BEGIN
+        return true;
+    }
+
+    // ---- inbound ----------------------------------------------------------
+    // `busy` is the local guard (travelling / menu / cutscene / dialogue).  A busy
+    // player is skipped and NOT remembered, so the follow can still happen later.
+    HardVerdict OnPeerBegin(uint32_t seq, const char* map, const char* localMap, bool busy)
+    {
+        if (!map || !map[0]) return HV_REFUSED;
+        if (!stream::PlausibleLevelName(map)) return HV_REFUSED;
+        if (GaveUp(map)) return HV_REFUSED;
+        if (seq != 0 && seq == seq_ && SameText(map, target_)) return HV_IGNORED;
+
+        if (localMap && localMap[0] && SameText(map, localMap)) {
+            // We are already there: tell the sender so, and do not load anything.
+            seq_ = seq;
+            CopyText(target_, kDestCap, map);
+            localArrived_ = true;
+            peerArrived_ = true;
+            active_ = false;
+            announcePhase_ = 2;               // ARRIVED
+            return HV_ANNOUNCE_ARRIVE;
+        }
+        if (busy) return HV_NONE;             // not remembered: retry when free
+
+        seq_ = seq;
+        CopyText(target_, kDestCap, map);
+        active_ = true;
+        localArrived_ = false;
+        peerArrived_ = true;                  // the sender crossed, so it is there
+        resuming_ = false;
+        startedMs_ = 0;                       // armed by the caller's `Arm(now)`
+        announcePhase_ = 0;
+        return HV_LOAD;
+    }
+
+    // The caller is about to attempt the load.
+    void Arm(uint32_t now) { if (active_) startedMs_ = now; }
+
+    HardVerdict OnPeerArrived(uint32_t seq, const char* map, const char* localMap)
+    {
+        if (!active_ || !SameText(map, target_)) return HV_IGNORED;
+        peerArrived_ = true;
+        if (localMap && localMap[0] && SameText(map, localMap)) localArrived_ = true;
+        return HV_NONE;
+    }
+
+    HardVerdict OnPeerResume(uint32_t seq, const char* map)
+    {
+        if (!SameText(map, target_)) return HV_IGNORED;
+        if (!localArrived_) return HV_REFUSED;   // never resume into a map we are not in
+        resuming_ = true;
+        active_ = false;
+        return HV_RESUME;
+    }
+
+    // ---- local outcome ----------------------------------------------------
+    void OnLoadResult(bool ok, uint32_t now)
+    {
+        if (ok) return;                       // ARRIVED is observed from the world name
+        if (active_) { AddGaveUp(target_); active_ = false; }
+        localArrived_ = false;
+        (void)now;
+    }
+
+    // The host has sent RESUME; the transition is over for it too, or `ReadyToResume`
+    // would queue another RESUME on every heartbeat for the rest of the session.
+    void MarkResumed()
+    {
+        active_ = false;
+        resuming_ = true;
+    }
+
+    // True when the deadline expired and the transition was abandoned.
+    bool Tick(uint32_t now)
+    {
+        if (!active_ || startedMs_ == 0) return false;
+        if ((uint32_t)(now - startedMs_) < kHardDeadlineMs) return false;
+        AddGaveUp(target_);
+        active_ = false;
+        localArrived_ = false;
+        return true;
+    }
+
+    // ---- announce side ----------------------------------------------------
+    // The phase the caller should send next (0 = none, 1 = begin, 2 = arrived,
+    // 3 = resume), and the map it refers to.
+    uint8_t TakeAnnounce()
+    {
+        uint8_t p = announcePhase_;
+        announcePhase_ = 0;
+        return p;
+    }
+    void NoteAnnounce(uint8_t phase) { if (phase > announcePhase_) announcePhase_ = phase; }
+    const char* TargetMap() const { return target_; }
+    const char* LocalMap() const { return local_; }
+
+    // ---- queries ----------------------------------------------------------
+    bool Active() const { return active_; }
+    bool BothArrived() const { return localArrived_ && peerArrived_; }
+    bool ReadyToResume() const
+    {
+        return active_ && BothArrived() && !resuming_ && !GaveUp(target_);
+    }
+    bool Resuming() const { return resuming_; }
+    bool LocalArrived() const { return localArrived_; }
+    bool PeerArrived() const { return peerArrived_; }
+    bool IsTarget(const char* map) const { return SameText(map, target_); }
+    bool GaveUp(const char* map) const
+    {
+        for (int i = 0; i < gaveUpN_; ++i) if (SameText(gaveUp_[i], map)) return true;
+        return false;
+    }
+    uint32_t Seq() const { return seq_; }
+
+private:
+    void AddGaveUp(const char* map)
+    {
+        if (!map || !map[0] || GaveUp(map)) return;
+        if (gaveUpN_ < kHardMaxGaveUp) {
+            CopyText(gaveUp_[gaveUpN_], kDestCap, map);
+            ++gaveUpN_;
+        } else {
+            CopyText(gaveUp_[gaveUpNext_], kDestCap, map);
+            gaveUpNext_ = (gaveUpNext_ + 1) % kHardMaxGaveUp;
+        }
+    }
+
+    char     local_[kDestCap];
+    char     target_[kDestCap];
+    bool     active_;
+    bool     localArrived_;
+    bool     peerArrived_;
+    bool     resuming_;
+    uint32_t startedMs_;
+    uint32_t seq_;
+    uint8_t  announcePhase_;
+    bool     suppressNextLocal_;
+    char     gaveUp_[kHardMaxGaveUp][kDestCap];
+    int      gaveUpN_;
+    int      gaveUpNext_;
+};
+
 } // namespace travel
 } // namespace qd

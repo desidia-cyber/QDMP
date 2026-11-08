@@ -280,10 +280,22 @@ fn vectors() -> Vec<Vector> {
             body: Body::Travel(Travel {
                 seq: 0x123,
                 role: roles::HOST,
+                phase: travel_phase::NONE,
                 map: "100_GR".to_owned(),
                 dest: "Teleporter_500_AUT_02/100_GR".to_owned(),
             }),
-            expected: "23 23 01 00 00 01 06 00 31 30 30 5f 47 52 1c 00 54 65 6c 65 70 6f 72 74 65 72 5f 35 30 30 5f 41 55 54 5f 30 32 2f 31 30 30 5f 47 52",
+            expected: "23 23 01 00 00 01 00 06 00 31 30 30 5f 47 52 1c 00 54 65 6c 65 70 6f 72 74 65 72 5f 35 30 30 5f 41 55 54 5f 30 32 2f 31 30 30 5f 47 52",
+        },
+        Vector {
+            name: "travel_hard",
+            body: Body::Travel(Travel {
+                seq: 0x124,
+                role: roles::HOST,
+                phase: travel_phase::HARD_BEGIN,
+                map: "900_SipehaWorld".to_owned(),
+                dest: "/Game/RuinsLevel/Maps/900_SipehaWorld.900_SipehaWorld".to_owned(),
+            }),
+            expected: "23 24 01 00 00 01 01 0f 00 39 30 30 5f 53 69 70 65 68 61 57 6f 72 6c 64 35 00 2f 47 61 6d 65 2f 52 75 69 6e 73 4c 65 76 65 6c 2f 4d 61 70 73 2f 39 30 30 5f 53 69 70 65 68 61 57 6f 72 6c 64 2e 39 30 30 5f 53 69 70 65 68 61 57 6f 72 6c 64",
         },
         Vector {
             name: "damage",
@@ -293,6 +305,54 @@ fn vectors() -> Vec<Vector> {
                 flags: damage_flags::MELEE,
             }),
             expected: "24 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f ac 0d 00 00 01",
+        },
+        Vector {
+            name: "cutscene",
+            body: Body::Cutscene(Cutscene {
+                seq: 2,
+                slot: slots::HOST,
+                state: cutscene_state::PLAYING,
+                name: "SipehaTransitionCutsceneManager".to_owned(),
+            }),
+            expected: "25 02 00 00 00 00 01 1f 00 53 69 70 65 68 61 54 72 61 6e 73 69 74 69 6f 6e 43 75 74 73 63 65 6e 65 4d 61 6e 61 67 65 72",
+        },
+        Vector {
+            name: "movers",
+            body: Body::Movers(Movers {
+                rev: 5,
+                rows: vec![MoverRow {
+                    id: sample_guid(),
+                    x: 100,
+                    y: -200,
+                    z: 50,
+                    yaw: 16384,
+                    pitch: -4096,
+                    flags: mover_flags::MOVING | mover_flags::OWNER,
+                }],
+            }),
+            expected: "26 05 00 00 00 01 00 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 64 00 00 00 38 ff ff ff 32 00 00 00 00 40 00 f0 03",
+        },
+        Vector {
+            name: "loot",
+            body: Body::Loot(Loot {
+                rev: 9,
+                entries: vec![LootEntry {
+                    source_hash: 0xDEAD_BEEF,
+                    drop_index: 2,
+                    taken: true,
+                    item_path: String::new(),
+                }],
+            }),
+            expected: "27 09 00 00 00 01 00 ef be ad de 02 00 00 00 01 00 00",
+        },
+        Vector {
+            name: "suspend",
+            body: Body::Suspend(Suspend {
+                seq: 3,
+                state: suspend_state::HOLD,
+                slot: "World0_Suspend_1".to_owned(),
+            }),
+            expected: "28 03 00 00 00 01 10 00 57 6f 72 6c 64 30 5f 53 75 73 70 65 6e 64 5f 31",
         },
         Vector {
             name: "log",

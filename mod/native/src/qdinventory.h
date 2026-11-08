@@ -213,6 +213,11 @@ public:
     int      Size() const { return set_.Count(); }
     bool     Overflowed() const { return set_.Overflowed(); }
 
+    // Re-send the whole set at the next pump without changing it.  Used after a suspend
+    // load on the peer: the container here is still the truth, but the peer's copy was
+    // replaced by a snapshot, so the absolute body must go out again.
+    void ForceDirty() { dirty_ = true; cursor_ = 0; }
+
     // Adopt a freshly-enumerated container.  Returns true when it differs from the set
     // being published, which is the "on change" half of the rate rule.  A change
     // restarts the pass at entry 0: the entries already sent belong to the old set, and

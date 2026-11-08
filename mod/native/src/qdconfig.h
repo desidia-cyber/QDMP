@@ -39,7 +39,12 @@ struct Config {
     int  puppet_sync;      // remote body spawn/drive
     int  dialogue_sync;    // lock + first-answer-decides
     int  stream_union;     // level-streaming union guard
-    int  suppress_pause;   // stop a menu pause from freezing the session
+    int  travel_sync;      // G6 map/world announcement, follow and hard handshake
+    int  cutscene_sync;    // play/hold a partner's cutscene, resume together
+    int  mover_sync;       // owner-authoritative moving world objects
+    int  loot_sync;        // one shared drop set
+    int  suspend_guard;    // hold the peer's timed suspend save, repair a load
+    int  suppress_pause;   // stop a menu freeze from freezing the session
     int  object_scan;      // walk GObjects to find UFunctions (OFF: it exits the game)
 
     // behaviour
@@ -74,6 +79,14 @@ inline void ConfigDefaults()
     c.puppet_sync      = 0;
     c.dialogue_sync    = 0;
     c.stream_union     = 0;
+    // Travel is independent of the streaming union on purpose: a hard map switch is a
+    // world change, not a sublevel load, and it must still be followed with
+    // StreamUnion=0.  Still default OFF, like every write path.
+    c.travel_sync      = 0;
+    c.cutscene_sync    = 0;
+    c.mover_sync       = 0;
+    c.loot_sync        = 0;
+    c.suspend_guard    = 0;
     c.suppress_pause   = 0;
     c.object_scan      = 0;
 
@@ -208,6 +221,11 @@ inline int ConfigLoad()
         else if (detail::StrEq(k, "PuppetSync"))    c.puppet_sync = detail::ParseInt(v, c.puppet_sync);
         else if (detail::StrEq(k, "DialogueSync"))  c.dialogue_sync = detail::ParseInt(v, c.dialogue_sync);
         else if (detail::StrEq(k, "StreamUnion"))   c.stream_union = detail::ParseInt(v, c.stream_union);
+        else if (detail::StrEq(k, "TravelSync"))    c.travel_sync = detail::ParseInt(v, c.travel_sync);
+        else if (detail::StrEq(k, "CutsceneSync"))  c.cutscene_sync = detail::ParseInt(v, c.cutscene_sync);
+        else if (detail::StrEq(k, "MoverSync"))     c.mover_sync = detail::ParseInt(v, c.mover_sync);
+        else if (detail::StrEq(k, "LootSync"))      c.loot_sync = detail::ParseInt(v, c.loot_sync);
+        else if (detail::StrEq(k, "SuspendGuard"))  c.suspend_guard = detail::ParseInt(v, c.suspend_guard);
         else if (detail::StrEq(k, "SuppressMenuPause")) c.suppress_pause = detail::ParseInt(v, c.suppress_pause);
         else if (detail::StrEq(k, "ObjectScan"))   c.object_scan = detail::ParseInt(v, c.object_scan);
         else if (detail::StrEq(k, "HostAuthoritative")) c.host_authoritative = detail::ParseInt(v, c.host_authoritative);
