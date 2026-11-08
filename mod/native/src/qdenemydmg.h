@@ -130,6 +130,46 @@ inline int32_t Centi(float damage)
     return (int32_t)(v + 0.5f);
 }
 
+// The HP the local player must end at, when `TryApplyDamage` did not move it.
+//
+// G4's receive lane has two ways to make a host-run enemy hurt the partner's pawn: the
+// game's own `TryApplyDamage` message, and -- when that returns without applying (see
+// proxy.cpp's ApplyDamageToActor for the measured reason) -- the one scalar the game
+// itself writes on that class.  This is the arithmetic of the second, kept pure so the
+// clamp can be pinned to numbers instead of discovered in a game run:
+//
+//   * never below 0: a negative `Health` is a state the player class does not expect,
+//     and the death entry is driven by the value reaching exactly 0.
+//   * never above the starting value: damage subtracts, so a rule that could raise HP
+//     would be a heal wearing a damage lane's clothes.
+//   * a non-positive amount is "no hit" and must return the unchanged value, so the
+//     caller cannot accidentally apply a zero-damage packet as a no-op sweep.
+//
+// `before <= 0` means the pawn was already dead or its Health was unreadable; the answer
+// is 0 and the caller's death test then fires, which is the honest outcome.
+struct HpAfter {
+    float value;
+    bool  changed;   // false when the amount was not a hit, so the caller logs nothing
+};
+
+inline HpAfter ApplyHpDamage(float before, float amount)
+{
+    HpAfter r;
+    r.value = before;
+    r.changed = false;
+    if (!(amount > 0.0f)) return r;
+    if (!(before > 0.0f)) {
+        r.value = 0.0f;
+        r.changed = (before != 0.0f);
+        return r;
+    }
+    float after = before - amount;
+    if (after < 0.0f) after = 0.0f;
+    r.value = after;
+    r.changed = after < before;
+    return r;
+}
+
 // ---------------------------------------------------------------------------
 // Per-swing de-duplication and the sustained-rate bound
 // ---------------------------------------------------------------------------

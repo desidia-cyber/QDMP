@@ -309,12 +309,118 @@ static void TestTypes()
     }
 }
 
+// ===========================================================================
+// the soft-object record (G3)
+// ===========================================================================
+// LIVE-TEST-LOG Session 6: `AddItemToInventory` was called with a correct path, a
+// correct count and a correct __WorldContext, returned success, and the native counter
+// read `0 -> 0`.  The cause was the soft record's internal layout: the FName was written
+// at +0 instead of +0x10, so the path the engine read out of the parameter was 16 bytes
+// of the sub-path length and tag instead of the asset name.
+//
+// These assertions encode the measured layout (FWeakObjectPtr 8, TagAtLastTest+pad 8,
+// FSoftObjectPath{FName, FString}) so a future edit cannot quietly move it again, and
+// pin that the constants themselves are the ones the two already-correct call sites in
+// this tree use (`avatar::LoadAsset`, `DevGive`).
+static void TestSoftRecord()
+{
+    // Read through `volatile` so these are real comparisons at run time rather than
+    // compile-time constants: /W4 reports a constant condition inside `if` as C4127, and
+    // this project treats a suppressed warning as a numeric mistake waiting to happen.
+    volatile int weakOff     = kSoftWeakOff;
+    volatile int pathNameOff = kSoftPathNameOff;
+    volatile int subPathOff  = kSoftSubPathOff;
+    volatile int minSize     = kSoftMinSize;
+
+    const int wo = weakOff, pno = pathNameOff, spo = subPathOff, ms = minSize;
+
+    CHECK(pno == 0x10,
+          "soft/the FSoftObjectPath starts at +0x10, after the weak pointer and tag");
+    CHECK(spo == 0x18,
+          "soft/the sub-path FString follows the asset FName");
+    CHECK(wo == 0x00, "soft/the weak pointer is the first field");
+    CHECK(ms == 0x28, "soft/the record is 40 bytes, the size this build reflects");
+
+    // The offsets must tile a 40-byte record exactly: FString is { Data*, Num, Max } =
+    // 8 + 4 + 4, so the sub-path ends where the record ends.
+    CHECK(spo + 16 == ms,
+          "soft/the FString ends exactly at the end of the record");
+    // ...and the path name must sit entirely below the sub-path, with no overlap.
+    CHECK(pno + 8 <= spo,
+          "soft/the asset FName does not overrun the sub-path FString");
+
+    // The AddItemToInventory signature this build reflects, as the live log measured it:
+    // {Item : SoftObjectProperty @0 size 40, Count : IntProperty @40 size 4,
+    //  __WorldContext : ObjectProperty @48 size 8}, ParmsSize 56.
+    ParamLayout l;
+    memset(&l, 0, sizeof(l));
+    l.n = 3;
+    l.parms_size = 56;
+    SetField(l, 0, "Item",           PK_SOFT,   0,  40);
+    SetField(l, 1, "Count",          PK_INT,    40, 4);
+    SetField(l, 2, "__WorldContext", PK_OBJECT, 48, 8);
+
+    // The world context is found by NAME, so it can never be mistaken for the item even
+    // though both are pointers, and the count is found by name and must not be the item.
+    const Field* ctx = WorldContextInput(l);
+    CHECK(ctx && NameEquals(ctx->name, "__WorldContext"),
+          "soft/the world context is chosen by name, not by position");
+    const Field* count = InputNamed(l, PK_INT, "Count");
+    CHECK(count && count->offset == 40, "soft/the count is found by name at its offset");
+
+    const Field* item = ItemParam(l, ctx, count);
+    CHECK(item && NameEquals(item->name, "Item"),
+          "soft/the item pin is the soft reference and not the world context");
+    CHECK(item && item->kind == PK_SOFT && item->size == 40,
+          "soft/the item pin keeps the reflected 40-byte size");
+
+    // A build that declares the item as a real object pointer must select THAT pin: the
+    // record form would put a weak pointer where an object pointer is read.
+    {
+        ParamLayout o;
+        memset(&o, 0, sizeof(o));
+        o.n = 3;
+        o.parms_size = 20;
+        SetField(o, 0, "Item",           PK_OBJECT, 0,  8);
+        SetField(o, 1, "Count",          PK_INT,    8,  4);
+        SetField(o, 2, "__WorldContext", PK_OBJECT, 16, 8);
+        const Field* octx = WorldContextInput(o);
+        const Field* ocnt = InputNamed(o, PK_INT, "Count");
+        const Field* oitem = ItemParam(o, octx, ocnt);
+        CHECK(oitem && oitem->kind == PK_OBJECT && oitem->offset == 0,
+              "soft/an object-typed item pin wins over the soft form");
+        CHECK(octx && octx->offset == 16,
+              "soft/the object item is not mistaken for the world context");
+    }
+
+    // TryConsumingItemFromInventory carries the same Item pin plus a Success bool.  The
+    // bool is an OUT parameter and must never be chosen as the item or the count.
+    {
+        ParamLayout c;
+        memset(&c, 0, sizeof(c));
+        c.n = 4;
+        c.parms_size = 57;
+        SetField(c, 0, "Item",           PK_SOFT,   0,  40);
+        SetField(c, 1, "Count",          PK_INT,    40, 4);
+        SetField(c, 2, "__WorldContext", PK_OBJECT, 48, 8);
+        SetField(c, 3, "Success",        PK_BOOL,   56, 1, CPF_OutParm);
+        const Field* cctx = WorldContextInput(c);
+        const Field* ccnt = InputNamed(c, PK_INT, "Count");
+        const Field* citem = ItemParam(c, cctx, ccnt);
+        CHECK(citem && NameEquals(citem->name, "Item"),
+              "soft/the consumer's item pin is the soft reference");
+        CHECK(ccnt && ccnt->offset == 40, "soft/the consumer's count offset matches");
+        CHECK(cctx && cctx->offset == 48, "soft/the consumer's world context offset matches");
+    }
+}
+
 int main()
 {
     printf("=== qd write-api tests ===\n");
     TestOracle();
     TestFrame();
     TestTypes();
+    TestSoftRecord();
     printf("=== %d passed, %d failed ===\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
