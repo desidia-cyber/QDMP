@@ -37,6 +37,7 @@ struct Config {
     int  actor_state_sync; // SavableActorStates
     int  enemy_sync;       // enemy rows + StoreEnemySaveState
     int  puppet_sync;      // remote body spawn/drive
+    int  player_body;      // ... as the game's own player class (B7 / G4 / G5)
     int  dialogue_sync;    // lock + first-answer-decides
     int  stream_union;     // level-streaming union guard
     int  suppress_pause;   // stop a menu pause from freezing the session
@@ -72,6 +73,10 @@ inline void ConfigDefaults()
     c.actor_state_sync = 0;
     c.enemy_sync       = 0;
     c.puppet_sync      = 0;
+    // OFF, like every other write path.  This one asks the engine to CONSTRUCT a full
+    // gameplay Blueprint (`FS_PlayerChar_C`), whose ReceiveBeginPlay runs; enable it only
+    // on a run that is already looking for B7's answer (`API-GAPS` section 5).
+    c.player_body      = 0;
     c.dialogue_sync    = 0;
     c.stream_union     = 0;
     c.suppress_pause   = 0;
@@ -206,6 +211,7 @@ inline int ConfigLoad()
         else if (detail::StrEq(k, "ActorStateSync")) c.actor_state_sync = detail::ParseInt(v, c.actor_state_sync);
         else if (detail::StrEq(k, "EnemySync"))     c.enemy_sync = detail::ParseInt(v, c.enemy_sync);
         else if (detail::StrEq(k, "PuppetSync"))    c.puppet_sync = detail::ParseInt(v, c.puppet_sync);
+        else if (detail::StrEq(k, "PlayerBody"))    c.player_body = detail::ParseInt(v, c.player_body);
         else if (detail::StrEq(k, "DialogueSync"))  c.dialogue_sync = detail::ParseInt(v, c.dialogue_sync);
         else if (detail::StrEq(k, "StreamUnion"))   c.stream_union = detail::ParseInt(v, c.stream_union);
         else if (detail::StrEq(k, "SuppressMenuPause")) c.suppress_pause = detail::ParseInt(v, c.suppress_pause);

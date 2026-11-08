@@ -420,9 +420,10 @@ struct HeldMesh {
 
 struct Body {
     void*  actor;
-    void*  root;             // SkeletalMeshComponent (no mesh) -- the movable root
+    void*  root;             // the movable root the poseable hangs off
     void*  pose;             // PoseableMeshComponent with the player mesh
     bool   rigged;           // rest pose captured
+    float  zoff;             // actor Z = the reported capsule centre + zoff (proxy side)
     QdName bone[B_COUNT];
     Xf     rest[B_COUNT];    // component-space rest transforms
     float  phase;            // walk cycle, radians
@@ -582,17 +583,27 @@ inline void Jab(Body* b)
     b->actT = 0.22f * b->actDur - 0.04f;
 }
 
-inline bool SetRelYaw(void* comp, float yawDeg)
+// `z` shifts the component along the parent's Z.  It is 0 when the parent's origin is the
+// body's feet (the SkeletalMeshActor's root), and the negative capsule half-height when
+// the parent is a Character's capsule, whose origin is its CENTRE.
+inline bool SetRelYaw(void* comp, float yawDeg, float z = 0.0f)
 {
     Xf x = XfIdentity();
     Q4 q = QFromRotator(0, yawDeg, 0);
     x.qx = q.x; x.qy = q.y; x.qz = q.z; x.qw = q.w;
+    x.tz = z;
     return SetRelativeTransform(comp, x);
 }
 
-// Build the visual parts on a freshly spawned SkeletalMeshActor.  Returns false (and
-// logs) if any engine call is missing; the caller destroys the actor.
-inline bool BuildBody(Body* b, void* actor)
+// Build the visual parts on a freshly spawned actor.  Returns false (and logs) if any
+// engine call is missing; the caller destroys the actor.
+//
+// `root` and `poseZ` exist for the player-class proxy body (proxy.cpp, qdplayerbody.h):
+// a Character's root is its capsule, whose origin is the capsule's CENTRE, so the body
+// must hang half a capsule below it to stand on the ground.  With `root` null the actor
+// is read as an ASkeletalMeshActor and its own SkeletalMeshComponent is the root, which
+// is the proven puppet path.
+inline bool BuildBody(Body* b, void* actor, void* root = nullptr, float poseZ = 0.0f)
 {
     memset(b, 0, sizeof(*b));
     b->actor = actor;
@@ -602,7 +613,12 @@ inline bool BuildBody(Body* b, void* actor)
         QDLOG(LOG_ERROR, "body: engine API incomplete");
         return false;
     }
-    b->root = *(void**)((uint8_t*)actor + a.skelMeshComp);
+    if (root) {
+        b->root = root;
+    } else {
+        if (a.skelMeshComp < 0) { QDLOG(LOG_ERROR, "body: no SkeletalMeshComponent offset"); return false; }
+        b->root = *(void**)((uint8_t*)actor + a.skelMeshComp);
+    }
     if (!b->root) return false;
     SetActorCollision(actor, false);
     void* mesh = LoadAsset(kBodyMeshPath);
@@ -610,7 +626,7 @@ inline bool BuildBody(Body* b, void* actor)
     b->pose = AddComponent(actor, a.clsPoseable, XfIdentity());
     if (!b->pose) { QDLOG(LOG_ERROR, "body: AddComponentByClass(PoseableMeshComponent) failed"); return false; }
     if (!SetSkeletalMesh(b->pose, mesh)) { QDLOG(LOG_ERROR, "body: SetSkeletalMesh on poseable failed"); return false; }
-    SetRelYaw(b->pose, -90.0f);
+    SetRelYaw(b->pose, -90.0f, poseZ);
     for (int i = 0; i < B_COUNT; ++i) {
         if (!FNameFromAnsi(kBoneNames[i], &b->bone[i])) return false;
     }

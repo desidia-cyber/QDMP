@@ -48,6 +48,13 @@ which cannot corrupt progression and does prove the path.  See
 **NOT yet proven live** (each has its own switch in `qdcoop.ini`, default OFF):
 
 - the puppet body spawn (the engine deferred-spawn pair — proof pending, `PuppetSync=0`)
+- the player-class body (`PlayerBody=0`) — built: the partner's body is spawned as the
+  game's own `FS_PlayerChar_C`, unpossessed and tickless, driven by the same mirroring, so
+  the enemy Blueprints can finally target and damage it (their two cast gates reject
+  anything else); `TargetPlayer` is steered to the nearer player only when the AI already
+  picked one, a hit the game resolves on the body is forwarded to the machine that owns
+  that player instead of being applied locally, and an enemy the partner was already
+  fighting keeps its HP when the host's spawner re-creates it
 - the level-streaming union (`StreamUnion=0`) — built: vetoes both
   `SetShouldBeVisible` and the byte-verified `SetShouldBeLoaded`, refuses to apply the
   partner's levels while the two machines are in different maps, and makes the partner
@@ -112,6 +119,8 @@ mod/
       qdenemy.h          enemy ownership/drive model       (pure, tested)
       qdenemyown.h       ownership by proximity            (pure, tested)
       qdenemydmg.h       when a host-run enemy hits the peer (pure, tested)
+      qdplayerbody.h     the player-class body: target choice, damage routing,
+                         respawn adoption                          (pure, tested)
       qdpending.h        the peer's outbound flag intents  (pure, tested)
       qdinventory.h      inventory publication and grants  (pure, tested)
       qdinvintent.h      the peer's own pickups, cumulative (pure, tested)

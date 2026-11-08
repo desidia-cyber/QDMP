@@ -70,6 +70,7 @@
 #include "qdenemy.h"
 #include "qdenemyown.h"
 #include "qdenemydmg.h"
+#include "qdplayerbody.h"
 #include "qdflags.h"
 #include "qdpending.h"
 #include "qdinventory.h"
@@ -226,9 +227,17 @@ void LogConfig()
           " actors=", dec(c.actor_state_sync),
           " enemy=", dec(c.enemy_sync),
           " puppet=", dec(c.puppet_sync),
+          " playerBody=", dec(c.player_body),
           " dialogue=", dec(c.dialogue_sync),
           " stream=", dec(c.stream_union),
           " pause=", dec(c.suppress_pause));
+    // The player body is the one switch whose prerequisites are another switch: without
+    // the puppet there is no body to drive, and without the enemy lane there is nowhere
+    // for a hit to go.  Say so at load rather than leaving it to be discovered.
+    if (c.player_body && !(c.puppet_sync && c.enemy_sync))
+        QDLOG(LOG_WARN, "PlayerBody=1 needs PuppetSync=1 and EnemySync=1; ",
+              (c.puppet_sync ? "" : "there will be no body to drive and "),
+              (c.enemy_sync ? "" : "a hit on it cannot be forwarded"));
 }
 
 // ---------------------------------------------------------------------------
@@ -1036,6 +1045,16 @@ bool EndsWith(const char* s, const char* tail)
 // small blue fragments".  The body is now qdavatar.h's: an engine SkeletalMeshActor
 // carrying the game's own full-body player model (Player_FullChar_2026, used by the
 // cutscenes), posed procedurally, holding the peer's weapon mesh.
+//
+// `PlayerBody=1` swaps the ACTOR under that body for the game's own player class, which
+// is the only thing the enemy Blueprints accept as a target (the block below).
+//
+// Defined with the other reflection helpers further down; the body needs both.
+void* ObjPropC(void* obj, const char* name);
+bool CallBool1(void* obj, Fn& f, const char* fn, bool v);
+bool CallNoArgs(void* obj, Fn& f, const char* fn);
+bool WriteBytePropC(void* obj, const char* name, uint8_t v);
+
 bool IsGameplayPawn(void* pawn)
 {
     if (!pawn || !ObjectIsLive(pawn)) return false;
@@ -1109,6 +1128,180 @@ float CapsuleHalfHeight()
     hh = (v > 20.0f && v < 300.0f) ? v : 90.0f;
     QDLOG(LOG_INFO, "capsule half height ", flt(hh, 1));
     return hh;
+}
+
+// ---------------------------------------------------------------------------
+// The player-class proxy body (B7's spawn, G4's target, G5's state)
+// ---------------------------------------------------------------------------
+// MEASURED (SYNC-RESEARCH 1b): an enemy's Blueprint admits a hit only through two cast
+// gates -- `FS_PlayerChar_C`, then `FB_DamageableInterface` -- so however near the
+// SkeletalMeshActor puppet stands, pointing `TargetPlayer` at it changes nothing: the
+// AI's own cast fails and the swing is discarded.  A body OF THE PLAYER CLASS is the
+// only value that satisfies both gates, so this spawns one and drives it with the SAME
+// poseable/animation/equipment code, which keeps what is on screen identical.
+//
+// The actor is UNPOSSESSED, AI-less, tickless and non-colliding: it is a target, not a
+// player.  Nothing applies damage to it either -- `TryApplyDamage` on it is intercepted
+// in HK_ProcessEvent and forwarded to the machine that owns that player (K_DAMAGE ->
+// OnPlayerDamage), so each player's HP still has exactly one authority.
+//
+// The unproven part is the engine constructing a full gameplay Blueprint: its
+// ReceiveBeginPlay runs, and this game's player Blueprint is not a passive object.  That
+// is why it sits behind `PlayerBody=1`, default OFF (`API-GAPS` section 5, B7).
+void* g_proxyCls = nullptr;      // FS_PlayerChar_C (or FS_Full_PlayerChar_C)
+bool  g_proxyClsTried = false;
+void* g_proxySeen = nullptr;     // the last proxy actor: recognises a target we set
+
+// A player Blueprint carries its own skeletal meshes -- the first-person `Arms`, and on
+// some builds a `CharacterMesh0` or `Mesh`.  They are made invisible rather than emptied:
+// the asset belongs to the class default object, and clearing it would be a write to
+// content rather than to this actor.
+void HidePawnMeshes(void* actor)
+{
+    static const char* const kNames[3] = {"Arms", "CharacterMesh0", "Mesh"};
+    static int off[3] = {-2, -2, -2};
+    for (int i = 0; i < 3; ++i) {
+        if (off[i] == -2) off[i] = FindPropertyOffsetIn(ObjClass(actor), kNames[i]);
+        if (off[i] < 0) continue;
+        void* comp = *(void**)((uint8_t*)actor + off[i]);
+        if (comp && LooksLikeUObject(comp)) avatar::SetVisibility(comp, false);
+    }
+}
+
+// The player-class body's own spawn, with a hook between BeginDeferred and
+// FinishSpawning.  That window is what a deferred spawn is FOR, and it is the only place
+// where the two properties that decide possession can be cleared before the engine's
+// PostActorConstruction acts on them:
+//   * `AutoPossessPlayer` would hand this body the machine's own player slot -- the host's
+//     player would be unpossessed and the proxy would be the player the mod reads as
+//     "local", which is the one failure this whole block must not have;
+//   * `AutoPossessAI` would give it a controller and an AI of its own.
+// Clearing them is belt and braces on top of the CDO's own values, and it is cheap.
+void* SpawnPlayerBodyActor(void* cls, float x, float y, float z, float yawDeg)
+{
+    void* world = GWorldPtr();
+    if (!world || !cls) return nullptr;
+    FnBeginDeferred begin = (FnBeginDeferred)Ptr<void*>(0x028D3C90u);
+    FnFinishSpawning finish = (FnFinishSpawning)Ptr<void*>(0x028DCD50u);
+    avatar::Xf xf = avatar::XfIdentity();
+    float h = yawDeg * 3.14159265f / 360.0f;
+    xf.qz = sinf(h); xf.qw = cosf(h);
+    xf.tx = x; xf.ty = y; xf.tz = z;
+    alignas(16) uint8_t buf[48];
+    memcpy(buf, &xf, 48);
+    __try {
+        void* actor = begin(world, cls, buf, 1, nullptr);   // 1 = AlwaysSpawn
+        if (!actor) return nullptr;
+        bool noPlayer = WriteBytePropC(actor, "AutoPossessPlayer", 0);
+        bool noAi = WriteBytePropC(actor, "AutoPossessAI", 0);
+        void* out = finish(actor, buf);
+        if (out) {
+            QDLOG(LOG_INFO, "player body: possession cleared (AutoPossessPlayer ",
+                  (noPlayer ? "0" : "property absent"), ", AutoPossessAI ",
+                  (noAi ? "0" : "property absent"), ")");
+        }
+        return out;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        QDLOG(LOG_ERROR, "player body: the engine's own spawn pair faulted on the player "
+                         "class (B7 fails on this build)");
+        return nullptr;
+    }
+}
+
+// Spawn and prepare the body on the player class.  Null means "this could not be done
+// here", and the caller falls back to the proven mesh body rather than leaving the
+// partner invisible.
+void* SpawnPlayerBody(avatar::Body* b, float x, float y, float z, float yaw)
+{
+    if (!EnsureActorApi() || !avatar::EnsureApi()) return nullptr;
+
+    if (!g_proxyClsTried) {
+        g_proxyClsTried = true;
+        // The name the enemy's cast gate uses first; the class the live game possesses
+        // second (it is the same gate if the full character derives from the base).
+        g_proxyCls = FindClassByName("FS_PlayerChar_C");
+        if (g_proxyCls) {
+            QDLOG(LOG_INFO, "player body: class FS_PlayerChar_C resolved");
+        } else {
+            g_proxyCls = FindClassByName("FS_Full_PlayerChar_C");
+            if (g_proxyCls)
+                QDLOG(LOG_INFO, "player body: class FS_Full_PlayerChar_C resolved "
+                                "(FS_PlayerChar_C is not in this build)");
+            else
+                QDLOG(LOG_ERROR, "player body: neither FS_PlayerChar_C nor "
+                                 "FS_Full_PlayerChar_C resolved; PlayerBody cannot work "
+                                 "on this build");
+        }
+    }
+    if (!g_proxyCls) return nullptr;
+
+    // The actor's own Z is the CAPSULE CENTRE here, not the body's feet: that is what
+    // ACharacter's root is, and it is also what the peer reports in its PLAYER row.
+    void* actor = SpawnPlayerBodyActor(g_proxyCls, x, y, z, yaw);
+    if (!actor) {
+        QDLOG(LOG_WARN, "player body: spawn of the player class failed; "
+                        "falling back to the mesh body");
+        return nullptr;
+    }
+
+    float hh = CapsuleHalfHeight();
+    void* root = g_actor.rootComponent >= 0
+                     ? *(void**)((uint8_t*)actor + g_actor.rootComponent) : nullptr;
+    if (!root || !LooksLikeUObject(root)) root = nullptr;
+    if (!avatar::BuildBody(b, actor, root, -hh)) {
+        QDLOG(LOG_WARN, "player body: could not attach the visible body; falling back");
+        DestroyActor(actor);
+        memset(b, 0, sizeof(*b));
+        return nullptr;
+    }
+    b->zoff = 0.0f;
+
+    // Inert.  A player Blueprint ticks input, HUD, weapon and attribute systems that need
+    // a controller; with no controller they can only misbehave, so its tick is off, the
+    // movement component's is off too (gravity would otherwise walk the body away from
+    // the position the peer sends), and the capsule neither blocks nor is swept.
+    static Fn fTick = {}, fCompTick = {}, fMode = {};
+    bool tick = CallBool1(actor, fTick, "SetActorTickEnabled", false);
+    void* cmc = ObjPropC(actor, "CharacterMovement");
+    bool cmcTick = false, cmcMode = false;
+    if (cmc) {
+        cmcTick = CallBool1(cmc, fCompTick, "SetComponentTickEnabled", false);
+        if (fMode.Resolve(cmc, "SetMovementMode")) {
+            Call c(fMode);
+            if (fMode.sig.props > 0) c.U8(fMode.sig.p[0].name, 0);
+            if (fMode.sig.props > 1) c.U8(fMode.sig.p[1].name, 0);
+            cmcMode = c.Run(cmc);
+        }
+    }
+    HidePawnMeshes(actor);
+
+    // A controller -- if the Blueprint's own defaults gave it one -- must not run: it
+    // would drive the body away from the positions the peer sends.
+    void* ctl = ObjPropC(actor, "Controller");
+    static Fn fCtlTick = {}, fStop = {};
+    if (ctl) {
+        CallBool1(ctl, fCtlTick, "SetActorTickEnabled", false);
+        CallNoArgs(ctl, fStop, "StopMovement");
+    }
+    // The last line of defence.  If the body somehow became player 0 of this machine, the
+    // session is broken in a way that must be reported and undone, never driven: the mod
+    // would read the proxy as "the local player" for every lane it has.
+    if (LocalPawn() == actor) {
+        QDLOG(LOG_ERROR, "player body: the spawn took over THIS machine's player slot "
+                         "(AutoPossessPlayer was not honoured); destroying it");
+        DestroyActor(actor);
+        memset(b, 0, sizeof(*b));
+        return nullptr;
+    }
+
+    g_proxySeen = actor;
+    QDLOG(LOG_INFO, "player body: spawned unpossessed at ", flt(x, 0), ",", flt(y, 0), ",",
+          flt(z, 0), " (tick ", (tick ? "off" : "MISSING"), ", movement ",
+          (cmc ? (cmcTick ? "off" : "tick MISSING") : "component absent"),
+          (cmcMode ? "/mode set" : ""), ", controller ", (ctl ? "present, stopped" : "none"),
+          ", collision off, own meshes hidden); the poseable body is the visible one");
+    return actor;
 }
 
 void* LocalController()
@@ -1256,6 +1449,12 @@ bool g_peerEquipDirty = false;
 void* SpawnBody(avatar::Body* b, float x, float y, float z, float yaw)
 {
     if (!EnsureActorApi() || !avatar::EnsureApi()) return nullptr;
+    // The player class when asked for, and the proven mesh actor otherwise -- including
+    // when the player class fails, because a switched-on body must never leave the
+    // partner invisible.
+    if (Cfg().player_body) {
+        if (void* a = SpawnPlayerBody(b, x, y, z, yaw)) return a;
+    }
     void* cls = FindClassByName("SkeletalMeshActor");
     void* actor = SpawnActorAt(cls, x, y, z - CapsuleHalfHeight(), yaw);
     if (!actor) return nullptr;
@@ -1264,14 +1463,17 @@ void* SpawnBody(avatar::Body* b, float x, float y, float z, float yaw)
         memset(b, 0, sizeof(*b));
         return nullptr;
     }
+    b->zoff = -CapsuleHalfHeight();   // this actor's origin IS the body's feet
     return actor;
 }
 
 void PlaceBody(avatar::Body* b, float x, float y, float z, float yaw, uint32_t now)
 {
-    float fz = z - CapsuleHalfHeight();
-    SetActorXform(b->actor, x, y, fz, yaw);
-    avatar::Animate(b, x, y, fz, yaw, now);
+    // The actor's own Z differs between the two body kinds (a Character's root is its
+    // capsule centre, a SkeletalMeshActor's is the feet); the body itself is placed at
+    // the same height either way, which is what Animate's ground reference needs.
+    SetActorXform(b->actor, x, y, z + b->zoff, yaw);
+    avatar::Animate(b, x, y, z - CapsuleHalfHeight(), yaw, now);
 }
 
 avatar::Xf XfFromWire(const int32_t* v)
@@ -1477,7 +1679,10 @@ void SpawnPuppetOnce(uint32_t now)
     g_puppetActor = actor;
     g_peerEquipDirty = true;
     g_puppet.Spawned(now);
-    QDLOG(LOG_INFO, "puppet spawned (full body) at ", flt(m.px, 0), ",", flt(m.py, 0), ",", flt(m.pz, 0));
+    char cn[96] = "?";
+    FNameToString(ObjNameRaw(ObjClass(actor)), cn, sizeof(cn));
+    QDLOG(LOG_INFO, "puppet spawned as ", cn, " at ", flt(m.px, 0), ",", flt(m.py, 0), ",",
+          flt(m.pz, 0));
 }
 
 void ApplyStatus(avatar::Body* b, uint32_t mask);
@@ -1553,7 +1758,7 @@ void PuppetPump(uint32_t now)
         lastReport = now;
         ActorXform x;
         if (ReadActorXform(g_puppetActor, &x)) {
-            float fz = m.pz - CapsuleHalfHeight();
+            float fz = m.pz + g_body.zoff;   // the ACTOR's own Z for either body kind
             float dx = x.px - m.px, dy = x.py - m.py, dz = x.pz - fz;
             QDLOG(LOG_INFO, "puppet at ", flt(x.px, 0), ",", flt(x.py, 0), ",", flt(x.pz, 0),
                   " yaw=", flt(x.yaw, 0), "  peer ", flt(m.px, 0), ",", flt(m.py, 0), ",",
@@ -3207,6 +3412,7 @@ struct EnemyRec {
     bool     haveGuid;
     bool     driven;         // this copy is frozen and following the owner's rows
     bool     killedByUs;     // a KILL from the owner was applied (one shot)
+    bool     fresh;          // a NEW actor for this GUID: the adoption rule runs once
     uint8_t  savedMoveMode;
     uint8_t  savedPaused;    // EnemyBase_C.Paused before this mod froze the copy
     float    lastHp, maxHp;
@@ -3271,6 +3477,10 @@ bool EnemyDead(void* actor)
     return BytePropC(actor, "bDead", &d) && d != 0;
 }
 
+// Defined with the damage path below (it applies through it); the scan calls it the
+// moment a GUID is known.
+void AdoptOnRespawn(EnemyRec& r);
+
 // Incremental discovery: 16 K object slots per frame, so a full pass costs no single
 // frame more than a fraction of a millisecond.  At the end of a pass, records whose
 // actor was not seen are dropped.
@@ -3313,6 +3523,7 @@ void EnemyScanStep()
             memset(r, 0, sizeof(*r));
             r->actor = o;
             r->lastHp = -1.0f;
+            r->fresh = true;
         }
         r->seenPass = g_enPass;
         void* sp = ObjPropC(o, "OwningSpawner");
@@ -3325,6 +3536,9 @@ void EnemyScanStep()
                 QDLOG(LOG_DEBUG, "enemy ", d, " guid=", hex32(r->guid[0]), "-", hex32(r->guid[1]));
             }
         }
+        // The GUID is only known now, so this is the first moment the partner's row for
+        // the same enemy can be consulted.  Once per actor.
+        if (r->fresh && r->haveGuid) AdoptOnRespawn(*r);
     }
     g_enCursor = end;
     if (g_enCursor >= total) {
@@ -3622,6 +3836,73 @@ bool ApplyEnemyDamage(void* actor, float amount, void* causer)
 }
 
 // ---------------------------------------------------------------------------
+// G5: a spawner that only sees ITS OWN player re-creates an enemy the partner is
+// already fighting
+// ---------------------------------------------------------------------------
+// `PlayerIsInActivationRange` and `PlayerDistanceDespawnCheck` are Blueprint functions on
+// the spawner that read `GetPlayerCharacter` -- player 0 of THIS machine -- so the host's
+// spawner cannot see that the partner is standing next to the enemy.  When the host walks
+// up to an enemy the partner has been fighting, the host's spawner produces a FRESH actor
+// at full HP, ownership moves to it, and the partner's copy is then driven from rows that
+// describe a fight that never happened.
+//
+// The mod cannot change that answer (those functions are Blueprint, and only reachable
+// through a patched asset), and it does not try to: it refuses to let the re-created
+// actor be a fresh fight.  The partner's own row for the same GUID is the HP it has
+// already taken off, and applying the difference is the game's own damage path, so the
+// fight continues exactly where it was.  Nothing is ever raised -- see
+// playerbody::AdoptedHpFrac.
+//
+// The distance pair in the line is the point: it is the only place a live run can see
+// that the game's range check and the partner's position disagree, which is what the
+// spawner's decision was based on.
+void AdoptOnRespawn(EnemyRec& r)
+{
+    r.fresh = false;
+    if (!Cfg().enemy_sync || !g_net.Connected()) return;
+    if (!r.haveGuid || !ObjectIsLive(r.actor)) return;
+    // Only the machine that PUBLISHES this enemy can make the correction stick: a
+    // follower converges from the row anyway, and a machine with no actor has none.
+    if (!g_own.Running(r.guid)) return;
+    const enemy::HostRow* row = g_hostView.Get(r.guid);
+    if (!row) return;
+
+    uint32_t now = Net::Now();
+    uint32_t age = (now > row->rx_ms) ? now - row->rx_ms : 0;
+    bool freshRow = age <= enemy::HostView::kFreshMs;
+
+    float hp = 0.0f, mx = 0.0f;
+    bool haveLocal = EnemyHp(r.actor, &hp, &mx);
+    uint16_t localFrac = haveLocal ? enemy::HpFrac(hp, mx) : 0;
+    uint16_t want = playerbody::AdoptedHpFrac(localFrac, haveLocal, row->hp, true, freshRow);
+    if (!haveLocal || want >= localFrac) return;
+    float d = enemy::ConvergeDamage(hp, mx, want, true);
+    if (d <= 0.0f) return;
+
+    ApplyEnemyDamage(r.actor, d, g_localPawn);
+    float after = hp;
+    EnemyHp(r.actor, &after, &mx);
+
+    float dl = -1.0f, dp = -1.0f;
+    ActorXform ex = {}, lx = {}, px = {};
+    if (ReadActorXform(r.actor, &ex)) {
+        const float e[3] = {ex.px, ex.py, ex.pz};
+        if (ReadActorXform(g_localPawn, &lx)) {
+            const float a[3] = {lx.px, lx.py, lx.pz};
+            dl = playerbody::Dist3(e, a);
+        }
+        if (g_puppetActor && ObjectIsLive(g_puppetActor) && ReadActorXform(g_puppetActor, &px)) {
+            const float b[3] = {px.px, px.py, px.pz};
+            dp = playerbody::Dist3(e, b);
+        }
+    }
+    QDLOG(LOG_INFO, "enemy spawn adopted guid=", hex32(r.guid[0]), " hp ", flt(hp, 1), " -> ",
+          flt(after, 1), ": the partner was already fighting it (local ", flt(dl, 0),
+          "cm, partner ", flt(dp, 0), "cm; the spawner's range check reads the local "
+          "player only)");
+}
+
+// ---------------------------------------------------------------------------
 // The two numbers the K_DAMAGE lane must not invent (SYNC-RESEARCH 1c, section A)
 // ---------------------------------------------------------------------------
 // DAMAGE.  The value the game applies is the `DamageAmount` field of the
@@ -3865,6 +4146,66 @@ void MirrorEnemyStatus(void* actor, uint16_t mask)
 }
 
 // ---------------------------------------------------------------------------
+// TargetPlayer: the lever the player-class body unlocks (SYNC-RESEARCH 1a)
+// ---------------------------------------------------------------------------
+// The AI reads `TargetPlayer` DIRECTLY -- it is a Blueprint ObjectProperty on
+// EnemyBase_C (+0x0C90, 18 bytecode sites) and `GetTargetPlayer` is never called -- so
+// writing the variable is the only mechanism that reaches the Blueprint.  Before the
+// body existed there was no value worth writing it to (both cast gates reject a
+// SkeletalMeshActor); now there is, and the rule for WHEN is qdplayerbody.h's.
+//
+// Read and write are guarded, and a write is read back: a property whose offset was
+// found on a class that is not the one the actor has (a Blueprint class is its own
+// layout) would otherwise scribble eight bytes of an unrelated field.
+struct TgtApi { void* cls; int off; };
+TgtApi g_tgtApi[32];
+int    g_tgtApiN = 0;
+
+int EnemyTargetOff(void* cls)
+{
+    if (!cls) return -1;
+    for (int i = 0; i < g_tgtApiN; ++i) if (g_tgtApi[i].cls == cls) return g_tgtApi[i].off;
+    int size = 0;
+    int off = FindPropertyOffsetIn(cls, "TargetPlayer", &size);
+    if (off >= 0 && size != 8) off = -1;      // an object reference is eight bytes
+    if (g_tgtApiN < (int)(sizeof(g_tgtApi) / sizeof(g_tgtApi[0]))) {
+        g_tgtApi[g_tgtApiN].cls = cls;
+        g_tgtApi[g_tgtApiN].off = off;
+        ++g_tgtApiN;
+    }
+    return off;
+}
+
+void* ReadEnemyTarget(void* actor, int off)
+{
+    __try { return *(void**)((uint8_t*)actor + off); }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return nullptr; }
+}
+
+bool WriteEnemyTarget(void* actor, int off, void* v)
+{
+    __try {
+        *(void**)((uint8_t*)actor + off) = v;
+        return *(void**)((uint8_t*)actor + off) == v;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+// True when this enemy is aimed at the proxy body.  `g_proxySeen` and not `g_puppetActor`
+// on purpose: after the body is destroyed the property still holds the old pointer, and
+// that is precisely the state that has to be recognised and repaired.
+bool EnemyTargetsProxy(void* actor)
+{
+    if (!actor || !g_proxySeen) return false;
+    if (!Cfg().player_body) return false;
+    int off = EnemyTargetOff(ObjClass(actor));
+    if (off < 0) return false;
+    return ReadEnemyTarget(actor, off) == g_proxySeen;
+}
+
+// ---------------------------------------------------------------------------
 // The host describes a swing the partner could not have felt (G4)
 // ---------------------------------------------------------------------------
 // The trigger is the same montage change the detail lane already detects.  One
@@ -3884,6 +4225,20 @@ void TrySendEnemyDamage(EnemyRec& r, uint32_t seq, uint8_t anim, uint32_t now)
     // is the function that decides who may describe a hit; a future caller must not be
     // able to make a frozen follower send one.
     if (!r.haveGuid || g_own.State(r.guid) != enemyown::O_LOCAL) return;
+
+    // A swing the enemy aimed at the proxy body is resolved by the GAME: the hit lands on
+    // a real player-class actor, `PlayerBodyObserve` forwards its own damage payload, and
+    // describing the same swing here from the montage would apply it twice.
+    if (playerbody::SwingAlreadyReal(g_puppetActor != nullptr && ObjectIsLive(g_puppetActor),
+                                     EnemyTargetsProxy(r.actor))) {
+        static uint32_t lastReal = 0;
+        if (now - lastReal > 5000) {
+            lastReal = now;
+            QDLOG(LOG_DEBUG, "damage: guid=", hex32(r.guid[0]),
+                  " swing handled by the game's own hit path; the described lane stays quiet");
+        }
+        return;
+    }
 
     // E_ATTACK is the melee vocabulary (attack/slash/swing/claw/bite/sting/punch/swipe)
     // and E_CAST is the ranged one (cast/spell/magic/summon/spit) in ClassifyAnim.  The
@@ -4214,6 +4569,68 @@ void EnemyOwnPump(uint32_t now)
     }
 }
 
+// Point the enemies this machine runs at whichever player is actually nearer.  This is
+// the second half of G4: the described-damage lane made a distant partner hurtable, but
+// the enemy still CHOSE the host every time, because `GetPlayerCharacter` on the host is
+// the host.  Only a target the AI itself picked from the two players is ever redirected
+// (qdplayerbody.h), and only by the machine that simulates the enemy -- a frozen copy
+// keeps its own decision, because it is not making one.
+void EnemyTargetPump(uint32_t now)
+{
+    if (!Cfg().enemy_sync || !Cfg().player_body) return;
+    // K_DAMAGE, the lane a redirected hit travels on, is host -> peer: the peer never
+    // sends a player's damage to the host, so on the peer this would only mislead the AI
+    // it has released to its own controller.  G4's case is the host's enemies.
+    if (!g_net.IsHost() || !g_net.Connected()) return;
+    if (!IsGameplayPawn(g_localPawn)) return;
+    (void)now;
+
+    bool proxyOk = (g_puppetActor != nullptr && ObjectIsLive(g_puppetActor));
+    // The same "the partner is reachable" test the damage lane uses: a frozen sample means
+    // the body has not moved for seconds and a hidden one means the peer is gone, and
+    // neither is a target worth walking to.
+    { motion::MoveOut m = g_peerInterp.Sample(now);
+      if (!m.valid || m.frozen || m.should_hide) proxyOk = false; }
+    ActorXform lx = {};
+    if (!ReadActorXform(g_localPawn, &lx)) return;
+    ActorXform px = {};
+    if (proxyOk) proxyOk = ReadActorXform(g_puppetActor, &px);
+    if (proxyOk) g_proxySeen = g_puppetActor;
+
+    for (int i = 0; i < g_enN; ++i) {
+        EnemyRec& r = g_en[i];
+        if (!r.haveGuid || !ObjectIsLive(r.actor)) continue;
+        // A copy that follows the other machine's rows is not simulating, so it is not
+        // choosing anything; changing its target would corrupt what the owner sends.
+        if (!g_own.Running(r.guid)) continue;
+        int off = EnemyTargetOff(ObjClass(r.actor));
+        if (off < 0) continue;
+
+        void* cur = ReadEnemyTarget(r.actor, off);
+        int c = (cur != nullptr && cur == g_localPawn)      ? playerbody::CUR_LOCAL
+              : (cur != nullptr && cur == g_proxySeen)      ? playerbody::CUR_REMOTE
+              : (cur == nullptr)                            ? playerbody::CUR_NONE
+                                                            : playerbody::CUR_OTHER;
+        ActorXform ex = {};
+        if (!ReadActorXform(r.actor, &ex)) continue;
+        const float e[3] = {ex.px, ex.py, ex.pz};
+        const float me[3] = {lx.px, lx.py, lx.pz};
+        const float pr[3] = {px.px, px.py, px.pz};
+        float dLocal = playerbody::Dist3(e, me);
+        float dRemote = proxyOk ? playerbody::Dist3(e, pr) : -1.0f;
+
+        playerbody::Tgt act = playerbody::ChooseTarget(true, proxyOk, c, dLocal, dRemote);
+        if (act == playerbody::TGT_LEAVE) continue;
+        void* want = (act == playerbody::TGT_TO_REMOTE) ? g_proxySeen : g_localPawn;
+        bool ok = WriteEnemyTarget(r.actor, off, want);
+        QDLOG(ok ? LOG_INFO : LOG_WARN, "enemy ", hex32(r.guid[0]), ": TargetPlayer ",
+              (act == playerbody::TGT_TO_REMOTE ? "local player -> the remote body"
+                                                : "remote body -> the local player"),
+              (ok ? " (read back)" : " WRITE FAILED"),
+              " dLocal=", flt(dLocal, 0), " dRemote=", flt(dRemote, 0));
+    }
+}
+
 // Publish rows for the enemies this machine runs, plus a few recent deaths.  The
 // kEnemyPeerOwns bit says "I have handed it to you"; a clear bit says "I run it".
 void EnemySendPump(uint32_t now)
@@ -4419,6 +4836,163 @@ void OnPlayerDamage(wire::Reader& r, uint32_t now)
               (causer ? "" : " (no local actor for the attacker)"));
 }
 
+// ---------------------------------------------------------------------------
+// The hit the game itself resolved on the proxy body (G4, the exact half)
+// ---------------------------------------------------------------------------
+// Once the partner's body is a real player class, an enemy that targets it hits it with
+// the GAME's own code: `ApplyDamageToHitboxTarget` casts, `TickIndividualHitbox` runs the
+// hitbox test, and `TryApplyDamage` arrives here with a fully built
+// `FB_DamageAttributeSet`.  That is a better number than the montage-and-range estimate
+// TrySendEnemyDamage has to use -- it is what the game decided -- so the amount is read
+// out of the payload and sent to the machine that owns the player, and the local
+// application is suppressed.  Nothing changes about the player's HP here: each machine
+// owns exactly one player's HP, which is the rule the K_DAMAGE receiver already obeys.
+//
+// Returns false when the call must NOT reach the original.
+bool WriteFalseReturn(void* parms, const LayoutResult& sig)
+{
+    if (sig.ret_offset == 0xFFFF) return false;
+    __try {
+        for (int i = 0; i < sig.props; ++i) {
+            const PropDesc& d = sig.p[i];
+            if (d.offset != sig.ret_offset) continue;
+            int n = (d.size > 0 && d.size <= 8) ? d.size : 1;
+            memset((uint8_t*)parms + d.offset, 0, (size_t)n);
+            return true;
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    return false;
+}
+
+// A projectile is its own actor; the enemy that fired it is its owner or instigator.
+EnemyRec* EnemyForCauser(void* causer)
+{
+    if (!causer) return nullptr;
+    if (EnemyRec* r = EnemyByActor(causer)) return r;
+    if (void* o = ObjPropC(causer, "Owner")) { if (EnemyRec* r = EnemyByActor(o)) return r; }
+    if (void* o = ObjPropC(causer, "Instigator")) { if (EnemyRec* r = EnemyByActor(o)) return r; }
+    return nullptr;
+}
+
+bool PlayerBodyObserve(void* self, void* func, void* parms)
+{
+    if (!Cfg().player_body || !Cfg().enemy_sync) return true;
+    // The one compare that runs on every Blueprint call in the process.
+    if (!g_puppetActor || self != g_puppetActor || !func || !parms) return true;
+    char fn[64];
+    if (FNameToString(ObjNameRaw(func), fn, sizeof(fn)) <= 0) return true;
+    if (strcmp(fn, "TryApplyDamage") != 0) return true;
+
+    struct HitApi {
+        bool         tried;
+        bool         ok;
+        void*        fn;          // the UFunction this signature belongs to
+        LayoutResult sig;
+        const PropDesc* dmg;      // DamageToApply: the incoming payload
+        const PropDesc* applier;  // who the game says hit us
+    };
+    static HitApi h = {};
+    // A UFunction is class-owned, and the class reloads with the world: a body respawned
+    // in a new map arrives with a DIFFERENT function object, and reusing the old
+    // signature would read the caller's frame at stale offsets.
+    if (!h.tried || h.fn != func) {
+        h = HitApi();
+        h.tried = true;
+        h.fn = func;
+        h.sig = Signature(func);
+        if (!h.sig.valid) {
+            QDLOG(LOG_ERROR, "player body: TryApplyDamage signature unavailable (",
+                  h.sig.note, "); hits on the proxy will be applied locally");
+            return true;
+        }
+        for (int i = 0; i < h.sig.props; ++i) {
+            const PropDesc& d = h.sig.p[i];
+            if (d.flags & CPF_OutParm) continue;
+            if (NameEquals(d.type, "StructProperty") && enemyown::HasCI(d.name, "DamageToApply"))
+                h.dmg = &d;
+            else if (NameEquals(d.type, "ObjectProperty") && d.size >= 8 &&
+                     (NameEquals(d.name, "Applier") || NameEquals(d.name, "DamageCauser") ||
+                      NameEquals(d.name, "Instigator")))
+                h.applier = h.applier ? h.applier : &d;
+        }
+        bool structOk = DamageStructInit();
+        bool fits = structOk && h.dmg &&
+                    g_dmgStruct.amountOff + g_dmgStruct.amountSize <= h.dmg->size;
+        if (!h.dmg || !fits) {
+            QDLOG(LOG_ERROR, "player body: the hit payload is not buildable (",
+                  (h.dmg ? "the damage struct is unreadable" : "no DamageToApply parameter"),
+                  "); hits on the proxy will be applied locally");
+            return true;
+        }
+        h.ok = true;
+        QDLOG(LOG_INFO, "player body: damage hook armed on the proxy (", h.dmg->name,
+              " size=", dec(h.dmg->size), ", amount -> ", g_dmgStruct.amountName,
+              " @", dec(g_dmgStruct.amountOff), ", applier ",
+              (h.applier ? h.applier->name : "absent"), ")");
+    }
+    if (!h.ok) return true;
+
+    float amount = 0.0f;
+    const uint8_t* base = (const uint8_t*)parms + h.dmg->offset;
+    if (g_dmgStruct.amountSize == 8) amount = (float)*(const double*)(base + g_dmgStruct.amountOff);
+    else memcpy(&amount, base + g_dmgStruct.amountOff, 4);
+
+    void* applier = nullptr;
+    if (h.applier) memcpy(&applier, (const uint8_t*)parms + h.applier->offset, 8);
+
+    EnemyRec* er = EnemyForCauser(applier);
+    if (!g_net.IsHost() || !g_net.Connected() || !er || !er->haveGuid || !(amount > 0.0f)) {
+        // Not routable.  Let the game apply it to the proxy: the proxy is not the player,
+        // so nothing of value is lost, and the reason is logged rather than hidden.
+        static uint32_t lastLog = 0;
+        uint32_t nowMs = Net::Now();
+        if (nowMs - lastLog > 5000) {
+            lastLog = nowMs;
+            const char* why = !g_net.IsHost() ? "this machine does not own a player's HP"
+                            : !g_net.Connected() ? "no session"
+                            : (!er || !er->haveGuid) ? "no enemy to attribute the hit to"
+                            : "the amount is not positive";
+            QDLOG(LOG_DEBUG, "player body: hit not forwarded (", flt(amount, 1), " damage, ",
+                  why, ", applier ", (applier ? "present" : "absent"),
+                  "); the game applies it to the proxy");
+        }
+        return true;
+    }
+
+    int32_t centi = enemydmg::Centi(amount);
+    if (centi <= 0) return true;
+
+    wire::DamageBody d;
+    memset(&d, 0, sizeof(d));
+    memcpy(d.guid, er->guid, sizeof(d.guid));
+    d.amount_centi = centi;
+    // The applier being the enemy itself is a melee hit; anything else (its projectile,
+    // its spawned effect) is the ranged one.  The receiver only reports the kind.
+    d.flags = (er->actor == applier) ? wire::kDamageMelee : wire::kDamageRanged;
+
+    uint8_t body[wire::kMaxBody];
+    wire::Writer w(body, sizeof(body));
+    wire::WriteDamage(w, d);
+    bool sent = w.ok && g_net.SendReliable(wire::K_DAMAGE, body, w.len);
+    if (!sent) {
+        QDLOG(LOG_WARN, "player body: K_DAMAGE send failed guid=", hex32(er->guid[0]),
+              "; the hit is applied locally on the proxy instead");
+        return true;
+    }
+    // Answer the Blueprint's own question honestly -- the damage was NOT applied here.
+    // A frame whose return slot cannot be written is still swallowed: the hit has already
+    // been described to the player's own machine, and running it here as well would apply
+    // it twice.
+    bool answered = WriteFalseReturn(parms, h.sig);
+    QDLOG(LOG_INFO, "player body hit guid=", hex32(er->guid[0]), " amount=", flt(amount, 1),
+          " centi=", dec(centi), " (", ((d.flags & wire::kDamageMelee) ? "melee" : "ranged"),
+          ") -> sent to the machine that owns the player; local damage suppressed",
+          (answered ? "" : " (the return value could not be written)"));
+    return false;
+}
+
 void EnemyPump(uint32_t now)
 {
     if (!Cfg().enemy_sync) return;
@@ -4439,6 +5013,10 @@ void EnemyPump(uint32_t now)
         // A swing sequence is per-world too; carrying it across a map change would
         // treat the first attack in the new world as already described.
         g_dmgGate.Reset();
+        // Classes unload with the world, so every per-class offset and every UFunction
+        // pointer found in the old one is a stale number.
+        g_tgtApiN = 0;
+        g_proxySeen = nullptr;
     }
     EnemyScanStep();
     if (!g_net.Connected()) {
@@ -4452,6 +5030,8 @@ void EnemyPump(uint32_t now)
     }
     g_own.SetHost(g_net.IsHost());
     EnemyOwnPump(now);
+    // After ownership, so only the machine that actually simulates an enemy steers it.
+    EnemyTargetPump(now);
     EnemySendPump(now);
 }
 
@@ -6884,6 +7464,10 @@ void HK_ProcessEvent(void* self, void* func, void* parms)
     UseObserve(self, func);
     RestObserve(self, func);
     PeTraceObserve(self, func);
+    // The proxy body reports rather than absorbs: false means the game's own hit has been
+    // described to the machine that owns the player, so the local TryApplyDamage must not
+    // also run (that would apply the same damage twice, on the wrong machine).
+    if (!PlayerBodyObserve(self, func, parms)) return;
     if (g_oProcessEvent) g_oProcessEvent(self, func, parms);
 }
 
@@ -7010,8 +7594,8 @@ DWORD WINAPI BootstrapThread(LPVOID)
         // off unless someone is tracing a specific Blueprint surface.
         // Effect sync needs it to see thrown weapons begin play (one compare per call).
         // Enemy sync needs it to see the host rest (RestObserve).
-        if (tPE && (Cfg().puppet_sync || Cfg().enemy_sync || Cfg().log_level >= LOG_TRACE ||
-                    DevEnvInt("QDCOOP_PE_TRACE", 0))) {
+        if (tPE && (Cfg().puppet_sync || Cfg().enemy_sync || Cfg().player_body ||
+                    Cfg().log_level >= LOG_TRACE || DevEnvInt("QDCOOP_PE_TRACE", 0))) {
             InstallHook(*tPE, (void*)&HK_ProcessEvent, (void**)&g_oProcessEvent);
         }
     }
