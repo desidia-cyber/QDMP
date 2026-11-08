@@ -128,6 +128,7 @@ inline const char* LevelName(int lv)
 // (level filtered) is a compare and a return.
 inline void Emit(int level, const char* msg, int len)
 {
+    (void)level;   // filtering happens in Log(); Emit only ever receives an accepted line
     HANDLE h = LogHandle();
     if (h == INVALID_HANDLE_VALUE) return;
     AcquireSRWLockExclusive(&LogLock());
