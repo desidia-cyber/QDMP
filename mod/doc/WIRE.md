@@ -56,14 +56,16 @@ arrives late is still correct.
 | `0x11` | `WORLD_FLAGS` | host → peer | unreliable, latest wins | on change + 1 Hz |
 | `0x12` | `ACTOR_STATES` | host → peer | unreliable, latest wins | on change + 1 Hz |
 | `0x13` | `INVENTORY` | host → peer | unreliable, latest wins | on change + 1 Hz |
-| `0x14` | `ENEMY` | host → peer | unreliable, latest wins | 20 Hz |
+| `0x14` | `ENEMY` | both | unreliable, latest wins | 20 Hz |
 | `0x15` | `EQUIPMENT` | each → other | unreliable, latest wins | on change + 1 Hz |
 | `0x16` | `EFFECT` | each → other | reliable | event (projectile spawned / ended) |
 | `0x17` | `EFFECT_MOVE` | each → other | unreliable, latest wins | ~15 Hz per live projectile |
 | `0x18` | `STATUS` | each → other | unreliable, latest wins | on change + 1 Hz |
+| `0x19` | `ENEMY_DETAIL` | both | reliable | on change |
 | `0x20` | `INTENT` | peer → host | reliable | event |
 | `0x21` | `DIALOGUE` | each → other | unreliable, latest wins | on change + 1 Hz |
 | `0x22` | `LEVEL_UNION` | both | unreliable, latest wins | 2 Hz + on change |
+| `0x23` | `TRAVEL` | both | reliable | on change + 0.5 Hz |
 | `0x30` | `LOG` | both | unreliable | event |
 
 The design rule being followed (DollsMP 12 §4.6 E8): **the event channel is a
@@ -193,7 +195,16 @@ paths, never pointers").
 u16  n                total rows this sender will send for this tick's batch
 n × { guid guid, i32 x, i32 y, i32 z, i16 yaw, u16 hp, u8 flags }
 ```
-`flags` bit0 alive, bit1 driven (peer copy with AI disabled), bit2 has-body.
+`flags` bit0 alive, bit1 driven (the receiver must freeze its copy because the sender
+runs this enemy), bit2 has-body, bit3 peer-owns (the sender has handed this enemy to
+the receiver and freezes its own copy).
+
+**Direction.** `ENEMY` is bidirectional even though the name suggests otherwise: the
+machine that *owns* an enemy publishes its rows. Ownership follows the nearer player,
+because the game's enemy AI only ever targets the local player (`GetPlayerCharacter`);
+an enemy can only attack the partner if the partner's own machine runs it. A machine
+that does not own an enemy freezes its copy (no AI, no tick, movement mode none) and
+follows the owner's rows, exactly as the peer used to follow the host's.
 
 `guid` is the authored `FGuid` of the enemy's **spawner** (`EnemySpawner_C.GetSaveGUID()`),
 the same key `StoreEnemySaveState` uses — one spawner owns one enemy.
@@ -218,6 +229,32 @@ the 1200 B body cap, so one datagram per tick at 20 Hz = 15.9 KB/s worst case.
 formula), remaining rows round-robin to the next tick. Never split a row. Here `n`
 is the number of rows actually in this body, not a container total — the enemy stream
 has no container, it is a snapshot of the live set.
+
+### 3.9a `ENEMY_DETAIL` (0x19)
+
+```
+guid guid            the enemy's key (its spawner's authored FGuid), same as a row
+u8   anim            see the table below; 0 = nothing playing
+u8   seq             bumps on every new montage, so a repeat restarts on the receiver
+u16  status          the same bits as `STATUS.mask`
+str  path            montage asset path, "" when `anim` is 0
+```
+
+Anim kinds: 0 none, 1 attack, 2 hurt, 3 die, 4 roar, 5 cast, 6 move.
+
+Why this is a body of its own and not more fields on the row: a row is a *sample*
+(20 Hz, latest wins, losing one costs a sample) while this is an *event* — a montage
+starts once, a status mask changes when a debuff lands and again when it expires. It
+is sent reliably and only on change, by whichever machine owns that enemy.
+
+The montage is identified by **asset path, not index**. Both machines load the same
+cooked assets, but the order in which each discovers them is its own; an index would
+select a different animation on each side, and the failure looks like "the enemy
+attacks with the wrong move" rather than like a sync bug.
+
+Status bits are mirrored onto the copy only where the property actually exists on the
+enemy class; a bit whose property is missing is logged and dropped rather than
+invented.
 
 ### 3.10 `INTENT` (0x20)
 
@@ -402,6 +439,29 @@ kept for the ground glow, and a mesh-free system is attached at four bones: the 
 brazier flame for magic fire, the poison fishman projectile FX for poison (wisps) and
 magic poison (magenta). Disease, weaken, heavy and binding have no stationary
 mesh-free look in the game's content; the buffs (7-9) have no world visual in the game.
+
+### 3.15a `TRAVEL` (0x23)
+
+```
+u32  seq             bumps on every change
+u8   role            1 = host, 2 = peer
+str  map             short map name, e.g. `100_GR`
+```
+
+The world is announced rather than inferred. The session normally lives inside one
+persistent level plus streamed sublevels, but hard transitions exist (the cutscene
+maps, `900_SipehaWorld`, `990_B33sment`), and after one the two machines are in
+different worlds where every absolute body means something different.
+
+Both machines send this (on change and every 2 s). A receiver that disagrees does not
+act: it logs the divergence once and stops applying the partner's `LEVEL_UNION` names
+and enemy rows until the names match again. The mismatch is debounced, because a
+transition produces a second or two of disagreement while levels finish loading.
+
+There is deliberately no "follow me" command in v1: the only measured travel entry
+point is `UGameplayStatics::OpenLevel`, and driving it from the mod is unproven
+(`API-GAPS.md` §4). Refusing to cross-apply state is the honest outcome — a silent
+half-applied world is worse than a named warning.
 
 ### Reliable kinds: ack and duplicate suppression
 
