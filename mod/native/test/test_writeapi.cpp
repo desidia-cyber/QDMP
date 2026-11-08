@@ -60,6 +60,23 @@ static ParamLayout Measured()
     return l;
 }
 
+// The shape the live build actually reflects (LIVE-TEST-LOG Session 6): the Blueprint
+// library world context is a real parameter of the UFunction, and this build declares
+// Value before WasSet.  ParmsSize 21 is exactly 8+8+4+1, so the four fields tile the
+// parameter block with no padding left over.
+static ParamLayout LiveShape()
+{
+    ParamLayout l;
+    memset(&l, 0, sizeof(l));
+    l.n = 4;
+    l.parms_size = 21;
+    SetField(l, 0, "Name",           PK_NAME,   0,  8);
+    SetField(l, 1, "__WorldContext", PK_OBJECT, 8,  8);
+    SetField(l, 2, "Value",          PK_INT,    16, 4);
+    SetField(l, 3, "WasSet",         PK_BOOL,   20, 1);
+    return l;
+}
+
 // ===========================================================================
 // oracle
 // ===========================================================================
@@ -119,6 +136,44 @@ static void TestOracle()
         l.n = 4;
         CHECK(!MatchesNameDataOracle(l, err, sizeof(err)),
               "oracle/an extra parameter is rejected");
+    }
+
+    // The four-parameter shape this build reflects.  Measured live (Session 6) and
+    // required: the world context is a real parameter, so refusing this shape refused
+    // every write and blamed the offsets.
+    {
+        ParamLayout l = LiveShape();
+        CHECK(MatchesNameDataOracle(l, err, sizeof(err)),
+              "oracle/the four-parameter live shape is accepted");
+    }
+
+    // Same four fields, order changed: still refused.  Accepting a second SHAPE is not
+    // accepting anything.
+    {
+        ParamLayout l = LiveShape();
+        Field tmp = l.p[1];
+        l.p[1] = l.p[2];
+        l.p[2] = tmp;
+        CHECK(!MatchesNameDataOracle(l, err, sizeof(err)),
+              "oracle/a four-parameter order change is rejected");
+    }
+
+    // And a four-parameter list with the world context's width wrong: the FProperty walk
+    // reading an object pointer as something narrower.
+    {
+        ParamLayout l = LiveShape();
+        l.p[1].size = 4;
+        CHECK(!MatchesNameDataOracle(l, err, sizeof(err)),
+              "oracle/a four-parameter width change is rejected");
+    }
+
+    // Three and four are the only shapes; five is neither.
+    {
+        ParamLayout l = LiveShape();
+        SetField(l, 4, "Fifth", PK_INT, 21, 4);
+        l.n = 5;
+        CHECK(!MatchesNameDataOracle(l, err, sizeof(err)),
+              "oracle/five parameters is not a known frame");
     }
 }
 

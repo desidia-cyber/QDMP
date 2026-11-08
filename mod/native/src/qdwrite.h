@@ -251,20 +251,38 @@ inline bool MatchesNameDataOracle(const ParamLayout& l, char* err, int cap)
         { PK_BOOL, 8,  1 },
         { PK_INT,  12, 4 },
     };
+    // The shape this build actually declares (measured): the world context sits between
+    // the key and the value, and the value precedes the bool.
+    static const struct { PKind kind; int32_t offset; int32_t size; } kWant4[4] = {
+        { PK_NAME,   0,  8 },
+        { PK_OBJECT, 8,  8 },
+        { PK_INT,    16, 4 },
+        { PK_BOOL,   20, 1 },
+    };
 
-    if (l.n != 3) {
+    // FOUR parameters are also a legitimate shape on this build: the Blueprint library
+    // world context is a real parameter, and this build declares Value before WasSet
+    // (LIVE-TEST-LOG Session 6).  Both shapes pin the count, the order, the offsets and
+    // the sizes, so neither weakens the check -- only the shape it expects.
+    const int n = (l.n == 3) ? 3 : (l.n == 4 ? 4 : 0);
+    if (!n) {
         char d[160];
         DescribeLayout(l, d, sizeof(d));
-        ErrSet(err, cap, "expected {FName@0, bool@8, i32@12}; frame is ", d);
+        ErrSet(err, cap, "expected 3 or 4 parameters; frame is ", d);
         return false;
     }
-    for (int i = 0; i < 3; ++i) {
-        if (l.p[i].kind != kWant[i].kind ||
-            l.p[i].offset != kWant[i].offset ||
-            l.p[i].size != kWant[i].size) {
+    for (int i = 0; i < n; ++i) {
+        const bool ok = (n == 3)
+            ? (l.p[i].kind == kWant[i].kind && l.p[i].offset == kWant[i].offset &&
+               l.p[i].size == kWant[i].size)
+            : (l.p[i].kind == kWant4[i].kind && l.p[i].offset == kWant4[i].offset &&
+               l.p[i].size == kWant4[i].size);
+        if (!ok) {
             char d[160];
             DescribeLayout(l, d, sizeof(d));
-            ErrSet(err, cap, "frame does not reproduce {FName@0, bool@8, i32@12}: ", d);
+            ErrSet(err, cap, n == 3
+                ? "frame does not reproduce {FName@0, bool@8, i32@12}: "
+                : "frame does not reproduce {FName@0, object@8, i32@16, bool@20}: ", d);
             return false;
         }
     }

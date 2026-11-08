@@ -335,6 +335,12 @@ private:
 // ---------------------------------------------------------------------------
 // An enemy montage name -> wire::EnemyAnim
 // ---------------------------------------------------------------------------
+// Case-insensitive "does `s` contain `k`".  BOTH sides are folded.  The first version
+// lowered only the haystack, so a needle containing an uppercase letter could never
+// match -- measured (Session 6): a `"VideoConfig"` guard deciding whether to force a
+// level visible silently answered "no" and the level was forced anyway, which is the
+// change that killed the game.  Every older call site passes an already-lowercase
+// needle, so folding the needle changes none of their answers.
 inline bool HasCI(const char* s, const char* k)
 {
     for (int i = 0; s[i]; ++i) {
@@ -343,6 +349,7 @@ inline bool HasCI(const char* s, const char* k)
             char a = s[i + j], b = k[j];
             if (!a) return false;
             if (a >= 'A' && a <= 'Z') a = (char)(a + 32);
+            if (b >= 'A' && b <= 'Z') b = (char)(b + 32);
             if (a != b) break;
         }
         if (!k[j]) return true;
@@ -359,6 +366,7 @@ inline bool EndsCI(const char* s, const char* tail)
     for (int i = 0; i < b; ++i) {
         char x = s[a - b + i], y = tail[i];
         if (x >= 'A' && x <= 'Z') x = (char)(x + 32);
+        if (y >= 'A' && y <= 'Z') y = (char)(y + 32);
         if (x != y) return false;
     }
     return true;

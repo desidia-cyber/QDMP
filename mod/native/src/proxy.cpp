@@ -412,6 +412,12 @@ bool TryInitSaveLayer(uint32_t now)
     if (!g_probeDone) {
         RunApiProbe();
         g_probeDone = true;
+        // §5 step 1 wants the write-path oracle at LOAD, not at the first write.
+        // Measured in Session 5: the session produced no `NAMED-SAVE ORACLE` line at all,
+        // because the oracle only ran when the first flag write asked for it and nothing
+        // wrote.  Resolving it here makes "this build's write path is proven" a load-time
+        // fact instead of something that depends on whether the player earned anything.
+        if (Cfg().flag_sync || Cfg().inventory_sync || Cfg().actor_state_sync) (void)WrReady();
     } else {
         QDLOG(LOG_INFO, "save layer re-initialised (new active save)");
     }
@@ -2609,6 +2615,19 @@ bool FloatPropC(void* obj, const char* name, float* out)
     return true;
 }
 
+// The write side of the same property, read back before reporting success.  Used only by
+// the test rig's health floor (QDCOOP_TEST_GOD); no sync lane writes a gameplay scalar.
+bool SetFloatPropC(void* obj, const char* name, float v)
+{
+    if (!obj) return false;
+    int off = PropOff(ObjClass(obj), name);
+    if (off < 0) return false;
+    memcpy((uint8_t*)obj + off, &v, 4);
+    float back = 0.0f;
+    memcpy(&back, (uint8_t*)obj + off, 4);
+    return back == v;
+}
+
 // The value a getter produced: its ReturnValue, or -- for a Blueprint function, which
 // returns through output parameters -- its first output parameter of the right size.
 uint8_t* OutParm(Call& c, int size)
@@ -3013,6 +3032,19 @@ void LevelsRefresh()
     }
 }
 
+// A level name that is never a place the partner can be standing.  `VideoConfigMap` is
+// the game's video/config map and `*_ShaderCompile` is a warm-up level; neither is
+// gameplay, so forcing either visible buys the union nothing -- and one of them kills the
+// game.  MEASURED (Session 6): the peer process died 0.5 s after
+// `level union: SHOW VideoConfigMap -> bShouldBeVisible=1` during a world load, with the
+// process gone and no further log line; the same force had been harmless in an earlier
+// run, which is what makes this a race rather than a rule.
+bool LevelNotForcible(const char* n)
+{
+    if (!n || !n[0]) return false;
+    return enemyown::HasCI(n, "VideoConfig") || enemyown::HasCI(n, "ShaderCompile");
+}
+
 void ForceLevel(LevelRec& r, bool show)
 {
     static Fn fLoad = {};
@@ -3099,7 +3131,24 @@ void StreamPump(uint32_t now)
         bool peer = worldsAgree && g_net.Connected() && g_stream.PeerWants(r.name, now);
         if (peer) {
             g_force.Need(r.name, now);
-            if (r.gameWants != 1 && !LevelVisible(r.ls) && budget > 0) { --budget; ForceLevel(r, true); }
+            if (r.gameWants != 1 && !LevelVisible(r.ls) && budget > 0) {
+                // The check sits here, not inside ForceLevel, so a refused level does not
+                // consume the two-levels-per-pump budget and starve the ones that matter.
+                if (LevelNotForcible(r.name)) {
+                    static char said[8][64];
+                    static int saidN = 0;
+                    bool told = false;
+                    for (int k = 0; k < saidN; ++k) if (strcmp(said[k], r.name) == 0) told = true;
+                    if (!told) {
+                        if (saidN < 8) lstrcpynA(said[saidN++], r.name, sizeof(said[0]));
+                        QDLOG(LOG_WARN, "level union: refusing to force '", r.name,
+                              "' (a video/config level, never a place a player stands)");
+                    }
+                } else {
+                    --budget;
+                    ForceLevel(r, true);
+                }
+            }
         } else if (g_force.IsForced(r.name)) {
             if (g_force.ShouldRelease(r.name, false, r.gameWants == 1, now) && r.gameWants != 1)
                 ForceLevel(r, false);
@@ -7448,6 +7497,38 @@ void DevRigPath(const char* envName, const char* leaf, char* out, int cap)
     lstrcpynA(out + n, leaf, cap - n);
 }
 
+// An integer rig lever, read from the environment OR from a control file in the
+// UserDir.  The control file is what the rig uses, for the same measured reason the
+// teleport file exists: `QDCOOP_TEST_TPFILE` was set in the parent and did not arrive in
+// an instance launched through the harness.  Control files need no inheritance.
+//
+//  returns 0 = off, `onValue` = "1" (plain "on"), or the value read.
+// `dflt` is what a present-but-empty file means.
+int DevLever(const char* envVar, const char* leaf, int dflt, int onValue)
+{
+    int v = 0;
+    char buf[64];
+    if (GetEnvironmentVariableA(envVar, buf, sizeof(buf)) && buf[0]) {
+        v = atoi(buf);
+        return v <= 1 ? onValue : v;
+    }
+    char p[MAX_PATH];
+    if (!CmdArg("-UserDir", p, sizeof(p)) || !p[0]) return 0;
+    int n = lstrlenA(p);
+    if (n > 0 && n < (int)sizeof(p) - 1 && p[n - 1] != '\\') { p[n++] = '\\'; p[n] = 0; }
+    lstrcpynA(p + n, leaf, sizeof(p) - n);
+    HANDLE h = CreateFileA(p, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return 0;
+    DWORD got = 0;
+    (void)ReadFile(h, buf, sizeof(buf) - 1, &got, nullptr);
+    CloseHandle(h);
+    buf[got] = 0;
+    if (!buf[0]) return dflt;
+    v = atoi(buf);
+    return v <= 1 ? onValue : v;
+}
+
 // QDCOOP_TEST_TPFILE=<path>: TEST INSTANCES ONLY -- teleport the local pawn to whatever
 // "x,y,z,yaw" the named file holds, whenever its contents change.
 //
@@ -7455,6 +7536,186 @@ void DevRigPath(const char* envName, const char* leaf, char* out, int cap)
 // process starts. A live test of the co-op lanes needs the player moved to a door, then
 // to a pickup, then to an enemy, inside one session; a file the driver rewrites is the
 // smallest interface that allows it, and it needs no window focus.
+//
+// WHY "near:<kind>" AND NOT JUST COORDINATES
+// ------------------------------------------
+// Coordinates copied out of the scan killed the peer twice: the first put the pawn
+// inside a brazier, the second over a drop.  Both are the same mistake -- treating a
+// number in a log as a place a player can stand.  So the file also accepts
+// `near:<substring>`, which resolves a live actor and puts the pawn BESIDE it: offset
+// horizontally along the approach direction, at that actor's own height, which is the
+// height the level placed it at.  The actor is the authority on where the ground is;
+// the driver is not.
+// A candidate's own name or its class name.  `near:chest` has to find a
+// `Chest_00_C` whose instance name is `Chest_00`, and `near:door` a doorway whose
+// instance name is a number, so both halves are tested.
+bool RigNameMatches(void* actor, const char* sub)
+{
+    if (!actor || !sub || !sub[0]) return false;
+    char nm[64] = "", cl[48] = "";
+    FNameToString(ObjNameRaw(actor), nm, sizeof(nm));
+    FNameToString(ObjNameRaw(ObjClass(actor)), cl, sizeof(cl));
+    // A class named `...Door...StateManager` is bookkeeping, not a door: Session 6 sent
+    // the peer 423 m and 33 km down to one, which is the same blind-teleport mistake in a
+    // new costume.  The whole CLASS is excluded, not just the class-name match: the
+    // instance is called `SkullDoorQuestStateManager`, so it also matched on its own name.
+    static const char* const kJunk[] = {"Manager", "Subsystem", "Component", "State", "Data"};
+    for (int k = 0; k < (int)(sizeof(kJunk) / sizeof(kJunk[0])); ++k)
+        if (enemyown::HasCI(cl, kJunk[k])) return false;
+    if (nm[0] && enemyown::HasCI(nm, sub)) return true;
+    if (cl[0] && enemyown::HasCI(cl, sub)) return true;
+    return false;
+}
+
+// The nearest PLACED actor of a class, by object-graph walk.  Needed for the kinds that
+// are not in `SavableActorStates` at all: an NPC to talk to, a checkpoint (whose unlock
+// IS a NamedSaveData flag), a sub-level door.  A CDO or a component has no transform and
+// is skipped, so this never reports a class default as a place to stand.
+void* RigNearestOfClass(const char* clsName, const char* sub, const ActorXform& me, float* distOut,
+                        ActorXform* xfOut, char* nameOut, int nameCap)
+{
+    if (distOut) *distOut = -1.0f;
+    void* base = FindClassByName(clsName);
+    if (!base) return nullptr;
+    void* best = nullptr;
+    float bestD = -1.0f;
+    ActorXform bestXf = {};
+    int count = ObjectCount();
+    for (int i = 0; i < count; ++i) {
+        void* o = ObjectAt(i);
+        if (!o || !LooksLikeUObject(o)) continue;
+        bool member = false;
+        __try { member = IsSubclassOf(ObjClass(o), base); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { continue; }
+        if (!member) continue;
+        if (sub && sub[0] && !RigNameMatches(o, sub)) continue;
+        ActorXform x;
+        if (!ReadActorXform(o, &x)) continue;
+        float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
+        float d = sqrtf(dx * dx + dy * dy + dz * dz);
+        if (bestD >= 0.0f && d >= bestD) continue;
+        bestD = d; best = o; bestXf = x;
+    }
+    if (!best) return nullptr;
+    if (distOut) *distOut = bestD;
+    if (xfOut) *xfOut = bestXf;
+    if (nameOut && nameCap > 0) {
+        nameOut[0] = 0;
+        FNameToString(ObjNameRaw(best), nameOut, nameCap);
+    }
+    return best;
+}
+
+// The nearest live actor of any kind whose name matches, out of the two sets a scenario
+// can actually use: the save's savable actors (doors, chests, barricades, keys, pickups)
+// and the enemies this machine knows about.
+void* RigFindNear(const char* sub, float* distOut, ActorXform* xfOut, char* nameOut, int nameCap)
+{
+    if (distOut) *distOut = -1.0f;
+    if (!sub || !sub[0]) return nullptr;
+    ActorXform me;
+    if (!ReadActorXform(g_localPawn, &me)) return nullptr;
+
+    void* best = nullptr;
+    float bestD = -1.0f;
+    ActorXform bestXf = {};
+    const bool wantEnemy = (enemyown::HasCI(sub, "enemy") || enemyown::HasCI("enemy", sub));
+
+    static ActorStateOwner owners[256];
+    int n = BuildActorStateOwners(owners, 256);
+    for (int i = 0; i < n; ++i) {
+        if (!owners[i].actor || !ObjectIsLive(owners[i].actor)) continue;
+        if (!RigNameMatches(owners[i].actor, sub)) continue;
+        ActorXform x;
+        if (!ReadActorXform(owners[i].actor, &x)) continue;
+        float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
+        float d = sqrtf(dx * dx + dy * dy + dz * dz);
+        if (bestD >= 0.0f && d >= bestD) continue;
+        bestD = d; best = owners[i].actor; bestXf = x;
+    }
+    for (int i = 0; i < g_enN; ++i) {
+        EnemyRec& r = g_en[i];
+        if (!r.haveGuid || !ObjectIsLive(r.actor) || EnemyDead(r.actor)) continue;
+        // `near:enemy` means "the nearest enemy", not "an actor whose NAME contains
+        // 'enemy'" -- no enemy is called that.  Measured: the literal match made every
+        // G4/enemy step a no-op with "no live actor matches 'enemy'".
+        if (!wantEnemy && !RigNameMatches(r.actor, sub)) continue;
+        ActorXform x;
+        if (!ReadActorXform(r.actor, &x)) continue;
+        float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
+        float d = sqrtf(dx * dx + dy * dy + dz * dz);
+        if (bestD >= 0.0f && d >= bestD) continue;
+        bestD = d; best = r.actor; bestXf = x;
+    }
+
+    // Nothing in the two synced sets matched.  The remaining useful kinds are in neither
+    // of them -- an NPC, a checkpoint and a sub-level door are plain placed actors -- so
+    // the last resort is a class walk keyed on the word the scenario asked for.
+    if (!best) {
+        static const struct { const char* key; const char* cls; } kKeys[] = {
+            {"npc", "NPC_Base_C"},
+            {"checkpoint", "Checkpoint_C"},
+            {"sublevel", "SubLevelDoor_C"},
+        };
+        for (int k = 0; k < (int)(sizeof(kKeys) / sizeof(kKeys[0])) && !best; ++k) {
+            if (!enemyown::HasCI(sub, kKeys[k].key) && !enemyown::HasCI(kKeys[k].key, sub)) continue;
+            float d2 = -1.0f;
+            ActorXform x2 = {};
+            char n2[64] = "";
+            void* a2 = RigNearestOfClass(kKeys[k].cls, nullptr, me, &d2, &x2, n2, sizeof(n2));
+            if (!a2) continue;
+            bestD = d2; best = a2; bestXf = x2;
+            if (nameOut && nameCap > 0) { nameOut[0] = 0; FNameToString(ObjNameRaw(a2), nameOut, nameCap); }
+        }
+    }
+    if (!best) return nullptr;
+    if (distOut) *distOut = bestD;
+    if (xfOut) *xfOut = bestXf;
+    if (nameOut && nameCap > 0) {
+        nameOut[0] = 0;
+        FNameToString(ObjNameRaw(best), nameOut, nameCap);
+    }
+    return best;
+}
+
+// QDCOOP_TEST_NEAR: cm to stand from a `near:` target.  Far enough not to spawn inside
+// it, close enough that the interaction trace reaches it.
+void DevTeleportToTarget(const char* sub, float yawOverride, bool haveYaw)
+{
+    float d = 0.0f;
+    ActorXform t = {};
+    char nm[64] = "-";
+    void* actor = RigFindNear(sub, &d, &t, nm, sizeof(nm));
+    if (!actor) {
+        QDLOG(LOG_WARN, "dev teleport near: no live actor matches '", sub, "'");
+        return;
+    }
+    float off = (float)DevEnvInt("QDCOOP_TEST_NEAR", 140);
+    if (off < 40.0f) off = 40.0f;
+    if (off > 400.0f) off = 400.0f;
+
+    ActorXform me = {};
+    if (!ReadActorXform(g_localPawn, &me)) return;
+    float dx = me.px - t.px, dy = me.py - t.py;
+    float len = sqrtf(dx * dx + dy * dy);
+    if (len < 1.0f) { dx = 1.0f; dy = 0.0f; len = 1.0f; }
+    dx /= len; dy /= len;
+
+    float px = t.px + dx * off;
+    float py = t.py + dy * off;
+    // The actor's own height is the level's ground for that actor; a `z` copied from a
+    // distant log line is not.
+    float pz = t.pz;
+    float yaw = haveYaw ? yawOverride : atan2f(-dx, -dy) * 57.29578f;  // face the target
+    bool ok = SetActorXform(g_localPawn, px, py, pz, yaw);
+    void* pc = LocalController();
+    int ro = pc ? FindPropertyOffsetIn(ObjClass(pc), "ControlRotation") : -1;
+    if (ro >= 0) { float* r = (float*)((uint8_t*)pc + ro); r[0] = 0.0f; r[1] = yaw; }
+    QDLOG(LOG_INFO, "dev teleport near '", sub, "' -> ", nm, " at ", flt(t.px, 0), ",", flt(t.py, 0),
+          ",", flt(t.pz, 0), " dist=", flt(d, 0), "; standing at ", flt(px, 0), ",", flt(py, 0), ",",
+          flt(pz, 0), " offset=", flt(off, 0), (ok ? "" : " FAILED"));
+}
+
 void DevTeleportFile(uint32_t now)
 {
     static char path[MAX_PATH];
@@ -7487,6 +7748,18 @@ void DevTeleportFile(uint32_t now)
     if (buf[0] == 0 || strcmp(buf, applied) == 0) return;
     lstrcpynA(applied, buf, sizeof(applied));
 
+    if (!strncmp(buf, "near:", 5)) {
+        // `near:<substring>[,yaw]` -- stand beside a live actor by name.
+        char* spec = buf + 5;
+        float yaw = 0.0f;
+        bool haveYaw = false;
+        char* comma = nullptr;
+        for (char* p = spec; *p; ++p) if (*p == ',') { comma = p; break; }
+        if (comma) { *comma = 0; yaw = (float)atof(comma + 1); haveYaw = true; }
+        DevTeleportToTarget(spec, yaw, haveYaw);
+        return;
+    }
+
     float v[4] = {0, 0, 0, 0};
     char* save = nullptr;
     int n = 0;
@@ -7510,6 +7783,23 @@ void DevTeleportFile(uint32_t now)
 // the save starts the player.
 void DevScanNearestBody();
 
+// The scan also names the nearest actor of a few classes that are NOT savables: an NPC to
+// talk to, and a checkpoint (whose unlock is a `NamedSaveData` flag, so it is the one
+// interaction that can demonstrate the G1 lane without a barricade).
+void RigScanActorsOfClass(const ActorXform& me)
+{
+    static const char* const names[] = {"NPC_Base_C", "Checkpoint_C", "SubLevelDoor_C"};
+    for (int k = 0; k < (int)(sizeof(names) / sizeof(names[0])); ++k) {
+        float d = 0.0f;
+        ActorXform x = {};
+        char nm[64] = "";
+        void* a = RigNearestOfClass(names[k], nullptr, me, &d, &x, nm, sizeof(nm));
+        if (!a) { QDLOG(LOG_INFO, "scan: class ", names[k], " none in reach of the object graph"); continue; }
+        QDLOG(LOG_INFO, "scan: class ", names[k], " ", nm, " at ", flt(x.px, 0), ",", flt(x.py, 0),
+              ",", flt(x.pz, 0), " dist=", flt(d, 0));
+    }
+}
+
 // File scope, not function-local: a dynamically-initialised static (`DevEnvInt(...)`)
 // needs a thread-safe init guard, which makes the frame require object unwinding, and
 // MSVC refuses __try in such a frame (C2712).
@@ -7518,7 +7808,7 @@ uint32_t g_devScanT0 = 0, g_devScanLast = 0;
 
 void DevScanNearest(uint32_t now)
 {
-    if (g_devScanOn < 0) g_devScanOn = DevEnvInt("QDCOOP_TEST_SCAN", 0);
+    if (g_devScanOn < 0) g_devScanOn = DevLever("QDCOOP_TEST_SCAN", "qd.scan", 1, 1);
     if (!g_devScanOn) return;
     if (!IsGameplayPawn(g_localPawn)) { g_devScanT0 = now; return; }
     if (now - g_devScanT0 < 20000) return;
@@ -7592,12 +7882,16 @@ void DevScanNearestBody()
 
     // The five nearest one-shot objects, by name: the nearest one is usually a coin in a
     // corner, and a scenario needs a chest or a door, which it can only choose between if
-    // it can see the names.  Each pick is cleared so the next pass finds a different one.
+    // it can see the names.  A pick is marked taken so the next pass finds a different
+    // one -- marked, not cleared: clearing the entry hid it from the KIND list below,
+    // which then reported the nearest coin as 195 m away instead of 46 m (measured,
+    // Session 6).
+    bool taken[64] = {false};
     for (int k = 0; k < 5; ++k) {
         float bd = -1.0f;
         int bi = -1;
-        for (int i = 0; i < n; ++i) {
-            if (!owners[i].actor || !ObjectIsLive(owners[i].actor)) continue;
+        for (int i = 0; i < n && i < 64; ++i) {
+            if (taken[i] || !owners[i].actor || !ObjectIsLive(owners[i].actor)) continue;
             ActorXform x;
             if (!ReadActorXform(owners[i].actor, &x)) continue;
             float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
@@ -7609,19 +7903,90 @@ void DevScanNearestBody()
         char nm[64] = "";
         FNameToString(ObjNameRaw(owners[bi].actor), nm, sizeof(nm));
         ActorXform x;
-        if (!ReadActorXform(owners[bi].actor, &x)) { owners[bi].actor = nullptr; continue; }
+        taken[bi] = true;
+        if (!ReadActorXform(owners[bi].actor, &x)) continue;
         QDLOG(LOG_INFO, "scan: savable ", dec(k), " ", nm, " at ", flt(x.px, 0), ",", flt(x.py, 0),
               ",", flt(x.pz, 0), " dist=", flt(bd, 0));
-        owners[bi].actor = nullptr;
     }
+
+    // THE SAFE TARGET LIST.  Measured (LIVE-TEST-LOG Session 5): the five nearest
+    // one-shot objects were five coins, and the two blind teleports that followed a
+    // coordinate list like that killed the peer -- one into a brazier, one into a fall.
+    // "Nearest savable" therefore cannot choose a door, and a coordinate copied out of
+    // the log is not a place a player can stand.  So the probe names the nearest
+    // representative of each KIND together with its own position, and the rig teleports
+    // to that actor (`near:<kind>` in qd.tp), not to a number.
+    {
+        static const char* const kinds[] = {"door",    "chest",  "barricade", "key", "coin",
+                                            "pickup",  "altar",  "lever",     "npc", "teleport"};
+        for (int k = 0; k < (int)(sizeof(kinds) / sizeof(kinds[0])); ++k) {
+            float bd = -1.0f;
+            int bi = -1;
+            for (int i = 0; i < n; ++i) {
+                if (!owners[i].actor || !ObjectIsLive(owners[i].actor)) continue;
+                if (!RigNameMatches(owners[i].actor, kinds[k])) continue;
+                ActorXform x;
+                if (!ReadActorXform(owners[i].actor, &x)) continue;
+                float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
+                float d = sqrtf(dx * dx + dy * dy + dz * dz);
+                if (bd >= 0.0f && d >= bd) continue;
+                bd = d; bi = i;
+            }
+            if (bi < 0) continue;
+            char nm[64] = "";
+            FNameToString(ObjNameRaw(owners[bi].actor), nm, sizeof(nm));
+            ActorXform x;
+            if (!ReadActorXform(owners[bi].actor, &x)) continue;
+            char gs[80] = "";
+            EncodeGuidForLog(owners[bi].guid, gs, sizeof(gs));
+            QDLOG(LOG_INFO, "scan: kind ", kinds[k], " ", nm, " guid=", gs, " at ", flt(x.px, 0), ",",
+                  flt(x.py, 0), ",", flt(x.pz, 0), " dist=", flt(bd, 0));
+        }
+        // The enemy is the other half of the list: a scenario has to stand next to one to
+        // be attacked by it (G4) or to kill it (the ownership lane).
+        {
+            float bd = -1.0f;
+            int bi = -1;
+            for (int i = 0; i < g_enN; ++i) {
+                EnemyRec& r = g_en[i];
+                if (!r.haveGuid || !ObjectIsLive(r.actor) || EnemyDead(r.actor)) continue;
+                ActorXform x;
+                if (!ReadActorXform(r.actor, &x)) continue;
+                float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
+                float d = sqrtf(dx * dx + dy * dy + dz * dz);
+                if (bd >= 0.0f && d >= bd) continue;
+                bd = d; bi = i;
+            }
+            if (bi >= 0) {
+                char nm[64] = "";
+                FNameToString(ObjNameRaw(g_en[bi].actor), nm, sizeof(nm));
+                ActorXform x;
+                if (ReadActorXform(g_en[bi].actor, &x))
+                    QDLOG(LOG_INFO, "scan: kind enemy ", nm, " guid=", hex32(g_en[bi].guid[0]), " at ",
+                          flt(x.px, 0), ",", flt(x.py, 0), ",", flt(x.pz, 0), " dist=", flt(bd, 0),
+                          " local-run=", dec(g_own.Running(g_en[bi].guid) ? 1 : 0));
+            }
+        }
+    }
+
+    RigScanActorsOfClass(me);
 
     // What the game itself thinks the player can interact with right now.  A scenario
     // that has to guess which of forty actors is a chest is not a test.
-    void* tgt = ObjPropC(g_localPawn, "Current Interact Actor");
-    if (!tgt) tgt = ObjPropC(g_localPawn, "CurrentInteractActor");
+    //
+    // `Current Interact Actor` is a property of the INTERACTION COMPONENT, not of the
+    // pawn (the cooked name table lists it beside `PlayerInteractionComponent`), which is
+    // why the probe reported "-" on every pass of Session 5 even with an actor in reach.
+    void* comp = ObjPropC(g_localPawn, "PlayerInteractionComponent");
+    void* tgt = comp ? ObjPropC(comp, "Current Interact Actor") : nullptr;
+    if (!tgt) tgt = ObjPropC(g_localPawn, "Current Interact Actor");
     char td[96] = "-";
     if (tgt) ObjDescribe(tgt, td, sizeof(td));
-    QDLOG(LOG_INFO, "scan: interact target ", td);
+    QDLOG(LOG_INFO, "scan: interact target ", td, " (component=", (comp ? "found" : "MISSING"), ")");
+
+    float hp = 0.0f;
+    if (FloatPropC(g_localPawn, "Health", &hp)) QDLOG(LOG_INFO, "scan: health ", flt(hp, 1));
+    else QDLOG(LOG_INFO, "scan: health unreadable");
 }
 
 // QDCOOP_TEST_ACTFILE=<path>: TEST INSTANCES ONLY -- perform the player's own interact
@@ -7635,25 +8000,95 @@ void DevScanNearestBody()
 // is the same code path the key press ends in.
 // File-scope, not function-local: a `static Fn` needs a thread-safe init guard, which
 // makes the enclosing frame require object unwinding, and MSVC refuses __try there.
-Fn g_devInteractPawn = {}, g_devInteractHeld = {}, g_devInteractComp = {}, g_devInteractCompHeld = {};
 
-void DevInteractBody()
+// A verb resolved once per (object, name).  Fixed-size and linear because there are a
+// handful; a map would be machinery for its own sake.
+struct RigVerb {
+    Fn          f;
+    void*       obj;
+    const char* name;
+};
+RigVerb g_rigVerbs[24];
+int     g_rigVerbN = 0;
+
+// Call `name` on `obj`, resolving it once.  When the verb takes exactly one object
+// parameter that parameter is the interactive actor: that is not a guess, it is the only
+// object parameter such a verb can have, and leaving it null is what makes a Blueprint
+// interaction branch out immediately.
+bool RigCallVerb(void* obj, const char* name, void* arg, const char** ranName)
 {
-    void* tgt = ObjPropC(g_localPawn, "Current Interact Actor");
+    if (!obj) return false;
+    RigVerb* slot = nullptr;
+    for (int i = 0; i < g_rigVerbN; ++i)
+        if (g_rigVerbs[i].obj == obj && strcmp(g_rigVerbs[i].name, name) == 0) { slot = &g_rigVerbs[i]; break; }
+    if (!slot) {
+        if (g_rigVerbN >= (int)(sizeof(g_rigVerbs) / sizeof(g_rigVerbs[0]))) return false;
+        slot = &g_rigVerbs[g_rigVerbN++];
+        slot->f = Fn();
+        slot->obj = obj;
+        slot->name = name;
+    }
+    if (!slot->f.Resolve(obj, name)) return false;
+    Call c(slot->f);
+    if (arg) {
+        for (int i = 0; i < slot->f.sig.props; ++i) {
+            const PropDesc& d = slot->f.sig.p[i];
+            if (!NameEquals(d.type, "ObjectProperty") || (d.flags & CPF_OutParm) || d.size < 8) continue;
+            c.Obj(d.name, arg);
+            break;
+        }
+    }
+    bool ok = c.Run(obj);
+    if (ok && ranName) *ranName = name;
+    return ok;
+}
+
+void DevInteractBody(void* explicitTarget)
+{
+    // WHERE THE VERB ACTUALLY IS.  Measured (Session 6): `PlayerInteractionComponent_C`
+    // has exactly five UFUNCTIONs -- `Update`, `ReceiveBeginPlay`, `ReceiveTick`,
+    // `ExecuteUbergraph_...` and a delegate signature.  It TRACKS the target
+    // (`Current Interact Actor`); it does not interact.  The verb is on the target
+    // itself: `Checkpoint_C.Interact` was the one call that ran in Session 5.  So a
+    // scenario names the actor (`qd.act` = `near:checkpoint`) and this calls the
+    // target's own verb -- an interaction the component's trace would have dispatched.
+    void* comp = ObjPropC(g_localPawn, "PlayerInteractionComponent");
+    void* tgt = explicitTarget;
+    if (!tgt && comp) tgt = ObjPropC(comp, "Current Interact Actor");
+    if (!tgt) tgt = ObjPropC(g_localPawn, "Current Interact Actor");
     char d[96] = "-";
     if (tgt) ObjDescribe(tgt, d, sizeof(d));
 
-    bool ok = CallNoArgs(g_localPawn, g_devInteractPawn, "Interact");
-    if (!ok) ok = CallNoArgs(g_localPawn, g_devInteractHeld, "InteractHeld");
-    if (!ok) {
-        void* comp = ObjPropC(g_localPawn, "PlayerInteractionComponent");
-        if (!comp) comp = ObjPropC(g_localPawn, "InteractionComponent");
-        if (comp) {
-            ok = CallNoArgs(comp, g_devInteractComp, "Interact");
-            if (!ok) ok = CallNoArgs(comp, g_devInteractCompHeld, "InteractHeld");
+    // PRESS THEN HOLD.  A key press is not one message: the game's own binding calls
+    // `Interact` and then `InteractHeld` for as long as the key is down, and an
+    // interactable that fills a bar over time only completes on the second.
+    const char* ran1 = nullptr;
+    const char* ran2 = nullptr;
+    static const char* const onTgt[]  = {"Interact", "InteractHeld", "OnInteract", "Use", "Activate",
+                                         "StartDialogue", "Talk", "BeginDialogue", "StartConversation"};
+    static const char* const onComp[] = {"Interact", "DoInteract"};
+    static const char* const onPawn[] = {"Interact", "DoInteract"};
+    for (int i = 0; i < (int)(sizeof(onTgt) / sizeof(onTgt[0])) && !ran1; ++i)
+        RigCallVerb(tgt, onTgt[i], g_localPawn, &ran1);
+    for (int i = 0; i < (int)(sizeof(onComp) / sizeof(onComp[0])) && !ran1; ++i)
+        RigCallVerb(comp, onComp[i], tgt, &ran1);
+    for (int i = 0; i < (int)(sizeof(onPawn) / sizeof(onPawn[0])) && !ran1; ++i)
+        RigCallVerb(g_localPawn, onPawn[i], tgt, &ran1);
+    if (ran1) {
+        RigCallVerb(tgt, "InteractHeld", g_localPawn, &ran2);
+        if (!ran2) RigCallVerb(comp, "InteractHeld", tgt, &ran2);
+    }
+
+    QDLOG(LOG_INFO, "dev interact: target=", d, " component=", (comp ? "found" : "MISSING"),
+          (ran1 ? " verb=" : " no verb ran"), (ran1 ? ran1 : ""), (ran2 ? "+" : ""), (ran2 ? ran2 : ""));
+    if (!ran1 && tgt) {
+        // A refused verb is only diagnosable if the real surface is on the record.
+        static void* dumpedFor = nullptr;
+        if (dumpedFor != tgt) {
+            dumpedFor = tgt;
+            LogFunctionsOf(tgt, d, 40);
         }
     }
-    QDLOG(LOG_INFO, "dev interact: target=", d, (ok ? " called" : " no Interact verb found"));
 }
 
 char     g_devActPath[MAX_PATH];
@@ -7665,6 +8100,17 @@ void DevInteract(uint32_t now)
 {
     if (g_devActOn < 0)
         g_devActOn = (DevRigPath("QDCOOP_TEST_ACTFILE", "qd.act", g_devActPath, sizeof(g_devActPath)), g_devActPath[0] != 0) ? 1 : 0;
+    // Same diagnostic as the teleport control, and for the same reason: measured twice,
+    // a lever whose path lookup failed was silent, and every later "it does not fire"
+    // conclusion was a guess about which half was broken.
+    {
+        static bool said = false;
+        if (!said) {
+            said = true;
+            QDLOG(LOG_INFO, "rig: act control '", g_devActPath, "' ", (g_devActOn ? "enabled" : "DISABLED"),
+                  " exists=", (g_devActPath[0] && GetFileAttributesA(g_devActPath) != INVALID_FILE_ATTRIBUTES ? "yes" : "no"));
+        }
+    }
     if (!g_devActOn || !IsGameplayPawn(g_localPawn)) return;
     if (now - g_devActPoll < 200) return;
     g_devActPoll = now;
@@ -7683,10 +8129,27 @@ void DevInteract(uint32_t now)
     if (buf[0] == 0 || strcmp(buf, g_devActApplied) == 0) return;
     lstrcpynA(g_devActApplied, buf, sizeof(g_devActApplied));
 
+    // `near:<name>`: interact with THAT actor.  The name is the instruction, so a
+    // scenario can say which door, chest or NPC it means instead of hoping the engine's
+    // own trace happened to be pointing at it.
+    void* explicitTarget = nullptr;
+    if (!strncmp(buf, "near:", 5)) {
+        float d = 0.0f;
+        ActorXform xf = {};
+        char nm[64] = "";
+        explicitTarget = RigFindNear(buf + 5, &d, &xf, nm, sizeof(nm));
+        if (!explicitTarget) {
+            QDLOG(LOG_WARN, "dev interact: no live actor matches '", buf + 5, "'");
+            return;
+        }
+        QDLOG(LOG_INFO, "dev interact: resolved '", buf + 5, "' -> ", nm, " at ", flt(xf.px, 0), ",",
+              flt(xf.py, 0), ",", flt(xf.pz, 0), " dist=", flt(d, 0));
+    }
+
     // Same rule as the scan: this dereferences the pawn, its component and whatever the
     // game currently considers interactable, and it runs while a reload may be tearing
     // those down.
-    __try { DevInteractBody(); }
+    __try { DevInteractBody(explicitTarget); }
     __except (EXCEPTION_EXECUTE_HANDLER) {
         QDLOG(LOG_WARN, "dev interact: fault while resolving the verb; skipped");
     }
@@ -7696,34 +8159,258 @@ void DevInteract(uint32_t now)
 // teleports it around looking for a door, a chest or an enemy.
 //
 // Measured: two blind teleports ended a session, one into a brazier and one into a fall,
-// and each death reloaded the world -- which is how the two crash paths below were found,
-// but it makes a scenario unreliable.  This drives the game's own cheat object, so the
-// player is still hurtable in the sense that matters (the damage lane still fires and is
-// still logged); it just cannot die from arriving somewhere.
+// and each death reloaded the world.
+//
+// THE CHEAT OBJECT IS NOT AVAILABLE ON THIS BUILD.  `FS_Cheats_C` is found, but neither
+// `GodModeOn` nor `HealToFull` resolves (Session 6 measured `GodModeOn=no HealToFull=no`),
+// and `fn <name>: not found` is logged for both.  So the mechanism that actually works is
+// a FLOOR ON THE HEALTH PROPERTY: the pawn's own `Health` is a FloatProperty (the same
+// one the damage lane reads back, so a rig that pins it is still hurtable in the sense
+// that matters -- the hit still lands and is still logged -- it just cannot reach 0).
+//
+// The class's real UFunction surface is dumped once, because "the name we guessed is not
+// there" is only useful next to the list of what is.
 Fn g_devGodFn = {}, g_devHealFn = {};
 int      g_devGodOn = -1;
-uint32_t g_devGodLast = 0;
 
-void DevGodBody()
+struct RigGodState {
+    int    armed;          // 0 no, 1 yes
+    int    floorSet;
+    float  floor;
+    float  peak;
+    int    refills;
+    uint32_t lastLog;
+};
+RigGodState g_rigGod = {0, 0, 0, 0, 0, 0};
+
+// The cheat object is a convenience, not the mechanism.  Try the two names this module
+// knew plus the plausible spellings, and let the log say which (if any) exists.
+void DevGodCheats()
 {
     void* ch = FindInstanceOf("FS_Cheats_C");
     if (!ch) { QDLOG(LOG_WARN, "god: FS_Cheats_C not found"); return; }
+    static bool dumped = false;
+    if (!dumped) {
+        dumped = true;
+        LogFunctionsOf(ch, "FS_Cheats_C", 120);
+    }
+    // MEASURED: this build has no `GodModeOn` and no `HealToFull`.  The god switch is
+    // called `DeadGod` (72 UFUNCTIONs on the class, listed above).  Both old names are
+    // still tried so the log records the miss rather than a guess.
     bool god = CallNoArgs(ch, g_devGodFn, "GodModeOn");
     bool heal = CallNoArgs(ch, g_devHealFn, "HealToFull");
-    QDLOG(LOG_INFO, "god: GodModeOn=", (god ? "ok" : "no"),
-          " HealToFull=", (heal ? "ok" : "no"));
+    static Fn fDeadGod = {};
+    bool dead = CallNoArgs(ch, fDeadGod, "DeadGod");
+    QDLOG(LOG_INFO, "god: GodModeOn=", (god ? "ok" : "no"), " HealToFull=", (heal ? "ok" : "no"),
+          " DeadGod=", (dead ? "ok" : "no"),
+          " (health floor=", flt(g_rigGod.floor, 0), ", hp=", flt(g_rigGod.peak, 1), ")");
 }
 
+// Called from the frame pump.  Cheap enough to run every tick: one property read and,
+// only when it has dropped, one write.
 void DevGod(uint32_t now)
 {
-    if (g_devGodOn < 0) g_devGodOn = DevEnvInt("QDCOOP_TEST_GOD", 0);
+    if (g_devGodOn < 0) {
+        // TWO gates, on purpose.  A lever asks for it (the environment, or the `qd.god`
+        // control file in the UserDir); the `-UserDir` argument is what makes this a rig
+        // instance at all (the launcher always passes it, and a normal player never
+        // does).  A switch that can only be reached from a test instance cannot be left
+        // on by accident in normal play.
+        char ud[260];
+        bool rig = CmdArg("-UserDir", ud, sizeof(ud)) && ud[0] != 0;
+        int want = DevLever("QDCOOP_TEST_GOD", "qd.god", 400, 400);
+        g_devGodOn = (want && rig) ? 1 : 0;
+        g_rigGod.floor = want > 0 ? (float)want : 400.0f;
+        if (want && !rig) QDLOG(LOG_WARN, "god: the rig asks for god mode but this is not a rig instance (no -UserDir); refusing");
+        if (g_devGodOn)
+            QDLOG(LOG_INFO, "rig: god control enabled (rig-only, floor=", flt(g_rigGod.floor, 0), ")");
+    }
     if (!g_devGodOn || !IsGameplayPawn(g_localPawn)) return;
-    // Every 5 s: the game restores health on its own events, and re-asserting costs two
-    // reflective calls.
-    if (g_devGodLast && now - g_devGodLast < 5000) return;
-    g_devGodLast = now;
-    __try { DevGodBody(); }
-    __except (EXCEPTION_EXECUTE_HANDLER) { QDLOG(LOG_WARN, "god: fault while applying"); }
+
+    if (!g_rigGod.armed) {
+        g_rigGod.armed = 1;
+        __try { DevGodCheats(); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { QDLOG(LOG_WARN, "god: fault while calling the cheat object"); }
+    }
+
+    float hp = 0.0f;
+    if (!FloatPropC(g_localPawn, "Health", &hp)) {
+        static uint32_t lastWarn = 0;
+        if (now - lastWarn > 5000) { lastWarn = now; QDLOG(LOG_WARN, "god: the pawn has no readable Health property"); }
+        return;
+    }
+    if (hp > g_rigGod.peak) g_rigGod.peak = hp;
+    float floorHp = g_rigGod.floor;
+    if (floorHp < g_rigGod.peak) floorHp = g_rigGod.peak;
+    if (hp >= floorHp) return;
+    if (!SetFloatPropC(g_localPawn, "Health", floorHp)) return;
+    ++g_rigGod.refills;
+    if (now - g_rigGod.lastLog > 1000) {
+        g_rigGod.lastLog = now;
+        QDLOG(LOG_INFO, "god: health refilled ", flt(hp, 1), " -> ", flt(floorHp, 1),
+              " (refills=", dec(g_rigGod.refills), ")");
+    }
+}
+
+// QDCOOP_TEST_HIT=<amount> (<UserDir>\qd.hit): TEST INSTANCES ONLY -- hit the nearest enemy
+// this machine RUNS through the module's own `TryApplyDamage` payload, every
+// QDCOOP_TEST_HITMS (default 3000).  The kill lane needs a kill that both machines
+// attribute correctly, and the peer's swing cannot be synthesised (measured: window
+// messages do not reach gameplay input), so the damage is applied here instead.
+void DevKillNearest(uint32_t now)
+{
+    // Polled, not latched: a scenario has to switch the kill on for the one step that
+    // wants it (and off again), and a lever read once at launch could only be armed for
+    // the whole session -- which would damage enemies during every earlier step.
+    static int amount = 0;
+    static uint32_t lastPoll = 0, last = 0;
+    if (now - lastPoll >= 500) { lastPoll = now; amount = DevLever("QDCOOP_TEST_HIT", "qd.hit", 200, 200); }
+    if (!amount || !IsGameplayPawn(g_localPawn)) return;
+    int gap = DevEnvInt("QDCOOP_TEST_HITMS", 3000);
+    if (last && now - last < (uint32_t)gap) return;
+    last = now;
+
+    ActorXform me;
+    if (!ReadActorXform(g_localPawn, &me)) return;
+    // The three nearest locally-run enemies, tried in order.  Not every enemy answers
+    // `TryApplyDamage` -- measured: `Looker_Base_BP_C` has neither that message nor
+    // `GetHP` (the hit logged `ran=0 hp 0.0 -> 0.0`), while a fighter does. Giving up at
+    // the nearest one tested the class that cannot be hit and called it a failure.
+    EnemyRec* cand[3] = {nullptr, nullptr, nullptr};
+    float cd[3] = {-1.0f, -1.0f, -1.0f};
+    bool cf[3] = {false, false, false};
+    for (int i = 0; i < g_enN; ++i) {
+        EnemyRec& r = g_en[i];
+        if (!r.haveGuid || !ObjectIsLive(r.actor) || EnemyDead(r.actor)) continue;
+        ActorXform x;
+        if (!ReadActorXform(r.actor, &x)) continue;
+        float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
+        float d = sqrtf(dx * dx + dy * dy + dz * dz);
+        if (d > 1500.0f) continue;
+        bool running = g_own.Running(r.guid);
+        for (int k = 0; k < 3; ++k) {
+            if (cd[k] >= 0.0f && d >= cd[k]) continue;
+            for (int j = 2; j > k; --j) { cand[j] = cand[j - 1]; cd[j] = cd[j - 1]; cf[j] = cf[j - 1]; }
+            cand[k] = &r; cd[k] = d; cf[k] = !running;
+            break;
+        }
+    }
+    if (!cand[0]) {
+        QDLOG(LOG_WARN, "rig: hit -- no live enemy within 15 m of ", flt(me.px, 0), ",", flt(me.py, 0),
+              ",", flt(me.pz, 0));
+        return;
+    }
+    for (int k = 0; k < 3 && cand[k]; ++k) {
+        float before = 0, after = 0;
+        bool haveHp = false;
+        bool ok = ApplyDamageToActor(cand[k]->actor, (float)amount, g_localPawn, false, &before, &after, &haveHp);
+        QDLOG(LOG_INFO, "rig: hit enemy guid=", hex32(cand[k]->guid[0]), " amount=", dec(amount),
+              " ran=", dec(ok ? 1 : 0), " hp ", flt(before, 1), " -> ", flt(after, 1),
+              (cf[k] ? " (FROZEN copy: its HP belongs to the host)" : " (local-run)"));
+        if (ok) return;
+    }
+}
+
+// QDCOOP_TEST_CHEAT=<function> (<UserDir>\qd.cheat, argument in qd.cheatarg): TEST
+// INSTANCES ONLY -- call one of the game's own `FS_Cheats_C` UFUNCTIONs on this machine.
+//
+// WHY THE CHEAT OBJECT IS THE RIGHT ORIGIN FOR A LANE TEST.  The lanes are about what
+// happens AFTER a machine's world changes; how the change was caused is not part of the
+// claim.  The two levers that can cause a change without a keyboard are the interaction
+// component (whose `Current Interact Actor` only fills when the engine's own trace finds
+// a real E-interactable -- coins and fruit are overlap pickups, so the act lever does
+// nothing near them) and this object, which is the game's own code path for exactly these
+// events: `UnlockAllCheckpoints` raises a NamedSaveData flag, `GiveAllKeys` adds items,
+// `KillAllEnemies` records deaths, `ForceOpenDoor` changes a savable's state.
+//
+// The function list is dumped once by DevGodCheats, so the attempt is always visible next
+// to the surface that exists.
+void DevCheatCall(const char* fn, float amount, bool hasAmount)
+{
+    void* ch = FindInstanceOf("FS_Cheats_C");
+    if (!ch) { QDLOG(LOG_WARN, "rig: cheat ", fn, " -- FS_Cheats_C not found"); return; }
+    static Fn f = {};
+    static char lastName[64] = "";
+    if (strcmp(lastName, fn) != 0) { f = Fn(); lstrcpynA(lastName, fn, sizeof(lastName)); }
+    if (!f.Resolve(ch, fn)) {
+        QDLOG(LOG_WARN, "rig: cheat ", fn, " -- no such UFunction on FS_Cheats_C");
+        LogFunctionsOf(ch, "FS_Cheats_C", 120);
+        return;
+    }
+    Call c(f);
+    if (hasAmount) {
+        // The cheat signature is not known ahead of time; a float parameter named like an
+        // amount is filled, and if there is none the call is still made (most cheats take
+        // nothing).
+        for (int i = 0; i < f.sig.props; ++i) {
+            const PropDesc& p = f.sig.p[i];
+            if (p.flags & CPF_OutParm) continue;
+            if (NameEquals(p.type, "FloatProperty") || NameEquals(p.type, "DoubleProperty")) {
+                c.F32(p.name, amount);
+                break;
+            }
+        }
+    }
+    bool ok = c.Run(ch);
+    QDLOG(LOG_INFO, "rig: cheat ", fn, (hasAmount ? " (amount given)" : ""), " ran=", dec(ok ? 1 : 0));
+}
+
+char     g_devCheatPath[MAX_PATH];
+int      g_devCheatOn = -1;
+uint32_t g_devCheatPoll = 0;
+char     g_devCheatApplied[64] = "";
+
+void DevCheat(uint32_t now)
+{
+    if (g_devCheatOn < 0) {
+        char ud[260];
+        bool rig = CmdArg("-UserDir", ud, sizeof(ud)) && ud[0] != 0;
+        g_devCheatOn = (DevRigPath("QDCOOP_TEST_CHEAT", "qd.cheat", g_devCheatPath, sizeof(g_devCheatPath)),
+                        (g_devCheatPath[0] != 0 && rig)) ? 1 : 0;
+        if (g_devCheatOn)
+            QDLOG(LOG_INFO, "rig: cheat control '", g_devCheatPath, "' enabled exists=",
+                  (GetFileAttributesA(g_devCheatPath) != INVALID_FILE_ATTRIBUTES ? "yes" : "no"));
+    }
+    if (!g_devCheatOn || !IsGameplayPawn(g_localPawn)) return;
+    if (now - g_devCheatPoll < 500) return;
+    g_devCheatPoll = now;
+
+    HANDLE h = CreateFileA(g_devCheatPath, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return;
+    char buf[96];
+    DWORD got = 0;
+    (void)ReadFile(h, buf, sizeof(buf) - 1, &got, nullptr);
+    CloseHandle(h);
+    buf[got] = 0;
+    for (int i = 0; buf[i]; ++i) {
+        if (buf[i] == '\r' || buf[i] == '\n' || buf[i] == ' ') { buf[i] = 0; break; }
+    }
+    if (buf[0] == 0 || strcmp(buf, g_devCheatApplied) == 0) return;
+    lstrcpynA(g_devCheatApplied, buf, sizeof(g_devCheatApplied));
+
+    float amount = 0.0f;
+    bool hasAmount = false;
+    {
+        char ap[MAX_PATH];
+        if (CmdArg("-UserDir", ap, sizeof(ap)) && ap[0]) {
+            int nn = lstrlenA(ap);
+            if (nn > 0 && nn < (int)sizeof(ap) - 1 && ap[nn - 1] != '\\') { ap[nn++] = '\\'; ap[nn] = 0; }
+            lstrcpynA(ap + nn, "qd.cheatarg", sizeof(ap) - nn);
+            HANDLE ah = CreateFileA(ap, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (ah != INVALID_HANDLE_VALUE) {
+                char ab[48];
+                DWORD ag = 0;
+                (void)ReadFile(ah, ab, sizeof(ab) - 1, &ag, nullptr);
+                CloseHandle(ah);
+                ab[ag] = 0;
+                if (ab[0]) { amount = (float)atof(ab); hasAmount = true; }
+            }
+        }
+    }
+    __try { DevCheatCall(buf, amount, hasAmount); }
+    __except (EXCEPTION_EXECUTE_HANDLER) { QDLOG(LOG_WARN, "rig: cheat ", buf, " -- faulted"); }
 }
 
 void DevAvatarTest(uint32_t now)
@@ -8399,6 +9086,8 @@ bool HK_Tick(void* engineLoop)
     DevScanNearest(now);
     DevInteract(now);
     DevGod(now);
+    DevKillNearest(now);
+    DevCheat(now);
     TravelPump(now);
     StreamPump(now);
     EnemyPump(now);

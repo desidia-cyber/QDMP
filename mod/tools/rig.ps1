@@ -1,4 +1,4 @@
-﻿# rig.ps1 -- drive one instance of the two-machine rig from a short command.
+# rig.ps1 -- drive one instance of the two-machine rig from a short command.
 #
 # WHY THIS EXISTS
 # ---------------
@@ -9,11 +9,22 @@
 # is nearest to the player (QDCOOP_TEST_SCAN), so a scenario is a sequence of these calls:
 #
 #   rig.ps1 -Action ps -Instance 1                      what the player's position is now
+#   rig.ps1 -Action targets -Instance 1                 the safe target list (nearest per kind)
 #   rig.ps1 -Action near -Instance 1                    the last scan block
-#   rig.ps1 -Action tp -Instance 1 -Value "x,y,z,yaw"   put the player there
+#   rig.ps1 -Action goto -Instance 1 -Value chest       stand BESIDE the nearest chest
+#   rig.ps1 -Action tp -Instance 1 -Value "x,y,z,yaw"   put the player there (or near:<name>)
+#   rig.ps1 -Action act -Instance 1                     run the player's Interact verb
 #   rig.ps1 -Action key -Instance 1 -Value E            post a key to the game window
 #   rig.ps1 -Action click -Instance 1 -Value left       post a click at the client centre
 #   rig.ps1 -Action log -Instance 1 -Value damage       last matches from that run's log
+#
+# The other rig levers are control files created BEFORE launch, because the environment
+# is not inherited reliably through the launch chain (measured with QDCOOP_TEST_TPFILE):
+#   <UserDir>\qd.tp     teleport instruction (see -Action tp)
+#   <UserDir>\qd.act    run the Interact verb once per content change
+#   <UserDir>\qd.scan   "1" = log the safe target list every 10 s
+#   <UserDir>\qd.god    "1" or a number = floor the local player's Health at that value
+#   <UserDir>\qd.hit    "1" or a number = damage the nearest locally-run enemy every 3 s
 #
 # It posts to the same window capture-hidden.ps1 reads, so what is keyed and what is
 # screenshotted are the same surface, and nothing here takes the desktop.
@@ -26,7 +37,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('ps', 'near', 'tp', 'key', 'click', 'log', 'wait', 'shot', 'act')]
+    [ValidateSet('ps', 'near', 'tp', 'goto', 'targets', 'key', 'click', 'log', 'wait', 'shot', 'act')]
     [string]$Action,
 
     # 1 = inst1 (suffix qd1), 2 = inst2 (suffix qd2)
@@ -95,13 +106,34 @@ switch ($Action) {
     }
 
     'tp' {
-        if ($Value -notmatch '^-?[0-9.]+\s*,\s*-?[0-9.]+\s*,\s*-?[0-9.]+') {
-            throw "tp needs x,y,z[,yaw]; got '$Value'"
+        # Coordinates are accepted but are the wrong tool: two of them killed the peer
+        # (a brazier, a fall) because a number in a log is not a place a player can stand.
+        # `near:<name>` stands the pawn BESIDE a live actor instead, at that actor's own
+        # height, which is the level's own answer to "where is the ground here".
+        if ($Value -match '^near:' -or $Value -match '^-?[0-9.]+\s*,\s*-?[0-9.]+\s*,\s*-?[0-9.]+') {
+            Set-Content -LiteralPath $tpFile -Value $Value -NoNewline
+            Write-Output "teleport $Instance -> $Value"
+            return
         }
-        # The mod acts on a change, so an identical instruction is a no-op by design;
-        # writing the same coordinates twice is harmless rather than sticky.
-        Set-Content -LiteralPath $tpFile -Value $Value -NoNewline
-        Write-Output "teleport $Instance -> $Value"
+        throw "tp needs x,y,z[,yaw] or near:<name>; got '$Value'"
+    }
+
+    'goto' {
+        if (-not $Value) { throw "goto needs a target name, e.g. -Value chest" }
+        Set-Content -LiteralPath $tpFile -Value ('near:' + $Value) -NoNewline
+        Write-Output "teleport $Instance -> near:$Value"
+    }
+
+    'targets' {
+        # The safe target list the scan probe produced: one nearest representative per
+        # kind, plus the nearest enemy, with the coordinates the mod itself measured.
+        $rows = @(Get-CurrentRunLines | Where-Object { $_ -match 'scan: kind |scan: nearest enemy|scan: interact target|scan: health' })
+        if ($rows.Count -eq 0) { Write-Output 'no scan targets yet (is qd.scan / QDCOOP_TEST_SCAN set?)'; return }
+        $start = 0
+        for ($i = $rows.Count - 1; $i -ge 0; $i--) {
+            if ($rows[$i] -match 'scan: interact target') { $start = $i - 2; if ($start -lt 0) { $start = 0 }; break }
+        }
+        $rows[$start..($rows.Count - 1)] | ForEach-Object { Write-Output $_ }
     }
 
     'act' {

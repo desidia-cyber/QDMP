@@ -545,3 +545,218 @@ change therefore needs a *safe* target list, not just coordinates.
 The four change paths: door/chest, pickup, enemy attack (`DAMAGE`), travel follow. The
 plumbing all runs (state converged, zero dropped slots, zero refused intents), but no
 scenario has yet produced the *event*.
+
+---
+
+## Session 6 - 2026-11-08 (driving a change, and what the game says about it)
+
+Two instances, `_test\inst1` / `_test\inst2`, relay rebuilt from this branch, every write
+path on. Four sessions were run with `tools/scenario.ps1` (18:30, 18:51, 19:18, 19:37);
+the last one reached every step, and its lines are the ones quoted here. The instance
+saves are mutated by each run, so a counter like `CheckpointUnlockCount` starts from
+whatever the previous run left.
+
+`scenario.ps1` is the whole session in ONE process -- relay, both instances, the driving,
+the collection, the teardown -- because a launched game does not survive the command that
+started it (R14). It reads the roles from `session established` and never assumes which
+machine is the host.
+
+### R50. The rig can now drive a change: five levers, and three things that were wrong
+
+`qd.tp` (already there), plus `qd.act`, `qd.scan`, `qd.god`, `qd.hit` and `qd.cheat`, all
+in the instance's `-UserDir` and all gated on `-UserDir` being present, so none of them is
+reachable in normal play. Three of those needed a correction before they did anything:
+
+* **`FS_Cheats_C` has no `GodModeOn` and no `HealToFull` on this build.** The class's own
+  function table (dumped once by the mod) has 72 UFUNCTIONs and the god switch is
+  `DeadGod`. Measured:
+
+  ```
+  god: GodModeOn=no HealToFull=no DeadGod=ok (health floor=400, hp=0.0)
+  god: health refilled 100.0 -> 400.0 (refills=1)
+  ```
+
+  `DeadGod` alone was not enough to build a scenario on, so the rig also pins the player's
+  `Health` FloatProperty at a floor. The player is still *hurtable* -- a hit lands and is
+  logged -- it just cannot reach 0. This is what finally made the test player unkillable;
+  two blind teleports had ended earlier sessions.
+
+* **The interaction component does not interact.** `PlayerInteractionComponent_C` has
+  exactly five UFUNCTIONs -- `Update`, `ReceiveBeginPlay`, `ReceiveTick`,
+  `ExecuteUbergraph_PlayerInteractionComponent`, `InteractTargetChanged__DelegateSignature`
+  -- and none of them is `Interact`. It only *tracks* the actor
+  (`Current Interact Actor`); the verb is on the target (`Checkpoint_C.Interact`). The act
+  lever therefore names an actor (`qd.act` = `near:checkpoint`), resolves it, and calls
+  its own verb, press then hold. Measured:
+
+  ```
+  dev interact: resolved 'checkpoint' -> Checkpoint17 at 3871,-1723,51 dist=4019
+  dev interact: target=Checkpoint17 [Checkpoint_C] component=found verb=Interact
+  ```
+
+  The same lever starts a conversation when the name is an NPC, which is what §5.5 needed.
+
+* **`Current Interact Actor` is a property of the component, not of the pawn.** The probe
+  of Session 5 read it from the pawn and reported `-` on every pass; it now reads the
+  component and says whether the component was found at all.
+
+Two further corrections to the *teleport* lever, both the same mistake Session 5 made:
+
+* `near:<name>` resolves a live actor and uses **its** height, instead of a `z` copied out
+  of a log. `near:enemy` also means "the nearest enemy" rather than "an actor whose name
+  contains 'enemy'", which matched nothing.
+* The resolver refuses bookkeeping classes. A `SkullDoorQuestStateManager` matched "door"
+  and put the peer 423 m away and 33 km below the world -- the same class of blind
+  teleport that killed the peer twice in Session 5.
+
+### R51. FIXED - the write-path oracle refused a correct build, and had never run
+
+Session 5 produced no `NAMED-SAVE ORACLE` line at all, because the oracle only ran when
+the first flag write asked for it and nothing wrote. Running it at load made it fail
+loudly, on both instances:
+
+```
+ERR  NAMED-SAVE ORACLE FAIL: GetNamedSaveData frame = {FName@0 size 8, object@8 size 8, i32@16 size 4, bool@20 size 1}
+ERR  write api: expected {FName@0, bool@8, i32@12}; frame is ...; SaveNamedData offsets cannot be trusted, so writes are refused
+```
+
+The expectation was the three-field frame measured by **disassembly** of the game's own
+call site. This build's UFunction declares **four** parameters: the Blueprint library
+`__WorldContext` at `+8` is real, and `Value` precedes `WasSet`, which tiles `ParmsSize 21`
+exactly (8+8+4+1, no padding). A frame built from reflection could never equal the
+three-field form, and the refusal blamed the offsets. Both shapes are accepted now, each
+pinned strictly by count, order, offset and size, and the oracle runs at load:
+
+```
+NAMED-SAVE ORACLE PASS: GetNamedSaveData frame = {FName@0 size 8, object@8 size 8, i32@16 size 4, bool@20 size 1}
+write api: ready=1 oracle=1 set=1 add=1
+```
+
+Nothing was refused in consequence -- the flag lane writes through the native map
+(`NsdWrite`), not through this frame -- but a guard that fires on a good build is a guard
+that gets ignored (R2), and this one had been silent rather than wrong.
+
+### R52. FIXED - `HasCI` folded one side only, and that forced a video level visible
+
+`enemyown::HasCI` lowercased the haystack and compared it to the **unlowered** needle, so
+any needle containing an uppercase letter could never match. Every existing caller passed
+an already-lowercase needle, so it had never shown. It showed when a `"VideoConfig"` guard
+decided whether to force a level visible: it answered "no", the level was forced, and the
+game died.
+
+Measured (19:29 run), the host's log ends mid-frame and the process is gone:
+
+```
+19:29:43.349 INFO level union: SHOW VideoConfigMap -> bShouldBeVisible=1
+19:29:43.349 INFO level union: SHOW VideoConfigMap -> bShouldBeVisible=1
+19:29:43.349 INFO level union size 16 (local 15, forced for partner 15)
+```
+
+Both sides are folded now. The union also refuses to force a video/config or
+shader-compile level at all -- neither is ever a place a player stands, so the union's
+contract is not weakened -- and a refusal does not consume the two-levels-per-pump budget.
+The same bug was making the teleport resolver ignore its own junk-class filter, which is
+R50's 423 m teleport.
+
+Verified in the following run, on both machines, and the session then survived:
+
+```
+WARN level union: refusing to force 'VideoConfigMap' (a video/config level, never a place a player stands)
+```
+```
+0 occurrences of "SHOW VideoConfig"; both processes alive at the end.
+```
+
+This was the third crash of the same family as R48 and R49: a mod-side decision taken on
+a wrong answer, during a world load.
+
+### R53. The cheat object is the rig's most capable lever, and its names are not guessable
+
+`FS_Cheats_C` on this build, in full (72): `AddAllEnemiesToBestiary`, `AddEnemyToBestiary`,
+`AddNote`, `BindingMe`, `BPSlomo`, `ChallengeSimulateComplete`, `ChallengeSimulateProgress`,
+`CheatLoad`, `CheatSave`, `ClearBestiaryData`, `CompleteAllChallenges`, 14 `Completed_*`,
+`DeadGod`, `DeleteChallengeSave`, `DeleteItem`, `DiseaseMe`, `ExecuteUbergraph_FS_Cheats`,
+`FillMyUltraHole`, `FindDoorOpenTarget`, `ForceCompleteChallenge`, `ForceOpenDoor`,
+`ForceShowKnightGhosts`, `GemCurseMe`, `GimmeUltra`, `GimmeXP`, `GiveAllAccessories`,
+`GiveAllConsumables`, `GiveAllEquipment`, `GiveAllGuides`, `GiveAllKeys`,
+`GiveAllThrowingWeapons`, `GiveAllWeapons`, `GiveItem`, `GiveWeaponXP`, `HeavyMe`,
+`HideHUD`, `HideTitleScreen`, `HurtMe`, `InternalChallengeProgressCheat`,
+`KillAllEnemies`, `KnockMeDown`, `LoadSaveSlot`, `MagicFireMe`, `MagicPoisonMe`,
+`NecroHeadClear`, `ParseSpawnEnemyArgs`, `PoisonMe`, `RemoveBestiaryEnemies`, `ReportBug`,
+`RingLibraryBell`, `SaveHere`, `SaveNote`, `SetBestiaryEnemyPercent`, `SetCulture`,
+`SetEnemyCountInBestiary`, `SetNamedSaveData`, `SetNativeCulture`, `SetTestCulture`,
+`SetUltraCharge`, `ShowHUD`, `ShowTitleScreen`, `SimulateAllChallenges`, `SpawnEnemy`,
+`SpawnEnemyFromData`, `SpawnEnemyInactive`, `StickyMe`, `SuspendSave`, `TestAudioBug_2D`,
+`TestAudioBug_Player`, `TestEmptyLevelList`, `ToggleStreamignLevelVis`,
+`UnlockAllCheckpoints`, `UnlockAllTeleporters`, `WeakenMe`, `WhaleBossDoBellySlide`,
+`WhaleBossDoLaser`, `WhaleBossOverrideAttack`, `WhaleBossSetPhase`.
+
+`qd.cheat` calls one of them by name on the machine it is written to. That is the rig's
+origin for a world change, and it is the game's own code path for the event, not a
+simulated one.
+
+### R54. §5, step by step, with the lines
+
+| Step | Verdict | The line |
+|---|---|---|
+| 1. Load | **PASS** | `switches: flags=1 inventory=1 actors=1 enemy=1 puppet=1 dialogue=1 stream=1 pause=0` / `NAMED-SAVE ORACLE PASS` / `container offsets: NamedSaveData=1000 SavableActorStates=704 InventoryContents=40` / `enemy sync: FS_EnemyCharacterBase found` / `hooked ULevelStreaming::SetShouldBeLoaded @ 029ACAC0` |
+| 2. G1 | **PASS** | peer `flag CHANGE CheckpointUnlockCount : 1 -> 34` then `flag intent sent CheckpointUnlockCount=34 rev=28 try 1/5` then `flag intent confirmed ... rev=29`; host `intent applied: CheckpointUnlockCount=34`. One send, no repeat for the same value. |
+| 3. Enemies | **PARTIAL** | `Paused ok=1` on both machines (90 and 117 times), and the peer's hit landed: `rig: hit enemy guid=F6418295 amount=200 ran=1 hp 34.9 -> -165.0 (local-run)`. **No `enemy death recorded` and no `enemy record sent`** for any of the three kills. The death reached the host through the *actor-state* lane instead (see step 6). |
+| 4. G4 | **FAIL** | No attack fired in the scenario's own window: the provoked host stood 140 cm from `Ribber_Base_BP_C` for 90 s with no `damage sent`. In the 18:51 session the lane did transmit -- `damage sent guid=518B943C seq=1 melee amount=20.0 centi=2000 (Data.BaseDamage) range=5000` -- and the peer answered `player damage had NO effect: TryApplyDamage ran asked 20.0 returned 0.00 hp 400.0 -> 400.0`. Transport proven; **the effect is not**. |
+| 5. Dialogue | **PASS** | peer `dialogue: local started with Ghost_Budaen [Knight_Budaen_NPC_Ghost_BP_C]`; host `dialogue: BLOCK Ghost_Budaen [Knight_Budaen_NPC_Ghost_BP_C] BlockInteract=`. |
+| 6. G2 | **PASS on the lane, NOT-REACHED on the door** | The peer->host actor-state leg is proven, three times, by the kills in step 3: peer `actor-state local change: queued=1` / `actor-state intent sent guid=F6418295-... value=1 rev=29 try 1/5`; host `actor-state intent applied: guid=F6418295-... value=1`. The host->peer leg is proven too: peer `actor-state: wrote guid=b1cb0f48-... value=1 via SavableActor.Save Data Index to World Save index=0 read back container=1 cached=ok` / `actor states applied=1`. **A door was never made to change**: `FindDoorOpenTarget` and `ForceOpenDoor` both ran (`ran=1`) and produced no local container change, so no intent followed. |
+| 7. G3 | **FAIL** | peer `item intent sent .../KeyItems/BookKeys/FairyTales/... x1 rev=2 try 3/5`; host `inventory grant failed: ... count did not rise by the requested amount: 0 -> 0 (wanted +1)` for every key item, and the peer gives up (`item intent given up ... after 5 attempts, the host never showed it`). In the 19:18 run the peer's queue also overflowed: `item intent: 0 unreadable path(s); pending overflow=1 ...; those pickups are NOT on the wire`. |
+| 8. Streaming and travel | **PASS on streaming and survival, NOT-REACHED on follow** | `level name:` on both (50 lines each, no REFUSED), `level union size 16/15`, and **both processes alive at the end** for the first time after the R52 fix. `travel: local destination TempTeleporter/Ruins_Level_00 seq=2` at load on both, and the partner's travel was correctly declined: `travel: partner is travelling to TempTeleporter/Ruins_Level_00 but the local player is busy; skipped (not remembered)`. No `travel: followed` -- nobody ever travelled while the partner was free. |
+
+### R55. What the failures are
+
+**G3's grant does not work for key items.** The host resolves the peer's intent, calls its
+own grant path, reads the counter back, and the counter does not move: `count did not rise
+by the requested amount: 0 -> 0 (wanted +1)`. Either `AddItemToInventory` refuses
+`KeyItems/*` or keys are not in `InventoryContents` on this build. The read-back is doing
+its job -- the grant is reported as failed rather than assumed -- so this is a missing
+write path, not a silent corruption. `GiveAllKeys` adds ~40 items in one frame, which also
+overflows the peer's bounded intent queue; the overflow is logged and the items are
+dropped, not sent late.
+
+**Nothing can make a door change.** The two levers that exist (`ForceOpenDoor`,
+`FindDoorOpenTarget`) run and change nothing the save container observes. The peer->host
+actor-state lane itself works -- measured on three enemy GUIDs -- so the gap is a driver,
+not the lane.
+
+**No enemy attacked the player on demand.** Teleporting the host next to a
+`Ribber_Base_BP_C`, a `RattyBugger_Base_BP_C` and a `Dragonfly_Base_BP_C` and waiting
+90 s produced no attack. The attacks that *did* fire happened at the spawn, unprompted, in
+an earlier session. Until an attack can be provoked, G4's `applied hp a -> b` half stays
+unmeasured -- and the one measurement there is says the payload does not damage.
+
+**`TryApplyDamage` damages an enemy but not the player.** The same call applied 200 to an
+enemy (`hp 34.9 -> -165.0`) and returned nothing against the pawn
+(`returned 0.00 hp 400.0 -> 400.0`). Since both go through the same payload fill and the
+same reader, the difference is in the receiving implementation, not in the module's
+struct: `FS_Full_PlayerChar_C`'s `FB_Damageable` path wants something this fill does not
+provide. **This is the single thing standing between the damage lane and G4.**
+
+**No enemy death record.** Three enemies went to negative HP and `StoreEnemySaveState`
+never fired for any of them, so no `enemy death recorded` and no `enemy record sent`. What
+happened instead is that each kill produced a *savable actor state* change, which the
+actor-state lane carried to the host. So a kill does reach the partner -- by a different
+lane than the design says -- and the enemy-persistence lane (the spawner GUID record that
+stops an enemy respawning) is unproven.
+
+### Still unproven after this session
+- G4's effect half, and any enemy attack on demand.
+- `travel: followed` (needs a travel while the partner is free), and `WORLD DIVERGENCE`
+  (needs a hard map switch, which no lever performs).
+- The door/chest half of G2, and with it the visibility question in SYNC-GAPS §2.
+- Enemy death records reaching the host as records rather than as actor states.
+- Whether G2's in-level actor shows the change without a load: the container converges
+  (`read back container=1 cached=ok`) but nothing in this run looked at the screen.
+
+### What this session cost, and what it bought
+Five defects, three of them in code that had passed 3 598 assertions and two live
+sessions: the oracle refused a correct build, `HasCI` answered wrongly for any uppercase
+needle (which both defeated a guard and crashed the game), and the interaction component's
+verb was on the wrong object. The pattern is consistent with every earlier round -- the
+defect is never in the state machine, it is in the assumption about the game.
+
