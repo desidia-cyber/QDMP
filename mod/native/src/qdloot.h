@@ -55,6 +55,119 @@ inline uint32_t HashSource(const char* name)
     return h ? h : 1u;      // 0 is reserved for "no source"
 }
 
+// ---------------------------------------------------------------------------
+// A derived key for a build whose drop actor carries no {source, item} property
+// ---------------------------------------------------------------------------
+// Measured (LIVE-TEST-LOG R62): the spawned drop is an `ItemPickup_Base` subclass with
+// `IsADrop=1`, but `DropSource`, `Dropper`, `ItemData` and their spellings are all absent.
+// The lane still needs one shared identity, so it is derived from what BOTH machines do
+// share: the item class (the same cooked package) and the point where the drop appeared.
+// The position is quantized so the two copies' small spawn difference does not split the
+// key, and `dup` separates identical drops that really do coincide (they are
+// interchangeable, so an arbitrary numbering is safe there and nowhere else).
+inline int32_t QuantizeCm(float cm, int32_t bucket)
+{
+    if (bucket <= 0) bucket = 1;
+    float q = cm / (float)bucket;
+    return (int32_t)(q >= 0.0f ? q + 0.5f : q - 0.5f);
+}
+
+// Spell "<class>@qx,qy,qz#dup".  Separators are explicit, so "1,23" and "12,3" cannot
+// collide, and the format is CRT-free because this runs on the game thread's drop scan.
+inline void DerivedKeyText(const char* classPath, const int32_t q[3], uint16_t dup,
+                           char* out, int cap)
+{
+    if (!out || cap <= 0) { return; }
+    int w = 0;
+    for (int i = 0; classPath && classPath[i] && w < cap - 40; ++i) out[w++] = classPath[i];
+    out[w++] = '@';
+    for (int i = 0; i < 3 && w < cap - 16; ++i) {
+        if (i) out[w++] = ',';
+        int32_t v = q[i];
+        if (v < 0) { out[w++] = '-'; v = -v; }
+        char d[12];
+        int n = 0;
+        if (v == 0) d[n++] = '0';
+        while (v) { d[n++] = (char)('0' + (v % 10)); v /= 10; }
+        while (n) out[w++] = d[--n];
+    }
+    out[w++] = '#';
+    {
+        char d[12];
+        int n = 0;
+        uint32_t u = dup;
+        if (u == 0) d[n++] = '0';
+        while (u) { d[n++] = (char)('0' + (u % 10)); u /= 10; }
+        while (n && w < cap - 1) out[w++] = d[--n];
+    }
+    out[w < cap ? w : cap - 1] = 0;
+}
+
+// Coincident identical drops.  Bounded and recycled like the enemy summons' table.
+class DropOrdinals {
+public:
+    static const int      kMax = 64;
+    static const uint32_t kRecycleMs = 120000;
+
+    DropOrdinals() { Reset(); }
+
+    void Reset()
+    {
+        for (int i = 0; i < kMax; ++i) r_[i].used = false;
+        overflow_ = 0;
+    }
+
+    uint16_t Claim(uint32_t classHash, const int32_t q[3], uint32_t now_ms)
+    {
+        Rec* r = Touch(classHash, q, now_ms);
+        if (!r) { ++overflow_; return 0; }
+        uint16_t v = r->n;
+        if (r->n != 0xFFFF) ++r->n;
+        return v;
+    }
+
+    uint32_t Overflows() const { return overflow_; }
+
+private:
+    struct Rec {
+        bool     used;
+        uint32_t classHash;
+        int32_t  q[3];
+        uint16_t n;
+        uint32_t touchMs;
+    };
+
+    Rec* Touch(uint32_t classHash, const int32_t q[3], uint32_t now_ms)
+    {
+        if (classHash == 0) return nullptr;
+        for (int i = 0; i < kMax; ++i) {
+            if (!r_[i].used) continue;
+            if (r_[i].classHash != classHash) continue;
+            if (r_[i].q[0] != q[0] || r_[i].q[1] != q[1] || r_[i].q[2] != q[2]) continue;
+            r_[i].touchMs = now_ms;
+            return &r_[i];
+        }
+        int victim = -1;
+        uint32_t oldest = 0;
+        for (int i = 0; i < kMax; ++i) {
+            if (!r_[i].used) { victim = i; break; }
+            uint32_t age = (uint32_t)(now_ms - r_[i].touchMs);
+            if (age > kRecycleMs && age > oldest) { oldest = age; victim = i; }
+        }
+        if (victim < 0) return nullptr;
+        Rec& r = r_[victim];
+        r.used = true;
+        r.classHash = classHash;
+        for (int k = 0; k < 3; ++k) r.q[k] = q[k];
+        r.n = 0;
+        r.touchMs = now_ms;
+        return &r;
+    }
+
+    Rec      r_[kMax];
+    uint32_t overflow_;
+};
+
 inline bool SameKey(const Entry& e, uint32_t source_hash, int32_t drop_index)
 {
     return e.source_hash == source_hash && e.drop_index == drop_index;

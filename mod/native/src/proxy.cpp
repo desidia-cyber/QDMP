@@ -110,11 +110,14 @@ struct Hook {
 // quietly, which looks nothing like a crash and is exactly why the signature matters.
 typedef bool      (*FnTick)(void* engineLoop);
 typedef bool      (*FnSetGamePaused)(void* worldContext, bool paused);
+typedef void      (*FnSetGlobalDilation)(void* worldContext, float dilation);
+typedef float     (*FnGetGlobalDilation)(void* worldContext);
 typedef void      (*FnStoreEnemy)(void* self, const QdGuid* guid, float respawn, float hp);
 typedef void      (*FnProcessEvent)(void* self, void* func, void* parms);
 
 FnTick            g_oTick = nullptr;
 FnSetGamePaused   g_oSetGamePaused = nullptr;
+FnSetGlobalDilation g_oSetGlobalDilation = nullptr;
 FnStoreEnemy      g_oStoreEnemy = nullptr;
 FnProcessEvent    g_oProcessEvent = nullptr;
 
@@ -3391,6 +3394,36 @@ void* FindTravelActor(const char* name, void* world)
             // An unreadable slot is skipped; a follow must never die for one.
         }
     }
+
+    // The outer-chain test above is the right identity test for a placed actor, but it is
+    // too strict for the case Session 7 measured: the actor's outer chain reaches its
+    // STREAMED LEVEL package, not the UWorld the follower is standing in, and the actor is
+    // otherwise exactly the one the sender found.  Rejecting it is what produced
+    // "no live actor named Teleporter_GR" and stopped `travel: followed` dead.
+    //
+    // The fallback still cannot pick a CDO or an asset: the short name is the cooked
+    // instance name (a CDO is `Default__...`) and the object must be a live Actor
+    // subclass that carries the `LocationData` this call is about to read.  That carrier
+    // test is the same one LocalTravelDest applies when choosing the destination.
+    static bool saidFallback = false;
+    for (int i = 0; i < n; ++i) {
+        void* o = ObjectAt(i);
+        if (!o) continue;
+        __try {
+            if (!ObjectIsLive(o) || !ObjNameIs(o, name)) continue;
+            void* c = ObjClass(o);
+            if (!c || !IsSubclassOf(c, actorBase)) continue;
+            if (PropOff(c, "LocationData") < 0) continue;
+            if (!saidFallback) {
+                saidFallback = true;
+                QDLOG(LOG_DEBUG, "travel: resolved '", name,
+                      "' without the outer-chain test (its level is streamed, not the world)");
+            }
+            return o;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+        }
+    }
     return nullptr;
 }
 
@@ -3415,6 +3448,46 @@ void* ActorLocationData(void* actor)
 // by that exact name and a type-based fallback follows it.  `GreenFX` is the full-screen
 // effect; a follow drives it with 0 so the partner's transition is not doubled on this
 // screen.
+bool FollowTravelActor(void* actor, const char* actorName, void* pawn,
+                       char* err, int errCap, bool greenFx)
+{
+    if (err && errCap > 0) err[0] = 0;
+    if (!IsGameplayPawn(pawn)) {
+        ErrSet(err, errCap, "no local gameplay pawn", "");
+        return false;
+    }
+    if (!ReflectionReady()) {
+        ErrSet(err, errCap, "property layout not validated: ", Lay().note);
+        return false;
+    }
+    if (!actor) { ErrSet(err, errCap, "no live actor named ", actorName ? actorName : "?"); return false; }
+    void* data = ActorLocationData(actor);
+    if (!data) { ErrSet(err, errCap, actorName ? actorName : "?", " carries no LocationData"); return false; }
+
+    Fn fTp;
+    if (!fTp.Resolve(pawn, "TeleportToLocation")) {
+        ErrSet(err, errCap, "FS_PlayerChar.TeleportToLocation not found", "");
+        return false;
+    }
+    const PropDesc* pObj = FindProp(fTp.sig, "Location Data");
+    if (!pObj) pObj = FindPropOfType(fTp.sig, "ObjectProperty", CPF_OutParm | CPF_ReturnParm);
+    const PropDesc* pFx = FindProp(fTp.sig, "GreenFX");
+    if (!pFx) pFx = FindPropOfType(fTp.sig, "BoolProperty", CPF_OutParm | CPF_ReturnParm);
+    if (!pObj) {
+        ErrSet(err, errCap, "TeleportToLocation has no LocationData parameter", "");
+        return false;
+    }
+
+    Call c(fTp);
+    c.Obj(pObj->name, data);
+    if (pFx) c.U8(pFx->name, greenFx ? 1 : 0);
+    if (!c.Run(pawn)) {
+        ErrSet(err, errCap, "TeleportToLocation faulted", "");
+        return false;
+    }
+    return true;
+}
+
 bool FollowTravelDest(const char* dest, void* pawn, char* err, int errCap, bool greenFx = false)
 {
     if (err && errCap > 0) err[0] = 0;
@@ -3443,31 +3516,7 @@ bool FollowTravelDest(const char* dest, void* pawn, char* err, int errCap, bool 
 
     void* actor = FindTravelActor(p.actor, world);
     if (!actor) { ErrSet(err, errCap, "no live actor named ", p.actor); return false; }
-    void* data = ActorLocationData(actor);
-    if (!data) { ErrSet(err, errCap, p.actor, " carries no LocationData"); return false; }
-
-    Fn fTp;
-    if (!fTp.Resolve(pawn, "TeleportToLocation")) {
-        ErrSet(err, errCap, "FS_PlayerChar.TeleportToLocation not found", "");
-        return false;
-    }
-    const PropDesc* pObj = FindProp(fTp.sig, "Location Data");
-    if (!pObj) pObj = FindPropOfType(fTp.sig, "ObjectProperty", CPF_OutParm | CPF_ReturnParm);
-    const PropDesc* pFx = FindProp(fTp.sig, "GreenFX");
-    if (!pFx) pFx = FindPropOfType(fTp.sig, "BoolProperty", CPF_OutParm | CPF_ReturnParm);
-    if (!pObj) {
-        ErrSet(err, errCap, "TeleportToLocation has no LocationData parameter", "");
-        return false;
-    }
-
-    Call c(fTp);
-    c.Obj(pObj->name, data);
-    if (pFx) c.U8(pFx->name, greenFx ? 1 : 0);
-    if (!c.Run(pawn)) {
-        ErrSet(err, errCap, "TeleportToLocation faulted", "");
-        return false;
-    }
-    return true;
+    return FollowTravelActor(actor, p.actor, pawn, err, errCap, greenFx);
 }
 
 // ---- hard map transition: the game's own world-load entry (G6) -------------
@@ -4109,13 +4158,18 @@ bool EnemyIdentity(EnemyRec& r)
         memcpy(r.guid, g, sizeof(r.guid));
         r.haveGuid = true;
         r.src = enemyid::SRC_SPAWNER;
+        // One INFO line per identified enemy: the parity run has to be able to show all
+        // three identity sources and compare the keys across the two logs.
+        char cn[64] = "?";
+        FNameToString(ObjNameRaw(ObjClass(r.actor)), cn, sizeof(cn));
+        QDLOG(LOG_INFO, "enemy id: spawner ", hex32(r.guid[0]), " (", cn, ")");
         return true;
     }
     if (src == enemyid::SRC_PLACED) {
         r.haveGuid = enemyid::PlacedKey(path, r.guid);
         r.src = enemyid::SRC_PLACED;
         if (r.haveGuid) {
-            QDLOG(LOG_DEBUG, "enemy id: placed ", path,
+            QDLOG(LOG_INFO, "enemy id: placed ", path, " key=", hex32(r.guid[0]),
                   (taken ? " (its spawner GUID is held by another live enemy)" : ""));
         }
         return r.haveGuid;
@@ -4210,7 +4264,7 @@ bool EnemyIdentity(EnemyRec& r)
     r.haveGuid = !enemyid::ZeroKey(r.guid);
     r.src = enemyid::SRC_SUMMON;
     if (r.haveGuid) {
-        QDLOG(LOG_DEBUG, "enemy id: summon at ", dec(r.guidSpawn[0]), ",", dec(r.guidSpawn[1]),
+        QDLOG(LOG_INFO, "enemy id: summon at ", dec(r.guidSpawn[0]), ",", dec(r.guidSpawn[1]),
               ",", dec(r.guidSpawn[2]), " dup=", dec((int)dup), " key=", hex32(r.guid[0]));
     }
     return r.haveGuid;
@@ -7112,9 +7166,38 @@ bool LooksLikeADrop(void* actor)
     return false;
 }
 
-// The game's own drop key, recovered from the drop actor where the class exposes it.
-// A class that names none of these is skipped and reported once: inventing an identity
-// would make two different drops address one slot.
+// The drop's identity.  Two paths, in order of strength:
+//
+//  1. the game's own `{source, dropIndex}` where the class exposes it.  That is the
+//     authoritative key qdloot.h was designed around.
+//  2. a DERIVED key when it does not -- which is this build (R62): the drop actor is an
+//     `ItemPickup_Base` subclass and none of the source/item spellings exist.  The
+//     derived key is the item CLASS path plus the quantized spawn point, both of which
+//     the cooked content and the shared enemy death make identical on the two machines.
+//     A small ordinal separates identical drops that coincide.
+//
+// Inventing a key would be wrong if two different drops could address one slot; both
+// halves of the derived key (class, place) are shared facts, so they cannot.
+loot::DropOrdinals g_lootOrd;
+
+bool DerivedLootKey(void* actor, uint32_t* hash, int32_t* index, char* path, int cap)
+{
+    char cls[192];
+    if (avatar::AssetPath(ObjClass(actor), cls, sizeof(cls)) <= 0 || !cls[0]) return false;
+    ActorXform x;
+    if (!ReadActorXform(actor, &x)) return false;
+    int32_t q[3] = { loot::QuantizeCm(x.px, 100), loot::QuantizeCm(x.py, 100),
+                     loot::QuantizeCm(x.pz, 100) };
+    uint32_t clsHash = loot::HashSource(cls);
+    uint16_t dup = g_lootOrd.Claim(clsHash, q, Net::Now());
+    char text[320];
+    loot::DerivedKeyText(cls, q, dup, text, sizeof(text));
+    *hash = loot::HashSource(text);
+    *index = (int32_t)dup;
+    loot::CopyPath(path, cap, cls);
+    return true;
+}
+
 bool LootKeyOf(void* actor, uint32_t* hash, int32_t* index, char* path, int cap)
 {
     static const char* kSources[] = {"DropSource", "SourceActor", "SourceObject", "Source",
@@ -7126,21 +7209,31 @@ bool LootKeyOf(void* actor, uint32_t* hash, int32_t* index, char* path, int cap)
     void* src = nullptr;
     for (unsigned i = 0; i < sizeof(kSources) / sizeof(kSources[0]) && !src; ++i)
         src = ObjPropC(actor, kSources[i]);
-    if (!src) return false;
-    char sn[80];
-    if (FNameToString(ObjNameRaw(src), sn, sizeof(sn)) <= 0) return false;
-    *hash = loot::HashSource(sn);
 
-    *index = 0;
-    for (unsigned i = 0; i < sizeof(kIndexes) / sizeof(kIndexes[0]); ++i)
-        if (IntPropC(actor, kIndexes[i], index)) break;
+    if (src) {
+        char sn[80];
+        if (FNameToString(ObjNameRaw(src), sn, sizeof(sn)) > 0 && sn[0]) {
+            *hash = loot::HashSource(sn);
+            *index = 0;
+            for (unsigned i = 0; i < sizeof(kIndexes) / sizeof(kIndexes[0]); ++i)
+                if (IntPropC(actor, kIndexes[i], index)) break;
+            void* item = nullptr;
+            for (unsigned i = 0; i < sizeof(kItems) / sizeof(kItems[0]) && !item; ++i)
+                item = ObjPropC(actor, kItems[i]);
+            if (!item || avatar::AssetPath(item, path, cap) <= 0) {
+                // The key is complete without an item asset; the path is only the wire's
+                // human-readable half, so fall back to the class name rather than refuse.
+                char cls[192];
+                if (avatar::AssetPath(ObjClass(actor), cls, sizeof(cls)) > 0)
+                    loot::CopyPath(path, cap, cls);
+                else
+                    loot::CopyPath(path, cap, "?");
+            }
+            return true;
+        }
+    }
 
-    void* item = nullptr;
-    for (unsigned i = 0; i < sizeof(kItems) / sizeof(kItems[0]) && !item; ++i)
-        item = ObjPropC(actor, kItems[i]);
-    if (!item) return false;
-    if (avatar::AssetPath(item, path, cap) <= 0) return false;
-    return true;
+    return DerivedLootKey(actor, hash, index, path, cap);
 }
 
 void LootScanStep()
@@ -7168,7 +7261,14 @@ void LootScanStep()
         uint32_t hash = 0;
         int32_t index = 0;
         char path[loot::kMaxPathLen];
-        if (!LootKeyOf(o, &hash, &index, path, sizeof(path))) {
+        bool haveKey = false;
+        // The derived identity reads the actor's class, transform and (on the game-key
+        // path) its properties.  A world load frees those between the class test above and
+        // this read; the same containment as the class test keeps one dying actor from
+        // taking the session down on the frame the world is torn down.
+        __try { haveKey = LootKeyOf(o, &hash, &index, path, sizeof(path)); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { haveKey = false; }
+        if (!haveKey) {
             if (!g_lootSaidUnrepresented) {
                 g_lootSaidUnrepresented = true;
                 QDLOG(LOG_WARN, "loot: a drop actor exposes no source/item property; "
@@ -7215,6 +7315,7 @@ void LootPump(uint32_t now)
     if (world != lastWorld) {
         lastWorld = world;
         g_loot.Reset();          // drops are per-world; a stale tombstone is not a fact
+        g_lootOrd.Reset();
         g_lootActorN = 0;
         g_lootScanCursor = 0;
     }
@@ -8730,9 +8831,21 @@ void* RigFindNear(const char* sub, float* distOut, ActorXform* xfOut, char* name
 
     static ActorStateOwner owners[256];
     int n = BuildActorStateOwners(owners, 256);
+    // `closedchest`: a chest whose CONTAINER still says it is unopened.  G2's failure in
+    // Session 7 was a pick that happened to be an already-open quest chest, so the next
+    // run has to be able to ask for one that has something left to open.
+    const bool wantClosedChest = (sub && enemyown::HasCI(sub, "closed"));
     for (int i = 0; i < n; ++i) {
         if (!owners[i].actor || !ObjectIsLive(owners[i].actor)) continue;
-        if (!RigNameMatches(owners[i].actor, sub)) continue;
+        if (wantClosedChest) {
+            if (!RigNameMatches(owners[i].actor, "chest")) continue;
+            int32_t v = 0;
+            bool isSet = false;
+            char gerr[128];
+            if (!ReadActorStateViaGetterGuarded(owners[i].actor, owners[i].index, &v, &isSet,
+                                                gerr, sizeof(gerr))) continue;
+            if (isSet && v != 0) continue;
+        } else if (!RigNameMatches(owners[i].actor, sub)) continue;
         ActorXform x;
         if (!ReadActorXform(owners[i].actor, &x)) continue;
         float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
@@ -8975,8 +9088,8 @@ void DevScanNearestBody()
               ",", flt(best.py, 0), ",", flt(best.pz, 0), " dist=", flt(bestD, 0));
     }
 
-    static ActorStateOwner owners[64];
-    int n = BuildActorStateOwners(owners, 64);
+    static ActorStateOwner owners[256];
+    int n = BuildActorStateOwners(owners, 256);
     bestD = -1.0f;
     const ActorStateOwner* bestOwner = nullptr;
     for (int i = 0; i < n; ++i) {
@@ -9006,11 +9119,11 @@ void DevScanNearestBody()
     // one -- marked, not cleared: clearing the entry hid it from the KIND list below,
     // which then reported the nearest coin as 195 m away instead of 46 m (measured,
     // Session 6).
-    bool taken[64] = {false};
+    bool taken[256] = {false};
     for (int k = 0; k < 5; ++k) {
         float bd = -1.0f;
         int bi = -1;
-        for (int i = 0; i < n && i < 64; ++i) {
+        for (int i = 0; i < n && i < 256; ++i) {
             if (taken[i] || !owners[i].actor || !ObjectIsLive(owners[i].actor)) continue;
             ActorXform x;
             if (!ReadActorXform(owners[i].actor, &x)) continue;
@@ -9025,8 +9138,47 @@ void DevScanNearestBody()
         ActorXform x;
         taken[bi] = true;
         if (!ReadActorXform(owners[bi].actor, &x)) continue;
+        int32_t sv = 0;
+        bool sset = false;
+        char serr[128];
+        bool haveSv = ReadActorStateViaGetterGuarded(owners[bi].actor, owners[bi].index, &sv,
+                                                     &sset, serr, sizeof(serr));
+        uint8_t op = 0;
+        bool haveOp = BytePropC(owners[bi].actor, "Opened", &op);
         QDLOG(LOG_INFO, "scan: savable ", dec(k), " ", nm, " at ", flt(x.px, 0), ",", flt(x.py, 0),
-              ",", flt(x.pz, 0), " dist=", flt(bd, 0));
+              ",", flt(x.pz, 0), " dist=", flt(bd, 0),
+              " value=", (haveSv ? dec((int)sv) : dec(-1)), " opened=",
+              (haveOp ? (op ? "1" : "0") : "n/a"));
+    }
+
+    // EVERY chest near the player, with the state that decides whether G2 can be tested
+    // at all.  R60 picked an already-open quest chest and produced only a flag change, so
+    // the next run must show which chests are still closed (container value 0) instead of
+    // letting the resolver choose blind.
+    {
+        int chestShown = 0;
+        for (int i = 0; i < n && chestShown < 8; ++i) {
+            if (!owners[i].actor || !ObjectIsLive(owners[i].actor)) continue;
+            if (!RigNameMatches(owners[i].actor, "chest")) continue;
+            ActorXform x;
+            if (!ReadActorXform(owners[i].actor, &x)) continue;
+            float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
+            float d = sqrtf(dx * dx + dy * dy + dz * dz);
+            char nm[64] = "", gs[80] = "";
+            FNameToString(ObjNameRaw(owners[i].actor), nm, sizeof(nm));
+            EncodeGuidForLog(owners[i].guid, gs, sizeof(gs));
+            int32_t v = 0;
+            bool sset = false;
+            char serr[128];
+            bool haveSv = ReadActorStateViaGetterGuarded(owners[i].actor, owners[i].index, &v,
+                                                         &sset, serr, sizeof(serr));
+            uint8_t op = 0;
+            bool haveOp = BytePropC(owners[i].actor, "Opened", &op);
+            QDLOG(LOG_INFO, "scan: chest ", nm, " guid=", gs, " index=", dec(owners[i].index),
+                  " dist=", flt(d, 0), " value=", (haveSv ? dec((int)v) : dec(-1)),
+                  " opened=", (haveOp ? (op ? "1" : "0") : "n/a"));
+            ++chestShown;
+        }
     }
 
     // THE SAFE TARGET LIST.  Measured (LIVE-TEST-LOG Session 5): the five nearest
@@ -9059,8 +9211,17 @@ void DevScanNearestBody()
             if (!ReadActorXform(owners[bi].actor, &x)) continue;
             char gs[80] = "";
             EncodeGuidForLog(owners[bi].guid, gs, sizeof(gs));
+            int32_t sv = 0;
+            bool sset = false;
+            char serr[128];
+            bool haveSv = ReadActorStateViaGetterGuarded(owners[bi].actor, owners[bi].index, &sv,
+                                                         &sset, serr, sizeof(serr));
+            uint8_t op = 0;
+            bool haveOp = BytePropC(owners[bi].actor, "Opened", &op);
             QDLOG(LOG_INFO, "scan: kind ", kinds[k], " ", nm, " guid=", gs, " at ", flt(x.px, 0), ",",
-                  flt(x.py, 0), ",", flt(x.pz, 0), " dist=", flt(bd, 0));
+                  flt(x.py, 0), ",", flt(x.pz, 0), " dist=", flt(bd, 0),
+                  " value=", (haveSv ? dec((int)sv) : dec(-1)),
+                  " opened=", (haveOp ? (op ? "1" : "0") : "n/a"));
         }
         // The enemy is the other half of the list: a scenario has to stand next to one to
         // be attacked by it (G4) or to kill it (the ownership lane).
@@ -9163,6 +9324,47 @@ bool RigCallVerb(void* obj, const char* name, void* arg, const char** ranName)
     return ok;
 }
 
+// One line naming where a one-shot actor's state actually lives.  Added for Session 8's
+// G2 question: R60's chest changed only `TotalChestsOpened`, so the next run must say
+// whether the actor is a Savable (GUID + container index), what its container value and
+// the game's own getter say, and whether it carries an `Opened` / `IsOpen` gate.
+void DevActorStateDump(void* actor)
+{
+    if (!actor) return;
+    char nm[64] = "?", cls[64] = "?";
+    FNameToString(ObjNameRaw(actor), nm, sizeof(nm));
+    FNameToString(ObjNameRaw(ObjClass(actor)), cls, sizeof(cls));
+
+    static ActorStateOwner owners[512];
+    int n = BuildActorStateOwners(owners, 512);
+    int index = -1;
+    char gs[80] = "-";
+    for (int i = 0; i < n; ++i) {
+        if (owners[i].actor != actor) continue;
+        index = owners[i].index;
+        EncodeGuidForLog(owners[i].guid, gs, sizeof(gs));
+        break;
+    }
+    int32_t value = 0;
+    bool isSet = false;
+    char gerr[160] = "";
+    bool haveValue = index >= 0 &&
+        ReadActorStateViaGetterGuarded(actor, index, &value, &isSet, gerr, sizeof(gerr));
+    bool opened = false, isOpen = false;
+    bool haveOpened = ReadActorBool(actor, "Opened", &opened);
+    bool haveIsOpen = ReadActorBool(actor, "IsOpen", &isOpen);
+    int myN = ReadActorArrayNum(actor, "MySaveData");
+    int guidN = ReadActorArrayNum(actor, "GUIDs");
+    QDLOG(LOG_INFO, "dev state: ", nm, " [", cls, "] savable=", (index >= 0 ? "yes" : "no"),
+          " guid=", gs, " index=", dec(index),
+          " value=", (haveValue ? dec((int)value) : dec(-1)),
+          " isset=", (haveValue ? (isSet ? "1" : "0") : "?"),
+          " opened=", (haveOpened ? (opened ? "1" : "0") : "n/a"),
+          " isOpen=", (haveIsOpen ? (isOpen ? "1" : "0") : "n/a"),
+          " mySaveData=", dec(myN), " guids=", dec(guidN),
+          (haveValue ? "" : " getter="), (haveValue ? "" : gerr));
+}
+
 void DevInteractBody(void* explicitTarget)
 {
     // WHERE THE VERB ACTUALLY IS.  Measured (Session 6): `PlayerInteractionComponent_C`
@@ -9207,6 +9409,7 @@ void DevInteractBody(void* explicitTarget)
 
     QDLOG(LOG_INFO, "dev interact: target=", d, " component=", (comp ? "found" : "MISSING"),
           (ran1 ? " verb=" : " no verb ran"), (ran1 ? ran1 : ""), (ran2 ? "+" : ""), (ran2 ? ran2 : ""));
+    if (tgt) DevActorStateDump(tgt);
     if (!ran1 && tgt) {
         // A refused verb is only diagnosable if the real surface is on the record.
         static void* dumpedFor = nullptr;
@@ -9645,7 +9848,11 @@ void DevTravelLever(uint32_t now)
         break;
     }
     char err[160];
-    bool ok = FollowTravelDest(dest, g_localPawn, err, sizeof(err), true);
+    // The actor RigFindNear already found IS the destination.  Re-resolving it by name
+    // here was Session 7's bug: FindTravelActor's world test rejected the very actor the
+    // search had just returned, so the origin's own trip reported "no live actor named
+    // Teleporter_GR" and the partner never heard a destination to follow.
+    bool ok = FollowTravelActor(actor, nm, g_localPawn, err, sizeof(err), true);
     QDLOG(ok ? LOG_INFO : LOG_WARN, "rig: travel lever -> ", dest,
           " (LocationData resolved, dest field ", used, ") TeleportToLocation ran=",
           dec(ok ? 1 : 0), (ok ? "" : ": "), (ok ? "" : err));
@@ -9734,11 +9941,143 @@ void DevLevelLever(uint32_t now)
     }
 }
 
-// Why a drop probe exists: the loot lane's identity is the game's own {source, index},
-// and the actor the game spawns for a drop is an ItemPickup subclass whose properties
-// are the only place that identity can be read back.  One line per nearby candidate
-// makes the lane's refusal ("this drop is not represented on the wire") diagnosable
-// instead of a guess.
+// Defined with the menu-time-dilation block below; the rig lever that drives the game's
+// own SetPauseTimeDilation sits here, before it.
+extern int g_devMenuPretend;
+const char* LocalOpenMenuName();
+float GlobalDilation();
+
+// QDCOOP_TEST_MENUFILE: TEST INSTANCES ONLY -- drive the game's own menu-pause path.
+// `SetPauseTimeDilation(true|false)` on the pawn is the entry `GameMenu_C` and the
+// inventory screens use (13b: the player declares it; TimeDilationManagement owns the
+// value).  Calling it is the game's code path for the event, not a simulated pause.
+// `dilate`/`undilate` drive `UGameplayStatics::SetGlobalTimeDilation` directly with a
+// pretend-menu flag, which exercises the suppression without needing a widget:
+// the setter is what a menu would call.
+char     g_devMenuApplied[64] = "";
+uint32_t g_devMenuPoll = 0;
+
+void DevMenuLever(uint32_t now)
+{
+    static char path[MAX_PATH];
+    static int on = -1;
+    if (on < 0) {
+        DevRigPath("QDCOOP_TEST_MENU", "qd.menu", path, sizeof(path));
+        on = path[0] != 0;
+        if (on) QDLOG(LOG_INFO, "rig: menu control '", path, "' enabled exists=",
+                      (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES ? "yes" : "no"));
+    }
+    if (!on) return;
+    if (now - g_devMenuPoll < 500) return;
+    g_devMenuPoll = now;
+
+    char spec[64];
+    if (!DevRigText("QDCOOP_TEST_MENU", "qd.menu", spec, sizeof(spec))) return;
+    if (strcmp(spec, g_devMenuApplied) == 0) return;
+    lstrcpynA(g_devMenuApplied, spec, sizeof(g_devMenuApplied));
+
+    float before = GlobalDilation();
+    if (!strcmp(spec, "0") || !strcmp(spec, "close") || !strcmp(spec, "false"))
+        g_devMenuPretend = 0;
+    if (!strcmp(spec, "dilate") || !strcmp(spec, "undilate")) {
+        bool on2 = !strcmp(spec, "dilate");
+        g_devMenuPretend = on2 ? 1 : 0;
+        float want = on2 ? 0.2f : 1.0f;
+        if (g_oSetGlobalDilation)
+            g_oSetGlobalDilation(GWorldPtr(), want);
+        QDLOG(LOG_INFO, "rig: menu lever -> pretend menu ", (on2 ? "open" : "closed"),
+              ", SetGlobalTimeDilation(", flt(want, 2), ") issued; dilation ",
+              flt(before, 2), " -> ", flt(GlobalDilation(), 2));
+        return;
+    }
+
+    if (!IsGameplayPawn(g_localPawn)) {
+        QDLOG(LOG_WARN, "rig: menu lever -- no local gameplay pawn");
+        return;
+    }
+    Fn f;
+    if (!f.Resolve(g_localPawn, "SetPauseTimeDilation")) {
+        QDLOG(LOG_WARN, "rig: menu lever -- FS_PlayerChar.SetPauseTimeDilation not found");
+        return;
+    }
+    bool wantPause = !strcmp(spec, "1") || !strcmp(spec, "open") || !strcmp(spec, "true");
+    Call c(f);
+    const char* set = "none";
+    for (int i = 0; i < f.sig.props; ++i) {
+        const PropDesc& d = f.sig.p[i];
+        if (!NameEquals(d.type, "BoolProperty") || (d.flags & CPF_OutParm)) continue;
+        c.U8(d.name, wantPause ? 1 : 0);
+        set = d.name;
+        break;
+    }
+    bool ok = c.Run(g_localPawn);
+    QDLOG(LOG_INFO, "rig: menu lever -> SetPauseTimeDilation(", (wantPause ? "1" : "0"),
+          ") param=", set, " props=", dec(f.sig.props), " ran=", dec(ok ? 1 : 0),
+          "; dilation ", flt(before, 2), " -> ", flt(GlobalDilation(), 2),
+          " menu=", (LocalOpenMenuName() ? LocalOpenMenuName() : "-"));
+}
+
+
+// QDCOOP_TEST_EFUNC / QDCOOP_TEST_EATTACK: TEST INSTANCES ONLY.
+//   qd.efunc   = "1" dumps the nearest enemy's UFunction surface once, so an attack verb
+//                can be chosen from what the build actually has rather than guessed.
+//   qd.eattack = "1" calls the first of a small set of attack verbs the enemy exposes.
+//                Calling the game's own attack entry is a provocation, not a simulation:
+//                the hit that follows is the game's, which is what G4 needs to measure.
+char     g_devEFuncApplied[64] = "";
+char     g_devEAttackApplied[64] = "";
+uint32_t g_devEFuncPoll = 0;
+
+void DevEFuncLever(uint32_t now)
+{
+    static char fpath[MAX_PATH], apath[MAX_PATH];
+    static int on = -1;
+    if (on < 0) {
+        DevRigPath("QDCOOP_TEST_EFUNC", "qd.efunc", fpath, sizeof(fpath));
+        DevRigPath("QDCOOP_TEST_EATTACK", "qd.eattack", apath, sizeof(apath));
+        on = (fpath[0] || apath[0]) ? 1 : 0;
+        if (on) QDLOG(LOG_INFO, "rig: enemy-func controls efunc='", fpath, "' eattack='", apath,
+                      "' enabled");
+    }
+    if (!on || !IsGameplayPawn(g_localPawn)) return;
+    if (now - g_devEFuncPoll < 500) return;
+    g_devEFuncPoll = now;
+
+    char spec[64];
+    if (fpath[0] && DevRigText("QDCOOP_TEST_EFUNC", "qd.efunc", spec, sizeof(spec)) &&
+        strcmp(spec, g_devEFuncApplied) != 0) {
+        lstrcpynA(g_devEFuncApplied, spec, sizeof(g_devEFuncApplied));
+        float d = 0.0f;
+        ActorXform x = {};
+        char nm[64] = "-";
+        void* a = RigFindNear("enemy", &d, &x, nm, sizeof(nm));
+        if (!a) QDLOG(LOG_WARN, "rig: efunc -- no live enemy found");
+        else {
+            QDLOG(LOG_INFO, "rig: efunc -> ", nm, " dist=", flt(d, 0));
+            LogFunctionsOf(a, nm, 80);
+        }
+    }
+
+    if (apath[0] && DevRigText("QDCOOP_TEST_EATTACK", "qd.eattack", spec, sizeof(spec)) &&
+        strcmp(spec, g_devEAttackApplied) != 0) {
+        lstrcpynA(g_devEAttackApplied, spec, sizeof(g_devEAttackApplied));
+        float d = 0.0f;
+        ActorXform x = {};
+        char nm[64] = "-";
+        void* a = RigFindNear("enemy", &d, &x, nm, sizeof(nm));
+        if (!a) { QDLOG(LOG_WARN, "rig: eattack -- no live enemy found"); return; }
+        static const char* const kVerbs[] = {"Attack", "StartAttack", "PrimaryAttack",
+                                             "MeleeAttack", "PerformAttack", "DoAttack",
+                                             "TryAttack", "BeginAttack"};
+        const char* ran = nullptr;
+        for (unsigned i = 0; i < sizeof(kVerbs) / sizeof(kVerbs[0]) && !ran; ++i)
+            RigCallVerb(a, kVerbs[i], g_localPawn, &ran);
+        QDLOG(LOG_INFO, "rig: eattack -> ", nm, " verb=", (ran ? ran : "none ran"),
+              " dist=", flt(d, 0));
+    }
+}
+
+
 uint32_t g_devDropLast = 0;
 
 void DevDropProbeBody()
@@ -10432,6 +10771,119 @@ void DevProbe2(uint32_t now)
     if (status && stage >= 2 && now - lastFx > 5000) { lastFx = now; ProbeLogArcs("status"); }
 }
 
+// ---------------------------------------------------------------------------
+// Menu time dilation -- the second stop mechanism (13b/13c)
+// ---------------------------------------------------------------------------
+// `SetGamePaused` stops the tick; a menu can instead leave the world ticking at a
+// dilation below 0.5.  D1 measured that the two are distinct: the Escape pause uses the
+// pause pair, while a GameMenu_C can scale the world.  Suppressing only the pause leaves
+// the second door open, so the same switch (SuppressMenuPause) covers both, while a live
+// session refuses to let a LOCAL UI stop the shared clock.  Hit-stop slow-mo runs with no
+// menu open and is deliberately untouched.
+int g_devMenuPretend = 0;   // set by the rig's qd.menu lever ("dilate")
+
+const char* LocalOpenMenuName()
+{
+    if (g_devMenuPretend) return "DevPretendMenu";
+    static char s_menu[64];
+    s_menu[0] = 0;
+    void* p = g_localPawn;
+    if (!p) return nullptr;
+    // The pawn pointer is refreshed at the top of every frame, but a world load destroys
+    // the old pawn between two pumps.  Reading it is exactly the use-after-free class
+    // R64 fixed in PuppetPump; here the value is only a diagnostic, so a fault must
+    // answer "no menu" instead of taking the session down.
+    __try {
+        static const char* const kMenus[] = {
+            "CurrentGameMenu", "CurrentSaveMenu", "CurrentShopMenu",
+            "KeyMenu", "CurrentSearchMenu", "QuickSubmenu"
+        };
+        for (unsigned i = 0; i < sizeof(kMenus) / sizeof(kMenus[0]) && !s_menu[0]; ++i) {
+            void* m = ObjPropC(p, kMenus[i]);
+            if (!m) continue;
+            if (FNameToString(ObjNameRaw(ObjClass(m)), s_menu, sizeof(s_menu)) <= 0)
+                CopyText2(s_menu, sizeof(s_menu), kMenus[i]);
+        }
+        if (!s_menu[0]) {
+            uint8_t b = 0;
+            if (BytePropC(p, "IsInReadTextMenu", &b) && b)
+                CopyText2(s_menu, sizeof(s_menu), "ReadTextMenu");
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        s_menu[0] = 0;
+    }
+    return s_menu[0] ? s_menu : nullptr;
+}
+
+float GlobalDilation()
+{
+    static FnGetGlobalDilation f = (FnGetGlobalDilation)Ptr<void*>(0x028DF810u);
+    void* w = GWorldPtr();
+    if (!f || !w) return 1.0f;
+    return f(w);
+}
+
+void HK_SetGlobalTimeDilation(void* worldContext, float dilation)
+{
+    if (Cfg().suppress_pause && g_net.Connected() && dilation < 0.5f) {
+        const char* menu = LocalOpenMenuName();
+        if (menu) {
+            static uint32_t lastLog = 0;
+            uint32_t now = Net::Now();
+            if (now - lastLog > 1000) {
+                lastLog = now;
+                QDLOG(LOG_WARN, "BLOCK global time dilation ", flt(dilation, 2),
+                      " during a live session (menu ", menu,
+                      "; the peer would see a frozen world)");
+            }
+            return;
+        }
+    }
+    if (g_oSetGlobalDilation) g_oSetGlobalDilation(worldContext, dilation);
+}
+
+void MenuDilationPump(uint32_t now)
+{
+    static uint32_t last = 0, lastLog = 0, lastClock = 0;
+    if (!Cfg().suppress_pause || !g_net.Connected()) return;
+    if (now - last < 250) return;
+    last = now;
+    const char* menu = LocalOpenMenuName();
+    if (menu) {
+        float d = GlobalDilation();
+        if (d < 0.5f) {
+            // A direct AWorldSettings write bypasses the setter; the poll restores it.
+            if (g_oSetGlobalDilation) g_oSetGlobalDilation(GWorldPtr(), 1.0f);
+            if (now - lastLog > 1000) {
+                lastLog = now;
+                QDLOG(LOG_WARN, "restored global time dilation ", flt(d, 2),
+                      " -> 1.00 (menu ", menu, ")");
+            }
+        }
+    }
+    // The clock proof.  `UWorld::UnpausedTimeSeconds` (+0x5A4) advances only while the
+    // world is unpaused; `RealTimeSeconds` (+0x5A8) always advances; `DeltaTimeSeconds`
+    // (+0x5B0) is 0 under pause.  Two machines whose unpaused clocks keep advancing are
+    // the evidence that a menu on one did not freeze the session.
+    if (now - lastClock >= 5000) {
+        lastClock = now;
+        __try {
+            void* w = GWorldPtr();
+            if (w) {
+                float real = *(float*)((uint8_t*)w + 0x5A8);
+                float unp  = *(float*)((uint8_t*)w + 0x5A4);
+                float dt   = *(float*)((uint8_t*)w + 0x5B0);
+                QDLOG(LOG_INFO, "clock: dilation=", flt(GlobalDilation(), 2),
+                      " real=", flt(real, 1), " unpaused=", flt(unp, 1),
+                      " delta=", flt(dt, 4), " menu=", (menu ? menu : "-"));
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            QDLOG(LOG_DEBUG, "clock: unreadable");
+        }
+    }
+}
+
 bool HK_Tick(void* engineLoop)
 {
     // Forward first and keep the answer: the pump below must never change the engine's
@@ -10500,6 +10952,8 @@ bool HK_Tick(void* engineLoop)
     DevTravelLever(now);
     DevHardLever(now);
     DevLevelLever(now);
+    DevMenuLever(now);
+    DevEFuncLever(now);
     DevDropProbe(now);
     TravelPump(now);
     StreamPump(now);
@@ -10510,6 +10964,7 @@ bool HK_Tick(void* engineLoop)
     MoverPump(now);
     LootPump(now);
     SuspendPump(now);
+    MenuDilationPump(now);
 
     if (tracing) QDLOG(LOG_DEBUG, "  frame ", dec(g_frame), " end");
     g_lastTickMs = now;
@@ -10522,6 +10977,8 @@ bool HK_SetGamePaused(void* worldContext, bool paused)
     // freeze UWorld::TimeSeconds), while dialogue does not.  A paused host stops
     // ticking, which to the peer looks exactly like a hang.  So in a live session a
     // pause is declined -- and logged as BLOCK so a suppressed pause is never silent.
+    // The second stop mechanism lives in HK_SetGlobalTimeDilation: a menu that does not
+    // pause can still scale the world below 0.5.
     if (Cfg().suppress_pause && paused && g_net.Connected()) {
         static uint32_t lastLog = 0;
         uint32_t now = Net::Now();
@@ -10719,6 +11176,7 @@ DWORD WINAPI BootstrapThread(LPVOID)
         // hook the wrong address.
         const QdTarget* tTick = nullptr;
         const QdTarget* tPause = nullptr;
+        const QdTarget* tDil = nullptr;
         const QdTarget* tStore = nullptr;
         const QdTarget* tPE = nullptr;
         const QdTarget* tVis = nullptr;
@@ -10728,6 +11186,7 @@ DWORD WINAPI BootstrapThread(LPVOID)
             if (NameEquals(kQdTargets[k].name, "ULevelStreaming::SetShouldBeLoaded")) tLoad = &kQdTargets[k];
             if (NameEquals(kQdTargets[k].name, "FEngineLoop::Tick")) tTick = &kQdTargets[k];
             if (NameEquals(kQdTargets[k].name, "UGameplayStatics::SetGamePaused")) tPause = &kQdTargets[k];
+            if (NameEquals(kQdTargets[k].name, "UGameplayStatics::SetGlobalTimeDilation")) tDil = &kQdTargets[k];
             if (NameEquals(kQdTargets[k].name, "StoreEnemySaveState")) tStore = &kQdTargets[k];
             if (NameEquals(kQdTargets[k].name, "UObject::ProcessEvent")) tPE = &kQdTargets[k];
         }
@@ -10739,9 +11198,11 @@ DWORD WINAPI BootstrapThread(LPVOID)
         else QDLOG(LOG_ERROR, "target not found in the table: FEngineLoop::Tick");
         if (tPause) { if (InstallHook(*tPause, (void*)&HK_SetGamePaused, (void**)&g_oSetGamePaused)) ++installed; }
         else QDLOG(LOG_WARN, "target not found in the table: SetGamePaused");
+        if (tDil) { if (InstallHook(*tDil, (void*)&HK_SetGlobalTimeDilation, (void**)&g_oSetGlobalDilation)) ++installed; }
+        else QDLOG(LOG_WARN, "target not found in the table: SetGlobalTimeDilation");
         if (tStore) { if (InstallHook(*tStore, (void*)&HK_StoreEnemySaveState, (void**)&g_oStoreEnemy)) ++installed; }
         else QDLOG(LOG_WARN, "target not found in the table: StoreEnemySaveState");
-        QDLOG(LOG_INFO, "hooks installed: ", dec(installed), " of 3 (ProcessEvent is opt-in)");
+        QDLOG(LOG_INFO, "hooks installed: ", dec(installed), " of 4 (ProcessEvent is opt-in)");
         // The streaming veto is an engine-wide setter; it is hooked only when the union
         // is switched on, so a session without it runs the engine untouched.
         if (Cfg().stream_union) {
