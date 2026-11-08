@@ -1,171 +1,231 @@
 # SYNC-GAPS — what is still not synced, and what it costs
 
-Written 2026-11-08 after enemy, dialogue and level-streaming sync were built
-(branch `sync-world`). Everything here comes from reading the module as it stands —
-which wire kinds it actually sends and handles — and from the cooked Blueprint name tables
-(`analysis/pak/code/blueprints.py` on `EnemySpawner`, `EnemyBase`, `NPC_Base`,
-`DialogueManager`). It is not taken from what the design documents intend. "Built" still
-means **not proven live**: the three new systems are behind `EnemySync`, `DialogueSync`
-and `StreamUnion`, all still `0`.
+Written 2026-11-08, after the second round: peer progression, enemy combat, inventory,
+the dialogue block and the streaming unload path were built on top of the first round's
+enemy/dialogue/streaming work.
+
+Two documents belong beside this one:
+
+* [`SYNC-RESEARCH.md`](SYNC-RESEARCH.md) — what the *game* actually does, measured from
+  the shipped image and the cooked packages. Where this document says "blocked", the
+  reason and the passing probe are there, tagged `[P]`/`[I]`/UNKNOWN.
+* [`WIRE.md`](WIRE.md) — what the messages are.
+
+"Built" still means **not proven live**. Every write path is behind a switch in
+`qdcoop.ini` and every one of those is `0` except `FlagSync`. Nothing in this document has
+been run on two machines yet; §5 lists what a first live session has to show.
 
 ## 0. What the module sends today
 
-| Kind | Sent | Handled | Note |
+| Kind | Sent by | Handled by | Note |
 |---|---|---|---|
-| `PLAYER` | yes | yes | proven live |
-| `WORLD_FLAGS` | host only | peer | host → peer only; see G1 |
-| `ACTOR_STATES` | **no** | **no** | G2 |
-| `INVENTORY` | **no** | **no** | G3 |
-| `ENEMY` | host | peer | new, not proven live |
-| `EQUIPMENT` / `EFFECT` / `EFFECT_MOVE` / `STATUS` | yes | yes | proven live |
-| `INTENT` | peer: kinds 7, 8 only | host: 1, 6 (log only), 4, 7, 8 | **no flag/item/checkpoint intent is ever sent** (G1) |
-| `DIALOGUE` | yes | yes | new, not proven live |
-| `LEVEL_UNION` | yes | yes | new, not proven live |
+| `PLAYER` | both | both | proven live |
+| `WORLD_FLAGS` | host | peer | absolute set, chunked, 1 Hz + on change |
+| `INVENTORY` | host | peer | **new**: absolute set, chunked, gated `InventorySync` |
+| `ACTOR_STATES` | **nobody** | **nobody** | the container is still unlocated — G2 |
+| `ENEMY` | **both** | **both** | **new**: bidirectional; whoever owns an enemy publishes its rows |
+| `ENEMY_DETAIL` | both | both | **new**: montage asset + status mask, reliable, on change |
+| `EQUIPMENT` / `EFFECT` / `EFFECT_MOVE` / `STATUS` | both | both | proven live |
+| `INTENT` | peer | host | kinds 1 (flag), 7 (enemy hit), 8 (enemy record) |
+| `DIALOGUE` | both | both | per-slot talk state |
+| `LEVEL_UNION` | both | both | what each machine's own game wants |
+| `TRAVEL` | both | both | **new**: the map each machine is in, 2 s + on change |
 
-## 1. Gaps that break the co-op promise (fix first)
+No other kind is sent or received. `K_ACTOR_STATES` is decoded in the Rust crate and has
+never had a producer.
 
-**G1. The peer's progression never reaches the host.** `HostApplyIntent` accepts
-`I_SET_FLAG`, but nothing sends one. When the peer opens a barricade, picks up the flying
-sword or finishes a quest step, its `NamedSaveData` changes **locally only**. The host's
-`WORLD_FLAGS` cannot lower the peer's value (monotone rule), so the two saves now differ
-for good, and the host's world never shows what the peer did.
-*Needed:* the mirror already sees every local change (`MirrorObserve`); on the peer, turn
-each raised value into `INTENT kind 1` (absolute, `based_on_rev` = the last host rev). The
-write side is already proven (`NsdWrite` no-op round trip, LIVE-TEST-LOG R21). This is the
-cheapest gap and the biggest one.
+## 1. What this round fixed
 
-**G2. One-shot world objects (`SavableActorStates`) are not synced.** Chests, doors,
-breakable barricades and `ActivatableGroup` setters each live on one machine only. Failure:
-both players loot the same chest, and a door opened by one player is shut for the other.
-*Blocked by:* the container offset (`save+0x168` is a LOW/MEDIUM lead, API-GAPS §2) and the
-lack of any native writer. Getting a read-back oracle is the first step.
+**G1 — the peer's progression now reaches the host.** A rise in `NamedSaveData` observed by
+the read-only mirror on the peer becomes an absolute `INTENT kind 1`. Echo suppression (a
+value the host's own body wrote is remembered per key and never sent back), a bounded
+retry (the host's gate refuses a stale revision, so a refusal is not a loss) and rate
+limiting live in `qdpending.h`. This also covers checkpoints: `CheckpointUnlockCount` is
+just another key and rises like any other. The change uncovered a real defect in the gate
+— the host compared against its *next* revision rather than the one it had published,
+which would have refused every intent forever.
 
-**G3. Inventory and key items are not synced.** A key picked up by one player does not
-exist for the other, so that player is locked out of the region the key opens
-(SYNC-DESIGN §2.4 calls this out as the reason inventory is host-owned).
-*Blocked by:* the inventory **write** (`SaveFunctions_C.AddItemToInventory` has no pair-table
-entry and has to be reached reflectively, API-GAPS §2). The read side (`save+0x28`,
-stride 0x18) is measured.
+**Enemies now fight the player who can reach them.** Ownership follows the nearer player
+(800 cm margin, 1.5 s hold, handoff completed only when the receiver claims it); the
+non-owner freezes its copy and follows the owner's rows, so `ENEMY` is bidirectional.
+Without this a peer standing next to an enemy the host was simulating got a statue,
+because the Blueprint AI only ever targets the local player.
 
-**G4. Enemies only fight the player on their own machine.** Measured in the cooked
-names: aggro, chase and attack go through `GetPlayerCharacter` / `TargetPlayer` /
-`GetTargetPlayer` in `EnemyBase_C` — player 0 of that machine. A host-simulated enemy
-therefore never targets, chases or damages the peer, and the peer is invulnerable
-wherever the host runs the enemies. The peer's driven copies do not attack either,
-because their AI is off.
-*Needed:* a way to make the host's enemy pick the remote body as a target. The puppet is
-a `SkeletalMeshActor`, not an `FS_PlayerChar_C`, so a cast in the Blueprint fails. The
-options are (a) a hidden proxy pawn of the player class standing at the puppet's position
-that the Blueprint can target, or (b) overriding the target in the Blueprint's
-`GetTargetPlayer` through a `ProcessEvent` post-hook. (b) only works if that call is a
-real `ProcessEvent` dispatch and not a VM-internal call, and that is unmeasured. Damage
-taken by the peer would then be an event from host to peer, so a new intent kind would
-be needed in that direction.
+**Enemy damage now goes through a path that exists.** The old code called
+`UGameplayStatics::ApplyDamage` at `0x028D2190`. That function is real, but `EnemyBase_C`
+never imports it and a live pass recorded it never firing on a real kill — so HP
+convergence, the host applying a peer's hit, and the dead-record kill all changed
+*nothing*. It now calls `TryApplyDamage` (the `FB_Damageable` interface message) with a
+`DamageToApply` struct filled by walking the struct's own fields, and is renamed
+`ApplyEnemyDamage` so the name describes what runs.
 
-**G5. Spawners activate only for their own machine's player.** `PlayerIsInActivationRange`,
-`CheckSpawnerMaxDist` and `PlayerDistanceDespawnCheck` are Blueprint and read the local
-player. The enemy model built here works around this: when the host has no live copy,
-the peer runs the enemy itself, and kills come back as `INTENT kind 8`. The cost is that
-when the host walks up later, its spawner spawns a **fresh** enemy (full HP, new
-position), and the peer's copy switches to following it. Making a spawner count the
-remote player is the same problem as G4.
+**Enemy attacks and status effects are visible.** The owner reads the active montage,
+classifies it and sends the asset path in `ENEMY_DETAIL` on change; the follower plays it
+and reads back what is actually playing. Poison and stagger are mirrored only where the
+property exists on the class.
 
-**G6. Level transitions are not coordinated.** Hard transitions (intro, cutscene maps
-`997/998/999_*`, `SipehaWorld`, `B33sment`) and travel are not handled. When one player
-travels, the two are in different worlds. The union, the enemy table and the dialogue
-board all reset on a world change, and nothing brings the other player along. SYNC-DESIGN
-§3 specifies host-announced, acknowledged travel; the travel API itself is still an open
-item (API-GAPS §4). **Announcement plus refusal is implemented** (`K_TRAVEL`, sent by
-both machines, tracked by `stream::MapBoard`): each machine announces its short map name
-on change and every ~2 s; a difference that persists 3 s is logged once, and cross-world
-state is dropped — the partner's `LEVEL_UNION` names are not installed and
-`K_ENEMY`/`K_DIALOGUE` are not applied — until the names match again. Hard travel itself
-stays refused in co-op v1; the session is not torn down.
+**Enemy projectiles reach the partner.** `FxPump` only sent projectiles the *local pawn*
+owned, so a fireball or a spit existed on one machine. A projectile owned or instigated by
+an enemy is now sent, and the peer spawns the same collisionless visual copy the player's
+thrown daggers already use.
 
-## 2. Gaps inside the three systems just built
+**The dialogue block was never working.** `BlockInteract` is not a function anywhere in
+this build: it is a boolean property on `NPC_Base_C` (`+0x0613`). The old code resolved a
+UFunction of that name, found nothing, and left the partner's NPC fully interactable. It
+is written as a property now; `ReenableInteract` (a real zero-argument UFunction) still
+runs on release.
+
+**Inventory is shared, host to peer.** The host publishes its whole `InventoryContents`
+(chunked, absolute, 1 Hz + on change); the peer grants only the difference through the
+read-back-verified `AddItemToInventory` path and never removes anything. `WrGrantItem`
+lives in `qdwrite.h`, which also refuses to trust the `SaveNamedData` frame unless the same
+walk reproduces the measured `GetNamedSaveData` layout.
+
+**Streaming covers the unload path and the world it is in.** `SetShouldBeLoaded` is
+byte-verified at `0x029ACAC0` (`+0xBA` bit 4, pinned by `ShouldBeLoaded`) and is vetoed
+with the same pending-hide flip as the visibility hook, so a level the partner stands in
+cannot be unloaded if the manager ever starts doing that. Level names are accepted only if
+they look like a level name, with the source logged. And a new `MapBoard` declares **world
+divergence** after 3 s of differing map names, after which the partner's union names,
+enemy rows, enemy detail and dialogue are not applied at all.
+
+## 2. Gaps that still break the co-op promise
+
+**G2. One-shot world objects are still not synced.** Chests, doors, breakable barricades
+and `ActivatableGroup` setters live on one machine only, so both players can loot the same
+chest and a door opened by one player is shut for the other. The blocker is unchanged and
+is a *write* blocker: `SavableActorStates` has no native writer and its container offset is
+a LOW/MEDIUM lead (`save+0x168`), not a measurement. What now exists is the other half of
+the recipe — `WrProbeActorState` asks the game's own reflective getter what value an actor
+holds, for a given GUID, and logs it. A live pass reads that value, snaps its own save, and
+the map that changes with it is the container. Until then `ActorStateSync` stays `0` and
+the intent path only logs.
+
+**G3. Inventory is shared in one direction only.** The host's inventory reaches the peer; a
+pickup the *peer* makes stays local and the host never learns of it. So SYNC-DESIGN §2.4's
+acceptance test ("the peer picks up `AquaDoorKey_2`; the host gains it") does **not** pass
+from this round's change — only its mirror image does. This needs a peer-side intent
+producer (`I_GRANT_ITEM` is decoded and handled on the host; its sender does not exist),
+plus a decision the design does not make: what happens when both players loot independently
+and the counts disagree. Two smaller consequences of the one-way rule: the peer never
+*loses* a consumable the host spent (it is replenished, not reduced), and a pending grant
+whose item the host removed before it landed can over-grant by that difference.
+
+**G4. A host-owned enemy still cannot hurt a distant peer.** Ownership by proximity solves
+the common case — the player next to an enemy runs it, with the game's own AI. But when the
+peer is far and the host owns an enemy, that enemy's attacks land on the host's player only
+and the peer is invulnerable to it. The true fix is to make the Blueprint target the remote
+body, and that is now measured to need a **player-class proxy pawn**: `TargetPlayer` is a
+Blueprint variable the AI reads directly (so the `ProcessEvent` post-hook idea is refuted),
+and two cast gates admit only an `FS_PlayerChar_C` implementing `FB_DamageableInterface`,
+which the puppet is not. That puts the unproven spawn proof (`API-GAPS` §5, B7) on the
+critical path of combat, not just of the puppet's appearance. The alternative lane — the
+host computing damage and sending it for the peer to apply to its own pawn through
+`TryApplyDamage` — is implementable but has no trigger until the host knows the peer was hit
+by something it cannot see.
+
+**G5. Spawners still activate only for their own machine's player.**
+`PlayerIsInActivationRange` and `PlayerDistanceDespawnCheck` are Blueprint and read the local
+player. When the host walks up to an enemy the peer was running, the host's spawner spawns a
+**fresh** enemy (full HP, new position) and ownership moves to it. The workaround (the peer
+runs what the host cannot) is in place; the cause is the same proxy-pawn problem as G4.
+
+**G6. Travel is detected, not coordinated.** `TRAVEL` announces the map each machine is in
+and refuses to cross-apply state while they differ, which turns a silent half-applied world
+into one warning. It does not move anybody. The measured entry point is
+`FS_PlayerChar.TeleportToLocation(LocationData, GreenFX)` with
+`EnemySpawner_C.PlayerTeleported()` as the world notification — not `OpenLevel`, which only
+menus and death use. Making the peer follow a host transition is the next step and needs a
+`LocationData` identity both machines agree on.
+
+## 3. Inside the systems built this round
 
 **Enemies**
-- **Attacks and animation.** A driven copy moves and turns. With its AI and tick off it
-  plays no attack montage, so the peer sees an enemy that slides into range and does
-  nothing. Its locomotion animation depends on the movement component's velocity, which
-  is not written. Sync the montage the way `PLAYER.action` does: the active montage's
-  asset as an index, plus a counter.
-- **Enemy projectiles and hit effects** exist on the host only (fireballs and spit from
-  enemies). They could ride the existing `EFFECT` lane.
-- **Status effects on enemies** (fire, poison, stagger, `Poisoned`, `bIsStaggered`) are
-  not synced. Only HP converges.
-- **Bosses.** A boss is synced as an enemy row (position + HP) and nothing more: phases,
-  the boss health bar (`ActivateBossHPBar`), arena teleports
-  (`PlayerTeleportedOutOfBossArena`) and `PairedBossSpawners` run per machine. The
-  multi-GUID spawner (`LargeRobot_Rusted_Spawner`, two GUIDs) is keyed by whatever
-  `GetSaveGUID` returns, which is unverified for that spawner.
-- **Enemies without a spawner** (placed directly, or summoned by a boss) have no key and
-  are not synced at all. They run on both machines.
-- **The damage path is unproven.** HP convergence and peer hits use
-  `UGameplayStatics::ApplyDamage`. Analysis D5 says damage goes ApplyDamage → TakeDamage,
-  but the game also uses `ApplyDamageToHitboxTarget`. Every call is read back, and the
-  log says "enemy damage had NO effect" if that path is wrong.
-- **Hit attribution.** A peer hit is detected as an HP drop on the copy that the mod did
-  not cause. Damage over time on a driven copy, such as poison applied by the peer,
-  arrives as a stream of small hits. That is correct, but noisy.
+- **Bosses are still a row and nothing more.** A boss is position and HP. The boss health
+  bar (`ActivateBossHPBar` on `PlayerStatsAndUtils_C`) and the arena exit
+  (`PlayerTeleportedOutOfBossArena`, a zero-argument spawner event) are both drivable on the
+  peer and are not driven. Boss **phases** are not expressible at all: no cooked package
+  contains `Phase`, `bBoss` or `OnSubStateChanged`.
+- **Enemies placed without a spawner are not synced**, because identity is the spawner's
+  GUID. Summoned and boss-spawned enemies run independently on both machines.
+- **`TryApplyDamage` is unproven.** The amount field is found by name in the struct and every
+  field is logged, but if the payload needs a damage-type tag or a nested `Data` struct, HP
+  will not move and the log will say so. The "enemy damage had NO effect" warning is the
+  acceptance criterion for the next live run, and it must stop appearing.
+- **Montage playback is unproven.** The follower resolves `Montage_Play` reflectively and
+  reads `GetCurrentActiveMontage` back, so a failure is visible rather than silent; an AnimBP
+  that plays sequences rather than montages sends nothing.
+- **Bandwidth with many enemies is unmeasured.** `ENEMY_DETAIL` is on change only, but a
+  large fight is exactly when montages change most.
+- **Hit attribution is noisy.** A peer hit is detected as an HP drop on the copy the mod did
+  not cause, so poison damage-over-time arrives as a stream of small hits. Correct, but
+  noisy in the log.
 
 **Dialogue**
-- **Choices are not synced, by design.** Progression is supposed to flow through flags
-  (G1). Until G1 is fixed, a quest choice the peer makes in dialogue reaches nobody.
-- `entry` (the cursor within a sequence) is not read and is sent as 0. Nothing uses it
-  yet.
-- **Concurrent start.** If both players start the same NPC within one round trip, both
-  conversations run. This is logged, not prevented. Turn-in NPCs can then pay out twice
-  until G1/G3 put the host in charge of the reward.
-- **Death.** The design says a death must end the conversation. The module only
-  *observes* `RunningDialogue`. If the game does not end the talk on death, the partner's
-  NPC stays blocked until the talk ends or goes stale (5 s after the sender stops).
-- `BlockInteract`'s signature is logged on first use, but it is unverified. If it takes
-  arguments, they are passed as zero.
+- **Concurrent start is logged, not prevented.** If both players start the same NPC within
+  one round trip, both conversations run, and turn-ins can pay out twice until the host owns
+  the reward.
+- **Death does not end a conversation.** The module only observes `RunningDialogue`; if the
+  game does not end the talk on death, the partner's NPC stays blocked until the talk ends or
+  goes stale (5 s).
+- **Choices are still not sent as choices.** Progress flows through flags, which now works
+  (G1) — that is the design, not a gap, but it means a dialogue option that writes no flag
+  reaches nobody.
+- `entry` (the cursor within a sequence) is still read as 0.
 
-**Level streaming**
-- **Both setters are guarded.** `SetShouldBeVisible` (`0x029ACB20`) and the virtual
-  `SetShouldBeLoaded` (body `0x029ACAC0`, reached through vtable `+0x270`) are vetoed
-  for a level the partner needs. The measured manager path only calls the visibility
-  setter, so the unload hook is inert unless the game calls it.
-- **Loading cost.** A partner's levels are shown at most two per 500 ms, so a hitch is
-  possible when the players separate. Forced levels stay *loaded* after release (only
-  visibility is released), which costs memory; that is deliberate because it avoids a
-  re-load and a re-spawn when the partner crosses the boundary again.
-- **`bShouldBeVisible` at +0xBA bit 3 and `bShouldBeLoaded` at +0xBA bit 4** are
-  verified by the setters' own bytes (and `ShouldBeLoaded` at vtable `+0x278` reads bit
-  4). The `WorldAsset` soft path at +0x10 used for level names is still unverified; the
-  resolver now logs which source produced each name once and refuses empty/implausible
-  names (preferring `PackageNameToLoad` when the two disagree) rather than publishing
-  them into the union.
+**Streaming**
+- **The two-levels-per-pump budget** can produce a visible hitch when the players separate.
+- **Forced levels stay loaded after release** (only visibility is released). That trades
+  memory for not re-loading and re-spawning the level's enemies, and the manager has no
+  unload path to piggy-back on — `[P]` `SYNC-RESEARCH` §3.
+- **World divergence only exists when `StreamUnion` is on.** With the switch off, nothing
+  tracks which map the partner is in.
 
-## 3. Not synced, lower stakes
+## 4. Not synced, lower stakes
 
-- **Checkpoints** (`INTENT kind 5`, `SavePointsVisited`, `CheckpointUnlockCount`): never sent,
-  so each player unlocks fast-travel alone.
-- **Suspend saves** (SYNC-DESIGN §2.11): nothing holds `BlockSuspendSaves` or re-applies
-  host state after a suspend load. The `-UserDir` isolation in the test rig protects the
-  saves, but a player's normal launch shares `%LOCALAPPDATA%`.
-- **Moving world objects** (elevators, platforms, `Activatable` movers): each machine
-  runs its own, so they can be at different positions. A player riding one is then shown
-  floating on the other machine.
-- **Loot pickups.** Each machine rolls its own drops (SYNC-DESIGN §2.5). A drop picked
-  up on one machine stays on the floor on the other, and quest items can be doubled.
-- **Shop, journal/bestiary, XP, weapon levels, grimoire ink.** These are per-player by
-  nature. They only become a problem if the owner wants shared progress.
-- **Peer vitals.** The partner's HP and death are not shown (no HUD element). A death
-  shows only as the body's fall.
-- **Cutscenes / sequencer.** They play only on the machine that triggers them.
+- **Moving world objects** (elevators, platforms, `Activatable` movers): each machine runs
+  its own, so a player riding one is shown floating on the other.
+- **Loot pickups.** Each machine rolls its own drops; a drop picked up on one machine stays
+  on the floor on the other, and quest items can be doubled.
+- **Shop, journal/bestiary, XP, weapon levels, grimoire ink.** Per-player by nature.
+- **Peer vitals.** The partner's HP and death are not shown; a death shows as the body
+  falling.
+- **Cutscenes / sequencer** play only on the machine that triggers them.
+- **Suspend saves.** Nothing holds `BlockSuspendSaves` or re-applies host state after a
+  suspend load. The test rig's `-UserDir` isolation protects the saves; a player's normal
+  launch shares `%LOCALAPPDATA%`.
 
-## 4. Suggested order
+Checkpoints are **not** on this list any more: they are a `NamedSaveData` counter, so the
+peer-intent path covers them.
 
-1. **G1** (peer flag intents). The write path is proven and the change is small.
-2. **Live-prove the three new systems.** Use two instances in `100_GR` and run the
-   SYNC-DESIGN §2.6/§2.7/§2.8 acceptance tests, with the read-back log lines named in
-   §2 above.
-3. **G4/G5** (enemies targeting the remote player). Without this, co-op combat is one
-   player fighting while the other watches.
-4. **Enemy attack montages and projectiles** (§2). They are cheap once G4 decides who
-   is attacked.
-5. **G3 and G2.** They are blocked on write APIs and need oracle work first.
-6. **G6** (coordinated travel).
+## 5. What a first live two-instance run has to show
+
+Ordered, because each one makes the next diagnosable.
+
+1. **Load.** The `switches:` line, `NAMED-SAVE ORACLE PASS` (or a loud FAIL), the container
+   offsets, `enemy sync: FS_EnemyCharacterBase found`, and
+   `hooked ULevelStreaming::SetShouldBeLoaded` when `StreamUnion=1`.
+2. **G1.** Peer opens a barricade in `100_GR`: the peer logs `flag intent sent … try 1/5`
+   then `flag intent confirmed`; the host logs `intent applied:`. No second send for the
+   same value.
+3. **Enemies.** With `EnemySync=1`: a kill with the peer nearby shows `Paused ok=1`, an
+   ownership handoff, and **no** `enemy damage had NO effect`.
+4. **Dialogue.** `dialogue: BLOCK <npc> BlockInteract=1` on the partner's machine, and the
+   NPC really does not start.
+5. **Streaming.** `level name: <name> from <source>` with no `REFUSED`, and a trip into a
+   cutscene map producing one `WORLD DIVERGENCE` warning and one `worlds agree again`.
+6. **Inventory.** With `InventorySync=1`: the host picking up the aqua key produces
+   `inventory sent rev=N`, and on the peer `write api: AddItemToInventory … read back`.
+
+## 6. Suggested order from here
+
+1. **Live-prove this round** (§5). Nothing new should be built on a path that has never run;
+   every correction in this round came from measurement rather than from play, and more will
+   surface the same way.
+2. **B7, the player-class spawn.** It is now the blocker for enemy targeting (G4/G5) as well
+   as for the puppet body, and the enemy ownership work is the best test bed for it.
+3. **The peer → host item lane** (G3): a small intent producer plus a policy decision that
+   `SYNC-DESIGN` §2.4 does not make.
+4. **G2.** The read oracle exists; one live pass with a known chest value locates the
+   container.
+5. **Boss bar and arena exit**, which are two reflective calls, and then G6 travel.
