@@ -53,6 +53,7 @@
 #include "qdsubstrate.h"
 #include "qdreflect.h"
 #include "qdsave.h"
+#include "qdwrite.h"
 #include "qdavatar.h"
 #include "qdwire.h"
 #include "qdnet.h"
@@ -661,8 +662,32 @@ void HostApplyIntent(wire::Reader& r)
             QDLOG(LOG_WARN, "intent write failed: ", b.name, " ", err);
         }
     } else if (b.kind == wire::I_ACTOR_STATE) {
-        QDLOG(LOG_INFO, "actor-state intent from peer guid=", hex32(b.guid[0]),
-              " value=", dec(b.value), " (apply path pending)");
+        if (!Cfg().actor_state_sync) return;
+        // The SavableActorStates offset is unproven (save+0x168 is a LOW/MEDIUM lead),
+        // so this branch does NOT write.  It runs the read-back oracle: find the actor
+        // by GUID, ask the game's own reflective getter what value it holds, and log it.
+        // A live pass then searches memory for a map that returns this same value.
+        QdGuid g = { b.guid[0], b.guid[1], b.guid[2], b.guid[3] };
+        int32_t v = 0;
+        char err[160];
+        if (WrProbeActorState(g, &v, err, sizeof(err))) {
+            QDLOG(LOG_INFO, "actor-state intent: peer value=", dec(b.value),
+                  " reflective=", dec(v), " (oracle only; nothing written)");
+        } else {
+            QDLOG(LOG_WARN, "actor-state intent: probe failed: ", err);
+        }
+    } else if (b.kind == wire::I_GRANT_ITEM) {
+        if (!Cfg().flag_sync) return;
+        // The inventory write rides the same save-write switch as the flag path: there is
+        // no separate switch, and adding one would let a half-configured client write
+        // inventory while refusing flags from the same container.
+        char err[160];
+        if (WrGrantItem(b.name, b.value, err, sizeof(err))) {
+            QDLOG(LOG_INFO, "inventory grant applied: ", b.name, " x", dec(b.value));
+        } else {
+            QDLOG(LOG_WARN, "inventory grant failed: ", b.name, " x", dec(b.value),
+                  ": ", err);
+        }
     } else if (b.kind == wire::I_ENEMY_HIT || b.kind == wire::I_ENEMY_RECORD) {
         HostApplyEnemyIntent(b);
     } else if (b.kind == wire::I_DIALOGUE_ANS) {
