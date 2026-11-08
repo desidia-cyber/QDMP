@@ -472,6 +472,213 @@ twice.
 
 ---
 
+## 5A. The two write paths that failed live, and what the game says the shape is
+
+LIVE-TEST-LOG Session 6 recorded two failures that the transport did not explain: the G3
+inventory grant read `count did not rise by the requested amount: 0 -> 0` for every key
+item, and the G4 damage lane read `player damage had NO effect: TryApplyDamage ran asked
+20.0 returned 0.00 hp 400.0 -> 400.0`. Both are now root-caused from the **cooked
+packages**, not from a guess, and both were in the module's assumption about the game
+rather than in the state machine — the pattern every previous round found.
+
+### 5A.1 G3 — the `SoftObjectProperty` frame was written 16 bytes too low
+
+**What the live log measured.** The signature block is recorded verbatim on both
+instances, and it is the same on both:
+
+```
+write api: GetNamedSaveData=... AddItemToInventory=1DF5D64F040
+signature AddItemToInventory props=3 parms=56 ret@-1
+    Item : SoftObjectProperty @0 size=40 flags=00000094
+    Count : IntProperty @40 size=4 flags=40000294
+    __WorldContext : ObjectProperty @48 size=8 flags=40000294
+```
+
+So the parameter list, the order and the `__WorldContext` position the module already
+handles are **right**. `size=40` is the tell: this build reflects a 40-byte
+`FSoftObjectPtr`, whose first field is a *weak object pointer*, not the path.
+
+**What `FSoftObjectPtr` is on this build (40 bytes, measured three ways in this tree):**
+
+```
++0x00  FWeakObjectPtr   int32 ObjectIndex; int32 ObjectSerialNumber     (8)
++0x08  int32 TagAtLastTest + 4 bytes padding                            (8)
++0x10  FSoftObjectPath  FName AssetPathName                             (8)
++0x18                   FString SubPathString { wchar_t* Data; int32 Num; int32 Max } (16)
+                                                               total 0x28 = 40
+```
+
+The three confirmations are not new work — they were already correct in the same source
+file and its neighbours, which is why the differential is visible:
+
+* `qdavatar.h` `LoadAsset` (`KismetSystemLibrary::LoadAsset_Blocking`) writes the FName at
+  `p + 16` and documents the class as "FWeakObjectPtr(8), TagAtLastTest(4)+pad(4), then
+  FSoftObjectPath{...} — 40 bytes".
+* `proxy.cpp` `DevGive` calls **this same** `AddItemToInventory` and writes the FName at
+  `at + 16`.
+* `proxy.cpp` `LevelNameOf` reads `TSoftObjectPtr<UWorld>::AssetPathName` at `+0x10`.
+
+**Root cause.** `qdwrite.h`'s `PutSoftItem` wrote the FName at `+0` and the `FString` at
+`+8/+16/+20`:
+
+```c
+*(QdName*)raw = an;                     // +0x00  <- should be +0x10
+*(wchar_t**)(raw + 8) = ... wide;       // +0x08  <- should be +0x18
+*(int32_t*)(raw + 16) = wn;             // +0x10  <- inside AssetPathName
+*(int32_t*)(raw + 20) = wideCap;        // +0x14  <- inside AssetPathName
+```
+
+Every field landed 16 bytes early. The engine therefore read the asset name as
+`ObjectIndex|ObjectSerialNumber` plus the sub-path's length (~`0x0000000C` for a
+5-character object name) — a package that does not exist — and the soft reference resolved
+to nothing. `ProcessEvent` still returned successfully, which is exactly
+`API-GAPS` §0's "a wrong frame returns successfully and changes nothing", and the native
+counter oracle correctly reported `0 -> 0` instead of claiming success.
+
+**Second, independent reason the add could fail even with a correct path.** The game's own
+`AddItemToInventory` script (`SaveFunctions.uasset`, 1654-byte script, disassembled from
+the cooked package) opens with
+
+```
+@0x00B NewItem   @0x02B IMP#77 IsValidSoftObjectReference   @0x01E CallFunc_..._ReturnValue
+```
+
+i.e. its whole body sits behind `IsValidSoftObjectReference(Item)`. A soft record with a
+correct path but a **zero weak pointer** is only valid if the engine has already resolved
+that path; an unresolved one is rejected and the function returns with nothing done. The
+item assets are loaded (`FS_ItemData_C` instances), so the weak pointer can be filled
+exactly as the engine would: `{InternalIndex, FUObjectItem.SerialNumber}`.
+
+**Third: the read-back key.** The script then does
+`Conv_SoftObjectReferenceToObject(Item)` → `K2Node_DynamicCast_AsFS_Item_Data` and drops
+the result when the cast fails. So `InventoryContents` is keyed on the **`FS_ItemData_C`
+asset object**. The old `ResolveItemObject` asked for `FindClassByName(<last segment>)`
+first, which returns a `*_C` class — a value the map can never hold — turning an
+unresolved item into a permanent `0`.
+
+**Fix (qdwrite.h), all three parts:**
+
+1. `PutSoftItem` writes `FName @+0x10` and `FString{Data @+0x18, Num @+0x20, Max @+0x24}`,
+   with the named constants `kSoftWeakOff/kSoftPathNameOff/kSoftSubPathOff/kSoftMinSize`
+   and a size check against `kSoftMinSize` (40).
+2. `PutWeakObject` fills `{InternalIndex, SerialNumber}` at `+0`; a record with neither a
+   weak pointer nor a sub-path is **refused** rather than passed to the game.
+3. `ResolveItemObject` prefers an `FS_ItemData_C` object and never returns a class.
+
+**What the third-party reference proves, and what it does not.** A working reflection-only
+mod for this build reaches the same function as `Default__SaveFunctions_C ->
+AddItemToInventory(UObject* item, int count)` and then calls
+`FullyRefreshInventoryTagCount` + `GI_NotifyInventoryChanged` + `GI_QueueSystemSave`.
+Reading the game's own script settles the post-call question: `AddItemToInventory` already
+ends with `GetGameInstance` → cast → **`GI_NotifyInventoryChanged`** and nothing else, and
+`FullyRefreshInventoryTagCount` is not owned by `SaveFunctions_C` at all (it is a bare
+`Function` import, resolved by whichever caller wants it). So the grant made through
+`ProcessEvent` has already run the game's notification; calling it again would be a second
+broadcast per pickup. **No post-call refresh is added for that reason** (§5A.3 keeps the
+call sites so a later build can be checked against them).
+
+**Oracle.** Unchanged and correct: the native counter
+`0x00E2EA40(world, item) -> int32` (`Map_Find` on `save+0x28`, element stride `0x18`,
+value `+8`), read before and after and required to rise by exactly the requested amount.
+It is the reason this bug was *reported* instead of silently corrupting the save.
+
+### 5A.2 G4 — the player's `TryApplyDamage` returns 0 because of its own gate chain
+
+**What is not the difference.** `FS_PlayerChar_C.TryApplyDamage` is a real Function export
+(`FS_PlayerChar.uasset` export #578, 8044-byte serial, 4929-byte script), and its parameter
+list is the same shape as the enemy's — read out of the cooked package:
+
+| class | struct #1 | struct #2 | object | struct #3 (out) |
+|---|---|---|---|---|
+| `FS_PlayerChar` | `Hit` | `DamageToApply` | `Applier` | `AppliedDamage` |
+| `EnemyBase` | `Hit` | `DamageToApply` | `Applier` | `AppliedDamage` |
+| `NPC_Base` | `Hit` | `DamageToApply` | `Applier` | — |
+
+The payload is `FB_DamageAttributeSet`, resolved from reflection once and shared by both
+directions: `DamageAmount : FloatProperty @0 size 4`, `DamageTags : StructProperty @8
+size 32`, `DataTags : MapProperty @40`, `AdditionalData : SetProperty @120`,
+`SourceGUID : StructProperty @200` (live log, `damage: FB_DamageAttributeSet fields=5`).
+The enemy lane applies through it in full (`hp 34.9 -> -165.0`).
+
+**What is the difference.** The player's script is a long gate chain, and the HP write is
+behind all of it. Disassembling the script and reading the `EX_Let` targets and the
+`EX_JumpIfNot`s gives the order:
+
+```
+0x0005  IncomingDamageMult            <- multiplicative pipeline, read first
+0x0104  AppliedDamage                 <- the out parameter, initialized
+0x0206  Applier (dynamic cast)        <- cast Applier to Enemy_Base
+0x0308  HasPitInvincibility / 0x0319 KnockedDown
+0x0393  Damage.Tags.IgnorePitInvincibility
+0x03A6  Damage.Tags.IgnoreKnockdownInvincibility
+0x041E  IsDead
+0x0589  EX_JumpIfNot -> 0x0F35        <- skips everything below
+0x059F  CalculatedAppliedDamage       <- GetSimpleSumStat / Multiply / Add
+0x0698  TakenDamageMultiplier
+0x0831  BooleanAND                    0x083A  bCanBeDamaged (Actor)
+0x0858  EX_JumpIfNot -> 0x0EAE        <- skips the Health write
+0x086E  EX_Let Health                 <- the ONLY HP assignment
+```
+
+So `AppliedDamage` stays `0.0` — the live line's `returned 0.00` is the function's own
+answer, not a missed return slot — and `Health` is never assigned. Note also that
+`ret` in the module was reading the *ReturnValue* slot, which this function does not have
+(`AppliedDamage` is an out parameter), so `returned 0.00` is a diagnostic, not an oracle;
+the code now says so.
+
+**Why the module cannot fix the gate chain by reflection.** Every gate reads a stat, a
+status or a gameplay tag the module does not own: `IncomingDamageMult`,
+`TakenDamageMultiplier`, `CalculatedAppliedDamage` (from `GetSimpleSumStat`),
+`IsDead`, `KnockedDown`, `HasPitInvincibility`, and `bCanBeDamaged` on the actor. Faking
+them would mean writing gameplay state from the sync lane, which is precisely what this
+document forbids (§0). And there is no second entry point to use instead: `Kill` is a
+death verb, not a damage one.
+
+**The fix: try the message, then write the one scalar the game writes.**
+`proxy.cpp`'s `ApplyDamageToActor` already tried the message first; it now, **for the
+local player only** and **only when the message produced no HP movement at all**, writes
+the class's own `Health` `FloatProperty` to the clamped result and calls the game's death
+entry when it reaches 0. The clamp is a pure rule, `enemydmg::ApplyHpDamage(before,
+amount)`, so it is unit-tested (`test_enemydmg.cpp`, 8 assertions) instead of discovered
+in a game run.
+
+The `Health` property is the right scalar and is demonstrably live and writable: the test
+rig's own `DevGod` reads and restores it, and it has watched real gameplay damage arrive
+through it (`god: health refilled 140.0 -> 400.0`, `god: health refilled 100.0 -> 400.0`),
+and the class's own `Set Health Points(NewVal: float)` writes the same property. The
+death entry is `FS_PlayerChar_C:Kill(B33smentDeath: bool)` — a 347-byte script whose only
+parameter is that bool (measured from the player package); `DeathAnim` and
+`FellInDeathPit` exist as separate verbs and are deliberately not used, because `Kill` is
+the ordinary death and the other two are the animation and the pit, not a damage outcome.
+
+**Consistency with B7.** `PlayerBodyObserve` is untouched. It still intercepts
+`TryApplyDamage` on the **proxy** body, still forwards `K_DAMAGE` to the machine that owns
+that player, and still answers the Blueprint's own question honestly. The receive lane on
+that machine is the one that now has the fallback, so the two halves stay symmetrical:
+each machine owns exactly one player's HP, and the path that moves it is logged.
+
+**What remains unproven** — see §5A.3.
+
+### 5A.3 What is still a claim
+
+* That filling the weak pointer makes `IsValidSoftObjectReference` true for an
+  already-loaded `FS_ItemData_C` asset. It follows from the class's own definition and
+  from the object being live, but no live run has yet read `PASS` on
+  `write api: AddItemToInventory ... read back 0 -> 1`.
+* That `Health` reaching 0 through the write is equivalent to the game dying the player.
+  The rig's floor (400) deliberately prevents the player reaching 0, so this path cannot
+  be exercised by the current scenario without turning the floor off.
+* That `AppliedDamage` is what a *partial* application would report. The module now treats
+  "HP moved" as success and "HP did not move" as failure, so it does not depend on the
+  answer.
+* Whether `FullyRefreshInventoryTagCount` is needed for the *tag* counts (challenge and
+  bestiary conditions) as opposed to the item count. The game's own `AddItemToInventory`
+  does not call it, so a pickup's own Interact path must do it; a grant that skips that
+  caller could leave a tag count stale even though the count rose. This is logged as a
+  follow-up, not fixed by calling a function the game does not call here.
+
+---
+
 ## 6. Cross-references and the facts this document had to reconcile
 
 Where this document silently needed a decision because two analysis files disagree:

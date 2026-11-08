@@ -693,10 +693,9 @@ inline bool InventoryCountNative(void* world, void* item, int32_t* out)
     return true;
 }
 
-// The last path segment: `/Game/Items/KeyItems/AquaDoorKey_2.AquaDoorKey_2` names the
-// object `AquaDoorKey_2`.  A Blueprint item asset's UClass carries that name, and the
-// game's own `TMap<UObject*, int32>` is keyed by the object the soft reference resolves
-// to -- so prefer the class, then any object of that name.
+// The last path segment: `/Game/Items/KeyItems/AquaDoorKey_2_Data.AquaDoorKey_2_Data`
+// names the object `AquaDoorKey_2_Data`.  That object is an `FS_ItemData_C` asset, which
+// is what the game's own map operations key on (see ResolveItemObject below).
 inline bool ObjectNameFromPath(const char* path, char* out, int cap)
 {
     if (!path || !out || cap <= 0) return false;
@@ -710,22 +709,124 @@ inline bool ObjectNameFromPath(const char* path, char* out, int cap)
     return n > 0;
 }
 
+// The inventory's TMap is keyed by the `FS_ItemData_C` asset object, and
+// `AddItemToInventory` gates on `IsValidSoftObjectReference(Item)` before it does
+// anything else.  MEASURED from the cooked package (SaveFunctions.uasset, 1654-byte
+// script): the very first tokens are `NewItem` <- `IsValidSoftObjectReference` and the
+// whole body sits behind its result -- so a soft record with a correct path and a ZERO
+// weak pointer is still rejected when the engine has not resolved that path yet, and the
+// add silently does nothing while ProcessEvent returns success.
+//
+// The item objects are loaded (`FS_ItemData_C` assets), so the weak pointer can be
+// filled exactly as the engine would fill it: TWeakObjectPtr is
+// { int32 ObjectIndex; int32 ObjectSerialNumber }, and both are readable off the live
+// UObject (InternalIndex at +0x0C, serial from the FUObjectItem's SerialNumber).  Filling
+// it makes `IsValidSoftObjectReference` true without depending on a resolve, and the path
+// stays as the fallback identity.
+//
+// The record's field offsets.  These are the measured ones -- see the block comment on
+// PutSoftItem below for the three independent confirmations in this tree, and the two
+// test_*.cpp suites that pin them.
+static const int kSoftWeakOff     = 0x00;   // FWeakObjectPtr
+static const int kSoftPathNameOff = 0x10;   // FSoftObjectPath::AssetPathName (FName)
+static const int kSoftSubPathOff  = 0x18;   // FSoftObjectPath::SubPathString (FString)
+static const int kSoftMinSize     = 0x28;   // 40: the size this build reflects
+inline bool IsClassObject(const void* o)
+{
+    char cn[64];
+    if (!o || FNameToString(ObjNameRaw(ObjClass(o)), cn, sizeof(cn)) <= 0) return false;
+    for (int i = 0; cn[i]; ++i) {
+        if (cn[i] == 'C' && cn[i + 1] == 'l' && cn[i + 2] == 'a' && cn[i + 3] == 's' &&
+            (cn[i + 4] == 's' || cn[i + 4] == 0))
+            return true;
+    }
+    return false;
+}
+
 inline void* ResolveItemObject(const char* path)
 {
     char nm[96];
     if (!ObjectNameFromPath(path, nm, sizeof(nm))) return nullptr;
-    void* o = FindClassByName(nm);
-    if (!o) o = FindObjectByNameAndClass(nm, nullptr);
+    if (FindClassByName("FS_ItemData_C")) {
+        void* o = FindObjectByNameAndClass(nm, "FS_ItemData_C", nullptr);
+        if (o) return o;
+    }
+    // Fall back to any object of that name, but never to a class: a class is not a key
+    // the map could hold, and returning one turns "unresolved" into a silent 0.
+    void* o = FindObjectByNameAndClass(nm, nullptr);
+    if (IsClassObject(o)) return nullptr;
     return o;
 }
 
-// FSoftObjectPath is { FName AssetPathName; FString SubPathString; } and FString is
-// { wchar_t* Data; int32 Num; int32 Max }.  `SetPath` splits `/Pkg/Asset.Object` at the
-// LAST dot, so the asset FName must be the package path and the sub-path the object
-// name; interning the whole string into the FName would not resolve.  The wide buffer
-// is supplied by the caller and outlives the synchronous ProcessEvent call.
+// The serial number half of the weak pointer.  FUObjectItem is
+// { UObject* Object; int32 Flags; int32 ClusterRootIndex; int32 SerialNumber; } with a
+// 0x18 stride (qdsubstrate's chunk walk pins the stride and the chunk table).  TWeakObjectPtr
+// compares exactly these two ints, so reading them off the live object reproduces the weak
+// pointer the engine would have cached for this asset.
+inline int32_t ObjectSerialNumber(const void* o)
+{
+    if (!o) return 0;
+    __try {
+        uint8_t** chunks = ObjectChunks();
+        if (!chunks) return 0;
+        int i = ObjInternalIndex(o);
+        if (i < 0) return 0;
+        const uint8_t* chunk = chunks[i / kObjectsPerChunk];
+        if (!chunk) return 0;
+        const uint8_t* item = chunk + (size_t)(i % kObjectsPerChunk) * kFUObjectItemStride;
+        return *(const int32_t*)(item + 0x10);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+
+// Write the 8-byte TWeakObjectPtr[ObjectIndex, SerialNumber] into the soft record.
+inline bool PutWeakObject(uint8_t* record, void* itemObj)
+{
+    if (!record || !itemObj) return false;
+    int32_t idx = ObjInternalIndex(itemObj);
+    int32_t serial = ObjectSerialNumber(itemObj);
+    if (idx < 0) return false;
+    memcpy(record + kSoftWeakOff, &idx, 4);
+    memcpy(record + kSoftWeakOff + 4, &serial, 4);
+    return ObjectIsLive(itemObj);
+}
+
+// A `SoftObjectProperty` in this build is a 40-byte `FSoftObjectPtr`, and the FName
+// part is NOT at offset 0.  MEASURED three times against the engine's own consumers in
+// this very tree, all of which read/write it at +0x10:
+//   * qdavatar.h `LoadAsset` (KismetSystemLibrary::LoadAsset_Blocking) writes the FName
+//     to `p + 16` and documents the class as
+//     "FWeakObjectPtr(8), TagAtLastTest(4)+pad(4), then FSoftObjectPath{...} -- 40 bytes";
+//   * proxy.cpp `DevGive` (this same AddItemToInventory) writes the FName to `at + 16`;
+//   * proxy.cpp `LevelNameOf` reads TSoftObjectPtr<UWorld>::AssetPathName at +0x10.
+//
+//   +0x00  FWeakObjectPtr    int32 ObjectIndex, int32 ObjectSerialNumber   (8)
+//   +0x08  int32 TagAtLastTest + 4 bytes padding                            (8)
+//   +0x10  FSoftObjectPath   FName AssetPathName                            (8)
+//   +0x18                   FString SubPathString { Data*, Num, Max }       (16)
+//   total 0x28 = 40
+//
+// The previous version wrote the FName at +0 and the FString at +8/+16/+20, i.e. 16
+// bytes too low.  That left the path's AssetPathName reading 32 bits of the sub-path
+// length in its comparison index and wrote a live pointer into the TagAtLastTest
+// padding, so the soft reference resolved to nothing -- the game then added its null
+// key (or skipped the add) and the native counter never moved, which is exactly
+// LIVE-TEST-LOG Session 6's `count did not rise by the requested amount: 0 -> 0`.
+// The two other sites in this tree were already right, which is why the differential
+// is visible: the same function, the same payload kind, one offset apart.
+//
+// The offsets themselves are the `kSoft*` constants declared above, next to
+// PutWeakObject, which fills the first field.
+
+// `SetPath` splits `/Pkg/Asset.Object` at the LAST dot, so the asset FName must be the
+// package path and the sub-path the object name; interning the whole string into the
+// FName would not resolve (it would name a package `/Pkg/Asset.Object` that does not
+// exist).  The wide buffer is supplied by the caller and outlives the synchronous
+// ProcessEvent call.
 inline bool PutSoftItem(wr::Frame& f, const wr::Field* p, const char* path,
-                        wchar_t* wide, int wideCap, char* err, int cap)
+                        void* itemObj, wchar_t* wide, int wideCap, char* err, int cap)
 {
     const char* dot = nullptr;
     for (const char* q = path; *q; ++q) if (*q == '.') dot = q;
@@ -762,13 +863,24 @@ inline bool PutSoftItem(wr::Frame& f, const wr::Field* p, const char* path,
 
     alignas(16) uint8_t raw[64];
     memset(raw, 0, sizeof(raw));
-    *(QdName*)raw = an;                                   // +0x00 AssetPathName
-    *(wchar_t**)(raw + 8) = sub[0] ? wide : nullptr;      // +0x08 FString::Data
-    *(int32_t*)(raw + 16) = sub[0] ? wn : 0;              // +0x10 FString::Num
-    *(int32_t*)(raw + 20) = sub[0] ? wideCap : 0;         // +0x14 FString::Max
+    // The weak pointer first: `IsValidSoftObjectReference` reads it, and it is the one
+    // form that needs no resolve.  A failure here is not fatal -- the path below is the
+    // fallback identity -- but it is worth knowing, so the caller logs it.
+    bool weak = PutWeakObject(raw, itemObj);
+    *(QdName*)(raw + kSoftPathNameOff) = an;              // +0x10 AssetPathName
+    *(wchar_t**)(raw + kSoftSubPathOff) = sub[0] ? wide : nullptr;        // +0x18 Data
+    *(int32_t*)(raw + kSoftSubPathOff + 8) = sub[0] ? wn : 0;             // +0x20 Num
+    *(int32_t*)(raw + kSoftSubPathOff + 12) = sub[0] ? wideCap : 0;       // +0x24 Max
+    if (!weak && !sub[0] && p->kind == wr::PK_SOFT) {
+        // No weak pointer and no sub-path means nothing resolves: refuse rather than
+        // hand the game an empty reference that returns success and adds nothing.
+        ErrSet(err, cap, "the item soft reference has neither a live object nor a sub-path: ",
+               p->name);
+        return false;
+    }
     int len = p->size < (int)sizeof(raw) ? p->size : (int)sizeof(raw);
-    if (len < 8) {
-        ErrSet(err, cap, "SoftObjectProperty is smaller than an FName: ", p->name);
+    if (len < kSoftMinSize) {
+        ErrSet(err, cap, "SoftObjectProperty is smaller than an FSoftObjectPtr: ", p->name);
         return false;
     }
     if (!wr::FramePut(f, p->name, raw, len)) {
@@ -790,7 +902,7 @@ inline bool PutItemArg(wr::Frame& f, const wr::Field* p, const char* path,
         return true;
     }
     if (p->kind == wr::PK_SOFT) {
-        return PutSoftItem(f, p, path, wide, wideCap, err, cap);
+        return PutSoftItem(f, p, path, itemObj, wide, wideCap, err, cap);
     }
     if (p->kind == wr::PK_NAME) {
         QdName n;
@@ -821,15 +933,17 @@ inline bool PutItemArg(wr::Frame& f, const wr::Field* p, const char* path,
     return false;
 }
 
-// The item pin, chosen by form and then by name.  The soft reference comes first
-// because the Blueprint converts one; a name/string form is accepted only if that is
-// what the signature actually declares (in which case the read-back still keys on the
-// resolved object).
+// The item pin, chosen by form and then by name.  This build declares
+// `SoftObjectProperty Item` (measured: `Item : SoftObjectProperty @0 size=40`), so the
+// soft form is what will be selected here; the object form is kept first in the list
+// because a build that declares `ObjectProperty Item` wants the resolved `FS_ItemData_C`
+// pointer directly, and an object pin fed a soft record would read a pointer out of the
+// weak field.  Both are now correct, so the order only has to match the declaration.
 inline const wr::Field* ItemParam(const wr::ParamLayout& l,
                                   const wr::Field* ctx, const wr::Field* count)
 {
     static const wr::PKind kForms[] = {
-        wr::PK_SOFT, wr::PK_OBJECT, wr::PK_NAME, wr::PK_STR
+        wr::PK_OBJECT, wr::PK_SOFT, wr::PK_NAME, wr::PK_STR
     };
     for (unsigned k = 0; k < sizeof(kForms) / sizeof(kForms[0]); ++k) {
         for (int i = 0; i < l.n; ++i) {
@@ -848,6 +962,21 @@ inline const wr::Field* ItemParam(const wr::ParamLayout& l,
     return nullptr;
 }
 
+// Nothing else fires after a successful add.  MEASURED from the cooked package: the
+// game's own `AddItemToInventory` script (`SaveFunctions.uasset`, 1654-byte script) ends
+// with `CallFunc_GetGameInstance_ReturnValue` ->
+// `K2Node_DynamicCast_AsGame_Instance_Utils` -> `GI_NotifyInventoryChanged` and nothing
+// else -- it does NOT call `FullyRefreshInventoryTagCount`, and that function is not even
+// owned by `SaveFunctions_C` (it is an import of the `Function` class, resolved at the
+// call site that wants it).  So a grant made through ProcessEvent has already run the
+// game's refresh and a second copy would be a second broadcast for one pickup.  The tag
+// count is refreshed by whatever asked for the item (the pickup's own Interact path),
+// which is exactly the caller this lane stands in for.
+//
+// What is left is the ordering fact the lane depends on: the counter is written by
+// `Map_Find`/`Add_IntInt` under `InventoryContents`, so the read-back must happen after
+// the ProcessEvent returns -- which it does, and which the `read back a -> b` line
+// proves.
 inline bool WrGrantItem(const char* itemPath, int32_t count, char* err, int errCap)
 {
     if (err && errCap > 0) err[0] = 0;

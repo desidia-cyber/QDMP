@@ -4125,8 +4125,53 @@ bool ActorHp(void* actor, bool player, float* hp, float* maxHp)
 // out is what lets the peer apply the same message to its own pawn instead of the two
 // directions drifting apart.
 //
-// `before`/`after`/`haveHp` are optional out-parameters so the caller can log the
-// outcome with the attacker's identity in one line.
+// WHY THE PLAYER NEEDS A SECOND, PROVEN HALF (G4)
+// -----------------------------------------------
+// MEASURED from the cooked packages, not inferred:
+//
+//   * `FS_PlayerChar_C.TryApplyDamage` is a real 4 929-byte script (export #578 of
+//     FS_PlayerChar.uasset; the UFunction header is {Hit, DamageToApply, Applier,
+//     AppliedDamage} exactly like EnemyBase_C, so the payload the module builds is not
+//     the difference).  It DOES assign `Health` -- an `EX_Let` on the `Health`
+//     FProperty at script offset 0x086E.
+//   * Everything before that assignment is a chain of gates the reflected call cannot
+//     satisfy: `IsValidSoftObjectReference`-style payload validity, the
+//     `IncomingDamageMult` / `TakenDamageMultiplier` multiplicative pipeline,
+//     `GetSimpleSumStat`/`Get Defense Damage Mult` stat lookups, `IsDead`,
+//     `HasPitInvincibility`/`KnockedDown` with their Damage.Tags exceptions, and a
+//     `bCanBeDamaged` `EX_JumpIfNot` at 0x0858 that skips the Health write entirely.
+//     In consequence `AppliedDamage` (the function's out parameter) stays 0.0 -- which is
+//     the live line `player damage had NO effect: TryApplyDamage ran asked 20.0 returned
+//     0.00 hp 400.0 -> 400.0`.
+//   * The SAME payload against an enemy class applies in full (`hp 34.9 -> -165.0`),
+//     which is why the lane reads as "works on enemies, not on the player".
+//
+// The game writes exactly one scalar on this class, and it is demonstrably live and
+// writable: the rig's own `DevGod` reads and restores `Health` and watches real gameplay
+// damage arrive through it (`god: health refilled 140.0 -> 400.0`), and the sealed
+// draw's `Set Health Points(NewVal)` writes the same property.  So the honest
+// degradation is to write that scalar, clamped, and to run the game's own death entry
+// when it reaches zero.  `TryApplyDamage` is still tried FIRST, so hit reactions, status
+// and the game's death path all still run whenever the build does accept the payload.
+//
+// `PlayerBodyObserve` (the B7 intercept) is untouched: it still runs on the PROXY body and
+// still speaks `TryApplyDamage` to the machine that owns the player.
+bool CallPlayerDeath(void* pawn)
+{
+    // `FS_PlayerChar_C:Kill(B33smentDeath: bool)` -- measured in the player package
+    // (Kill is a 347-byte script whose only parameter is the BoolProperty
+    // `B33smentDeath`).  false is the ordinary death.
+    static Fn f = {};
+    if (!pawn || !f.Resolve(pawn, "Kill")) return false;
+    Call c(f);
+    for (int i = 0; i < f.sig.props; ++i) {
+        const PropDesc& d = f.sig.p[i];
+        if (d.flags & (CPF_OutParm | CPF_ReturnParm)) continue;
+        if (NameEquals(d.type, "BoolProperty")) { c.U8(d.name, 0); break; }
+    }
+    return c.Run(pawn);
+}
+
 bool ApplyDamageToActor(void* actor, float amount, void* causer, bool player,
                         float* beforeOut, float* afterOut, bool* haveHpOut)
 {
@@ -4162,29 +4207,61 @@ bool ApplyDamageToActor(void* actor, float amount, void* causer, bool player,
         memcpy(base + d.offset, &v, 8);
     }
     bool ran = c.Run(actor);
+    // NOTE: `ret` is the function's ReturnValue slot, not its `AppliedDamage` out
+    // parameter, so it can be 0 on a call that did apply (and 1 on one that did not).
+    // It is logged because it is the value the live log quotes, never used as the oracle.
     float ret = 0.0f;
     if (c.Ret()) memcpy(&ret, c.Ret(), 4);
 
     bool haveAfter = ActorHp(actor, player, &after, &mx);
     bool took = haveBefore && haveAfter && after < before;
+
+    // G4's second half.  Only the local player needs it, and only when the game's own
+    // entry produced no HP movement at all -- a partial application is the game's own
+    // answer and is never overridden.
+    const char* path = took ? "TryApplyDamage" : "none";
+    bool died = false;
+    if (player && haveBefore && !took) {
+        enemydmg::HpAfter hp = enemydmg::ApplyHpDamage(before, amount);
+        if (hp.changed && SetFloatPropC(actor, "Health", hp.value)) {
+            float back = 0.0f;
+            if (FloatPropC(actor, "Health", &back) && back == hp.value) {
+                after = back;
+                haveAfter = true;
+                took = back < before;
+                path = "Health (TryApplyDamage had no effect)";
+                if (back <= 0.0f) died = CallPlayerDeath(actor);
+            }
+        }
+    }
+
     if (beforeOut) *beforeOut = before;
     if (afterOut) *afterOut = after;
     if (haveHpOut) *haveHpOut = haveBefore && haveAfter;
 
-    static int failures = 0;
-    if (!took && haveBefore && haveAfter && failures++ < 5) {
-        // The enemy variant is SYNC-GAPS section 5's acceptance criterion; keep the
-        // exact "enemy damage had NO effect" wording so a live run can grep for it.
-        if (player)
-            QDLOG(LOG_WARN, "player damage had NO effect: TryApplyDamage ",
-                  (ran ? "ran" : "did not run"), " asked ", flt(amount, 1),
-                  " returned ", flt(ret, 2), " hp ", flt(before, 1), " -> ",
-                  flt(after, 1), " (if this repeats, the FB_DamageAttributeSet fill is wrong)");
-        else
-            QDLOG(LOG_WARN, "enemy damage had NO effect: TryApplyDamage ",
-                  (ran ? "ran" : "did not run"), " asked ", flt(amount, 1),
-                  " returned ", flt(ret, 2), " hp ", flt(before, 1), " -> ",
-                  flt(after, 1), " (if this repeats, the FB_DamageAttributeSet fill is wrong)");
+    if (took && player) {
+        // One INFO line that says WHICH path moved the HP, so a live run can tell the
+        // game's own application from the degradation without reading the code.
+        QDLOG(LOG_INFO, "damage: player hp via ", path, " ", flt(amount, 1),
+              " (TryApplyDamage returned ", flt(ret, 2), ") hp ", flt(before, 1),
+              " -> ", flt(after, 1));
+        if (died) QDLOG(LOG_INFO, "damage: the player reached 0 hp; Kill called");
+    } else if (!took && haveBefore && haveAfter) {
+        static int failures = 0;
+        if (failures++ < 5) {
+            // The enemy variant is SYNC-GAPS section 5's acceptance criterion; keep the
+            // exact "enemy damage had NO effect" wording so a live run can grep for it.
+            if (player)
+                QDLOG(LOG_WARN, "player damage had NO effect: TryApplyDamage ",
+                      (ran ? "ran" : "did not run"), " asked ", flt(amount, 1),
+                      " returned ", flt(ret, 2), " hp ", flt(before, 1), " -> ",
+                      flt(after, 1), " (both the message and the Health write failed)");
+            else
+                QDLOG(LOG_WARN, "enemy damage had NO effect: TryApplyDamage ",
+                      (ran ? "ran" : "did not run"), " asked ", flt(amount, 1),
+                      " returned ", flt(ret, 2), " hp ", flt(before, 1), " -> ",
+                      flt(after, 1), " (if this repeats, the FB_DamageAttributeSet fill is wrong)");
+        }
     }
     return took;
 }
