@@ -15,7 +15,7 @@ Two documents belong beside this one:
 
 "Built" still means **not proven live**. Every write path is behind a switch in
 `qdcoop.ini` and every one of those is `0` except `FlagSync`. Nothing here has run on two
-machines; §5 lists what a first live session has to show. The module passes 3 598
+machines; §5 lists what a first live session has to show. The module passes 3 651
 assertions across 12 off-target test suites, which proves the state machines and the wire
 encoding — not the game.
 
@@ -25,12 +25,12 @@ encoding — not the game.
 |---|---|---|---|
 | `PLAYER` | both | both | proven live |
 | `WORLD_FLAGS` | host | peer | absolute set, chunked, 1 Hz + on change |
-| `INVENTORY` | **both** | **both** | host: absolute set. Peer: `INTENT kind 2` for its own pickups — G3 |
+| `INVENTORY` | **both** | **both** | host: absolute set. Peer: `INTENT kind 2` for its own pickups and `kind 3` for its consumptions — G3 |
 | `ACTOR_STATES` | **both** | **both** | host: absolute set. Peer: `INTENT kind 6` — G2 |
 | `ENEMY` | both | both | bidirectional; whoever owns an enemy publishes its rows |
 | `ENEMY_DETAIL` | both | both | montage asset + status mask, reliable, on change |
 | `EQUIPMENT` / `EFFECT` / `EFFECT_MOVE` / `STATUS` | both | both | proven live |
-| `INTENT` | peer | host | kinds 1 (flag), 2 (item), 6 (actor state), 7 (enemy hit), 8 (enemy record) |
+| `INTENT` | peer | host | kinds 1 (flag), 2 (item pickup), 3 (item use), 6 (actor state), 7 (enemy hit), 8 (enemy record) |
 | `DAMAGE` | host | peer | **new**: a host-run enemy's hit, applied to the partner's own pawn |
 | `DIALOGUE` | both | both | per-slot talk state |
 | `LEVEL_UNION` | both | both | what each machine's own game wants |
@@ -57,14 +57,53 @@ own `TMap` instantiations. Writes go through the game's own
 chest stays open, a door can close — but holds a disagreeing body while it has a local
 change in flight, so a 1 Hz heartbeat cannot silently undo the peer's action.
 
+The **in-level actor now follows the container** on the frame the value changes. The
+game's only apply path is `SavableActor_C.RestoreFromSave()`, which does
+`CacheSaveData(); Restore State From Save Data(MySaveData)`; calling it repeatedly is
+unsafe because `CacheSaveData` uses `Array_Add`, so each call appends another copy of
+the GUIDs. The mod therefore clears only the `MySaveData` array's logical length (its
+allocation is left alone), calls the game's own `RestoreFromSave`, and reads three
+things back: `GetSavableActorDataAtIndex(Index).IsSet`, the rebuilt
+`MySaveData`/`GUIDs` lengths, and the actor's own `Opened` bool when it has one. That is
+the same code the game runs on every load, not a hand-driven "open" call, so a door or
+chest opened by the partner visibly opens here, becomes non-interactable, and a chest
+looted by one player cannot be looted again by the other. `WrRefreshActorState` is
+called once per changed GUID on both machines (peer `K_ACTOR_STATES` apply and host
+`INTENT kind 6` apply); the 1 Hz heartbeat skips unchanged values, so it does not replay.
+`ActorStateSync` remains `0` in the shipped config, ready to flip.
+
 **G3 — both directions of the inventory are shared.** The host publishes its whole
-`InventoryContents`; the peer grants only what it lacks. The peer now also measures its own
+`InventoryContents`; the peer grants only what it lacks. The peer now measures its own
 contribution (`local − what the host granted this peer`, never `local − the host's total`,
 which would cancel an item both players picked up independently) and sends it as a
 **cumulative** `INTENT kind 2`. Cumulative rather than a delta, because the grant is
 additive on the receiving side: a resent delta would add the item twice, a resent
 cumulative value applies nothing. The host applies only the increase over what it has
 already applied, which makes a reliable-lane retransmit exactly-once.
+
+**Keys and doors use both lanes, and neither needed a third mechanism.** A key is an
+ordinary `InventoryContents` entry, so the G3 lane already gives it to both players: the
+host grants it to the peer, or the peer's pickup becomes a cumulative `INTENT kind 2`.
+`Door_Base_C.CheckRequiredItems` (and `Chest_C.TryUseKey`) call the native
+`GetInventoryItemCount` on the interacting player, which reads that same container; a
+granted key therefore satisfies the door's own check, and the key is not consumed by
+opening (a door that does consume it lowers the local count, which is now `INTENT kind
+3`). The door's open/closed state is the `SavableActorStates` entry, so G2 carries it and
+the `RestoreFromSave` refresh makes the other player see it. Nothing in the door reads a
+GUID or a path: it reads the local inventory and its own savable state, and both are now
+correct on both machines.
+
+**A consumption is sent too.** A fall in the peer's local count raises a second,
+independent cumulative counter and goes out as `INTENT kind 3` (`I_CONSUME_ITEM`). The
+host removes only the increase through the game's own
+`SaveFunctions_C.TryConsumingItemFromInventory`, with the native counter as the oracle
+(the count must fall by exactly the amount removed). While a use is outstanding, the
+peer's grant target is `hostCount − outstandingUse`, so a host body that crossed the use
+on the wire cannot hand the item straight back. That is what turns the old
+"peer consumes, next host body replenishes, counts drift upward" into exact convergence;
+a host that holds fewer than requested removes what it has and the use is settled, never
+invented. The peer's own use is what the counter means; the host's own use still lowers
+only the host's stock and is not sent (SYNC-DESIGN section 2.4).
 
 **G4 — a host-run enemy can hurt the distant partner.** The host sees the attack (it owns
 the enemy, and the attack montage is already an event), takes the amount from
@@ -96,22 +135,25 @@ both `SetShouldBeVisible` and the byte-verified `SetShouldBeLoaded`.
 
 ## 2. What still breaks the co-op promise
 
-**G2's remaining question is visibility, not state.** The container and the actor's cached
-`MySaveData` converge through the writer, but the *in-level* actor may only re-read its
-visual state on the game's own load path (`RestoreFromSave`), which is not called because
-`CacheSaveData` appends to `MySaveData` and the package imports no clear/remove — repeated
-refreshes would grow the array. A live pass has to show whether a door or chest shows the
-change without it. If it does not, the next step is a safe one-shot refresh, not a
-different container. Until then `ActorStateSync` stays `0`.
+**G2 is implemented but unproven.** The container, the actor's cached `MySaveData` and
+the in-level visual state now converge through the writer plus the one-shot
+`RestoreFromSave` refresh described in §1. The remaining risk is behavioural, not
+structural: a subclass' `Restore State From Save Data` is the game's load path, so it
+must not award loot or replay a one-time effect; the read-back logs `opened=1` (or
+`opened=0`) so the live run can see whether the actor actually followed. `ActorStateSync`
+stays `0` until §5.6 shows the door/chest open on the partner's screen and a looted
+chest refuses a second interaction.
 
-**G3's remaining caveats are policy, not plumbing.** A peer's *consumption* is not sent and
-is replenished by the next host body, so consumable counts drift upward on the peer. If
-both players independently pick up the same item, the gains are added (the design's
-"granted twice is harmless" side) — but if the host's body already reports the count the
-peer independently reached before the peer detects its own gain, the two are
-indistinguishable and the intent settles as already-satisfied. The host's own consumption
-is a high-water floor, so it is never re-granted to the peer, who keeps its copy until it
-uses it.
+**G3's remaining caveats are policy, not plumbing.** A peer's *pickup* is still
+cumulative, so if both players independently pick up the same item the gains are added
+(the design's "granted twice is harmless" side) — but if the host's body already reports
+the count the peer independently reached before the peer detects its own gain, the two
+are indistinguishable and the intent settles as already-satisfied. A peer's *use* is now
+sent and removed exactly once; the one remaining asymmetry is the host's own use, which
+lowers the host's stock and is not propagated (the peer keeps its copy until it uses it).
+A host that holds fewer than the requested amount removes what it has and logs
+`consume partial`; the use is settled, never invented. Consumables therefore converge
+after a peer use, but a host use is still per-player by design.
 
 **G4's real fix is still blocked, and G5 with it.** The damage lane covers an enemy the host
 runs attacking the partner. What it does *not* do is make the Blueprint *target* the remote
@@ -197,14 +239,48 @@ Ordered, because each one makes the next diagnosable.
 5. **Dialogue.** `dialogue: BLOCK <npc> BlockInteract=1` on the partner's machine, and the
    NPC really does not start.
 6. **G2.** Peer opens a door: `actor-state intent sent` → host `actor-state intent applied:`
-   → peer `actor states applied=1 confirmed=1`, and both containers agree for that GUID.
-   Then the visibility question: does the door look open on the peer **without** a load?
+   → host `actor-state refresh ok … opened=1` → peer `actor states applied=1 confirmed=1`
+   and `actor-state refresh ok … opened=1`, and both containers agree for that GUID. If
+   the refresh line says `INCOMPLETE`, the actor class' `Restore State From Save Data`
+   override did not follow — the exact sentence the log prints is the next thing to read.
+   The door must visibly open on the partner **without** a load, and a chest the partner
+   looted must refuse a second interaction.
 7. **G3.** Peer picks up the aqua key: peer `item intent sent … try 1/5` → host
-   `inventory grant applied: … (peer total N)` → peer `item intent confirmed`.
+   `inventory grant applied: … (peer total N)` → peer `item intent confirmed`. Then the
+   key opens the matching door for the other player (G3 supplies the key; G2 supplies the
+   door state). Peer uses a potion: peer `item consume queued` → `item consume sent …` →
+   host `inventory consume applied: … -1 (peer total 1)` → peer `item consume confirmed`,
+   and the count does not rise again on the next host body.
 8. **Streaming and travel.** `level name: <name> from <source>` with no `REFUSED`; a
    teleport produces `travel: local destination …=` on the sender and `travel: followed …`
    on the partner; a hard map switch produces one `WORLD DIVERGENCE` and one explicit
    `cannot follow … recorded`, and the session survives.
+
+### 5.1 The exact G2/G3 proof lines
+
+Grep these literally; each one is emitted by the path it names.
+
+```
+actor-state refresh: RestoreFromSave resolved at 0x... frame=0 (MySaveData cleared, cache rebuilt, state re-applied)
+actor-state refresh ok <FS_..._C /Game/...> index=0 value=1 mySaveData=0->1 guids=1 cached=ok opened=1
+actor-state refresh ok <FS_..._C /Game/...> index=0 value=1 mySaveData=1->1 guids=1 cached=ok opened=1 forced=1
+actor-state refresh INCOMPLETE <FS_..._C /Game/...> index=0 value=1 mySaveData=1->1 guids=1 cached=NOT SET opened=0
+actor-state refresh failed rev=<R> guid=<g0>-<g1>-<g2>-<g3>: <reason>
+item consume queued <path> x1
+item consume sent <path> x1 rev=<R> try 1/5
+item consume confirmed: <path> host=4
+inventory consume applied: <path> -1 (peer total 1 rev=<R>)
+write api: TryConsumingItemFromInventory <path> -1 read back 5 -> 4
+inventory consume partial: <path> asked -2 but the host held 1; the rest is settled, never invented
+```
+
+The first `actor-state refresh: RestoreFromSave resolved` line is printed once per
+process. A successful door/chest must show `actor-state refresh ok` on **both** machines
+on the frame the value crosses; `INCOMPLETE` (getter disagrees) or `failed` (no
+`RestoreFromSave`, signature mismatch, or fault) is the actionable failure. On the peer,
+`item consume sent` followed by `inventory consume applied` and `item consume confirmed`
+is the proof the drift is gone; the next `inventory sent rev=…` line must carry the lower
+count, not the old one.
 
 ## 6. Suggested order from here
 
@@ -212,8 +288,8 @@ Ordered, because each one makes the next diagnosable.
    four systems added this round have never touched the game.
 2. **B7, the player-class spawn.** It is now the single blocker for enemy targeting, for
    spawner activation, and for the puppet's appearance.
-3. **G2's visual refresh**, if the live pass shows the in-level actor does not follow the
-   container.
+3. **G2's live follow-up**, if §5.6 shows `INCOMPLETE`: inspect that subclass' own
+   `Restore State From Save Data` override before changing the container path.
 4. **Boss bar and arena exit** — two reflective calls, both measured.
 5. **Hard map transitions**, which need a measured entry point into another `UWorld`; until
    then the refusal is the correct behaviour.

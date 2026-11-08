@@ -46,22 +46,36 @@
 //
 // WHAT HAPPENS ON A CONSUMABLE
 // ----------------------------
-// A consumption LOWERS L, so `own` falls and nothing is sent -- WrGrantItem could not
-// express a removal even if the host wanted one, and the host must never re-grant an
-// item it or the peer already consumed.  Two consequences, stated because a live run
-// will show them:
+// A consumption LOWERS L.  It is sent as its own cumulative counter (`C`, the total the
+// peer has used since the baseline) in `INTENT kind 3` (I_CONSUME_ITEM), and the host
+// removes only the increase over what it has already removed (ConsumeLedger).  The
+// earlier design sent nothing, which made the next host body grant the consumed item
+// back and the count drift upward on every use.  The two counters are independent and
+// both monotone, so a retransmit, a reorder and a lost result body all apply at most
+// once:
 //
-//   * The peer uses an item: the host does not learn.  The peer's count is now lower
-//     than the host's; the next host body makes PeerApplyInventory grant the
-//     difference back, so the peer is REPLENISHED rather than reduced.  Per-player
-//     consumption is not modelled, by design (SYNC-DESIGN section 2.4).
+//   * P (I_GRANT_ITEM) -- total the peer picked up beyond what the host gave it.
+//   * C (I_CONSUME_ITEM) -- total the peer has consumed; a fall in L is the only thing
+//     that raises it, and a host grant raises L and the accounting together, so a grant
+//     is never mistaken for a consumption.
 //
-//   * The host uses an item: the host's count falls and the peer's does not.  The
-//     peer does not send anything, because `own` is measured from G (what the host
-//     gave this peer) and not from H, and G does not change when the host's own stock
-//     falls.  The shared count therefore stays at the host's lower value; the peer
-//     keeps its copy until it uses it.  Re-granting the host's consumed item is the
-//     one thing this lane must never do.
+// The host owns the bank, so a peer's use lowers the shared count by exactly that many
+// units.  Its own consumption is still per-player (it lowers H and is not sent); the
+// peer keeps its copy until it uses it.  That remaining asymmetry is already stated in
+// SYNC-DESIGN section 2.4 and is not changed here.
+//
+// THE GRANT TARGET WHILE A CONSUMPTION IS IN FLIGHT
+// -------------------------------------------------
+// H is published at 1 Hz, so the body that crosses a peer consumption on the wire can
+// still advertise the pre-consumption count.  Granting `H - L` from that body would put
+// the consumed item straight back.  The peer therefore grants up to
+//
+//     target = H - outstandingConsumption
+//
+// until the host's own body shows the fall (or the bounded retry gives up).  The grant
+// and the consumption both proceed; the target is the count the host will hold once it
+// applies the intent.  This is what makes the two sides converge exactly instead of
+// suppressing grants for a whole retry window.
 //
 // ECHO
 // ----
@@ -176,31 +190,35 @@ public:
 
     // What the local pass decided for one path.
     enum LocalResult {
-        kAbsorbed,    // the first pass after a host view: held items are host-derived
-        kNoChange,    // own did not rise
-        kLowered,     // own fell (consumption, or a host gain); nothing is sent
-        kQueued,      // a new peer contribution
-        kCoalesced,   // a larger contribution overtook the one already waiting
-        kDropped,     // a pending intent was cancelled because the peer no longer holds it
-        kNoBaseline,  // no complete host set has been seen yet
-        kOverflow     // the item table or the pending table is full
+        kAbsorbed,        // the first pass after a host view: held items are host-derived
+        kNoChange,        // neither contribution rose
+        kLowered,         // a fall covered by an unsent pickup; nothing is sent
+        kQueued,          // a new peer pickup contribution
+        kCoalesced,       // a larger pickup overtook the one already waiting
+        kConsumeQueued,   // a new peer consumption
+        kConsumeCoalesced,// a larger consumption overtook the one already waiting
+        kDropped,         // a pending intent was cancelled because the peer no longer holds it
+        kNoBaseline,      // no complete host set has been seen yet
+        kOverflow         // the item table or the pending table is full
     };
 
     // What one host entry did to a pending path.
     enum HostResult {
-        kHostNew,         // first time this path has been seen from the host
-        kHostUpdated,     // the host's high-water count rose
-        kHostUnchanged,   // nothing about this path changed
-        kHostConfirmed,   // the host reached exactly the count the peer's intent asked for
-        kHostSuperseded,  // the host is already ahead; the intent is settled and dropped
-        kHostOverflow     // the per-path table is full
+        kHostNew,             // first time this path has been seen from the host
+        kHostUpdated,         // the host's high-water count rose
+        kHostUnchanged,       // nothing about this path changed
+        kHostConfirmed,       // the host reached exactly the count the peer's intent asked for
+        kHostSuperseded,      // the host is already ahead; the intent is settled and dropped
+        kHostConsumeConfirmed,// the host's count shows the peer's consumption landed
+        kHostOverflow         // the per-path table is full
     };
 
     struct Out {
         char     path[kMaxPath];
-        int32_t  count;       // the peer's cumulative own contribution, NOT a delta
+        int32_t  count;       // cumulative pickup (P) or cumulative consumption (C)
         uint32_t basedOnRev;  // the host revision this peer is acting on (diagnostics)
         int      attempt;     // 1-based send count, for the caller's log
+        uint8_t  intentKind;  // wire::I_GRANT_ITEM or wire::I_CONSUME_ITEM
     };
 
     PickupQueue() { Reset(); }
@@ -212,9 +230,12 @@ public:
             it.used = false;
             it.path[0] = 0;
             it.local = 0;
+            it.lastLocal = 0;
             it.hostGiven = 0;
             it.own = 0;
             it.hostFloor = 0;
+            it.hostNow = 0;
+            it.seenHost = false;
             it.confirmedOwn = 0;
             it.expectedHost = 0;
             it.pending = false;
@@ -223,6 +244,15 @@ public:
             it.lastRev = 0;
             it.passRev = 0;
             it.inLocal = false;
+            it.inHostPass = false;
+            it.consumed = 0;
+            it.consumeConfirmed = 0;
+            it.consumePending = false;
+            it.consumeAttempts = 0;
+            it.consumeLastSendMs = 0;
+            it.consumeLastRev = 0;
+            it.consumeSent = 0;
+            it.hostAtConsume = 0;
         }
         n_ = 0;
         haveBaseline_ = false;
@@ -246,22 +276,38 @@ public:
 
     // The host's inventory publisher restarts from a new save (its rev goes back to 1).
     // The peer keeps its local/hostGiven accounting, but the host's floors, confirmations
-    // and in-flight intents name a container that no longer exists.
+    // and in-flight intents name a container that no longer exists.  The consumption
+    // total is reset with the host ledger: replaying a use into a fresh host stock would
+    // remove items the host never had.
     void ResetHostView()
     {
         for (int i = 0; i < kMaxItems; ++i) {
             if (!it_[i].used) continue;
             it_[i].hostFloor = 0;
+            it_[i].hostNow = 0;
+            it_[i].seenHost = false;
             it_[i].confirmedOwn = 0;
             it_[i].expectedHost = 0;
+            it_[i].consumed = 0;
+            it_[i].consumeConfirmed = 0;
+            it_[i].hostAtConsume = 0;
             if (it_[i].pending) {
                 it_[i].pending = false;
+                --pendingCount_;
+            }
+            if (it_[i].consumePending) {
+                it_[i].consumePending = false;
                 --pendingCount_;
             }
             it_[i].attempts = 0;
             it_[i].lastSendMs = 0;
             it_[i].lastRev = 0;
+            it_[i].consumeAttempts = 0;
+            it_[i].consumeLastSendMs = 0;
+            it_[i].consumeLastRev = 0;
+            it_[i].consumeSent = 0;
             it_[i].passRev = 0;
+            it_[i].inHostPass = false;
         }
         haveBaseline_ = false;
         hostRev_ = 0;
@@ -289,6 +335,9 @@ public:
             passUnique_ = 0;
             passTotal_ = total;
             bodyCounts_ = true;
+            // A new pass: a path not visited by the time this one completes is absent
+            // from the host's container, which is how a zero count is expressed.
+            for (int i = 0; i < n_; ++i) it_[i].inHostPass = false;
         } else if (rev == passRev_) {
             // A later slice of the same pass.  Keep the largest advertised size: a set
             // that grew mid-pass needs its new tail before it can be called complete.
@@ -326,8 +375,17 @@ public:
             r = kHostNew;
         }
 
+        // The body is also the only acknowledgement the consumption has.  `hostAtConsume`
+        // is the host count the peer last saw before it used the item; a count at or below
+        // that base minus the outstanding use is the host showing the fall that was asked
+        // for.  A host that has not applied it yet keeps publishing the old count, so the
+        // consumption stays pending and GrantTarget keeps subtracting it.
+        it->hostNow = count;
+        it->seenHost = true;
+
         if (passSet_ && bodyCounts_) {
             // Distinct paths seen in the current pass, for the completeness test.
+            it->inHostPass = true;
             if (it->passRev != passRev_) {
                 it->passRev = passRev_;
                 ++passUnique_;
@@ -350,21 +408,57 @@ public:
             it->confirmedOwn = it->own;
             r = (it->hostFloor == it->expectedHost) ? kHostConfirmed : kHostSuperseded;
         }
+
+        // A consumption is acknowledged by the host's count FALLING to (or below) the
+        // count it held when the peer used the item, minus what is still outstanding.
+        // Requiring a send first keeps a never-sent intent from being settled by the
+        // body that predates it.
+        bool consumeConfirmedNow = false;
+        if (it->consumePending && it->consumeSent > 0) {
+            int32_t outstanding = ClampCount((int64_t)it->consumed - (int64_t)it->consumeConfirmed);
+            if (outstanding > 0 && count <= it->hostAtConsume - outstanding) {
+                it->consumeConfirmed = it->consumed;
+                it->consumePending = false;
+                --pendingCount_;
+                consumeConfirmedNow = true;
+            }
+        }
+        if (consumeConfirmedNow &&
+            (r == kHostNew || r == kHostUpdated || r == kHostConfirmed ||
+             r == kHostSuperseded)) {
+            // Both settled in one body.  The pickup news is the more informative line;
+            // the consumption is still applied internally.
+            return r;
+        }
+        if (consumeConfirmedNow) return kHostConsumeConfirmed;
         return r;
     }
 
     // Returns true on the call that completes the FIRST full pass.  `entries` is the
     // number of entries in this body; it is not needed for completeness (unique paths
     // are counted as they arrive) but is kept so a caller can log a body it parsed.
+    //
+    // A complete pass also settles any consumption for a path it did not carry: the
+    // publisher never sends a zero entry, so absence from the whole set means the host
+    // holds none, which is exactly what the use asked for.  Without this the last unit
+    // of a consumable would retry to the cap and log a false give-up.
     bool EndHostBody(int entries)
     {
         (void)entries;
-        if (haveBaseline_) return false;
-        if (passTotal_ == 0 || passUnique_ >= (int)passTotal_) {
-            haveBaseline_ = true;
-            return true;
+        if (!passSet_ || !bodyCounts_) return false;
+        if (passTotal_ != 0 && passUnique_ < (int)passTotal_) return false;
+
+        bool first = !haveBaseline_;
+        haveBaseline_ = true;
+        for (int i = 0; i < n_; ++i) {
+            Item& it = it_[i];
+            if (!it.used || it.inHostPass || !it.consumePending) continue;
+            if (it.consumeSent <= 0) continue;
+            it.consumeConfirmed = it.consumed;
+            it.consumePending = false;
+            --pendingCount_;
         }
-        return false;
+        return first;
     }
 
     bool     HaveHostBaseline() const { return haveBaseline_; }
@@ -373,8 +467,8 @@ public:
 
     // ---- local view --------------------------------------------------------
     // Enumerate the peer's own InventoryContents and hand every positive entry here.
-    // A path that disappears between passes is simply not visited; EndLocalPass reaps
-    // any intent that is now pointless.
+    // A path that disappears between passes is not visited; EndLocalPass feeds it a
+    // zero so the last unit is seen as a consumption rather than silently ignored.
     void BeginLocalPass()
     {
         for (int i = 0; i < n_; ++i) it_[i].inLocal = false;
@@ -397,74 +491,7 @@ public:
             if (!it) { overflowItem_ = true; return kOverflow; }
         }
         it->inLocal = true;
-        it->local = local;
-
-        // No complete host set yet: any positive value here is either the peer's own
-        // pre-existing inventory or an item whose host entry is still in a later chunk.
-        // Neither is a pickup.  Hold the count and send nothing.
-        if (!haveBaseline_) {
-            it->own = 0;
-            return kNoBaseline;
-        }
-
-        // The first local pass after the host view fixes the BASELINE: whatever the
-        // peer already holds is treated as host-derived.  Without this, joining a
-        // session would upload the peer's entire save as a burst of grants and double
-        // every item the host also remembers.  Only gains made after this instant are
-        // the peer's own contribution.
-        if (!baselineTaken_) {
-            if (local > it->hostGiven) it->hostGiven = local;
-            it->own = 0;
-            it->confirmedOwn = 0;
-            return kAbsorbed;
-        }
-
-        int32_t want = ClampCount((int64_t)local - (int64_t)it->hostGiven);
-        if (want == it->own) return kNoChange;
-
-        if (want > it->own) {
-            it->own = want;
-            // The host count that proves this contribution landed.  Adding it to the
-            // floor captured at the last confirmation (not to the current floor) keeps
-            // two pickups from each expecting the other's proof.
-            it->expectedHost = ClampCount((int64_t)it->hostFloor +
-                                          (int64_t)(it->own - it->confirmedOwn));
-            if (!it->pending) {
-                if (pendingCount_ >= kMaxPending) {
-                    overflowPending_ = true;
-                    return kOverflow;
-                }
-                it->pending = true;
-                ++pendingCount_;
-                it->attempts = 0;
-                it->lastSendMs = 0;
-                it->lastRev = 0;
-                return kQueued;
-            }
-            // A larger contribution overtook the queued one.  Because the payload is
-            // CUMULATIVE, the newer value contains the older; the host's ledger turns
-            // the whole thing into one increment.  Mark it fresh so it does not wait
-            // out the old retry clock.
-            it->attempts = 0;
-            it->lastSendMs = 0;
-            it->lastRev = 0;
-            return kCoalesced;
-        }
-
-        // want < own: the peer consumed some (or the host gave it some).  Never send a
-        // fall.  If that leaves nothing beyond what the host has already confirmed,
-        // the intent has no work left and is cancelled rather than retried.
-        it->own = want;
-        if (it->pending) {
-            if (want <= it->confirmedOwn) {
-                it->pending = false;
-                --pendingCount_;
-                return kDropped;
-            }
-            it->expectedHost = ClampCount((int64_t)it->hostFloor +
-                                          (int64_t)(it->own - it->confirmedOwn));
-        }
-        return kLowered;
+        return ApplyLocalChange(*it, local);
     }
 
     // Returns the number of pending intents cancelled because the peer no longer holds
@@ -478,10 +505,22 @@ public:
         }
         for (int i = 0; i < n_; ++i) {
             Item& it = it_[i];
-            if (!it.used || !it.pending || it.inLocal) continue;
-            it.pending = false;
-            --pendingCount_;
-            ++dropped;
+            if (!it.used) continue;
+            if (!it.inLocal) {
+                // The path vanished: its remaining units were consumed.  This is the
+                // only place the LAST unit of a consumable can be seen, because the
+                // enumerator hands over positive counts only.
+                LocalResult r = ApplyLocalChange(it, 0);
+                if (r == kDropped) ++dropped;
+            }
+            // A pickup for an item the peer no longer holds is pointless; the existing
+            // rule reaps it.  A consumption is NOT reaped: it is exactly what a vanished
+            // item means and it still has to reach the host.
+            if (!it.inLocal && it.pending) {
+                it.pending = false;
+                --pendingCount_;
+                ++dropped;
+            }
         }
         return dropped;
     }
@@ -497,8 +536,9 @@ public:
 
     // A host -> peer grant landed: `amount` units of this path are now in the peer's
     // container because the host put them there.  Raising hostGiven is what suppresses
-    // the echo.  The local count is re-read on the next local pass (the caller applies
-    // grants before enumerating), so it is not touched here.
+    // the echo; advancing local/lastLocal by the same amount is what keeps the next
+    // pass from reading that rise as a peer pickup.  WrGrantItem has already read the
+    // container back, so the rise is a fact, not an assumption.
     void HostGranted(const char* path, int32_t amount)
     {
         if (!path || !path[0] || amount <= 0) return;
@@ -508,6 +548,8 @@ public:
             if (!it) { overflowItem_ = true; return; }
         }
         it->hostGiven = ClampCount((int64_t)it->hostGiven + amount);
+        it->local     = ClampCount((int64_t)it->local + amount);
+        it->lastLocal = ClampCount((int64_t)it->lastLocal + amount);
     }
 
     // ---- what may go on the wire now ---------------------------------------
@@ -517,6 +559,11 @@ public:
     // still drains in order).  Each returned entry has already spent its attempt and
     // started its retry clock, so a caller whose send fails cannot emit it twice in one
     // tick.
+    //
+    // Pickups and consumptions are separate cumulative counters on separate intents.
+    // A single pass that both picked up and used an item therefore emits two datagrams;
+    // the host's two ledgers make their order irrelevant, because the net change is
+    // +P - C either way.
     int Due(uint32_t now_ms, Out* out, int cap)
     {
         if (!out || cap <= 0) return 0;
@@ -526,29 +573,60 @@ public:
         if (cap > kMaxPerTick) cap = kMaxPerTick;
 
         int n = 0;
+        // Fresh pickups first, then fresh consumptions: a key just picked up is the
+        // latency-sensitive one, and a use is usually a step behind it.
         for (int i = 0; i < n_ && n < cap && tokens_ > 0; ++i) {
             Item& it = it_[i];
             if (!it.used || !it.pending || it.attempts != 0) continue;
             if (it.own <= it.confirmedOwn) continue;
-            if (Emit(it, now_ms, &out[n])) { ++n; --tokens_; }
+            if (EmitPickup(it, now_ms, &out[n])) { ++n; --tokens_; }
         }
+        for (int i = 0; i < n_ && n < cap && tokens_ > 0; ++i) {
+            Item& it = it_[i];
+            if (!it.used || !it.consumePending || it.consumeAttempts != 0) continue;
+            if (it.consumed <= it.consumeConfirmed) continue;
+            if (EmitConsume(it, now_ms, &out[n])) { ++n; --tokens_; }
+        }
+        // Then retries, in the same order.
         for (int i = 0; i < n_ && n < cap && tokens_ > 0; ++i) {
             Item& it = it_[i];
             if (!it.used || !it.pending || it.attempts == 0) continue;
             if (it.attempts >= kMaxAttempts) continue;     // spent; the caller reaps it
             if ((uint32_t)(now_ms - it.lastSendMs) < kRetryMs) continue;
             if (it.own <= it.confirmedOwn) continue;
-            if (Emit(it, now_ms, &out[n])) { ++n; --tokens_; }
+            if (EmitPickup(it, now_ms, &out[n])) { ++n; --tokens_; }
+        }
+        for (int i = 0; i < n_ && n < cap && tokens_ > 0; ++i) {
+            Item& it = it_[i];
+            if (!it.used || !it.consumePending || it.consumeAttempts == 0) continue;
+            if (it.consumeAttempts >= kMaxAttempts) continue;
+            if ((uint32_t)(now_ms - it.consumeLastSendMs) < kRetryMs) continue;
+            if (it.consumed <= it.consumeConfirmed) continue;
+            if (EmitConsume(it, now_ms, &out[n])) { ++n; --tokens_; }
         }
         return n;
     }
 
     // Drop an intent that has spent its attempts.  Separate from Due so the caller can
-    // log the give-up with the path and count it failed to have confirmed.
-    bool GiveUp(const char* path)
+    // log the give-up with the path and count it failed to have confirmed.  The default
+    // is the pickup lane; pass the intent kind from Out for a consumption.
+    bool GiveUp(const char* path) { return GiveUp(path, wire::I_GRANT_ITEM); }
+
+    bool GiveUp(const char* path, uint8_t intentKind)
     {
         Item* it = Find(path);
-        if (!it || !it->pending) return false;
+        if (!it) return false;
+        if (intentKind == wire::I_CONSUME_ITEM) {
+            if (!it->consumePending) return false;
+            it->consumePending = false;
+            // The bounded retry has done all it can.  Settle the ledger against the
+            // current cumulative value so the grant target stops subtracting a use the
+            // host was told about five times; the reliable lane is what delivered it.
+            it->consumeConfirmed = it->consumed;
+            --pendingCount_;
+            return true;
+        }
+        if (!it->pending) return false;
         it->pending = false;
         --pendingCount_;
         return true;
@@ -560,8 +638,8 @@ public:
     bool ItemOverflowed() const { return overflowItem_; }
     bool PathOverflowed() const { return overflowPath_; }
 
-    // Test and diagnostic access.  `PeerOwn` returns the current cumulative
-    // contribution for a path (0 for an unknown path).
+    // Test and diagnostic access.  `PeerOwn` returns the current pickup contribution
+    // for a path (0 for an unknown path).
     int32_t PeerOwn(const char* path) const
     {
         const Item* it = Find(path);
@@ -577,6 +655,32 @@ public:
         const Item* it = Find(path);
         return it ? it->hostGiven : 0;
     }
+
+    // What the peer has used that the host has not yet shown in a body.  The grant
+    // target is reduced by this, which is the whole fix for the replenishment drift.
+    int32_t OutstandingConsume(const char* path) const
+    {
+        const Item* it = Find(path);
+        if (!it) return 0;
+        return ClampCount((int64_t)it->consumed - (int64_t)it->consumeConfirmed);
+    }
+    int32_t ConsumedTotal(const char* path) const
+    {
+        const Item* it = Find(path);
+        return it ? it->consumed : 0;
+    }
+    bool ConsumePending(const char* path) const
+    {
+        const Item* it = Find(path);
+        return it && it->consumePending;
+    }
+    // The count the peer should grant up to for this path: the host's published count,
+    // less a use the host has not shown yet.  Callers recompute it at grant time so a
+    // queued grant cannot undo a use made after the body that queued it.
+    int32_t GrantTarget(const char* path, int32_t hostCount) const
+    {
+        return ClampCount((int64_t)hostCount - (int64_t)OutstandingConsume(path));
+    }
     int Size() const { return n_; }
 
 private:
@@ -584,9 +688,12 @@ private:
         bool     used;
         char     path[kMaxPath];
         int32_t  local;         // the last local count read
+        int32_t  lastLocal;     // the count the last change was computed from
         int32_t  hostGiven;     // cumulative amount of `local` the HOST put there
-        int32_t  own;           // clamp(local - hostGiven, 0)
+        int32_t  own;           // clamp(local - hostGiven, 0) -- the pickup contribution
         int32_t  hostFloor;     // highest host count ever published for this path
+        int32_t  hostNow;       // the host count in the newest body
+        bool     seenHost;      // hostNow names a real body
         int32_t  confirmedOwn;  // `own` at the last confirmation
         int32_t  expectedHost;  // hostFloor at last confirmation + unconfirmed own
         bool     pending;
@@ -595,16 +702,186 @@ private:
         uint32_t lastRev;
         uint32_t passRev;       // the host pass this item was last counted in
         bool     inLocal;       // seen in the current local pass
+        bool     inHostPass;    // seen in the current (possibly chunked) host pass
+
+        int32_t  consumed;        // cumulative units the peer has used (C)
+        int32_t  consumeConfirmed;// C the host's body has acknowledged
+        bool     consumePending;
+        int      consumeAttempts;
+        uint32_t consumeLastSendMs;
+        uint32_t consumeLastRev;
+        int32_t  consumeSent;     // the C value last handed to the sender
+        int32_t  hostAtConsume;   // hostNow when the outstanding use began
     };
 
-    bool Emit(Item& it, uint32_t now_ms, Out* o)
+    // The one place a local count change is interpreted, shared by a present path and
+    // by EndLocalPass's vanished path (local = 0).
+    LocalResult ApplyLocalChange(Item& it, int32_t local)
+    {
+        int32_t previous = it.lastLocal;
+        it.local = local;
+        it.lastLocal = local;
+
+        // No complete host set yet: any positive value here is either the peer's own
+        // pre-existing inventory or an item whose host entry is still in a later chunk.
+        // Neither is a pickup, and a fall is not a use yet either.
+        if (!haveBaseline_) {
+            it.own = 0;
+            return kNoBaseline;
+        }
+
+        // The first local pass after the host view fixes the BASELINE: whatever the
+        // peer already holds is treated as host-derived.  Without this, joining a
+        // session would upload the peer's entire save as a burst of grants and double
+        // every item the host also remembers.  Only changes made after this instant are
+        // the peer's own contribution.
+        if (!baselineTaken_) {
+            if (local > it.hostGiven) it.hostGiven = local;
+            it.own = 0;
+            it.confirmedOwn = 0;
+            it.consumed = 0;
+            it.consumeConfirmed = 0;
+            it.consumePending = false;
+            return kAbsorbed;
+        }
+
+        LocalResult pickupResult = kNoChange;
+        LocalResult consumeResult = kNoChange;
+
+        int32_t fall = previous > local ? previous - local : 0;
+        int32_t oldOwn = it.own;
+        int32_t want = ClampCount((int64_t)local - (int64_t)it.hostGiven);
+
+        // --- consumption: a fall that an UN SENT pickup does not already explain ---
+        // Reducing a contribution the host has not been told about would remove an item
+        // it never received, so that part of the fall cancels the pending pickup instead
+        // (handled by the want < oldOwn branch below).  Once a pickup has been sent --
+        // even if its result body was lost -- the use is a real removal on the host, and
+        // the two cumulative ledgers make its arrival order irrelevant.
+        if (fall > 0) {
+            int32_t unsent = 0;
+            if (it.pending && it.attempts == 0) {
+                unsent = ClampCount((int64_t)it.own - (int64_t)it.confirmedOwn);
+                if (unsent > fall) unsent = fall;
+            }
+            int32_t used = fall - unsent;
+            if (used > 0) {
+                it.consumed = ClampCount((int64_t)it.consumed + used);
+                consumeResult = QueueConsume(it);
+            }
+        }
+
+        if (want > oldOwn) {
+            it.own = want;
+            // The host count that proves this contribution landed.  Adding it to the
+            // floor captured at the last confirmation (not to the current floor) keeps
+            // two pickups from each expecting the other's proof.
+            it.expectedHost = ClampCount((int64_t)it.hostFloor +
+                                          (int64_t)(it.own - it.confirmedOwn));
+            if (!it.pending) {
+                if (pendingCount_ >= kMaxPending) {
+                    overflowPending_ = true;
+                    pickupResult = kOverflow;
+                } else {
+                    it.pending = true;
+                    ++pendingCount_;
+                    it.attempts = 0;
+                    it.lastSendMs = 0;
+                    it.lastRev = 0;
+                    pickupResult = kQueued;
+                }
+            } else {
+                // A larger contribution overtook the queued one.  Because the payload is
+                // CUMULATIVE, the newer value contains the older; the host's ledger turns
+                // the whole thing into one increment.  Mark it fresh so it does not wait
+                // out the old retry clock.
+                it.attempts = 0;
+                it.lastSendMs = 0;
+                it.lastRev = 0;
+                pickupResult = kCoalesced;
+            }
+        } else if (want < oldOwn) {
+            // The contribution shrank.  If that leaves nothing beyond what the host has
+            // already confirmed, the intent has no work left and is cancelled.
+            it.own = want;
+            if (it.pending) {
+                if (want <= it.confirmedOwn) {
+                    it.pending = false;
+                    --pendingCount_;
+                    pickupResult = kDropped;
+                } else {
+                    it.expectedHost = ClampCount((int64_t)it.hostFloor +
+                                                 (int64_t)(it.own - it.confirmedOwn));
+                    pickupResult = kLowered;
+                }
+            } else {
+                pickupResult = kLowered;
+            }
+        }
+
+        // A use is the event the caller most needs to log, so it wins when both lanes
+        // changed in one pass; both intents are queued either way.
+        if (consumeResult == kConsumeQueued || consumeResult == kConsumeCoalesced ||
+            consumeResult == kOverflow) {
+            return consumeResult;
+        }
+        return pickupResult != kNoChange ? pickupResult : consumeResult;
+    }
+
+    LocalResult QueueConsume(Item& it)
+    {
+        if (it.consumed <= it.consumeConfirmed) return kNoChange;
+        if (!it.consumePending) {
+            if (pendingCount_ >= kMaxPending) {
+                overflowPending_ = true;
+                // There is no slot to remember the use.  Settle it against the current
+                // value instead of leaving OutstandingConsume permanently non-zero: a
+                // grant target silently reduced for the rest of the session is worse
+                // than a reported loss.
+                it.consumeConfirmed = it.consumed;
+                return kOverflow;
+            }
+            it.consumePending = true;
+            ++pendingCount_;
+            it.consumeAttempts = 0;
+            it.consumeLastSendMs = 0;
+            it.consumeLastRev = 0;
+            it.consumeSent = 0;
+            // The count the host held when this use began is the base its acknowledgement
+            // is measured against.
+            it.hostAtConsume = it.seenHost ? it.hostNow : 0;
+            return kConsumeQueued;
+        }
+        // A larger use overtook the queued one.  The payload is cumulative, so the newer
+        // value contains the older; mark it fresh so it does not wait out the old clock.
+        it.consumeAttempts = 0;
+        it.consumeLastSendMs = 0;
+        it.consumeLastRev = 0;
+        return kConsumeCoalesced;
+    }
+
+    bool EmitPickup(Item& it, uint32_t now_ms, Out* o)
     {
         if (inventory::PathCopy(o->path, kMaxPath, it.path) <= 0) return false;
         o->count = it.own;
         o->basedOnRev = hostRev_;
         o->attempt = ++it.attempts;
+        o->intentKind = wire::I_GRANT_ITEM;
         it.lastSendMs = now_ms;
         it.lastRev = hostRev_;
+        return true;
+    }
+
+    bool EmitConsume(Item& it, uint32_t now_ms, Out* o)
+    {
+        if (inventory::PathCopy(o->path, kMaxPath, it.path) <= 0) return false;
+        o->count = it.consumed;
+        o->basedOnRev = hostRev_;
+        o->attempt = ++it.consumeAttempts;
+        o->intentKind = wire::I_CONSUME_ITEM;
+        it.consumeLastSendMs = now_ms;
+        it.consumeLastRev = hostRev_;
+        it.consumeSent = it.consumed;
         return true;
     }
 
@@ -650,9 +927,12 @@ private:
             return nullptr;
         }
         it.local = 0;
+        it.lastLocal = 0;
         it.hostGiven = 0;
         it.own = 0;
         it.hostFloor = 0;
+        it.hostNow = 0;
+        it.seenHost = false;
         it.confirmedOwn = 0;
         it.expectedHost = 0;
         it.pending = false;
@@ -661,6 +941,15 @@ private:
         it.lastRev = 0;
         it.passRev = 0;
         it.inLocal = false;
+        it.inHostPass = false;
+        it.consumed = 0;
+        it.consumeConfirmed = 0;
+        it.consumePending = false;
+        it.consumeAttempts = 0;
+        it.consumeLastSendMs = 0;
+        it.consumeLastRev = 0;
+        it.consumeSent = 0;
+        it.hostAtConsume = 0;
         return &it_[n_++];
     }
 
@@ -703,6 +992,13 @@ private:
 // sending).  WrGrantItem cannot lower anything, and granting nothing is the correct
 // response: the host's stock must not be raised again for an item the peer no longer
 // counts.
+//
+// THE SECOND AXIS: WHAT THE PEER USED
+// -----------------------------------
+// The same entry also remembers the highest cumulative consumption (`C`) applied for
+// the path.  `NeedConsume` returns only the increase, so a retransmit, a reorder and a
+// logical retry are exactly-once for a removal too.  One table holds both axes: a path
+// that was only ever used still needs a slot, and the bound is the same 512 paths.
 class GrantLedger {
 public:
     enum Result {
@@ -710,6 +1006,13 @@ public:
         kAlreadyApplied,// the same cumulative value arrived again
         kBelowApplied,  // a lower value: refuse, never lower or re-grant
         kLedgerFull     // no path slot: refuse rather than apply untracked
+    };
+
+    enum ConsumeResult {
+        kRemove,              // *remove > 0: remove that many
+        kConsumeAlreadyApplied,// the same cumulative use arrived again
+        kConsumeBelowApplied, // a lower value: refuse, never remove twice
+        kConsumeLedgerFull    // no path slot: refuse rather than remove untracked
     };
 
     GrantLedger() { Reset(); }
@@ -720,6 +1023,7 @@ public:
             e_[i].used = false;
             e_[i].path[0] = 0;
             e_[i].applied = 0;
+            e_[i].appliedConsumed = 0;
         }
         n_ = 0;
         overflow_ = false;
@@ -759,10 +1063,46 @@ public:
         if (peerOwn > e->applied) e->applied = peerOwn;
     }
 
+    // The consumption axis.  `peerConsumed` is the peer's cumulative use for the path.
+    ConsumeResult NeedConsume(const char* path, int32_t peerConsumed, int32_t* remove)
+    {
+        if (remove) *remove = 0;
+        if (!path || !path[0]) return kConsumeLedgerFull;
+        if (peerConsumed <= 0) return kConsumeBelowApplied;
+
+        Entry* e = Find(path);
+        int32_t applied = e ? e->appliedConsumed : 0;
+        if (peerConsumed == applied) return kConsumeAlreadyApplied;
+        if (peerConsumed < applied) return kConsumeBelowApplied;
+
+        if (!e) {
+            e = Insert(path);
+            if (!e) { overflow_ = true; return kConsumeLedgerFull; }
+        }
+        if (remove) *remove = peerConsumed - applied;
+        return kRemove;
+    }
+
+    void CommitConsume(const char* path, int32_t peerConsumed)
+    {
+        if (!path || !path[0] || peerConsumed <= 0) return;
+        Entry* e = Find(path);
+        if (!e) {
+            e = Insert(path);
+            if (!e) { overflow_ = true; return; }
+        }
+        if (peerConsumed > e->appliedConsumed) e->appliedConsumed = peerConsumed;
+    }
+
     int32_t Applied(const char* path) const
     {
         const Entry* e = Find(path);
         return e ? e->applied : 0;
+    }
+    int32_t AppliedConsume(const char* path) const
+    {
+        const Entry* e = Find(path);
+        return e ? e->appliedConsumed : 0;
     }
     bool Overflowed() const { return overflow_; }
     int  Size() const { return n_; }
@@ -771,7 +1111,8 @@ private:
     struct Entry {
         bool     used;
         char     path[kMaxPath];
-        int32_t  applied;
+        int32_t  applied;          // highest cumulative peer pickup applied
+        int32_t  appliedConsumed;  // highest cumulative peer consumption applied
     };
 
     Entry* Find(const char* path)
@@ -801,6 +1142,7 @@ private:
             return nullptr;
         }
         e.applied = 0;
+        e.appliedConsumed = 0;
         return &e_[n_++];
     }
 

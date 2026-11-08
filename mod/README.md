@@ -27,7 +27,7 @@ records that "a claim's DIRECTION and a claim's STRENGTH are separate properties
 | Save container read (`GetNamedSaveData`, direct native call at `0x00E2F6D0`) | **works** |
 | Wire format, native and Rust | **works** — 19/19 byte-for-byte vector matches between the two implementations |
 | DLL build | **works** — `native\build\winmm.dll`, 226 304 B, 180 forwarded exports, 0 real code |
-| Test suite | **209 native assertions + 146 Rust tests, all green** |
+| Test suite | **3 651 native assertions + 148 Rust tests, all green** |
 
 **Proven by independent measurement inside this work** (details in
 [`doc/IMPLEMENTATION.md`](doc/IMPLEMENTATION.md) §4): the save tooling decoded all 30
@@ -59,9 +59,11 @@ which cannot corrupt progression and does prove the path.  See
 - two-player dialogue (`DialogueSync=0`) — built: per-slot talk state, partner's NPC
   blocked through `NPC_Base`'s own `BlockInteract` property
 - the inventory mirror (`InventorySync=0`) — built: the host publishes its inventory
-  whole, the peer grants only what it lacks, and the peer's own pickups go back as intents
+  whole, the peer grants only what it lacks, the peer's own pickups and consumptions go
+  back as cumulative intents, and a use is removed exactly once
 - one-shot world objects (`ActorStateSync=0`) — built: chests, doors and barricades, host
-  absolute set plus the peer's changes as intents
+  absolute set plus the peer's changes as intents, and a one-shot `RestoreFromSave`
+  refresh so the in-level actor visibly follows the container
 - pausing suppression (`SuppressMenuPause=0`)
 
 The peer's own progression now reaches the host (`FlagSync=1`, an `INTENT kind 1` per

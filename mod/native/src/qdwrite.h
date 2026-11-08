@@ -409,14 +409,17 @@ struct WriteLayer {
     void* fnGet;
     void* fnSet;
     void* fnAdd;
+    void* fnConsume;
 
     wr::ParamLayout getLay;
     wr::ParamLayout setLay;
     wr::ParamLayout addLay;
+    wr::ParamLayout consumeLay;
 
     bool  getOk;
     bool  setOk;
     bool  addOk;
+    bool  consumeOk;
     bool  oracleOk;
     bool  ready;
     char  note[192];
@@ -455,9 +458,11 @@ inline bool ResolveWrite(WriteLayer& w, void* cdo)
     w.fnGet = FindFunction(cdo, "GetNamedSaveData");
     w.fnSet = FindFunction(cdo, "SaveNamedData");
     w.fnAdd = FindFunction(cdo, "AddItemToInventory");
+    w.fnConsume = FindFunction(cdo, "TryConsumingItemFromInventory");
     QDLOG(LOG_INFO, "write api: GetNamedSaveData=", hex((uintptr_t)w.fnGet),
           " SaveNamedData=", hex((uintptr_t)w.fnSet),
-          " AddItemToInventory=", hex((uintptr_t)w.fnAdd));
+          " AddItemToInventory=", hex((uintptr_t)w.fnAdd),
+          " TryConsumingItemFromInventory=", hex((uintptr_t)w.fnConsume));
 
     if (!w.fnGet || !w.fnSet) {
         CopyNote(w.note, sizeof(w.note),
@@ -471,8 +476,8 @@ inline bool ResolveWrite(WriteLayer& w, void* cdo)
     // ReturnValueOffset before any recovered offset is used.  A failure here is the
     // "write path unavailable" state, never a crash and never a guess.
     if (!Lay().valid) {
-        void* fns[3] = { w.fnGet, w.fnSet, w.fnAdd };
-        int n = w.fnAdd ? 3 : 2;
+        void* fns[4] = { w.fnGet, w.fnSet, w.fnAdd, w.fnConsume };
+        int n = w.fnAdd ? (w.fnConsume ? 4 : 3) : 2;
         if (!DiscoverLayout(fns, n)) {
             CopyNote(w.note, sizeof(w.note), Lay().note);
             QDLOG(LOG_ERROR, "write api: property layout FAIL (", Lay().note,
@@ -484,6 +489,8 @@ inline bool ResolveWrite(WriteLayer& w, void* cdo)
     w.getOk = SigOf(w.fnGet, &w.getLay, "GetNamedSaveData");
     w.setOk = SigOf(w.fnSet, &w.setLay, "SaveNamedData");
     if (w.fnAdd) w.addOk = SigOf(w.fnAdd, &w.addLay, "AddItemToInventory");
+    if (w.fnConsume) w.consumeOk = SigOf(w.fnConsume, &w.consumeLay,
+                                         "TryConsumingItemFromInventory");
 
     if (w.getOk) {
         char desc[192];
@@ -941,6 +948,142 @@ inline bool WrGrantItem(const char* itemPath, int32_t count, char* err, int errC
     *d = 0;
     ErrSet(err, errCap, m, "");
     QDLOG(LOG_WARN, "write api: AddItemToInventory ", itemPath, ": ", m);
+    return false;
+}
+
+// The removal half of the inventory lane (SYNC-GAPS G3's consumption caveat).  The
+// game's own consumer is `SaveFunctions_C.TryConsumingItemFromInventory(Item, Count,
+// __WorldContext)`, which checks the count and subtracts with Map_Add -- the same
+// container the grant writer uses.  It is called with the amount the host actually
+// holds (clamped), and the native counter is the oracle: it must fall by exactly the
+// requested amount.  A partial removal is a SUCCESS with `removed < count`: the host
+// cannot remove what it does not have, and the caller commits the peer's cumulative
+// value so the intent settles rather than retrying forever.
+inline bool WrConsumeItem(const char* itemPath, int32_t count, int32_t* removed,
+                          char* err, int errCap)
+{
+    if (err && errCap > 0) err[0] = 0;
+    if (removed) *removed = 0;
+    if (!itemPath || !itemPath[0]) {
+        ErrSet(err, errCap, "empty item path", "");
+        return false;
+    }
+    if (count <= 0) {
+        ErrSet(err, errCap, "removal count must be positive", "");
+        return false;
+    }
+    // Same rule as the grant: resolve through WrReady but gate on this writer's own
+    // signature and its native read-back, not on section 1's NamedSaveData oracle.
+    WrReady();
+
+    WriteLayer& w = Wl();
+    if (!Lay().valid) {
+        ErrSet(err, errCap, "property layout not validated: ", Lay().note);
+        return false;
+    }
+    if (!w.fnConsume) {
+        ErrSet(err, errCap, "TryConsumingItemFromInventory not found on SaveFunctions_C", "");
+        return false;
+    }
+    if (!w.consumeOk) {
+        ErrSet(err, errCap, "TryConsumingItemFromInventory signature unavailable", "");
+        return false;
+    }
+
+    void* world = GWorldPtr();
+    if (!world) { ErrSet(err, errCap, "no world", ""); return false; }
+    if (!ActiveSaveNoCreate(world)) {
+        ErrSet(err, errCap, "no active save object", "");
+        return false;
+    }
+
+    const wr::Field* pCtx = wr::WorldContextInput(w.consumeLay);
+    const wr::Field* pCount = wr::InputNamed(w.consumeLay, wr::PK_INT, "Count");
+    if (!pCount) pCount = wr::InputNamed(w.consumeLay, wr::PK_INT, "Amount");
+    if (!pCount) pCount = wr::FirstInput(w.consumeLay, wr::PK_INT);
+    const wr::Field* pItem = ItemParam(w.consumeLay, pCtx, pCount);
+    if (!pCount) { ErrSet(err, errCap, "TryConsumingItemFromInventory has no int count input", ""); return false; }
+    if (!pItem)  { ErrSet(err, errCap, "TryConsumingItemFromInventory has no item input", ""); return false; }
+
+    void* itemObj = ResolveItemObject(itemPath);
+    if (!itemObj) {
+        char m[192];
+        char* d = m;
+        const char* e = m + sizeof(m) - 1;
+        d = detail::Cat(d, e, "cannot resolve the item object for read-back: ");
+        d = detail::Cat(d, e, itemPath);
+        *d = 0;
+        ErrSet(err, errCap, m, "");
+        return false;
+    }
+
+    int32_t before = 0;
+    if (!InventoryCountNative(world, itemObj, &before)) {
+        ErrSet(err, errCap, "cannot read the pre-removal count", "");
+        return false;
+    }
+    // Nothing to remove is not a failure: the peer's cumulative use is as applied as
+    // this host can make it, and the caller's ledger records it so the retry ends.
+    if (before <= 0) {
+        QDLOG(LOG_INFO, "write api: TryConsumingItemFromInventory ", itemPath, " -",
+              dec(count), " but the host holds none (settled)");
+        return true;
+    }
+    int32_t amount = count < before ? count : before;
+
+    wr::Frame f;
+    if (!wr::FrameInit(f, w.consumeLay, (int)sizeof(f.bytes))) {
+        ErrSet(err, errCap, "TryConsumingItemFromInventory frame: ", f.why);
+        return false;
+    }
+    if (pCtx && !wr::FramePutObject(f, pCtx->name, world)) {
+        ErrSet(err, errCap, "TryConsumingItemFromInventory frame: ", f.why);
+        return false;
+    }
+    wchar_t wide[192];
+    if (!PutItemArg(f, pItem, itemPath, itemObj, wide, (int)(sizeof(wide) / sizeof(wide[0])),
+                    err, errCap)) {
+        return false;
+    }
+    if (!wr::FramePutInt(f, pCount->name, amount)) {
+        ErrSet(err, errCap, "TryConsumingItemFromInventory frame: ", f.why);
+        return false;
+    }
+
+    if (!ProcessEventGuarded(w.cdo, w.fnConsume, f.bytes)) {
+        ErrSet(err, errCap, "TryConsumingItemFromInventory ProcessEvent faulted", "");
+        QDLOG(LOG_ERROR, "write api: TryConsumingItemFromInventory ProcessEvent faulted for ",
+              itemPath);
+        return false;
+    }
+
+    int32_t after = 0;
+    if (!InventoryCountNative(world, itemObj, &after)) {
+        ErrSet(err, errCap, "cannot read the post-removal count", "");
+        return false;
+    }
+    int64_t delta = (int64_t)after - (int64_t)before;
+    if (delta == -(int64_t)amount) {
+        if (removed) *removed = amount;
+        QDLOG(LOG_INFO, "write api: TryConsumingItemFromInventory ", itemPath, " -",
+              dec(amount), " read back ", dec(before), " -> ", dec(after),
+              (amount < count ? " (host held less than the peer asked; settled)" : ""));
+        return true;
+    }
+
+    char m[192];
+    char* d = m;
+    const char* e = m + sizeof(m) - 1;
+    d = detail::Cat(d, e, "count did not fall by the requested amount: ");
+    d = detail::CatDec(d, e, before);
+    d = detail::Cat(d, e, " -> ");
+    d = detail::CatDec(d, e, after);
+    d = detail::Cat(d, e, " (wanted -");
+    d = detail::CatDec(d, e, amount);
+    d = detail::Cat(d, e, ")");
+    *d = 0;
+    ErrSet(err, errCap, m, "");
+    QDLOG(LOG_WARN, "write api: TryConsumingItemFromInventory ", itemPath, ": ", m);
     return false;
 }
 
@@ -1653,9 +1796,10 @@ inline bool EncodeGuidForLog(const QdGuid& g, char* out, int cap)
 // returned" is not evidence (DollsMP F-12.17), and a successful ProcessEvent with the
 // wrong frame changes nothing.
 inline bool WrSetActorState(const QdGuid& guid, int32_t value, void* actorHint,
-                            int indexHint, char* err, int errCap)
+                            int indexHint, char* err, int errCap, bool* changed = nullptr)
 {
     if (err && errCap > 0) err[0] = 0;
+    if (changed) *changed = false;
     if (guid.IsZero()) {
         ErrSet(err, errCap, "zero GUID", "");
         return false;
@@ -1723,6 +1867,7 @@ inline bool WrSetActorState(const QdGuid& guid, int32_t value, void* actorHint,
                   " via SavableActor.Save Data Index to World Save index=", dec(index),
                   " read back container=", dec(after),
                   (haveCached ? (isSet ? " cached=ok" : " cached=NOT SET") : " cached=n/a"));
+            if (changed) *changed = true;
             return true;
         }
         // Fall through to the in-place path only if the key exists; the reason is kept
@@ -1772,6 +1917,252 @@ inline bool WrSetActorState(const QdGuid& guid, int32_t value, void* actorHint,
     QDLOG(LOG_INFO, "actor-state: wrote guid=", gbuf, " value=", dec(value),
           " in place (no live SavableActor), read back ", dec(after));
     if (err && errCap > 0) err[0] = 0;
+    if (changed) *changed = true;
+    return true;
+}
+
+// ===========================================================================
+// Part 7 -- G2 visibility: one safe refresh of the in-level SavableActor
+// ===========================================================================
+// The container and the actor's cached `MySaveData` converge through the writer, but
+// the actor only READS that cache on the game's load path: `RestoreFromSave()` does
+// `CacheSaveData(); Restore State From Save Data(MySaveData)`.  Calling it repeatedly
+// is unsafe because `CacheSaveData` uses `Array_Add`, so every call appends another
+// copy of the GUIDs and the array grows without bound.
+//
+// The safe one-shot is therefore: clear the logical length of `MySaveData` (leave its
+// allocation alone), call the game's own `RestoreFromSave`, then read the result back.
+// `CacheSaveData` rebuilds exactly one entry per authored GUID from the container, and
+// `Restore State From Save Data` runs the subclass' own override -- the same code the
+// game runs on every load -- which is what makes a door/chest visibly open and become
+// non-interactable.  No effects are invented and no loot path is called: the override
+// is the load path, not the interact path.
+//
+// Everything here is a __try-guarded memory access, and the resolution is logged once
+// (the refresh itself logs one line per changed GUID, which is the live evidence).
+
+inline bool FindActorStateOwner(const QdGuid& guid, void** actor, int* index)
+{
+    if (actor) *actor = nullptr;
+    if (index) *index = -1;
+    void* a = FindSavableActorByGuid(guid);
+    if (!a) return false;
+    int idx = -1;
+    if (!FindGuidIndexInActor(a, guid, &idx)) return false;
+    if (actor) *actor = a;
+    if (index) *index = idx;
+    return true;
+}
+
+inline int ReadActorArrayNum(void* actor, const char* prop)
+{
+    if (!actor || !prop) return -1;
+    int sz = 0;
+    int off = FindPropertyOffsetIn(ObjClass(actor), prop, &sz);
+    if (off < 0 || sz < 16) return -1;
+    __try {
+        int32_t num = *(const int32_t*)((const uint8_t*)actor + off + 8);
+        if (num < 0 || num > 1000000) return -1;
+        return num;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return -1;
+    }
+}
+
+// Set the TArray's logical length to zero without touching its allocation.  The element
+// type is a Blueprint `SavableActorState` (one bool), so there is nothing to destruct;
+// CacheSaveData's Array_Add overwrites the abandoned elements in place.  Validating the
+// header first is what makes a wrong property offset fail instead of corrupting memory.
+inline bool ClearActorSaveData(void* actor, int* before, char* err, int cap)
+{
+    if (before) *before = -1;
+    if (!actor) { ErrSet(err, cap, "no actor", ""); return false; }
+    int sz = 0;
+    int off = FindPropertyOffsetIn(ObjClass(actor), "MySaveData", &sz);
+    if (off < 0) {
+        ErrSet(err, cap, "SavableActor has no MySaveData array", "");
+        return false;
+    }
+    if (sz < 16) {
+        ErrSet(err, cap, "MySaveData is not a TArray", "");
+        return false;
+    }
+    bool ok = false;
+    int32_t num = -1;
+    __try {
+        const void* data = *(const void* const*)((const uint8_t*)actor + off);
+        int32_t n = *(const int32_t*)((const uint8_t*)actor + off + 8);
+        int32_t m = *(const int32_t*)((const uint8_t*)actor + off + 12);
+        if (n >= 0 && m >= 0 && n <= m && m <= 1000000 && (m == 0 || data)) {
+            num = n;
+            *(int32_t*)((uint8_t*)actor + off + 8) = 0;
+            ok = true;
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        ok = false;
+    }
+    if (!ok) {
+        ErrSet(err, cap, "MySaveData header is implausible or unreadable", "");
+        return false;
+    }
+    if (before) *before = (int)num;
+    return true;
+}
+
+// Write a bool property directly.  Used only for the interaction gate (`Opened`), after
+// the game's own restore has run: the container says the chest is open, so a chest whose
+// Blueprint restore left the gate false must not stay lootable.  A direct property write
+// is how a Blueprint bool is stored; there is no setter to bypass.
+inline bool SetActorBoolGuarded(void* actor, const char* prop, bool value)
+{
+    if (!actor || !prop) return false;
+    int sz = 0;
+    int off = FindPropertyOffsetIn(ObjClass(actor), prop, &sz);
+    if (off < 0 || sz < 1) return false;
+    __try {
+        *(uint8_t*)((uint8_t*)actor + off) = value ? 1 : 0;
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+// Restore the logical length after a failed refresh.  The elements are still in the
+// allocation, so this puts the previous cache back rather than leaving the actor
+// forgetful until its next load.
+inline bool SetActorArrayNum(void* actor, const char* prop, int num)
+{
+    if (!actor || !prop || num < 0) return false;
+    int sz = 0;
+    int off = FindPropertyOffsetIn(ObjClass(actor), prop, &sz);
+    if (off < 0 || sz < 16) return false;
+    __try {
+        int32_t m = *(const int32_t*)((const uint8_t*)actor + off + 12);
+        if (num > m || m > 1000000) return false;
+        *(int32_t*)((uint8_t*)actor + off + 8) = num;
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+// Refresh one live SavableActor after `WrSetActorState` changed its container entry.
+// `value` is the value just written, so the read-backs can assert the actor now agrees
+// with the container.  Returns false when the game's own getter still disagrees; the
+// array-count and `Opened` checks are diagnostics, because actors that never had an
+// `Opened` property (e.g. a barricade) are still refreshed correctly.
+inline bool WrRefreshActorState(void* actor, int index, int32_t value,
+                                char* err, int cap)
+{
+    if (err && cap > 0) err[0] = 0;
+    if (!actor) { ErrSet(err, cap, "no live SavableActor", ""); return false; }
+
+    void* fn = FindFunction(actor, "RestoreFromSave");
+    static bool loggedResolve = false;
+    if (!fn) {
+        if (!loggedResolve) {
+            QDLOG(LOG_WARN, "actor-state refresh: no RestoreFromSave on the actor class; "
+                            "visibility will not follow the container");
+            loggedResolve = true;
+        }
+        ErrSet(err, cap, "RestoreFromSave not found", "");
+        return false;
+    }
+    LayoutResult sig = Signature(fn);
+    if (!sig.valid) {
+        if (!loggedResolve) {
+            QDLOG(LOG_WARN, "actor-state refresh: RestoreFromSave signature: ", sig.note);
+            loggedResolve = true;
+        }
+        ErrSet(err, cap, "RestoreFromSave signature: ", sig.note);
+        return false;
+    }
+    if (sig.props != 0) {
+        if (!loggedResolve) {
+            QDLOG(LOG_WARN, "actor-state refresh: RestoreFromSave has ", dec(sig.props),
+                  " parameters; refusing to guess a frame");
+            loggedResolve = true;
+        }
+        ErrSet(err, cap, "RestoreFromSave has parameters", "");
+        return false;
+    }
+    if (sig.parms_size < 0 || sig.parms_size > wr::kMaxFrame) {
+        if (!loggedResolve) {
+            QDLOG(LOG_WARN, "actor-state refresh: RestoreFromSave frame is ",
+                  dec(sig.parms_size), " bytes; refusing");
+            loggedResolve = true;
+        }
+        ErrSet(err, cap, "RestoreFromSave frame is out of range", "");
+        return false;
+    }
+    if (!loggedResolve) {
+        QDLOG(LOG_INFO, "actor-state refresh: RestoreFromSave resolved at ",
+              hex((uintptr_t)fn), " frame=", dec(sig.parms_size),
+              " (MySaveData cleared, cache rebuilt, state re-applied)");
+        loggedResolve = true;
+    }
+
+    int before = -1;
+    if (!ClearActorSaveData(actor, &before, err, cap)) return false;
+
+    ArgList args;
+    ReadBack rb;
+    if (!Invoke(actor, fn, sig, args, &rb, err, cap)) {
+        // The cache length was cleared for the rebuild.  If the game's own function did
+        // not run, put the previous length back so the actor keeps the state it had.
+        if (before >= 0) SetActorArrayNum(actor, "MySaveData", before);
+        QDLOG(LOG_WARN, "actor-state refresh: RestoreFromSave failed: ", err);
+        return false;
+    }
+
+    int cacheNum = ReadActorArrayNum(actor, "MySaveData");
+    int guidNum  = ReadActorArrayNum(actor, "GUIDs");
+    int32_t cached = 0;
+    bool isSet = false;
+    char gerr[160];
+    bool haveCached = ReadActorStateViaGetterGuarded(actor, index, &cached, &isSet,
+                                                     gerr, sizeof(gerr));
+    bool opened = false;
+    bool haveOpened = ReadActorBool(actor, "Opened", &opened);
+    bool expectSet = (value != 0);
+    bool forcedOpen = false;
+    // The load path should have set the gate; if it did not, the container still says
+    // this chest/door is open.  Forcing the bool is what makes "a chest looted by one
+    // player cannot be looted again by the other" a property of the state, not of the
+    // subclass' override happening to be complete.  The log names it `forced=1` so the
+    // live run can tell the restore from the backstop.
+    if (expectSet && haveOpened && !opened) {
+        if (SetActorBoolGuarded(actor, "Opened", true)) {
+            opened = true;
+            forcedOpen = true;
+        }
+    }
+
+    bool valueOk = !haveCached || (isSet == expectSet);
+    bool cacheOk = (cacheNum < 0 || guidNum < 0 || cacheNum == guidNum);
+    bool visibleOk = !haveOpened || (opened == expectSet);
+    bool allOk = valueOk && cacheOk && visibleOk;
+
+    char desc[160];
+    ObjDescribe(actor, desc, sizeof(desc));
+    QDLOG(allOk ? LOG_INFO : LOG_WARN,
+          "actor-state refresh ", (allOk ? "ok" : "INCOMPLETE"), " ", desc,
+          " index=", dec(index), " value=", dec(value),
+          " mySaveData=", dec(before < 0 ? 0 : before), "->", dec(cacheNum),
+          " guids=", dec(guidNum),
+          (haveCached ? (isSet ? " cached=ok" : " cached=NOT SET") : " cached=n/a"),
+          (haveOpened ? (opened ? " opened=1" : " opened=0") : " opened=n/a"),
+          (forcedOpen ? " forced=1" : ""));
+
+    if (!valueOk) {
+        ErrSet(err, cap, "actor getter still disagrees after RestoreFromSave", "");
+        return false;
+    }
+    if (err && cap > 0) err[0] = 0;
     return true;
 }
 

@@ -151,10 +151,12 @@ uint32_t                g_peerInvRev = 0;
 void*                   g_invSnapshotSave = nullptr;
 bool                    g_invHaveSnapshot = false;
 
-// The other direction of the same lane (qdinvintent.h): the peer's own pickups, as a
-// cumulative contribution per path, and the host's monotone record of how much of each
-// it has already added.  Both are reset with the inventory state above because an
-// in-flight contribution names a path in the container being replaced.
+// The other direction of the same lane (qdinvintent.h): the peer's own pickups and
+// consumptions, as two independent cumulative counters per path, and the host's
+// monotone record of how much of each it has already applied.  One table, two axes, so
+// a retransmit or a reorder is exactly-once for a grant and for a removal alike.
+// Reset with the inventory state above because an in-flight contribution names a path
+// in the container being replaced.
 invintent::PickupQueue  g_invIntents;
 invintent::GrantLedger  g_invGrantLedger;
 
@@ -789,10 +791,25 @@ void HostApplyIntent(wire::Reader& r)
             return;
         }
         QdGuid g = { b.guid[0], b.guid[1], b.guid[2], b.guid[3] };
+        void* actor = nullptr;
+        int index = -1;
+        FindActorStateOwner(g, &actor, &index);
         char err[192];
-        if (WrSetActorState(g, b.value, err, sizeof(err))) {
+        bool changed = false;
+        if (WrSetActorState(g, b.value, actor, index, err, sizeof(err), &changed)) {
             QDLOG(LOG_INFO, "actor-state intent applied: guid=", hex32(g.a), "-",
                   hex32(g.b), "-", hex32(g.c), "-", hex32(g.d), " value=", dec(b.value));
+            // The peer opened a door/chest here too.  The container is already written;
+            // run the actor's own load-path refresh once so the authority's world shows
+            // what the partner did.
+            if (changed && actor && index >= 0) {
+                char rerr[192];
+                if (!WrRefreshActorState(actor, index, b.value, rerr, sizeof(rerr))) {
+                    QDLOG(LOG_WARN, "actor-state refresh failed (intent) guid=",
+                          hex32(g.a), "-", hex32(g.b), "-", hex32(g.c), "-", hex32(g.d),
+                          ": ", rerr);
+                }
+            }
             // ObserveHostActorStates runs at 4 Hz and its Observe() sees this write, which
             // marks the publisher dirty and sends the echo.  Doing it here as well would
             // race the enumerator for no benefit.
@@ -848,6 +865,48 @@ void HostApplyIntent(wire::Reader& r)
                 // Not committed: a refused write must be retried, and committing now
                 // would make the retry look like a duplicate and lose the item.
                 QDLOG(LOG_WARN, "inventory grant failed: ", b.name, " x", dec(need),
+                      ": ", err);
+            }
+        }
+    } else if (b.kind == wire::I_CONSUME_ITEM) {
+        if (!Cfg().inventory_sync) return;
+        // The peer used an item.  The payload is its CUMULATIVE use for the path, and
+        // the ledger removes only the increase, so a retransmit or a reorder is
+        // exactly-once.  This is the half that used to be missing: without it the next
+        // host body granted the consumed item back and counts drifted upward.
+        int32_t need = 0;
+        invintent::GrantLedger::ConsumeResult lr =
+            g_invGrantLedger.NeedConsume(b.name, b.value, &need);
+        if (lr == invintent::GrantLedger::kConsumeAlreadyApplied) {
+            QDLOG(LOG_INFO, "inventory consume duplicate: ", b.name, " peer total ",
+                  dec(b.value), " already applied");
+        } else if (lr == invintent::GrantLedger::kConsumeBelowApplied) {
+            // A stale or declined use: the peer consumed less than it already told us
+            // about.  Never remove twice.
+            QDLOG(LOG_INFO, "inventory consume superseded: ", b.name, " peer total ",
+                  dec(b.value), " is below applied ",
+                  dec(g_invGrantLedger.AppliedConsume(b.name)));
+        } else if (lr == invintent::GrantLedger::kConsumeLedgerFull) {
+            QDLOG(LOG_WARN, "inventory consume refused: ", b.name, " x", dec(b.value),
+                  " (ledger full; untracked removals are not applied)");
+        } else {
+            int32_t removed = 0;
+            char err[160];
+            if (WrConsumeItem(b.name, need, &removed, err, sizeof(err))) {
+                // Commit the whole cumulative value even when the host held less than
+                // the peer asked for: there is nothing left to remove, and keeping the
+                // intent alive would only retry a settled use.
+                g_invGrantLedger.CommitConsume(b.name, b.value);
+                g_invForceObserve = true;
+                QDLOG(LOG_INFO, "inventory consume applied: ", b.name, " -", dec(removed),
+                      " (peer total ", dec(b.value), " rev=", dec(b.based_on_rev), ")");
+                if (removed < need) {
+                    QDLOG(LOG_WARN, "inventory consume partial: ", b.name, " asked -",
+                          dec(need), " but the host held ", dec(removed),
+                          "; the rest is settled, never invented");
+                }
+            } else {
+                QDLOG(LOG_WARN, "inventory consume failed: ", b.name, " x", dec(need),
                       ": ", err);
             }
         }
@@ -4837,23 +4896,33 @@ void PeerApplyInventory(wire::Reader& r, uint32_t now)
         } else if (hr == invintent::PickupQueue::kHostSuperseded) {
             QDLOG(LOG_INFO, "item intent superseded: ", path, " host=", dec(count),
                   " is already at or above the peer's ask");
+        } else if (hr == invintent::PickupQueue::kHostConsumeConfirmed) {
+            QDLOG(LOG_INFO, "item consume confirmed: ", path, " host=", dec(count));
         }
 
         int32_t local = 0;
         bool haveLocal = PeerInventoryCount(path, &local);
-        if (haveLocal && count <= local) {
-            // The host is not ahead.  This settles (cancels) any pending grant; it does
-            // NOT lower the peer's count, which may be higher from a local pickup.
+        // The host body may predate a use the peer made.  Grant up to the count the
+        // host will hold once it applies that use, or the consumed item is handed
+        // straight back and the count drifts upward (the G3 caveat).  The pump applies
+        // the same adjustment at grant time, so a grant queued before the use cannot
+        // undo it either.
+        int32_t target = g_invIntents.GrantTarget(path, count);
+        if (haveLocal && target <= local) {
+            // The host is not ahead once the outstanding use is counted.  This settles
+            // (cancels) any pending grant; it does NOT lower the peer's count, which
+            // may be higher from a local pickup.
             g_invGrants.Done(path);
             ++satisfied;
             continue;
         }
         if (!haveLocal) ++unread;
 
-        // Queue the ABSOLUTE target, not the difference: the peer's count can move
-        // between this body and the grant, and recomputing the difference at grant time
-        // makes a stale difference a no-op rather than an over-grant.  An unresolvable
-        // item is queued too, so its failure is reported and remembered.
+        // Queue the ABSOLUTE host count, not the difference: the peer's count and the
+        // outstanding use can both move between this body and the grant, and recomputing
+        // the target at grant time makes a stale difference a no-op rather than an
+        // over-grant.  An unresolvable item is queued too, so its failure is reported
+        // and remembered.
         inventory::GrantQueue::Observed o = g_invGrants.Observe(path, count, now);
         if (o == inventory::GrantQueue::kQueued ||
             o == inventory::GrantQueue::kRaised) {
@@ -4908,10 +4977,14 @@ void PeerGrantPump(uint32_t now)
                   " (peer count unreadable; kept)");
             continue;
         }
-        int32_t need = out[i].target - local;
+        int32_t target = g_invIntents.GrantTarget(out[i].path, out[i].target);
+        int32_t need = target - local;
+        // Re-evaluate against the use still outstanding NOW, not when the body queued
+        // this grant.  A grant queued before the player used the item must not restore
+        // it when it is applied a tick later.
         if (need <= 0) {
-            // A local pickup covered it between the body and now.  Nothing to add and
-            // (by the design's rule) nothing to take away.
+            // A local pickup (or the outstanding use) covered it between the body and
+            // now.  Nothing to add and (by the design's rule) nothing to take away.
             g_invGrants.Done(out[i].path);
             continue;
         }
@@ -4924,7 +4997,7 @@ void PeerGrantPump(uint32_t now)
             // qdinvintent.h).  Record it before the next local enumeration.
             g_invIntents.HostGranted(out[i].path, need);
             QDLOG(LOG_INFO, "inventory grant applied: ", out[i].path, " +", dec(need),
-                  " (host ", dec(out[i].target), ", peer ", dec(local), ")");
+                  " (host ", dec(target), ", peer ", dec(local), ")");
         } else {
             // KEPT, not dropped.  The reason is logged and the item is retried after
             // kRetryMs; a transient "asset not loaded yet" must not lose a key.
@@ -4970,6 +5043,12 @@ void CollectInvIntentItem(void* item, int32_t count, void* user)
         break;
     case invintent::PickupQueue::kCoalesced:
         QDLOG(LOG_INFO, "item intent superseded ", path, " by local ", dec(count));
+        break;
+    case invintent::PickupQueue::kConsumeQueued:
+        QDLOG(LOG_INFO, "item consume queued ", path, " x", dec(count));
+        break;
+    case invintent::PickupQueue::kConsumeCoalesced:
+        QDLOG(LOG_INFO, "item consume superseded ", path, " by local ", dec(count));
         break;
     case invintent::PickupQueue::kDropped:
         QDLOG(LOG_INFO, "item intent dropped (no longer held) ", path);
@@ -5025,31 +5104,33 @@ void PeerInventoryIntentPump(uint32_t now)
     invintent::PickupQueue::Out out[invintent::PickupQueue::kMaxPerTick];
     int n = g_invIntents.Due(now, out, invintent::PickupQueue::kMaxPerTick);
     for (int i = 0; i < n; ++i) {
-        // kind 2, then str(item_path) i32(count), which is ReadIntent's I_GRANT_ITEM
-        // layout.  `count` is the peer's CUMULATIVE own contribution for the path, not
-        // an increment; the host's ledger (GrantLedger) grants only the increase, which
-        // is what makes retries safe on an additive field.
+        // kind 2 (pickup) or kind 3 (consumption), then str(item_path) i32(cumulative).
+        // Both counters are cumulative, never deltas: the host's two ledgers grant or
+        // remove only the increase, which is what makes retransmission exactly-once.
         uint8_t body[inventory::kMaxPath + 32];
         wire::Writer w(body, sizeof(body));
-        wire::WriteIntentHeader(w, wire::I_GRANT_ITEM, out[i].basedOnRev);
+        wire::WriteIntentHeader(w, out[i].intentKind, out[i].basedOnRev);
         w.Str(out[i].path);
         w.I32(out[i].count);
 
         bool sent = w.ok && g_net.SendReliable(wire::K_INTENT, body, w.len);
+        const bool consuming = (out[i].intentKind == wire::I_CONSUME_ITEM);
         if (sent) {
-            QDLOG(LOG_INFO, "item intent sent ", out[i].path, " x", dec(out[i].count),
+            QDLOG(LOG_INFO, consuming ? "item consume sent " : "item intent sent ",
+                  out[i].path, " x", dec(out[i].count),
                   " rev=", dec(out[i].basedOnRev), " try ", dec(out[i].attempt), "/",
                   dec(invintent::PickupQueue::kMaxAttempts));
         } else {
-            QDLOG(LOG_WARN, "item intent send failed ", out[i].path, " x",
-                  dec(out[i].count));
+            QDLOG(LOG_WARN, consuming ? "item consume send failed " : "item intent send failed ",
+                  out[i].path, " x", dec(out[i].count));
         }
 
         // The attempt is spent whether or not the socket took it: the give-up must be
         // bounded, and the host's echo is the only thing that settles an intent.
         if (out[i].attempt >= invintent::PickupQueue::kMaxAttempts) {
-            g_invIntents.GiveUp(out[i].path);
-            QDLOG(LOG_WARN, "item intent given up ", out[i].path, " x", dec(out[i].count),
+            g_invIntents.GiveUp(out[i].path, out[i].intentKind);
+            QDLOG(LOG_WARN, consuming ? "item consume given up " : "item intent given up ",
+                  out[i].path, " x", dec(out[i].count),
                   " after ", dec(out[i].attempt), " attempts, the host never showed it");
         }
     }
@@ -5210,13 +5291,25 @@ void PeerApplyActorStates(wire::Reader& r, uint32_t now)
 
         QdGuid q = { g[0], g[1], g[2], g[3] };
         char err[192];
-        if (WrSetActorState(q, v, actor, index, err, sizeof(err))) {
+        bool changed = false;
+        if (WrSetActorState(q, v, actor, index, err, sizeof(err), &changed)) {
             ++applied;
             // The host's value is now in our container.  The 4 Hz local detector will
             // see the write a moment later; remembering it here is what stops it being
             // offered back as an intent.
             g_pendingActors.RememberEcho(g, v);
             g_actorMirror.Note(g, v);
+            // The container and the cached MySaveData follow immediately, but the
+            // in-level actor only re-reads them on the load path.  Refresh it once, on
+            // the frame that changed it, so the door/chest visibly opens here too.
+            if (changed && actor && index >= 0) {
+                char rerr[192];
+                if (!WrRefreshActorState(actor, index, v, rerr, sizeof(rerr))) {
+                    QDLOG(LOG_WARN, "actor-state refresh failed rev=", dec(rev),
+                          " guid=", hex32(g[0]), "-", hex32(g[1]), "-", hex32(g[2]), "-",
+                          hex32(g[3]), ": ", rerr);
+                }
+            }
         } else {
             ++failed;
             if (failed <= 4) {

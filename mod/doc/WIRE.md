@@ -287,15 +287,23 @@ highest value it has already applied for that path.
 
 Cumulative rather than a delta, because the grant is additive on the receiving side: a
 delta resent after a lost acknowledgement would add the item twice, while a cumulative
-value is idempotent — a repeat applies nothing, a lower value is a consumption and is
-refused, a higher value applies only the increment. This is deliberately a different rule
-from kind 1's `based_on_rev` gate: for a monotone counter a replay *is* stale, but for a
-cumulative grant a replay is exactly what recovers a lost body. `based_on_rev` is carried
-for diagnostics on this kind and is not the acceptance test.
+value is idempotent — a repeat applies nothing, a lower value is refused (a use travels
+as kind 3), a higher value applies only the increment. This is deliberately a different
+rule from kind 1's `based_on_rev` gate: for a monotone counter a replay *is* stale, but
+for a cumulative grant a replay is exactly what recovers a lost body. `based_on_rev` is
+carried for diagnostics on this kind and is not the acceptance test.
 
 The peer measures its own contribution as `local − (what the host granted this peer)`,
 never as `local − (the host's total)`: subtracting the host's total would make an item
 both players picked up independently cancel to zero and lose one of the two gains.
+
+**Kind 3** — an item the peer used. `count` is the peer's **cumulative use** for that
+path, not a delta. The host's ledger removes only the increase over the highest value it
+has already removed (through `SaveFunctions_C.TryConsumingItemFromInventory`, read back
+with the native counter), so a retransmit and a reorder are exactly-once. While a use is
+outstanding, the peer's grant target is `host count − outstanding use`, which is what stops
+the next host body from handing the consumed item back. `based_on_rev` is diagnostic only,
+for the same reason as kind 2.
 
 **Kind 7** — the peer's player hit a copy the host is driving. `damage_frac` is the HP
 the copy lost, as a fraction of its max in 1/65535 units (it may exceed 65535 for an

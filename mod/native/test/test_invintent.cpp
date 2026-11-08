@@ -10,6 +10,7 @@
 //   echo       a host grant is read as a local pickup and the item ping-pongs
 //   double     a retried additive grant is applied twice, so one pickup becomes two
 //   re-grant   a consumed item is granted again because a count fell
+//   consume    a peer use is not sent, or is sent twice, or replenishes the peer
 //   starve     a burst of pickups queues behind a retry backlog and the key the player
 //              is standing at the door with never goes out
 //   lower      a lower cumulative contribution is applied as a negative grant
@@ -183,29 +184,155 @@ static void TestWaitingGrantIsNotAPickup()
 }
 
 // ===========================================================================
-// consumption -- never sent, never re-granted
+// consumption -- sent as its own cumulative counter, exactly once
 // ===========================================================================
-static void TestPeerConsumptionNotSent()
+static void TestPeerConsumptionIsSent()
 {
     Row rows[] = { {"/Game/Items/Potion.Potion", 5} };
     Q q;
     EstablishWith(q, 1, rows, 1);
 
     q.BeginLocalPass();
-    CHECK(q.LocalItem("/Game/Items/Potion.Potion", 4) == Q::kNoChange,
-          "consume/a peer consumption never raises own (it is already zero)");
+    CHECK(q.LocalItem("/Game/Items/Potion.Potion", 4) == Q::kConsumeQueued,
+          "consume/a peer use is queued");
     q.EndLocalPass();
-    CHECK(q.Empty(), "consume/nothing is queued");
-    CHECK(q.Due(0, g_out, 8) == 0, "consume/nothing is sent");
+    CHECK(q.PendingCount() == 1, "consume/one intent waits");
+    CHECK(q.ConsumedTotal("/Game/Items/Potion.Potion") == 1,
+          "consume/the cumulative use is one");
+    CHECK(q.OutstandingConsume("/Game/Items/Potion.Potion") == 1,
+          "consume/the use is outstanding until the host shows it");
 
-    // The next host body replenishes it through GrantQueue, not through this lane.  The
-    // grant accounting must not turn that into a new contribution.
-    q.HostGranted("/Game/Items/Potion.Potion", 1);
+    int n = q.Due(0, g_out, 8);
+    CHECK(n == 1, "consume/the use is sent");
+    CHECK(g_out[0].intentKind == wire::I_CONSUME_ITEM, "consume/it is kind 3");
+    CHECK(g_out[0].count == 1, "consume/the payload is the cumulative use");
+
+    // The body that crossed the use on the wire still advertises the old count.  The
+    // grant target subtracts the use, so the consumed item is not handed back.
+    CHECK(q.GrantTarget("/Game/Items/Potion.Potion", 5) == 4,
+          "consume/the grant target drops by the outstanding use");
+    CHECK(q.HostItem("/Game/Items/Potion.Potion", 5) != Q::kHostConsumeConfirmed,
+          "consume/an old body does not confirm the use");
+    CHECK(q.OutstandingConsume("/Game/Items/Potion.Potion") == 1,
+          "consume/it is still outstanding");
+
+    // The host applied it and published the fall.
+    CHECK(q.HostItem("/Game/Items/Potion.Potion", 4) == Q::kHostConsumeConfirmed,
+          "consume/the host's fall confirms the use");
+    CHECK(q.OutstandingConsume("/Game/Items/Potion.Potion") == 0,
+          "consume/nothing is outstanding after confirmation");
+    CHECK(q.GrantTarget("/Game/Items/Potion.Potion", 4) == 4,
+          "consume/the grant target is the host count again");
+    CHECK(q.Due(1000, g_out, 8) == 0, "consume/nothing is retried after confirmation");
+}
+
+static void TestConsumptionOfSentPickup()
+{
+    Q q;
+    EstablishEmpty(q);
+
     q.BeginLocalPass();
-    CHECK(q.LocalItem("/Game/Items/Potion.Potion", 5) == Q::kNoChange,
-          "consume/the replenishment is an echo");
+    CHECK(q.LocalItem("/Game/Items/Key.A", 2) == Q::kQueued, "sent/the pickup is queued");
     q.EndLocalPass();
-    CHECK(q.Due(0, g_out, 8) == 0, "consume/the replenishment is not sent");
+    CHECK(q.Due(0, g_out, 8) == 1 && g_out[0].intentKind == wire::I_GRANT_ITEM,
+          "sent/the pickup goes out");
+
+    // The peer used one before the result body arrived.  The pickup is already on the
+    // wire, so the use is a real removal, not a cancellation of the contribution.
+    q.BeginLocalPass();
+    CHECK(q.LocalItem("/Game/Items/Key.A", 1) == Q::kConsumeQueued,
+          "sent/a use after the send is a consumption");
+    q.EndLocalPass();
+    CHECK(q.ConsumedTotal("/Game/Items/Key.A") == 1, "sent/the use is counted");
+    CHECK(q.PeerOwn("/Game/Items/Key.A") == 1, "sent/the remaining pickup is kept");
+
+    int n = q.Due(1, g_out, 8);
+    CHECK(n == 1, "sent/the consumption is due");
+    CHECK(g_out[0].intentKind == wire::I_CONSUME_ITEM && g_out[0].count == 1,
+          "sent/it carries the cumulative use");
+}
+
+static void TestConsumptionOfVanishedItem()
+{
+    Row rows[] = { {"/Game/Items/Potion.Potion", 1} };
+    Q q;
+    EstablishWith(q, 1, rows, 1);
+
+    // The last unit is used and the path disappears from the container, so the walk never
+    // visits it.  EndLocalPass must still see the fall.
+    q.BeginLocalPass();
+    int dropped = q.EndLocalPass();
+    CHECK(dropped == 0, "vanishuse/no pickup is reaped");
+    CHECK(q.ConsumedTotal("/Game/Items/Potion.Potion") == 1,
+          "vanishuse/the last unit is a use");
+    int n = q.Due(0, g_out, 8);
+    CHECK(n == 1 && g_out[0].intentKind == wire::I_CONSUME_ITEM && g_out[0].count == 1,
+          "vanishuse/the use is sent");
+}
+
+static void TestConsumptionConfirmedByAbsentPath()
+{
+    Row rows[] = { {"/Game/Items/Potion.Potion", 1} };
+    Q q;
+    EstablishWith(q, 1, rows, 1);
+
+    q.BeginLocalPass();
+    q.EndLocalPass();                       // the last unit was used
+    CHECK(q.Due(0, g_out, 8) == 1 && g_out[0].intentKind == wire::I_CONSUME_ITEM,
+          "absent/the use goes out");
+    CHECK(q.OutstandingConsume("/Game/Items/Potion.Potion") == 1,
+          "absent/it is outstanding while the host may still hold one");
+
+    // The host has none left, and its publisher never sends a zero entry.  A COMPLETE
+    // pass that omits the path therefore confirms the use.
+    q.BeginHostBody(2, 0);
+    CHECK(!q.EndHostBody(0), "absent/the second complete body is not a new baseline");
+    CHECK(q.OutstandingConsume("/Game/Items/Potion.Potion") == 0,
+          "absent/an omitted path confirms the use");
+    CHECK(!q.ConsumePending("/Game/Items/Potion.Potion"), "absent/it is not retried");
+    CHECK(q.Due(1000, g_out, 8) == 0, "absent/nothing is retried after confirmation");
+}
+
+// A partial pass must NOT confirm by absence: the path may be in a later chunk.
+static void TestPartialBodyDoesNotConfirmConsumption()
+{
+    Row rows[] = { {"/Game/Items/Potion.Potion", 1} };
+    Q q;
+    EstablishWith(q, 1, rows, 1);
+    q.BeginLocalPass();
+    q.EndLocalPass();
+    CHECK(q.Due(0, g_out, 8) == 1, "partialuse/the use goes out");
+
+    q.BeginHostBody(2, 2);
+    CHECK(q.HostItem("/Game/Items/Other1.Other1", 1) != Q::kHostOverflow,
+          "partialuse/one entry of two arrives");
+    CHECK(!q.EndHostBody(1), "partialuse/the pass is incomplete");
+    CHECK(q.OutstandingConsume("/Game/Items/Potion.Potion") == 1,
+          "partialuse/an incomplete pass does not confirm by absence");
+
+    q.BeginHostBody(2, 2);
+    CHECK(q.HostItem("/Game/Items/Other2.Other2", 1) != Q::kHostOverflow,
+          "partialuse/the second entry arrives");
+    q.EndHostBody(2);                  // complete: Potion is absent from the whole set
+    CHECK(q.OutstandingConsume("/Game/Items/Potion.Potion") == 0,
+          "partialuse/a complete pass that omits the path confirms the use");
+}
+
+static void TestConsumptionCoalesces()
+{
+    Row rows[] = { {"/Game/Items/Potion.Potion", 5} };
+    Q q;
+    EstablishWith(q, 1, rows, 1);
+
+    q.BeginLocalPass();
+    CHECK(q.LocalItem("/Game/Items/Potion.Potion", 4) == Q::kConsumeQueued,
+          "coalesceuse/the first use is queued");
+    CHECK(q.LocalItem("/Game/Items/Potion.Potion", 2) == Q::kConsumeCoalesced,
+          "coalesceuse/a larger use overtakes it");
+    q.EndLocalPass();
+    CHECK(q.PendingCount() == 1, "coalesceuse/one intent per path");
+    CHECK(q.Due(0, g_out, 8) == 1 && g_out[0].count == 3,
+          "coalesceuse/the cumulative use wins");
 }
 
 static void TestHostConsumptionNotRegranted()
@@ -226,6 +353,65 @@ static void TestHostConsumptionNotRegranted()
     q.EndLocalPass();
     CHECK(q.Empty(), "hostconsume/nothing is queued");
     CHECK(q.Due(0, g_out, 8) == 0, "hostconsume/the consumed item is not re-granted");
+}
+
+// The consumption axis of the same ledger: cumulative, monotone, exactly-once.
+static void TestConsumeLedger()
+{
+    Ledger g;
+    int32_t remove = 0;
+    CHECK(g.NeedConsume("/Game/Items/Potion.Potion", 1, &remove) == Ledger::kRemove &&
+          remove == 1,
+          "consumeledger/the first use is removed once");
+    g.CommitConsume("/Game/Items/Potion.Potion", 1);
+
+    CHECK(g.NeedConsume("/Game/Items/Potion.Potion", 1, &remove) ==
+          Ledger::kConsumeAlreadyApplied,
+          "consumeledger/a retry is a no-op");
+    CHECK(g.NeedConsume("/Game/Items/Potion.Potion", 2, &remove) == Ledger::kRemove &&
+          remove == 1,
+          "consumeledger/the second use is a separate removal");
+    g.CommitConsume("/Game/Items/Potion.Potion", 2);
+
+    CHECK(g.NeedConsume("/Game/Items/Potion.Potion", 1, &remove) ==
+          Ledger::kConsumeBelowApplied,
+          "consumeledger/a lower cumulative use is refused");
+    CHECK(g.AppliedConsume("/Game/Items/Potion.Potion") == 2,
+          "consumeledger/the applied use never falls");
+
+    // The two axes are independent: granting an item does not settle a use, and a use
+    // does not settle a grant.
+    int32_t need = 0;
+    CHECK(g.Need("/Game/Items/Potion.Potion", 1, &need) == Ledger::kGranted && need == 1,
+          "consumeledger/the grant axis is untouched");
+    g.Commit("/Game/Items/Potion.Potion", 1);
+    CHECK(g.Applied("/Game/Items/Potion.Potion") == 1 &&
+          g.AppliedConsume("/Game/Items/Potion.Potion") == 2,
+          "consumeledger/both axes survive independently");
+}
+
+static void TestGrantTargetAdjustsForUse()
+{
+    Row rows[] = { {"/Game/Items/Potion.Potion", 5} };
+    Q q;
+    EstablishWith(q, 1, rows, 1);
+    q.BeginLocalPass();
+    CHECK(q.LocalItem("/Game/Items/Potion.Potion", 4) == Q::kConsumeQueued,
+          "target/the use is queued");
+    q.EndLocalPass();
+
+    // Even before the intent is sent, the target is reduced, so a body that crosses it
+    // cannot grant the used item back.
+    CHECK(q.GrantTarget("/Game/Items/Potion.Potion", 5) == 4,
+          "target/old host count less the outstanding use");
+    CHECK(q.GrantTarget("/Game/Items/Potion.Potion", 6) == 5,
+          "target/a higher host count still subtracts the use");
+
+    CHECK(q.Due(0, g_out, 8) == 1, "target/the use is sent");
+    CHECK(q.HostItem("/Game/Items/Potion.Potion", 4) == Q::kHostConsumeConfirmed,
+          "target/the host shows the fall");
+    CHECK(q.GrantTarget("/Game/Items/Potion.Potion", 4) == 4,
+          "target/the target is the host count after the use");
 }
 
 // ===========================================================================
@@ -661,9 +847,16 @@ int main()
     TestPreExistingIsAbsorbed();
     TestEchoSuppressed();
     TestWaitingGrantIsNotAPickup();
-    TestPeerConsumptionNotSent();
+    TestPeerConsumptionIsSent();
+    TestConsumptionOfSentPickup();
+    TestConsumptionOfVanishedItem();
+    TestConsumptionConfirmedByAbsentPath();
+    TestPartialBodyDoesNotConfirmConsumption();
+    TestConsumptionCoalesces();
     TestHostConsumptionNotRegranted();
     TestAdditiveConflict();
+    TestConsumeLedger();
+    TestGrantTargetAdjustsForUse();
     TestAbortedPassKeepsBaseline();
     TestRetryIsExactlyOnce();
     TestConfirmation();
