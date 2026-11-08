@@ -1786,8 +1786,23 @@ void PuppetPump(uint32_t now)
 {
     if (!Cfg().puppet_sync) return;
 
-    // The body dies with its world on a level load.  Notice, and let the FSM respawn.
-    if (g_puppetActor && !ObjectIsLive(g_puppetActor)) {
+    // THE BODY DIES WITH ITS WORLD, and `ObjectIsLive(g_puppetActor)` is NOT a safe test
+    // across a map load: by the time the pump runs, the old world's objects have been
+    // freed, and reading the stale pointer's internal index is the access violation.
+    // MEASURED (Session 7): WINMM+0x44691 in PuppetPump on the first frame after
+    // LoadMapWithLoadingScreen, with the faulting address inside a freed UObject.
+    // Compare the WORLD first; a changed world means the pointer is dead, not merely
+    // invalid, so it must be dropped without a read.
+    static void* puppetWorld = nullptr;
+    void* worldNow = GWorldPtr();
+    bool worldChanged = (worldNow != puppetWorld);
+    puppetWorld = worldNow;
+    if (g_puppetActor && worldChanged) {
+        QDLOG(LOG_INFO, "puppet actor dropped with its world (the old pointer is not read)");
+        g_puppetActor = nullptr;
+        memset(&g_body, 0, sizeof(g_body));
+        g_puppet.LocalWorldChanged(now);
+    } else if (g_puppetActor && !ObjectIsLive(g_puppetActor)) {
         QDLOG(LOG_INFO, "puppet actor gone (level change)");
         g_puppetActor = nullptr;
         memset(&g_body, 0, sizeof(g_body));
@@ -3068,7 +3083,7 @@ bool LevelNotForcible(const char* n)
     return enemyown::HasCI(n, "VideoConfig") || enemyown::HasCI(n, "ShaderCompile");
 }
 
-void ForceLevel(LevelRec& r, bool show)
+void ForceLevel(LevelRec& r, bool show, bool quiet = false)
 {
     static Fn fLoad = {};
     if (show) CallBool1(r.ls, fLoad, "SetShouldBeLoaded", true);
@@ -3084,9 +3099,10 @@ void ForceLevel(LevelRec& r, bool show)
     g_ownVisCall = true;
     if (g_oSetVis) g_oSetVis(r.ls, show);
     g_ownVisCall = false;
-    QDLOG(LOG_INFO, "level union: ", (show ? "SHOW " : "release "), r.name,
-          " -> bShouldBeVisible=", dec(LevelVisible(r.ls) ? 1 : 0),
-          (show && !fLoad.fn ? " (SetShouldBeLoaded not found)" : ""));
+    if (!quiet)
+        QDLOG(LOG_INFO, "level union: ", (show ? "SHOW " : "release "), r.name,
+              " -> bShouldBeVisible=", dec(LevelVisible(r.ls) ? 1 : 0),
+              (show && !fLoad.fn ? " (SetShouldBeLoaded not found)" : ""));
 }
 
 void SendLevelUnion(const char* const* names, int n)
@@ -3258,28 +3274,61 @@ bool LocalTeleporting(void* pawn)
 
 // "Do not fight the player".  Each condition is a state the game itself would use to
 // refuse a teleport.  A follow that interrupts a local transition is worse than a
-// missed one, so every one of these skips.
-bool LocalTravelBusy(void* pawn)
+// missed one, so every one of these skips.  Returns the REASON (null = free): "busy" on
+// its own cannot be diagnosed, and a peer that skips a follow has to be able to say why.
+const char* LocalTravelBusyReason(void* pawn)
 {
-    if (!IsGameplayPawn(pawn)) return true;   // menu world / no pawn: never drive it
+    if (!IsGameplayPawn(pawn)) return "no gameplay pawn";   // menu world / no pawn
     uint8_t b = 0;
-    if (BytePropC(pawn, "Teleporting", &b) && b) return true;
-    if (BytePropC(pawn, "QuickTeleporting", &b) && b) return true;
-    if (BytePropC(pawn, "DoingTeleportCrystal", &b) && b) return true;
-    if (BytePropC(pawn, "TeleportingDisabled", &b) && b) return true;
-    // A menu is an object property that is null when the menu is closed.
-    if (ObjPropC(pawn, "CurrentGameMenu")) return true;
-    if (ObjPropC(pawn, "CurrentSaveMenu")) return true;
-    if (ObjPropC(pawn, "KeyMenu")) return true;
-    if (ObjPropC(pawn, "CurrentShopMenu")) return true;
+    if (BytePropC(pawn, "Teleporting", &b) && b) return "Teleporting";
+    if (BytePropC(pawn, "QuickTeleporting", &b) && b) return "QuickTeleporting";
+    if (BytePropC(pawn, "DoingTeleportCrystal", &b) && b) return "DoingTeleportCrystal";
+    if (BytePropC(pawn, "TeleportingDisabled", &b) && b) return "TeleportingDisabled";
+    // The game's own predicates first.  The widget-object checks below were the first
+    // assumption ("the menu object is null when closed"); Session 7 needs a reason for
+    // every skip, so the pawn's own `IsInModalMenu` / `IsInReadTextMenu` are asked
+    // before a pointer that a Blueprint may hold permanently.
+    static Fn fModal = {}, fRead = {};
+    bool haveModal = fModal.Resolve(pawn, "IsInModalMenu");
+    if (haveModal) {
+        Call c(fModal);
+        if (c.Run(pawn) && c.Ret() && *(uint8_t*)c.Ret()) return "IsInModalMenu";
+    }
+    if (fRead.Resolve(pawn, "IsInReadTextMenu")) {
+        Call c(fRead);
+        if (c.Run(pawn) && c.Ret() && *(uint8_t*)c.Ret()) return "IsInReadTextMenu";
+    }
+    if (!haveModal) {
+        // A menu is an object property that is null when the menu is closed.
+        if (ObjPropC(pawn, "CurrentGameMenu")) return "CurrentGameMenu open";
+        if (ObjPropC(pawn, "CurrentSaveMenu")) return "CurrentSaveMenu open";
+        if (ObjPropC(pawn, "KeyMenu")) return "KeyMenu open";
+        if (ObjPropC(pawn, "CurrentShopMenu")) return "CurrentShopMenu open";
+    }
     // A cutscene is a manager object; the intro flag is the same test the game uses.
-    if (ObjPropC(pawn, "CurrentCutsceneManager")) return true;
-    if (BytePropC(pawn, "InIntroCutscene", &b) && b) return true;
+    if (ObjPropC(pawn, "CurrentCutsceneManager")) return "CurrentCutsceneManager present";
+    if (BytePropC(pawn, "InIntroCutscene", &b) && b) return "InIntroCutscene";
     // The dialogue manager is a persistent component, so its own running bool is the
     // fact -- the same test DialoguePump uses for the local conversation.
     void* dm = ObjPropC(pawn, "DialogueManager");
-    if (dm && BytePropC(dm, "RunningDialogue", &b) && b) return true;
-    return false;
+    if (dm && BytePropC(dm, "RunningDialogue", &b) && b) return "RunningDialogue";
+    return nullptr;
+}
+
+bool LocalTravelBusy(void* pawn)
+{
+    return LocalTravelBusyReason(pawn) != nullptr;
+}
+
+// A HARD switch replaces the world and spawns a new pawn, so "no gameplay pawn" is NOT a
+// reason to defer it: a machine left in a DefaultPawn world by the previous switch could
+// never be brought back (measured Session 7 -- the peer deferred every BEGIN with
+// "busy (no gameplay pawn)" and the host abandoned at the deadline).  With a gameplay
+// pawn, the ordinary busy tests still apply.
+const char* LocalHardBusyReason(void* pawn)
+{
+    if (!pawn || !IsGameplayPawn(pawn)) return nullptr;
+    return LocalTravelBusyReason(pawn);
 }
 
 // The placed actor carrying the LocationData this machine is travelling through.  We do
@@ -3366,7 +3415,7 @@ void* ActorLocationData(void* actor)
 // by that exact name and a type-based fallback follows it.  `GreenFX` is the full-screen
 // effect; a follow drives it with 0 so the partner's transition is not doubled on this
 // screen.
-bool FollowTravelDest(const char* dest, void* pawn, char* err, int errCap)
+bool FollowTravelDest(const char* dest, void* pawn, char* err, int errCap, bool greenFx = false)
 {
     if (err && errCap > 0) err[0] = 0;
     travel::DestParts p;
@@ -3413,7 +3462,7 @@ bool FollowTravelDest(const char* dest, void* pawn, char* err, int errCap)
 
     Call c(fTp);
     c.Obj(pObj->name, data);
-    if (pFx) c.U8(pFx->name, 0);
+    if (pFx) c.U8(pFx->name, greenFx ? 1 : 0);
     if (!c.Run(pawn)) {
         ErrSet(err, errCap, "TeleportToLocation faulted", "");
         return false;
@@ -3460,6 +3509,9 @@ void MapPackagePath(const char* map, char* out, int cap)
     for (int i = 0; map[i] && w < cap - 1; ++i) out[w++] = map[i];
     out[w] = 0;
 }
+
+// A world load tears down the actors the enemy records point at; see EnemyDetectDeaths.
+uint32_t g_enDeathSuppressUntil = 0;
 
 bool FollowHardTravel(const char* map, char* err, int errCap)
 {
@@ -3534,6 +3586,11 @@ bool FollowHardTravel(const char* map, char* err, int errCap)
         ErrSet(err, errCap, "LoadMapWithLoadingScreen wants a map object that did not load: ", pkg);
         return false;
     }
+    // Arm BEFORE the call: the world's actors are torn down INSIDE it, and the pump runs
+    // again before the call returns on a long load.  Measured Session 7: 30+ invented
+    // deaths arrived in the frame between the teardown starting and this function
+    // returning, which is why the window has to be opened first.
+    g_enDeathSuppressUntil = Net::Now() + 20000;
     if (!c.Run(gi)) { ErrSet(err, errCap, "LoadMapWithLoadingScreen faulted", ""); return false; }
     return true;
 }
@@ -3600,6 +3657,16 @@ void TravelPump(uint32_t now)
             g_hard.NoteAnnounce(3);          // RESUME
             QDLOG(LOG_INFO, "travel: both machines arrived in ", g_hard.TargetMap(),
                   "; host releasing the pair to resume");
+        }
+        // A HARD_BEGIN that reached a BUSY peer is not remembered there (OnPeerBegin's
+        // "retry when free" rule), while the phase itself is one-shot.  Without this the
+        // transition is lost for the session -- measured Session 7: the peer saw a
+        // heartbeat carrying the right map and never loaded it, and the host abandoned at
+        // the 60 s deadline.  Re-arm BEGIN every 2 s until the peer arrives.
+        static uint32_t lastBeginArm = 0;
+        if (g_hard.Active() && !g_hard.PeerArrived() && now - lastBeginArm >= 2000) {
+            lastBeginArm = now;
+            g_hard.NoteAnnounce(1);
         }
         hardPhase = g_hard.TakeAnnounce();
         if (hardPhase) hardMap = g_hard.TargetMap();
@@ -3677,7 +3744,8 @@ void OnTravel(wire::Reader& r, uint32_t now)
         // before the pump, so g_map is one frame old during a load.
         char cur[stream::kMaxNameLen];
         LocalMapName(cur, sizeof(cur));
-        bool busy = LocalTravelBusy(g_localPawn);
+        const char* busyWhy = LocalHardBusyReason(g_localPawn);
+        bool busy = busyWhy != nullptr;
         switch (t.phase) {
         case wire::TP_HARD_BEGIN: {
             travel::HardVerdict v = g_hard.OnPeerBegin(t.seq, t.map, cur, busy);
@@ -3698,6 +3766,17 @@ void OnTravel(wire::Reader& r, uint32_t now)
             } else if (v == travel::HV_REFUSED) {
                 QDLOG(LOG_WARN, "travel: refused hard transition to ", t.map,
                       " (implausible map or one that already failed); recorded, not retried");
+            } else if (v == travel::HV_NONE && busy) {
+                // A busy peer is not remembered, and this phase is one-shot, so the
+                // sender re-announces it (TravelPump).  Say why it was skipped once per
+                // 2 s: a permanent busy state would otherwise look like a lost packet.
+                static uint32_t lastSay = 0;
+                uint32_t nowMs = Net::Now();
+                if (nowMs - lastSay > 2000) {
+                    lastSay = nowMs;
+                    QDLOG(LOG_INFO, "travel: hard BEGIN for ", t.map,
+                          " deferred; the local player is busy (", busyWhy, ")");
+                }
             }
             break;
         }
@@ -3747,10 +3826,13 @@ void OnTravel(wire::Reader& r, uint32_t now)
         }
         break;
     }
-    case travel::V_BUSY:
+    case travel::V_BUSY: {
+        const char* why = LocalTravelBusyReason(g_localPawn);
         QDLOG(LOG_INFO, "travel: partner is travelling to ", t.dest,
-              " but the local player is busy; skipped (not remembered)");
+              " but the local player is busy (", (why ? why : "busy"),
+              "); skipped (not remembered)");
         break;
+    }
     case travel::V_WRONG_WORLD: {
         // The in-world follow cannot cross a UWorld.  Now that the game's own hard-load
         // entry exists, take the world switch instead of ending in a refusal: the
@@ -3805,6 +3887,8 @@ struct EnemyRec {
     bool     driven;         // this copy is frozen and following the owner's rows
     bool     killedByUs;     // a KILL from the owner was applied (one shot)
     bool     fresh;          // a NEW actor for this GUID: the adoption rule runs once
+    bool     deathRecorded;  // this machine has already stored/broadcast the death
+    bool     seenAlive;      // observed with HP > 0: an HP of 0 after this is a kill
     uint8_t  savedMoveMode;
     uint8_t  savedPaused;    // EnemyBase_C.Paused before this mod froze the copy
     float    lastHp, maxHp;
@@ -5168,6 +5252,7 @@ void EnemyDetailPump(uint32_t now)
     const int cap = (int)(sizeof(cands) / sizeof(cands[0]));
     for (int i = 0; i < g_enN && n < cap; ++i) {
         EnemyRec& r = g_en[i];
+        __try {
         if (!r.haveGuid || !ObjectIsLive(r.actor)) continue;
         if (g_own.State(r.guid) != enemyown::O_LOCAL) continue;
         DetailCand* c = &cands[n];
@@ -5190,6 +5275,12 @@ void EnemyDetailPump(uint32_t now)
         c->bw.lastMs = 0;
         bwCand[n] = c->bw;
         ++n;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            // Same containment as the row pump (Session 7, R57): a stale actor costs this
+            // record, not the process.
+            r.actor = nullptr;
+            r.haveGuid = false;
+        }
     }
     if (n == 0) return;
 
@@ -5655,6 +5746,13 @@ void EnemyOwnPump(uint32_t now)
 
     for (int i = 0; i < g_enN; ++i) {
         EnemyRec& r = g_en[i];
+        // Every read below is game state for an actor the game may destroy at any moment
+        // (a copy killed by an owner row, a death animation, a level unload), and
+        // `ObjectIsLive` itself is a read of the pointer, so it is inside the guard too.
+        // MEASURED (Session 7): EXCEPTION_ACCESS_VIOLATION at WINMM+0x26805
+        // (EnemyOwnPump+0x265) after four minutes of combat with ~190 enemies; one stale
+        // record must not take the session down.
+        __try {
         if (!r.haveGuid || !ObjectIsLive(r.actor)) continue;
 
         float ex[3] = {0, 0, 0};
@@ -5710,7 +5808,13 @@ void EnemyOwnPump(uint32_t now)
                     // The owner's HP is the truth and is never converged downward from
                     // the other machine's row.  Only a follower converges.
                     float d = enemy::ConvergeDamage(hp, mx, row->hp, true);
-                    if (d > 0.0f) { ApplyEnemyDamage(r.actor, d, g_localPawn); EnemyHp(r.actor, &hp, &mx); }
+                    if (d > 0.0f) {
+                        ApplyEnemyDamage(r.actor, d, g_localPawn);
+                        // The game's death path can destroy the copy on this call; reading
+                        // its HP afterwards is a use-after-free, so liveness is re-checked.
+                        if (!ObjectIsLive(r.actor)) { r.actor = nullptr; r.haveGuid = false; continue; }
+                        EnemyHp(r.actor, &hp, &mx);
+                    }
                     r.lastHp = hp;
                     r.maxHp = mx;
                 }
@@ -5720,6 +5824,17 @@ void EnemyOwnPump(uint32_t now)
             // keeps simulating until the other machine's rows confirm it (qdenemyown.h).
             r.killedByUs = false;
             if (r.driven) EnemyDrive(r, false);
+        }
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            static uint32_t lastWarn = 0;
+            uint32_t nowMs = Net::Now();
+            if (nowMs - lastWarn > 5000) {
+                lastWarn = nowMs;
+                QDLOG(LOG_WARN, "enemy own pump: a stale actor was skipped guid=",
+                      hex32(r.guid[0]), "; the record is dropped and the scan re-adds it");
+            }
+            r.actor = nullptr;
+            r.haveGuid = false;
         }
     }
 }
@@ -5754,6 +5869,9 @@ void EnemyTargetPump(uint32_t now)
 
     for (int i = 0; i < g_enN; ++i) {
         EnemyRec& r = g_en[i];
+        // Same stale-actor window as EnemyOwnPump: an actor can be destroyed between the
+        // record and this read, and `ObjectIsLive` is itself a read.
+        __try {
         if (!r.haveGuid || !ObjectIsLive(r.actor)) continue;
         // A copy that follows the other machine's rows is not simulating, so it is not
         // choosing anything; changing its target would corrupt what the owner sends.
@@ -5783,6 +5901,10 @@ void EnemyTargetPump(uint32_t now)
                                                 : "remote body -> the local player"),
               (ok ? " (read back)" : " WRITE FAILED"),
               " dLocal=", flt(dLocal, 0), " dRemote=", flt(dRemote, 0));
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            r.actor = nullptr;
+            r.haveGuid = false;
+        }
     }
 }
 
@@ -5797,6 +5919,7 @@ void EnemySendPump(uint32_t now)
     int n = 0;
     for (int i = 0; i < g_enN; ++i) {
         EnemyRec& r = g_en[i];
+        __try {
         if (!r.haveGuid || !ObjectIsLive(r.actor) || EnemyDead(r.actor)) continue;
         enemyown::Publish pub = g_own.Publishing(r.guid);
         if (pub == enemyown::PUB_NONE) continue;
@@ -5817,6 +5940,10 @@ void EnemySendPump(uint32_t now)
         // hash of a placed path / summon.  Without it a placed hash colliding with a
         // spawner GUID would merge two enemies into one record.
         w.flags = enemyid::TagFlags(w.flags, (enemyid::Source)r.src);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            r.actor = nullptr;
+            r.haveGuid = false;
+        }
     }
     // Detail for the enemies this machine runs.  Reliable, on change only, and ranked by
     // relevance to the partner so a big fight stays inside the budget (qdenemybw.h).
@@ -6220,6 +6347,69 @@ bool PlayerBodyObserve(void* self, void* func, void* parms)
     return false;
 }
 
+// A kill this module performs through `TryApplyDamage` does not necessarily reach the
+// game's own persistence entry: measured (Session 6) a hit taking an enemy 34.9 -> -165
+// HP produced no `enemy death recorded` and no `enemy record sent`, because
+// `StoreEnemySaveState` is called by the spawner's own death path, not by the damage
+// message.  The death is still a fact this machine can read from the actor: HP <= 0,
+// `bDead` / `IsDead`, or the actor being gone since the last scan.  Recording a
+// DETECTED death through the game's own `StoreEnemySaveState` keeps a single persistence
+// path: the save gets the record, the peer gets the intent (HK_StoreEnemySaveState), and
+// the kill log broadcasts the dead row.  The line says "detected" on purpose -- a run
+// must be able to tell a game-reported death from one this module noticed.
+void EnemyDetectDeaths()
+{
+    // A load destroys the actors these records point at; HP reads 0 during the teardown
+    // and every enemy would be reported dead (measured Session 7: 30+ `enemy record sent`
+    // in one frame while a map switch was starting).  The world-change branch of
+    // EnemyPump and FollowHardTravel both arm this window.
+    if (Net::Now() < g_enDeathSuppressUntil) return;
+    for (int i = 0; i < g_enN; ++i) {
+        EnemyRec& r = g_en[i];
+        if (!r.haveGuid || !g_own.Running(r.guid)) continue;
+        bool live = ObjectIsLive(r.actor);
+        float hp = 0.0f, mx = 0.0f;
+        bool haveHp = false;
+        bool dead = false;
+        const char* why = "";
+        if (live) {
+            uint8_t b = 0;
+            bool flagDead = (BytePropC(r.actor, "bDead", &b) && b) ||
+                            (BytePropC(r.actor, "IsDead", &b) && b);
+            haveHp = EnemyHp(r.actor, &hp, &mx);
+            if (haveHp && hp > 0.0f) {
+                // Alive: remember it.  A spawner's enemy exists at HP 0 before it is
+                // activated, and a map load leaves actors mid-teardown reading 0.  Only an
+                // actor this machine has SEEN alive can be "detected dead" from HP 0.
+                r.seenAlive = true;
+                r.deathRecorded = false;
+                continue;
+            }
+            if (flagDead) { dead = true; why = "bDead/IsDead"; }
+            else if (haveHp && hp <= 0.0f && r.seenAlive) { dead = true; why = "hp<=0"; }
+            if (!dead) continue;
+        } else {
+            dead = true;
+            why = "actor gone";
+        }
+        if (r.deathRecorded) continue;
+        r.deathRecorded = true;
+        // The spawner's own respawn time when it names one; 0 otherwise.  The record is
+        // what this lane proves, and never inventing a respawn is the safe direction.
+        float respawn = 0.0f;
+        if (r.spawner && !FloatPropC(r.spawner, "RespawnTime", &respawn)) respawn = 0.0f;
+        void* ctx = (r.spawner && ObjectIsLive(r.spawner)) ? r.spawner : GWorldPtr();
+        QdGuid g = {r.guid[0], r.guid[1], r.guid[2], r.guid[3]};
+        QDLOG(LOG_INFO, "enemy death detected guid=", hex32(r.guid[0]), " (", why, ", hp ",
+              flt(haveHp ? hp : 0.0f, 1), "); recording it through StoreEnemySaveState");
+        __try { StoreEnemySaveState(ctx, g, respawn, 0.0f); }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+            QDLOG(LOG_WARN, "enemy death detected guid=", hex32(r.guid[0]),
+                  " but StoreEnemySaveState faulted; the record was not written");
+        }
+    }
+}
+
 void EnemyPump(uint32_t now)
 {
     if (!Cfg().enemy_sync) return;
@@ -6228,6 +6418,9 @@ void EnemyPump(uint32_t now)
     void* world = GWorldPtr();
     if (world != lastWorld) {
         lastWorld = world;
+        // The new world's enemy actors are not the old records' actors; do not read a
+        // death out of a half-built world.
+        g_enDeathSuppressUntil = now + 3000;
         g_enN = 0; g_enCursor = 0;
         g_propCacheN = 0;           // classes reload with the world
         g_enemyBaseCls = nullptr;
@@ -6269,6 +6462,8 @@ void EnemyPump(uint32_t now)
     }
     g_own.SetHost(g_net.IsHost());
     EnemyOwnPump(now);
+    // After ownership, so only the machine that actually runs an enemy owns its death.
+    EnemyDetectDeaths();
     // After ownership, so only the machine that actually simulates an enemy steers it.
     EnemyTargetPump(now);
     EnemySendPump(now);
@@ -6888,8 +7083,33 @@ bool IsDropClass(void* cls)
 {
     char cn[96];
     if (FNameToString(ObjNameRaw(cls), cn, sizeof(cn)) <= 0) return false;
-    return ContainsCI(cn, "ItemDrop") || ContainsCI(cn, "SpawnItemDrop") ||
-           ContainsCI(cn, "DroppedItem");
+    if (ContainsCI(cn, "ItemDrop") || ContainsCI(cn, "SpawnItemDrop") ||
+        ContainsCI(cn, "DroppedItem") || ContainsCI(cn, "CoreItemPickupActor")) return true;
+    // The game spawns enemy loot as an `ItemPickup_Base` subclass -- the SAME family it
+    // places in the level as coins, potions and keys (measured: SpawnItemDrop imports
+    // Coin_Item_BP_C / 2Coins_Item_BP_C / ItemPickup_Base_C / CoreItemPickupActor_C).
+    // The class name therefore cannot separate a drop from a placed pickup; the actor's
+    // own state does, and LooksLikeADrop asks it.
+    return ContainsCI(cn, "ItemPickup") || ContainsCI(cn, "Item_BP");
+}
+
+// A placed pickup is a SavableActor carrying the save's authored GUID; a spawned drop is
+// marked `IsADrop` and has no valid GUID.  Either fact admits the actor.  Putting every
+// placed coin on the loot wire would fill the bounded ledger with things that are
+// already ActorStateSync's job, and would make a tombstone hide the wrong actor.
+bool LooksLikeADrop(void* actor)
+{
+    uint8_t isDrop = 0;
+    if (BytePropC(actor, "IsADrop", &isDrop) && isDrop) return true;
+    static Fn fGuid = {};
+    if (fGuid.Resolve(actor, "HasValidGUID")) {
+        Call c(fGuid);
+        if (c.Run(actor) && c.Ret()) {
+            uint8_t has = *(uint8_t*)c.Ret();
+            if (!has) return true;
+        }
+    }
+    return false;
 }
 
 // The game's own drop key, recovered from the drop actor where the class exposes it.
@@ -6898,7 +7118,7 @@ bool IsDropClass(void* cls)
 bool LootKeyOf(void* actor, uint32_t* hash, int32_t* index, char* path, int cap)
 {
     static const char* kSources[] = {"DropSource", "SourceActor", "SourceObject", "Source",
-                                     "Owner", "Instigator"};
+                                     "Dropper", "Owner", "Instigator"};
     static const char* kItems[]   = {"ItemData", "DroppedItemData", "ItemObject", "Item",
                                      "DroppedItem"};
     static const char* kIndexes[] = {"DropIndex", "SourceDropIndex", "Index"};
@@ -6939,6 +7159,7 @@ void LootScanStep()
         if (!c || !IsDropClass(c)) continue;
         __try {
             if (!IsSubclassOf(c, actorBase) || !ActorOuterReachesWorld(o, world)) continue;
+            if (!LooksLikeADrop(o)) continue;
         } __except (EXCEPTION_EXECUTE_HANDLER) { continue; }
         bool have = false;
         for (int i = 0; i < g_lootActorN; ++i) if (g_lootActors[i].actor == o) { have = true; break; }
@@ -8542,6 +8763,14 @@ void* RigFindNear(const char* sub, float* distOut, ActorXform* xfOut, char* name
             {"npc", "NPC_Base_C"},
             {"checkpoint", "Checkpoint_C"},
             {"sublevel", "SubLevelDoor_C"},
+            // The teleporter is the only actor that carries a destination for TravelSync,
+            // and it is NOT in SavableActorStates (no GUID), so the savable walk above
+            // cannot find it.  A drop is likewise not a savable: the game spawns it as an
+            // ItemPickup subclass, which is the thing to stand next to for either a
+            // pickup test or a loot-lane observation.
+            {"teleport", "Teleporter_C"},
+            {"drop", "CoreItemPickupActor_C"},
+            {"itemdrop", "CoreItemPickupActor_C"},
         };
         for (int k = 0; k < (int)(sizeof(kKeys) / sizeof(kKeys[0])) && !best; ++k) {
             if (!enemyown::HasCI(sub, kKeys[k].key) && !enemyown::HasCI(kKeys[k].key, sub)) continue;
@@ -8576,9 +8805,14 @@ void DevTeleportToTarget(const char* sub, float yawOverride, bool haveYaw)
         QDLOG(LOG_WARN, "dev teleport near: no live actor matches '", sub, "'");
         return;
     }
-    float off = (float)DevEnvInt("QDCOOP_TEST_NEAR", 140);
+    // The distance is a per-mACHINE lever, not one global: the B7 target lines need
+    // one player nearer an enemy than the other, and the DAMAGE lane needs the proxy
+    // inside melee range while the owner's own player is further out.  `qd.near` is
+    // read at each teleport, so a scenario can move one machine and then the other.
+    int wantOff = DevLever("QDCOOP_TEST_NEAR", "qd.near", 140, 140);
+    float off = wantOff > 0 ? (float)wantOff : 140.0f;
     if (off < 40.0f) off = 40.0f;
-    if (off > 400.0f) off = 400.0f;
+    if (off > 4000.0f) off = 4000.0f;
 
     ActorXform me = {};
     if (!ReadActorXform(g_localPawn, &me)) return;
@@ -8951,6 +9185,12 @@ void DevInteractBody(void* explicitTarget)
     const char* ran1 = nullptr;
     const char* ran2 = nullptr;
     static const char* const onTgt[]  = {"Interact", "InteractHeld", "OnInteract", "Use", "Activate",
+                                         // A chest's own open verb, and a picked-up drop's own:
+                                         // `Chest_C` exports both `Interact` and `Open`, and
+                                         // `ItemPickup_Base` exports `Interact` and `Pickup`
+                                         // (measured from the cooked packages).  Trying them
+                                         // after Interact keeps the game's normal path first.
+                                         "Open", "Pickup",
                                          "StartDialogue", "Talk", "BeginDialogue", "StartConversation"};
     static const char* const onComp[] = {"Interact", "DoInteract"};
     static const char* const onPawn[] = {"Interact", "DoInteract"};
@@ -9297,6 +9537,289 @@ void DevCheat(uint32_t now)
     }
     __try { DevCheatCall(buf, amount, hasAmount); }
     __except (EXCEPTION_EXECUTE_HANDLER) { QDLOG(LOG_WARN, "rig: cheat ", buf, " -- faulted"); }
+}
+
+// ---------------------------------------------------------------------------
+// Travel / hard-map rig levers (Session 7)
+// ---------------------------------------------------------------------------
+// The travel lane had never been DRIVEN from the rig: Session 6's only travel was the
+// game's own at load, and the partner was busy, so `travel: followed` never appeared.
+// These are the two origins, both the game's own entry points:
+//
+//   qd.travel = near:<sub>|actorName -> FS_PlayerChar.TeleportToLocation with that
+//                                        actor's own LocationData (an in-world trip)
+//   qd.hard   = <map>                -> GameInstance.LoadMapWithLoadingScreen (a hard
+//                                        UWorld switch, the HARD_BEGIN handshake)
+//
+// Neither writes the partner's pawn.  The announcement travels and the other machine
+// performs the same operation on its own player -- that is TravelSync's contract.
+void WriteObjPropRaw(void* obj, const char* name, void* v)
+{
+    if (!obj || !name) return;
+    int off = FindPropertyOffsetIn(ObjClass(obj), name);
+    if (off < 0) return;
+    __try { memcpy((uint8_t*)obj + off, &v, 8); }
+    __except (EXCEPTION_EXECUTE_HANDLER) {}
+}
+
+// Read one line of a control file.  The levers below all need the same "the contents
+// changed, so this is a new instruction" rule as qd.tp / qd.act.
+bool DevRigText(const char* envName, const char* leaf, char* out, int cap)
+{
+    if (!out || cap <= 0) return false;
+    out[0] = 0;
+    char p[MAX_PATH];
+    DevRigPath(envName, leaf, p, sizeof(p));
+    if (!p[0]) return false;
+    HANDLE h = CreateFileA(p, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    DWORD got = 0;
+    (void)ReadFile(h, out, cap - 1, &got, nullptr);
+    CloseHandle(h);
+    out[got] = 0;
+    for (int i = 0; out[i]; ++i) {
+        if (out[i] == '\r' || out[i] == '\n' || out[i] == ' ') { out[i] = 0; break; }
+    }
+    return out[0] != 0;
+}
+
+char     g_devTravelApplied[128] = "";
+uint32_t g_devTravelPoll = 0;
+
+void DevTravelLever(uint32_t now)
+{
+    static char path[MAX_PATH];
+    static int on = -1;
+    if (on < 0) {
+        DevRigPath("QDCOOP_TEST_TRAVEL", "qd.travel", path, sizeof(path));
+        on = path[0] != 0;
+        if (on) QDLOG(LOG_INFO, "rig: travel control '", path, "' enabled exists=",
+                      (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES ? "yes" : "no"));
+    }
+    if (!on || !IsGameplayPawn(g_localPawn)) return;
+    if (now - g_devTravelPoll < 500) return;
+    g_devTravelPoll = now;
+
+    char spec[128];
+    if (!DevRigText("QDCOOP_TEST_TRAVEL", "qd.travel", spec, sizeof(spec))) return;
+    if (strcmp(spec, g_devTravelApplied) == 0) return;
+    lstrcpynA(g_devTravelApplied, spec, sizeof(g_devTravelApplied));
+
+    void* actor = nullptr;
+    char nm[64] = "";
+    if (!strncmp(spec, "near:", 5)) {
+        float d = 0.0f;
+        ActorXform x = {};
+        actor = RigFindNear(spec + 5, &d, &x, nm, sizeof(nm));
+        if (!actor) { QDLOG(LOG_WARN, "rig: travel -- no live actor matches '", spec + 5, "'"); return; }
+        QDLOG(LOG_INFO, "rig: travel near '", spec + 5, "' -> ", nm, " at ", flt(x.px, 0), ",",
+              flt(x.py, 0), ",", flt(x.pz, 0), " dist=", flt(d, 0));
+    } else {
+        actor = FindTravelActor(spec, GWorldPtr());
+        if (!actor) { QDLOG(LOG_WARN, "rig: travel -- no live actor named '", spec, "'"); return; }
+        lstrcpynA(nm, spec, sizeof(nm));
+    }
+    void* data = ActorLocationData(actor);
+    if (!data) {
+        QDLOG(LOG_WARN, "rig: travel -- ", nm, " carries no LocationData; cannot drive it");
+        return;
+    }
+    char world[stream::kMaxNameLen];
+    LocalMapName(world, sizeof(world));
+    char dest[travel::kDestCap];
+    if (!travel::MakeDest(nm, world, dest, sizeof(dest))) {
+        QDLOG(LOG_WARN, "rig: travel -- cannot form a destination from ", nm, "/", world);
+        return;
+    }
+    // TravelPump publishes the pawn's own destination property.  The game fills it in a
+    // real teleport; a direct TeleportToLocation call is not that caller, so the rig
+    // writes the same field the game would (the first one this class carries).
+    static const char* kFields[] = {"CurrentTeleporterTarget", "TeleportLocationTarget",
+                                    "TempTeleporter", "TeleporterStartActor"};
+    const char* used = "none";
+    for (unsigned i = 0; i < sizeof(kFields) / sizeof(kFields[0]); ++i) {
+        if (FindPropertyOffsetIn(ObjClass(g_localPawn), kFields[i]) < 0) continue;
+        WriteObjPropRaw(g_localPawn, kFields[i], actor);
+        used = kFields[i];
+        break;
+    }
+    char err[160];
+    bool ok = FollowTravelDest(dest, g_localPawn, err, sizeof(err), true);
+    QDLOG(ok ? LOG_INFO : LOG_WARN, "rig: travel lever -> ", dest,
+          " (LocationData resolved, dest field ", used, ") TeleportToLocation ran=",
+          dec(ok ? 1 : 0), (ok ? "" : ": "), (ok ? "" : err));
+}
+
+char     g_devHardApplied[64] = "";
+uint32_t g_devHardPoll = 0;
+
+void DevHardLever(uint32_t now)
+{
+    static char path[MAX_PATH];
+    static int on = -1;
+    if (on < 0) {
+        DevRigPath("QDCOOP_TEST_HARD", "qd.hard", path, sizeof(path));
+        on = path[0] != 0;
+        if (on) QDLOG(LOG_INFO, "rig: hard control '", path, "' enabled exists=",
+                      (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES ? "yes" : "no"));
+    }
+    if (!on) return;
+    if (now - g_devHardPoll < 1000) return;
+    g_devHardPoll = now;
+
+    char map[64];
+    if (!DevRigText("QDCOOP_TEST_HARD", "qd.hard", map, sizeof(map))) return;
+    if (strcmp(map, g_devHardApplied) == 0) return;
+    lstrcpynA(g_devHardApplied, map, sizeof(g_devHardApplied));
+
+    char err[160];
+    bool ok = FollowHardTravel(map, err, sizeof(err));
+    QDLOG(ok ? LOG_INFO : LOG_WARN, "rig: hard lever -> ", map,
+          " LoadMapWithLoadingScreen ran=", dec(ok ? 1 : 0), (ok ? "" : ": "), (ok ? "" : err));
+}
+
+// The hub world streams its areas as sublevels, and a sublevel loaded as a STANDALONE
+// world has no PlayerStart, so a hard switch to one lands in a DefaultPawn.  The rig
+// therefore does not use a hard switch to reach a chest: it asks the running world to
+// stream the area in, which is the engine's own mechanism and keeps the player in a
+// world that has a GameMode.  The pin is re-asserted every second because the game's
+// level manager hides out-of-range levels on its own schedule.
+char     g_devLevelApplied[64] = "";
+char     g_rigLevelPin[64] = "";
+uint32_t g_devLevelPoll = 0;
+
+void DevLevelLever(uint32_t now)
+{
+    static char path[MAX_PATH];
+    static int on = -1;
+    if (on < 0) {
+        DevRigPath("QDCOOP_TEST_LEVEL", "qd.level", path, sizeof(path));
+        on = path[0] != 0;
+        if (on) QDLOG(LOG_INFO, "rig: level control '", path, "' enabled exists=",
+                      (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES ? "yes" : "no"));
+    }
+    if (!on) return;
+    if (now - g_devLevelPoll < 1000) return;
+    g_devLevelPoll = now;
+
+    char name[64];
+    if (DevRigText("QDCOOP_TEST_LEVEL", "qd.level", name, sizeof(name))) {
+        if (strcmp(name, g_devLevelApplied) != 0) {
+            lstrcpynA(g_devLevelApplied, name, sizeof(g_devLevelApplied));
+            lstrcpynA(g_rigLevelPin, name, sizeof(g_rigLevelPin));
+        }
+    }
+    if (!g_rigLevelPin[0]) return;
+
+    LevelsRefresh();
+    for (int i = 0; i < g_levelN; ++i) {
+        if (!SameNameText(g_levels[i].name, g_rigLevelPin)) continue;
+        static bool said = false;
+        ForceLevel(g_levels[i], true, said);
+        if (!said) {
+            said = true;
+            QDLOG(LOG_INFO, "rig: level lever -> ", g_rigLevelPin,
+                  " forced loaded and visible (pinned; the manager may hide it again)");
+        }
+        return;
+    }
+    {
+        static bool warned = false;
+        if (!warned) {
+            warned = true;
+            QDLOG(LOG_WARN, "rig: level lever -- no streaming level named '", g_rigLevelPin,
+                  "' in this world (", dec(g_levelN), " listed)");
+        }
+    }
+}
+
+// Why a drop probe exists: the loot lane's identity is the game's own {source, index},
+// and the actor the game spawns for a drop is an ItemPickup subclass whose properties
+// are the only place that identity can be read back.  One line per nearby candidate
+// makes the lane's refusal ("this drop is not represented on the wire") diagnosable
+// instead of a guess.
+uint32_t g_devDropLast = 0;
+
+void DevDropProbeBody()
+{
+    ActorXform me;
+    if (!ReadActorXform(g_localPawn, &me)) return;
+    int shown = 0;
+    int total = ObjectCount();
+    for (int i = 0; i < total && shown < 10; ++i) {
+        void* o = ObjectAt(i);
+        if (!o || !LooksLikeUObject(o)) continue;
+        void* c = ObjClass(o);
+        char cn[96];
+        if (!c || FNameToString(ObjNameRaw(c), cn, sizeof(cn)) <= 0) continue;
+        if (!ContainsCI(cn, "Item") && !ContainsCI(cn, "Drop") && !ContainsCI(cn, "Pickup")) continue;
+        // An ITEM DATA ASSET also has "Item" in its name and answered `ReadActorXform`
+        // with NaNs; the probe is about placed actors in this world, so both facts are
+        // required (measured: the loose probe printed 10 FS_ItemData_C assets per pass).
+        static void* actorCls = nullptr;
+        if (!actorCls || !ObjectIsLive(actorCls)) actorCls = FindClassByName("Actor");
+        if (!actorCls) return;
+        void* world = GWorldPtr();
+        if (!world) return;
+        __try {
+            if (!IsSubclassOf(c, actorCls) || !ActorOuterReachesWorld(o, world)) continue;
+        } __except (EXCEPTION_EXECUTE_HANDLER) { continue; }
+        ActorXform x;
+        if (!ReadActorXform(o, &x)) continue;
+        float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
+        float d = sqrtf(dx * dx + dy * dy + dz * dz);
+        if (!(d == d) || d > 3000.0f) continue;
+        char nm[64] = "";
+        FNameToString(ObjNameRaw(o), nm, sizeof(nm));
+        uint8_t isDrop = 0;
+        bool haveDropProp = BytePropC(o, "IsADrop", &isDrop);
+        uint8_t validGuid = 0xFF;
+        static Fn fGuid = {};
+        if (fGuid.Resolve(o, "HasValidGUID")) {
+            Call cg(fGuid);
+            if (cg.Run(o) && cg.Ret()) validGuid = *(uint8_t*)cg.Ret();
+        }
+        uint32_t h = 0;
+        int32_t idx = 0;
+        char path[96];
+        bool key = LootKeyOf(o, &h, &idx, path, sizeof(path));
+        // What the lane's identity needs, property by property: the live drop actor is an
+        // ItemPickup subclass and `LootKeyOf` says "no" on this build, so the probe must
+        // name which half is missing rather than leave the refusal unexplained.
+        char ip[96] = "-";
+        void* itemData = ObjPropC(o, "ItemData");
+        if (itemData && avatar::AssetPath(itemData, ip, sizeof(ip)) <= 0) lstrcpynA(ip, "?", sizeof(ip));
+        void* itemRef = ObjPropC(o, "Item Ref");
+        void* owner = ObjPropC(o, "Owner");
+        void* inst = ObjPropC(o, "Instigator");
+        void* dropper = ObjPropC(o, "Dropper");
+        char on[64] = "-", inn[64] = "-", dn[64] = "-";
+        if (owner) FNameToString(ObjNameRaw(owner), on, sizeof(on));
+        if (inst) FNameToString(ObjNameRaw(inst), inn, sizeof(inn));
+        if (dropper) FNameToString(ObjNameRaw(dropper), dn, sizeof(dn));
+        QDLOG(LOG_INFO, "rig: drop probe ", nm, " [", cn, "] dist=", flt(d, 0),
+              " isADrop=", (haveDropProp ? (isDrop ? "1" : "0") : "?"),
+              " hasGUID=", (validGuid == 0xFF ? "?" : (validGuid ? "1" : "0")),
+              " lootKey=", (key ? "yes" : "no"), (key ? " path=" : ""), (key ? path : ""),
+              " | itemData=", ip, " itemRef=", (itemRef ? "yes" : "-"),
+              " owner=", on, " inst=", inn, " dropper=", dn);
+        ++shown;
+    }
+    if (!shown) QDLOG(LOG_INFO, "rig: drop probe -- no Item/Drop/Pickup actor within 30 m");
+}
+
+void DevDropProbe(uint32_t now)
+{
+    static int on = -1;
+    if (on < 0) on = DevLever("QDCOOP_TEST_DROPS", "qd.drops", 1, 1);
+    if (!on || !IsGameplayPawn(g_localPawn)) return;
+    if (now - g_devDropLast < 3000) return;
+    g_devDropLast = now;
+    __try { DevDropProbeBody(); }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        QDLOG(LOG_WARN, "rig: drop probe faulted while walking actors; skipped");
+    }
 }
 
 void DevAvatarTest(uint32_t now)
@@ -9974,6 +10497,10 @@ bool HK_Tick(void* engineLoop)
     DevGod(now);
     DevKillNearest(now);
     DevCheat(now);
+    DevTravelLever(now);
+    DevHardLever(now);
+    DevLevelLever(now);
+    DevDropProbe(now);
     TravelPump(now);
     StreamPump(now);
     EnemyPump(now);

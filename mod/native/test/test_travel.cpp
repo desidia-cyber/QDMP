@@ -367,6 +367,37 @@ static void TestHardResumeGuard()
           "resume/a resume before we arrived is refused");
 }
 
+static void TestHardReturnHome()
+{
+    // A map this machine is IN is reachable, so entering it clears a refusal.  Without
+    // this the boot race (both machines announcing the start transition) puts the home
+    // map in the gave-up ring and the deliberate journey home is refused for the rest of
+    // the session (measured live, Session 7).
+    HardBoard h;
+    h.OnLocalMap("990_B33sment", 1000);
+    CHECK(h.OnPeerBegin(1, "Ruins_Level_00", "990_B33sment", false) == HV_LOAD,
+          "return/the home map is loadable");
+    h.Arm(2000);
+    h.OnLoadResult(false, 3000);
+    CHECK(h.GaveUp("Ruins_Level_00"), "return/a failed home load is remembered");
+    CHECK(h.OnPeerBegin(2, "Ruins_Level_00", "990_B33sment", false) == HV_REFUSED,
+          "return/and is not retried");
+    // The game itself puts this machine in the map (the boot path).
+    h.OnLocalMap("Ruins_Level_00", 4000);
+    CHECK(!h.GaveUp("Ruins_Level_00"), "return/being in the map clears its gave-up entry");
+    CHECK(h.OnPeerBegin(3, "Ruins_Level_00", "Ruins_Level_00", false) == HV_ANNOUNCE_ARRIVE,
+          "return/the next begin is an arrival, not a refusal");
+
+    // The boot race arms a transition to the map we are already in; its deadline must not
+    // poison that map.
+    HardBoard b;
+    b.OnLocalMap("title_screen", 1000);
+    CHECK(b.OnLocalMap("Ruins_Level_00", 2000), "deadline/the boot transition is observed");
+    CHECK(b.Active(), "deadline/it is armed");
+    CHECK(b.Tick(2000 + kHardDeadlineMs), "deadline/and reports its deadline");
+    CHECK(!b.GaveUp("Ruins_Level_00"), "deadline/a transition to the map we are IN is not a failed load");
+}
+
 int main()
 {
     printf("=== qd travel tests ===\n");
@@ -385,6 +416,7 @@ int main()
     TestHardAlreadyThere();
     TestHardRefusalsAndDeadline();
     TestHardResumeGuard();
+    TestHardReturnHome();
     printf("=== %d passed, %d failed ===\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
