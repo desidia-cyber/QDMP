@@ -105,7 +105,7 @@ pub enum Event {
     Refused { addr: SocketAddr, why: &'static str },
     TimedOut { addr: SocketAddr, role: Option<Role> },
     SessionClosed,
-    Malformed { addr: SocketAddr, error: Error },
+    Malformed { addr: SocketAddr, kind: u8, error: Error },
     Dropped { addr: SocketAddr, why: &'static str },
 }
 
@@ -128,8 +128,8 @@ impl fmt::Display for Event {
                 None => write!(f, "[qd-relay] pinned endpoint {addr} timed out"),
             },
             Event::SessionClosed => write!(f, "[qd-relay] session closed"),
-            Event::Malformed { addr, error } => {
-                write!(f, "[qd-relay] malformed datagram from {addr}: {error}")
+            Event::Malformed { addr, kind, error } => {
+                write!(f, "[qd-relay] malformed datagram from {addr} (kind {kind:#04x}): {error}")
             }
             Event::Dropped { addr, why } => write!(f, "[qd-relay] dropped datagram from {addr}: {why}"),
         }
@@ -235,7 +235,12 @@ impl Relay {
             Ok(env) => env,
             Err(error) => {
                 self.stats.malformed += 1;
-                events.push(Event::Malformed { addr: from, error });
+                // The KIND is part of the diagnostic: a body-level refusal names one lane,
+                // and a run that says "464 malformed datagrams" without naming the lane
+                // costs another session to attribute (Session 9: 2 364 of them, all
+                // ACTOR_STATES, because the chunked container was read as a whole one).
+                let kind = buf.get(5).copied().unwrap_or(0);
+                events.push(Event::Malformed { addr: from, kind, error });
                 return events;
             }
         };
@@ -416,6 +421,7 @@ impl Relay {
                 self.stats.malformed += 1;
                 events.push(Event::Malformed {
                     addr: from,
+                    kind: buf.get(5).copied().unwrap_or(0),
                     error: Error::TruncatedPacket {
                         kind: "header",
                         need: HEADER_LEN,

@@ -106,9 +106,17 @@ inline Tgt ChooseTarget(bool can_retarget, bool remote_usable, int cur,
 // hit path already carried it.  A swing the enemy aimed at the LOCAL player is still
 // described the old way: that hit lands for real on this machine's own pawn, and the
 // partner is not its victim.
-inline bool SwingAlreadyReal(bool proxy_usable, bool enemy_targets_proxy)
+//
+// `real_hit_proven` is the third fact and it is not decoration.  The proxy body exists
+// with collision OFF (R57), and this build's melee resolves its victims itself; so "the
+// enemy is aimed at the proxy" does not mean the game will apply damage to it.  Measured
+// (R74): the enemy was steered at the proxy, swung, and produced neither
+// `player body hit ... -> sent` (the game never applied a hit) nor `damage sent` (this
+// rule had suppressed the description) -- the partner was hit by nothing at all.  So the
+// real path may suppress the description only after it has landed one hit on this body.
+inline bool SwingAlreadyReal(bool proxy_usable, bool enemy_targets_proxy, bool real_hit_proven)
 {
-    return proxy_usable && enemy_targets_proxy;
+    return proxy_usable && enemy_targets_proxy && real_hit_proven;
 }
 
 // The HP fraction (0..65535, WIRE.md 3.9) a freshly created enemy must be brought down

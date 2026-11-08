@@ -1255,6 +1255,11 @@ float CapsuleHalfHeight()
 void* g_proxyCls = nullptr;      // FS_PlayerChar_C (or FS_Full_PlayerChar_C)
 bool  g_proxyClsTried = false;
 void* g_proxySeen = nullptr;     // the last proxy actor: recognises a target we set
+// Measured capability, not an assumption: the game's own hit path reaches the proxy only
+// if the enemy's attack resolves the body.  Until a hit has actually landed the described
+// lane keeps describing (qdplayerbody.h SwingAlreadyReal), because a swing that is
+// suppressed here and never applied there hits nobody (R74).
+bool  g_proxyHitProven = false;
 
 // A player Blueprint carries its own skeletal meshes -- the first-person `Arms`, and on
 // some builds a `CharacterMesh0` or `Mesh`.  They are made invisible rather than emptied:
@@ -3448,12 +3453,171 @@ void* ActorLocationData(void* actor)
     return p ? *(void**)p : nullptr;
 }
 
-// Drive our own pawn through the game's own travel entry point.  The signature is
-// measured: `TeleportToLocation(Location Data: ObjectProperty, GreenFX: BoolProperty)`.
-// The parameter's name really contains a space (a Blueprint pin name), so it is passed
-// by that exact name and a type-based fallback follows it.  `GreenFX` is the full-screen
-// effect; a follow drives it with 0 so the partner's transition is not doubled on this
-// screen.
+// Where the trip lands, as a world-space point.  Two carriers expose it: the
+// `FS_LocationData` asset itself and the placed teleporter (`TeleportDestTransform`, a
+// property on `Teleporter_C`).  The size of the property decides how it is read --
+// 12 bytes is an `FVector`, 48/60 is an `FTransform` whose Translation sits at +0x10 --
+// so this asks the offset table rather than assuming one shape.
+bool ActorDestinationPoint(void* carrier, float out[3])
+{
+    if (!carrier) return false;
+    int size = 0;
+    int off = FindPropertyOffsetIn(ObjClass(carrier), "TeleportDestTransform", &size);
+    if (off < 0) return false;
+    __try {
+        const uint8_t* p = (const uint8_t*)carrier + off;
+        const float* v = nullptr;
+        if (size == 12 || size == 16) v = (const float*)p;
+        else if (size >= 44) v = (const float*)(p + 0x10);   // FTransform.Translation
+        else return false;
+        out[0] = v[0]; out[1] = v[1]; out[2] = v[2];
+        // A zero or absurd point is not a destination; refuse rather than teleport to it.
+        float m = out[0] * out[0] + out[1] * out[1] + out[2] * out[2];
+        if (!(m == m) || (m < 1.0f)) return false;
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+// Destination point for a travel, best carrier first.
+bool TravelDestinationPoint(void* actor, float out[3])
+{
+    void* data = ActorLocationData(actor);
+    if (data && ActorDestinationPoint(data, out)) return true;
+    return ActorDestinationPoint(actor, out);
+}
+
+// Is this parameter name about the player being moved rather than the data being read?
+bool NameMentionsPlayer(const char* n)
+{
+    return enemyown::HasCI(n, "player") || enemyown::HasCI(n, "pawn") ||
+           enemyown::HasCI(n, "char") || enemyown::HasCI(n, "instigat") ||
+           enemyown::HasCI(n, "user");
+}
+
+// Pack one resolved signature from what the travel lane actually has.  Returns the number
+// of parameters filled, and sets `skip` when the signature contains a parameter this
+// machine cannot fill honestly (a struct whose size is neither a point nor a transform).
+//
+// WHY NOT BY NAME: `FS_PlayerChar.TeleportToLocation` was documented as
+// `(Location Data: ObjectProperty, GreenFX: BoolProperty)` and measured live to have NO
+// object parameter at all (R68), so the follow refused on a correct build.  The function
+// that exists is packed by TYPE here, and the signature is logged, so the next reading of
+// that line is evidence rather than another guess.
+int PackTravelCall(Call& c, const Fn& f, void* data, void* player, const float point[3],
+                   bool havePoint, bool greenFx, const char** skip)
+{
+    int filled = 0;
+    *skip = nullptr;
+    for (int i = 0; i < f.sig.props; ++i) {
+        const PropDesc& p = f.sig.p[i];
+        if (p.flags & CPF_OutParm) continue;
+        if (NameEquals(p.type, "BoolProperty")) {
+            c.U8(p.name, greenFx ? 1 : 0);
+            ++filled;
+        } else if (NameEquals(p.type, "ObjectProperty")) {
+            // The data object is what a travel entry takes; a parameter named for the
+            // player is the interaction one.  A single unnamed object parameter is the
+            // data object, because that is what every carrier's entry is documents to take.
+            void* v = (NameMentionsPlayer(p.name) && player) ? player : (data ? data : player);
+            if (v) { c.Obj(p.name, v); ++filled; }
+        } else if (NameEquals(p.type, "StructProperty")) {
+            if (!havePoint) { *skip = p.name; return filled; }
+            if (p.size == 12) {
+                c.Set(p.name, point, 12);
+                ++filled;
+            } else if (p.size >= 44) {
+                // A transform: rotation identity, translation, unit scale.
+                uint8_t xf[60];
+                memset(xf, 0, sizeof(xf));
+                float* q = (float*)xf;                 // {x,y,z,w}
+                q[3] = 1.0f;
+                float* t = (float*)(xf + 0x10);
+                t[0] = point[0]; t[1] = point[1]; t[2] = point[2];
+                float* s = (float*)(xf + 0x20);
+                s[0] = s[1] = s[2] = 1.0f;
+                c.Set(p.name, xf, (p.size > (int)sizeof(xf)) ? (int)sizeof(xf) : p.size);
+                ++filled;
+            } else {
+                *skip = p.name;
+                return filled;
+            }
+        }
+    }
+    return filled;
+}
+
+// One attempt at driving this machine's own player through a travel entry.
+// `obj` is the object the function lives on, `label` names it in the log.
+bool TryTravelCall(void* obj, const char* fnName, const char* label, void* actor,
+                   void* data, void* pawn, bool greenFx, char* err, int errCap)
+{
+    if (!obj) return false;
+    // A fresh Fn per attempt: `Fn` caches a miss, and a carrier class that has no
+    // `TeleportToLocation` must not poison the next carrier's lookup.
+    Fn f;
+    if (!f.Resolve(obj, fnName)) return false;
+    // The signature is the evidence a refused follow needs, so it is printed once per
+    // (label, function) rather than on every attempt.
+    static const char* said[8] = {nullptr};
+    static int saidN = 0;
+    bool seen = false;
+    for (int i = 0; i < saidN; ++i) {
+        if (said[i] && !lstrcmpA(said[i], fnName)) { seen = true; break; }
+    }
+    if (!seen && saidN < (int)(sizeof(said) / sizeof(said[0]))) {
+        said[saidN++] = fnName;
+        QDLOG(LOG_INFO, "travel: ", label, ".", fnName, " signature resolved");
+        LogSignature("travel", f.sig);
+    }
+    float point[3] = {0, 0, 0};
+    bool havePoint = TravelDestinationPoint(actor, point);
+    const char* skip = nullptr;
+    Call c(f);
+    int filled = PackTravelCall(c, f, data, pawn, point, havePoint, greenFx, &skip);
+    ErrSet(err, errCap, "", "");
+    if (skip) {
+        ErrSet(err, errCap, label, ".");
+        int n = lstrlenA(err);
+        ErrSet(err + n, errCap - n, fnName, " wants a struct '");
+        n = lstrlenA(err);
+        ErrSet(err + n, errCap - n, skip, "' and the carrier exposes no destination");
+        return false;
+    }
+    if (!filled) {
+        ErrSet(err, errCap, label, ".");
+        int n = lstrlenA(err);
+        ErrSet(err + n, errCap - n, fnName, " has no parameter this call can fill");
+        return false;
+    }
+    if (!c.Run(obj)) {
+        ErrSet(err, errCap, label, ".");
+        int n = lstrlenA(err);
+        ErrSet(err + n, errCap - n, fnName, " faulted");
+        return false;
+    }
+    ErrSet(err, errCap, label, ".");
+    int n = lstrlenA(err);
+    ErrSet(err + n, errCap - n, fnName, " ran");
+    return true;
+}
+
+// Drive our own pawn through the game's own travel entry point.
+//
+// The order is measured, not preferred.  `TeleportToLocation` was documented on
+// `FS_PlayerChar` with an object parameter and refused live (R68: "has no LocationData
+// parameter"), so the attempts go from the entry that carries the data to the ones that
+// are guaranteed to exist:
+//
+//   1. the CARRIER's own `TeleportToLocation` (the teleporter class carries `LocationData`
+//      and the function name -- the player pressing E runs this class, not the pawn);
+//   2. the CARRIER's own `Interact` with this pawn -- the verb the act lever already
+//      drives on a checkpoint, and the game's own path;
+//   3. the PAWN's `TeleportToLocation`, packed by its real signature;
+//   4. the PAWN's `K2_TeleportTo(point, rotation)` -- the engine's own actor move.
+//
+// Every attempt logs its signature once, and the error names the last surface tried.
 bool FollowTravelActor(void* actor, const char* actorName, void* pawn,
                        char* err, int errCap, bool greenFx)
 {
@@ -3470,30 +3634,71 @@ bool FollowTravelActor(void* actor, const char* actorName, void* pawn,
     void* data = ActorLocationData(actor);
     if (!data) { ErrSet(err, errCap, actorName ? actorName : "?", " carries no LocationData"); return false; }
 
-    Fn fTp;
-    if (!fTp.Resolve(pawn, "TeleportToLocation")) {
-        char pc[64] = "?";
-        if (IsGameplayPawn(pawn)) FNameToString(ObjNameRaw(ObjClass(pawn)), pc, sizeof(pc));
-        ErrSet(err, errCap, "FS_PlayerChar.TeleportToLocation not found on ", pc);
-        return false;
+    char last[192] = "";
+    if (TryTravelCall(actor, "TeleportToLocation", "the carrier", actor, data, pawn, greenFx,
+                      err, errCap)) {
+        QDLOG(LOG_INFO, "travel: ", (actorName ? actorName : "the carrier"),
+              ".TeleportToLocation ran on the local pawn");
+        return true;
     }
-    const PropDesc* pObj = FindProp(fTp.sig, "Location Data");
-    if (!pObj) pObj = FindPropOfType(fTp.sig, "ObjectProperty", CPF_OutParm | CPF_ReturnParm);
-    const PropDesc* pFx = FindProp(fTp.sig, "GreenFX");
-    if (!pFx) pFx = FindPropOfType(fTp.sig, "BoolProperty", CPF_OutParm | CPF_ReturnParm);
-    if (!pObj) {
-        ErrSet(err, errCap, "TeleportToLocation has no LocationData parameter", "");
-        return false;
+    lstrcpynA(last, err, sizeof(last));
+
+    if (TryTravelCall(actor, "Interact", "the carrier", actor, data, pawn, greenFx,
+                      err, errCap)) {
+        QDLOG(LOG_INFO, "travel: ", (actorName ? actorName : "the carrier"),
+              ".Interact ran on the local pawn (the game's own travel verb)");
+        return true;
+    }
+    lstrcpynA(last, err, sizeof(last));
+
+    {
+        char pc[64] = "?";
+        FNameToString(ObjNameRaw(ObjClass(pawn)), pc, sizeof(pc));
+        if (TryTravelCall(pawn, "TeleportToLocation", pc, actor, data, pawn, greenFx,
+                          err, errCap)) {
+            QDLOG(LOG_INFO, "travel: ", pc, ".TeleportToLocation ran");
+            return true;
+        }
+        lstrcpynA(last, err, sizeof(last));
     }
 
-    Call c(fTp);
-    c.Obj(pObj->name, data);
-    if (pFx) c.U8(pFx->name, greenFx ? 1 : 0);
-    if (!c.Run(pawn)) {
-        ErrSet(err, errCap, "TeleportToLocation faulted", "");
-        return false;
+    {
+        // `K2_TeleportTo` takes the point and a rotation, both structs; it needs a
+        // destination point, which is why the carrier's transform is read first.
+        float point[3] = {0, 0, 0};
+        if (TravelDestinationPoint(actor, point)) {
+            Fn f;
+            if (f.Resolve(pawn, "K2_TeleportTo")) {
+                static bool saidK2 = false;
+                if (!saidK2) { saidK2 = true; LogSignature("K2_TeleportTo", f.sig); }
+                const PropDesc* pLoc = FindProp(f.sig, "DestLocation");
+                if (!pLoc) pLoc = FindPropOfType(f.sig, "StructProperty");
+                const PropDesc* pRot = FindProp(f.sig, "DestRotation");
+                Call c(f);
+                if (pLoc) c.Set(pLoc->name, point, 12);
+                if (pRot) {
+                    uint8_t rot[12];
+                    memset(rot, 0, sizeof(rot));
+                    c.Set(pRot->name, rot, 12);
+                }
+                if (pLoc && c.Run(pawn)) {
+                    QDLOG(LOG_INFO, "travel: K2_TeleportTo ran to ", flt(point[0], 0), ",",
+                          flt(point[1], 0), ",", flt(point[2], 0));
+                    ErrSet(err, errCap, "K2_TeleportTo ran", "");
+                    return true;
+                }
+                ErrSet(err, errCap, "K2_TeleportTo ", (pLoc ? "faulted" : "has no DestLocation"));
+                lstrcpynA(last, err, sizeof(last));
+            }
+        } else {
+            ErrSet(err, errCap, "the carrier exposes no TeleportDestTransform", "");
+            lstrcpynA(last, err, sizeof(last));
+        }
     }
-    return true;
+
+    // Nothing took: report the last surface, which names the class and the function.
+    ErrSet(err, errCap, last, "");
+    return false;
 }
 
 bool FollowTravelDest(const char* dest, void* pawn, char* err, int errCap, bool greenFx = false)
@@ -5184,11 +5389,13 @@ void TrySendEnemyDamage(EnemyRec& r, uint32_t seq, uint8_t anim, uint32_t now)
     // able to make a frozen follower send one.
     if (!r.haveGuid || g_own.State(r.guid) != enemyown::O_LOCAL) return;
 
-    // A swing the enemy aimed at the proxy body is resolved by the GAME: the hit lands on
-    // a real player-class actor, `PlayerBodyObserve` forwards its own damage payload, and
-    // describing the same swing here from the montage would apply it twice.
+    // A swing the enemy aimed at the proxy body is resolved by the GAME -- once the game
+    // has proved it can resolve it.  `PlayerBodyObserve` forwards the proxy's own damage
+    // payload, and until one such hit has actually landed the described lane below keeps
+    // working (R74: the enemy was aimed at a collision-less proxy and neither lane fired).
+    bool targetsProxy = EnemyTargetsProxy(r.actor);
     if (playerbody::SwingAlreadyReal(g_puppetActor != nullptr && ObjectIsLive(g_puppetActor),
-                                     EnemyTargetsProxy(r.actor))) {
+                                     targetsProxy, g_proxyHitProven)) {
         static uint32_t lastReal = 0;
         if (now - lastReal > 5000) {
             lastReal = now;
@@ -5196,6 +5403,14 @@ void TrySendEnemyDamage(EnemyRec& r, uint32_t seq, uint8_t anim, uint32_t now)
                   " swing handled by the game's own hit path; the described lane stays quiet");
         }
         return;
+    }
+    if (targetsProxy && !g_proxyHitProven) {
+        static uint32_t lastUnproven = 0;
+        if (now - lastUnproven > 5000) {
+            lastUnproven = now;
+            QDLOG(LOG_INFO, "damage: guid=", hex32(r.guid[0]), " is aimed at the proxy but the "
+                  "game's own hit path has never landed on it; describing the swing instead");
+        }
     }
 
     // E_ATTACK is the melee vocabulary (attack/slash/swing/claw/bite/sting/punch/swipe)
@@ -6037,7 +6252,25 @@ void EnemyTargetPump(uint32_t now)
         float dRemote = proxyOk ? playerbody::Dist3(e, pr) : -1.0f;
 
         playerbody::Tgt act = playerbody::ChooseTarget(true, proxyOk, c, dLocal, dRemote);
-        if (act == playerbody::TGT_LEAVE) continue;
+        if (act == playerbody::TGT_LEAVE) {
+            // The informative refusal: the proxy is inside the switch margin and the
+            // target still did not move.  Without this line a run can only say "no
+            // `TargetPlayer` line appeared", which does not name the reason -- and the
+            // reason differs: the AI has not picked a player yet (none), its target is
+            // something the mod must not touch (other), or the hysteresis held it (a
+            // genuine 200 cm tie).  DEBUG and rate-limited; this is a normal state.
+            static uint32_t lastKeep = 0;
+            if (proxyOk && (int32_t)(now - lastKeep) > 5000 && dRemote + 200.0f < dLocal) {
+                lastKeep = now;
+                QDLOG(LOG_DEBUG, "enemy ", hex32(r.guid[0]), ": TargetPlayer left alone (",
+                      c == playerbody::CUR_LOCAL ? "local player" :
+                      c == playerbody::CUR_REMOTE ? "the remote body" :
+                      c == playerbody::CUR_NONE ? "no target yet" : "not a player",
+                      ") dLocal=", flt(dLocal, 0), " dRemote=", flt(dRemote, 0),
+                      " -- the proxy is nearer by ", flt(dLocal - dRemote, 0), " cm");
+            }
+            continue;
+        }
         void* want = (act == playerbody::TGT_TO_REMOTE) ? g_proxySeen : g_localPawn;
         bool ok = WriteEnemyTarget(r.actor, off, want);
         QDLOG(ok ? LOG_INFO : LOG_WARN, "enemy ", hex32(r.guid[0]), ": TargetPlayer ",
@@ -6484,6 +6717,9 @@ bool PlayerBodyObserve(void* self, void* func, void* parms)
     // been described to the player's own machine, and running it here as well would apply
     // it twice.
     bool answered = WriteFalseReturn(parms, h.sig);
+    // The game's own attack resolved this body and the hit was forwarded: the described
+    // lane can defer to it from here on (SwingAlreadyReal's third fact).
+    g_proxyHitProven = true;
     QDLOG(LOG_INFO, "player body hit guid=", hex32(er->guid[0]), " amount=", flt(amount, 1),
           " centi=", dec(centi), " (", ((d.flags & wire::kDamageMelee) ? "melee" : "ranged"),
           ") -> sent to the machine that owns the player; local damage suppressed",
@@ -7216,12 +7452,68 @@ struct LootActorRec {
     int32_t  drop_index;
     char     path[loot::kMaxPathLen];
     bool     gone;
+    bool     visible;      // was not hidden when the scan recorded it
 };
 LootActorRec g_lootActors[64];
 int          g_lootActorN = 0;
 int          g_lootScanCursor = 0;
 uint32_t     g_lastLootSend = 0;
 bool         g_lootSaidUnrepresented = false;
+
+// A drop's key must be the SAME every time it is asked for.
+//
+// The derived identity ends in a coincidence ordinal (`DropOrdinals::Claim` hands out
+// 0, 1, 2 ... for the same class and quantized point), and Session 8 measured what that
+// costs when the key is recomputed: the drop scan recorded `8CD5056D#0`, the probe and
+// `near:loot` re-derived it and got `#1`, so the actor the player walked to and the entry
+// the ledger held were never the same entry and the tombstone had nothing to match
+// (`loot: local pickup` never fired; R69's "the ledger entry and the actor the player
+// touched were not the same one in time").  Remembering the key per actor is the fix,
+// which also makes the probe's `lootKey=` line agree with the ledger.
+struct LootKeyMemoRec {
+    void*    actor;
+    uint32_t hash;
+    int32_t  index;
+    char     path[loot::kMaxPathLen];
+};
+LootKeyMemoRec g_lootKeys[96];
+int            g_lootKeyN = 0;
+
+void LootKeyMemoReset() { g_lootKeyN = 0; }
+
+void LootKeyMemoPrune()
+{
+    for (int i = 0; i < g_lootKeyN;) {
+        if (g_lootKeys[i].actor && ObjectIsLive(g_lootKeys[i].actor)) { ++i; continue; }
+        g_lootKeys[i] = g_lootKeys[--g_lootKeyN];
+    }
+}
+
+const LootKeyMemoRec* LootKeyMemoFind(void* actor)
+{
+    if (!actor) return nullptr;
+    for (int i = 0; i < g_lootKeyN; ++i)
+        if (g_lootKeys[i].actor == actor) return &g_lootKeys[i];
+    return nullptr;
+}
+
+void LootKeyMemoStore(void* actor, uint32_t hash, int32_t index, const char* path)
+{
+    if (!actor) return;
+    if (LootKeyMemoFind(actor)) return;
+    if (g_lootKeyN >= (int)(sizeof(g_lootKeys) / sizeof(g_lootKeys[0]))) {
+        LootKeyMemoPrune();
+        if (g_lootKeyN >= (int)(sizeof(g_lootKeys) / sizeof(g_lootKeys[0]))) return;
+    }
+    LootKeyMemoRec& m = g_lootKeys[g_lootKeyN++];
+    m.actor = actor;
+    m.hash = hash;
+    m.index = index;
+    loot::CopyPath(m.path, loot::kMaxPathLen, path);
+}
+
+bool ActorHiddenNow(void* actor);
+bool LootActorGone(LootActorRec& r);
 
 bool IsDropClass(void* cls)
 {
@@ -7272,6 +7564,15 @@ loot::DropOrdinals g_lootOrd;
 
 bool DerivedLootKey(void* actor, uint32_t* hash, int32_t* index, char* path, int cap)
 {
+    // The key is derived ONCE per actor and remembered; see g_lootKeys.  Without this the
+    // coincidence ordinal is spent again on every ask and the same drop answers with a
+    // different key each time.
+    if (const LootKeyMemoRec* m = LootKeyMemoFind(actor)) {
+        *hash = m->hash;
+        *index = m->index;
+        loot::CopyPath(path, cap, m->path);
+        return true;
+    }
     char cls[192];
     if (avatar::AssetPath(ObjClass(actor), cls, sizeof(cls)) <= 0 || !cls[0]) return false;
     ActorXform x;
@@ -7285,6 +7586,7 @@ bool DerivedLootKey(void* actor, uint32_t* hash, int32_t* index, char* path, int
     *hash = loot::HashSource(text);
     *index = (int32_t)dup;
     loot::CopyPath(path, cap, cls);
+    LootKeyMemoStore(actor, *hash, *index, path);
     return true;
 }
 
@@ -7372,6 +7674,7 @@ void LootScanStep()
         r.drop_index = index;
         CopyText2(r.path, sizeof(r.path), path);
         r.gone = false;
+        r.visible = !ActorHiddenNow(o);
         if (g_loot.Offer(hash, index, path)) {
             QDLOG(LOG_INFO, "loot: drop ", hex32(hash), "#", dec((int)index), " = ", path);
             g_lootRev = g_loot.Revision();
@@ -7397,6 +7700,35 @@ void LootHide(uint32_t hash, int32_t index)
     }
 }
 
+// A drop that is gone: its object slot is empty, or it was visible when the scan recorded
+// it and the game has since hidden it.
+//
+// The disappearance test alone is what Session 8 measured failing: `ObjectIsLive` reads
+// the object array, and a Blueprint pickup that calls `K2_DestroyActor` keeps its slot
+// until the next GC, so "not live" can lag the pickup by longer than the window.  A
+// pickup that is instead hidden in place never becomes "not live" at all.  `bHidden` is a
+// one-bit field in the actor's first bitfield byte, and the scan only trusts it on an
+// actor that was VISIBLE when recorded, so a drop that spawns hidden cannot be
+// half-detected.
+bool ActorHiddenNow(void* actor)
+{
+    int size = 0;
+    int off = FindPropertyOffsetIn(ObjClass(actor), "bHidden", &size);
+    if (off < 0 || size != 1) return false;
+    __try {
+        return (*(const uint8_t*)((const uint8_t*)actor + off) & 1u) != 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+bool LootActorGone(LootActorRec& r)
+{
+    if (!ObjectIsLive(r.actor)) return true;
+    if (r.visible && ActorHiddenNow(r.actor)) return true;
+    return false;
+}
+
 void LootPump(uint32_t now)
 {
     if (!Cfg().loot_sync) return;
@@ -7406,35 +7738,51 @@ void LootPump(uint32_t now)
         lastWorld = world;
         g_loot.Reset();          // drops are per-world; a stale tombstone is not a fact
         g_lootOrd.Reset();
+        LootKeyMemoReset();
         g_lootActorN = 0;
         g_lootScanCursor = 0;
     }
     LootScanStep();
 
-    // A recorded drop that has gone from the world was picked up here.
+    // A recorded drop that has gone from the world was picked up here.  "Gone" is the
+    // measured pair of facts (LootActorGone), not just the object slot: a pickup that
+    // destroys itself keeps its slot until GC, and one that hides in place never loses it.
     for (int i = 0; i < g_lootActorN; ++i) {
         if (g_lootActors[i].gone) continue;
-        if (ObjectIsLive(g_lootActors[i].actor)) continue;
+        if (!LootActorGone(g_lootActors[i])) continue;
         g_lootActors[i].gone = true;
         if (g_loot.Take(g_lootActors[i].source_hash, g_lootActors[i].drop_index)) {
+            char nm[64] = "?";
+            if (ObjectIsLive(g_lootActors[i].actor))
+                FNameToString(ObjNameRaw(g_lootActors[i].actor), nm, sizeof(nm));
             QDLOG(LOG_INFO, "loot: local pickup ", hex32(g_lootActors[i].source_hash), "#",
-                  dec((int)g_lootActors[i].drop_index), " -- tombstoned for the partner");
+                  dec((int)g_lootActors[i].drop_index), " (", nm, ") -- tombstoned for the "
+                  "partner");
             g_lootRev = g_loot.Revision();
         }
     }
 
     if (!g_net.Connected()) return;
     static uint32_t lastState = 0;
-    bool due = g_loot.Revision() != lastState || now - g_lastLootSend >= 1000;
+    static int cursor = 0;
+    bool changed = g_loot.Revision() != lastState;
+    bool due = changed || now - g_lastLootSend >= 1000;
     if (!due) return;
     g_lastLootSend = now;
     lastState = g_loot.Revision();
+    // A change restarts the pass at entry 0: the entries already sent belong to the old
+    // set, and a mixed body would not be the absolute state the header promises
+    // (`HostPublisher::Observe`, the same rule the actor-state lane uses).
+    if (changed) cursor = 0;
 
     loot::Entry e[loot::kMaxDrops];
     int n = g_loot.Snapshot(e, loot::kMaxDrops);
+    if (n == 0) cursor = 0;
+    if (cursor >= n) cursor = 0;
+
     wire::LootEntry out[wire::kLootMax];
     int m = 0;
-    for (int i = 0; i < n && m < wire::kLootMax; ++i) {
+    for (int i = cursor; i < n && m < wire::kLootMax; ++i) {
         out[m].source_hash = e[i].source_hash;
         out[m].drop_index = e[i].drop_index;
         out[m].taken = e[i].taken ? 1 : 0;
@@ -7443,9 +7791,19 @@ void LootPump(uint32_t now)
     }
     uint8_t body[wire::kMaxBody];
     wire::Writer w(body, sizeof(body));
-    wire::WriteLootHeader(w, g_loot.Revision(), (uint16_t)m);
-    wire::WriteLootChunk(w, out, m, 0);
-    if (w.ok) g_net.SendUnreliable(wire::K_LOOT, body, w.len);
+    // `n` is the LEDGER size and the chunk is a prefix (WIRE.md 3.6): writing the number
+    // of entries that fit instead made a 68-drop ledger undecodable on both ends (the
+    // relay called the body malformed and the partner's own reader refused it).
+    wire::WriteLootHeader(w, g_loot.Revision(), (uint16_t)n);
+    int wrote = wire::WriteLootChunk(w, out, m, 0);
+    if (w.ok) {
+        if (g_net.SendUnreliable(wire::K_LOOT, body, w.len)) {
+            // Advance by what actually went out, so the entry the cap left behind is the
+            // first one of the next pass; wrap when the whole ledger has been covered.
+            cursor += (wrote > 0) ? wrote : m;
+            if (cursor >= n) cursor = 0;
+        }
+    }
 }
 
 void OnLoot(wire::Reader& r)
@@ -8928,6 +9286,7 @@ void* RigFindNear(const char* sub, float* distOut, ActorXform* xfOut, char* name
         ActorXform bxL = {};
         for (int i = 0; i < g_lootActorN; ++i) {
             if (g_lootActors[i].gone) continue;
+            if (LootActorGone(g_lootActors[i])) continue;   // hidden == taken by someone
             void* a = g_lootActors[i].actor;
             if (!a || !ObjectIsLive(a)) continue;
             ActorXform lx;
@@ -9144,6 +9503,65 @@ void DevScanNearestBody();
 // The scan also names the nearest actor of a few classes that are NOT savables: an NPC to
 // talk to, and a checkpoint (whose unlock is a `NamedSaveData` flag, so it is the one
 // interaction that can demonstrate the G1 lane without a barricade).
+//
+// The LOOSE pass exists because Session 9 has to find things nobody has named yet: a
+// cutscene trigger, an elevator or platform, a boss.  Guessing class names cost a run in
+// Session 7 (`near:chest` matched a quest chest), so the scan reports the nearest actor
+// whose CLASS name contains each wanted word, with its own name and place -- the level
+// says what is there instead of the scenario assuming.
+void RigScanLooseKinds(const ActorXform& me)
+{
+    static const char* const kinds[] = {"cutscene", "sequence", "elevator", "platform",
+                                        "boss", "whale", "dialogue"};
+    static const int nKinds = (int)(sizeof(kinds) / sizeof(kinds[0]));
+    static void* actorCls = nullptr;
+    if (!actorCls || !ObjectIsLive(actorCls)) actorCls = FindClassByName("Actor");
+    if (!actorCls) return;
+    void* world = GWorldPtr();
+    if (!world) return;
+
+    void*   best[8] = {nullptr};
+    float   bestD[8];
+    ActorXform bestX[8];
+    for (int k = 0; k < nKinds; ++k) bestD[k] = -1.0f;
+
+    int count = ObjectCount();
+    for (int i = 0; i < count; ++i) {
+        void* o = ObjectAt(i);
+        if (!o || !LooksLikeUObject(o)) continue;
+        __try {
+            void* c = ObjClass(o);
+            if (!c || !IsSubclassOf(c, actorCls)) continue;
+            char cl[96] = "";
+            if (FNameToString(ObjNameRaw(c), cl, sizeof(cl)) <= 0) continue;
+            int hit = -1;
+            for (int k = 0; k < nKinds; ++k)
+                if (enemyown::HasCI(cl, kinds[k])) { hit = k; break; }
+            if (hit < 0) continue;
+            if (!ActorOuterReachesWorld(o, world)) continue;
+            ActorXform x;
+            if (!ReadActorXform(o, &x)) continue;
+            float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
+            float d = sqrtf(dx * dx + dy * dy + dz * dz);
+            if (!(d == d)) continue;
+            if (bestD[hit] >= 0.0f && d >= bestD[hit]) continue;
+            bestD[hit] = d; best[hit] = o; bestX[hit] = x;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        }
+    }
+    for (int k = 0; k < nKinds; ++k) {
+        if (!best[k]) {
+            QDLOG(LOG_INFO, "scan: loose ", kinds[k], " none in this world");
+            continue;
+        }
+        char nm[64] = "?";
+        FNameToString(ObjNameRaw(best[k]), nm, sizeof(nm));
+        QDLOG(LOG_INFO, "scan: loose ", kinds[k], " ", nm, " [", kinds[k], "] at ",
+              flt(bestX[k].px, 0), ",", flt(bestX[k].py, 0), ",", flt(bestX[k].pz, 0),
+              " dist=", flt(bestD[k], 0));
+    }
+}
+
 void RigScanActorsOfClass(const ActorXform& me)
 {
     static const char* const names[] = {"NPC_Base_C", "Checkpoint_C", "SubLevelDoor_C"};
@@ -9376,6 +9794,7 @@ void DevScanNearestBody()
     }
 
     RigScanActorsOfClass(me);
+    RigScanLooseKinds(me);
 
     // What the game itself thinks the player can interact with right now.  A scenario
     // that has to guess which of forty actors is a chest is not a test.

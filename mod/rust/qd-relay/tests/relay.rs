@@ -255,9 +255,70 @@ fn state_datagrams_are_forwarded_byte_for_byte_apart_from_the_session_stamp() {
     assert!(matches!(decoded.body, Body::PlayerRow(_)));
 }
 
+/// A chunked absolute container must be FORWARDED, not dropped.
+///
+/// Measured on the rig (LIVE-TEST-LOG R74): the native host publishes
+/// `SavableActorStates` as a whole-container header (`n` = 117) split across several
+/// datagrams, each carrying a prefix. The decoder read `n` entries per datagram, ran
+/// out of data, reported "unexpected end of data", and the relay dropped every
+/// actor-state datagram -- 2 364 of them in one session -- while the flag and
+/// inventory lanes (which fit in one datagram) forwarded normally. The peer logged
+/// `flags applied=` and `inventory body` and never `actor states applied=`.
 #[test]
-fn an_already_assigned_session_is_not_rewritten() {
+fn a_chunked_actor_states_body_is_forwarded_not_dropped() {
     let mut relay = relay();
+    let relay_addr = relay.local_addr().unwrap();
+
+    let a = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let b = UdpSocket::bind("127.0.0.1:0").unwrap();
+    b.set_nonblocking(true).unwrap();
+
+    a.send_to(&hello("Alice", roles::ANY), relay_addr).unwrap();
+    pump(&mut relay);
+    b.send_to(&hello("Bob", roles::PEER), relay_addr).unwrap();
+    pump(&mut relay);
+    let _ = recv(&a);
+
+    // One chunk of a three-datagram pass: the header says 117 entries, two are here.
+    let mut body: Vec<u8> = Vec::new();
+    body.extend_from_slice(&41u32.to_le_bytes());
+    body.extend_from_slice(&117u16.to_le_bytes());
+    for i in 0..2u8 {
+        body.extend_from_slice(&[i, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, i]);
+        body.extend_from_slice(&1i32.to_le_bytes());
+    }
+    let packet = Envelope::new(0, 0x0A0B, Body::Log(Log { bytes: body.clone() }));
+    // Build the envelope by hand: the chunk is not a whole container, so the typed
+    // encoder (which writes `n = entries.len()`) cannot produce it. That asymmetry is
+    // exactly what the native publisher relies on.
+    let mut raw = packet.encode().unwrap();
+    raw[5] = 0x12; // kind = ACTOR_STATES (magic 0..4, ver 4, kind 5)
+
+    a.send_to(&raw, relay_addr).unwrap();
+    let events = relay.poll_once();
+    assert!(
+        !events.iter().any(|e| matches!(e, Event::Malformed { .. })),
+        "a chunked container must not be malformed: {events:?}"
+    );
+    assert!(
+        events.iter().any(|e| matches!(e, Event::Dropped { .. })) == false,
+        "a chunked container must not be dropped: {events:?}"
+    );
+
+    let (bytes, _) = recv(&b);
+    assert_eq!(bytes.len(), raw.len(), "the chunk reaches the other peer whole");
+    assert_eq!(bytes[5], 0x12, "still ACTOR_STATES");
+    match Envelope::decode(&bytes).unwrap().body {
+        Body::ActorStates(s) => {
+            assert_eq!(s.rev, 41);
+            assert_eq!(s.entries.len(), 2, "the prefix, not the whole container");
+        }
+        other => panic!("expected actor states, got {other:?}"),
+    }
+}
+
+#[test]
+fn an_already_assigned_session_is_not_rewritten() {    let mut relay = relay();
     let relay_addr = relay.local_addr().unwrap();
     let session = relay.session_id();
 
@@ -351,7 +412,7 @@ fn event_lines_are_single_lines() {
         Event::Refused { addr: addr(2), why: "session is full" },
         Event::TimedOut { addr: addr(3), role: Some(Role::Peer) },
         Event::SessionClosed,
-        Event::Malformed { addr: addr(4), error: qd_core::Error::BadMagic(*b"XXXX") },
+        Event::Malformed { addr: addr(4), kind: 0x12, error: qd_core::Error::BadMagic(*b"XXXX") },
         Event::Dropped { addr: addr(5), why: "no other peer yet" },
     ];
     for e in events {
