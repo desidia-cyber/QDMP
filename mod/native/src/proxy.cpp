@@ -67,6 +67,7 @@
 #include "qddialogue.h"
 #include "qdenemy.h"
 #include "qdflags.h"
+#include "qdpending.h"
 
 // ---------------------------------------------------------------------------
 // Globals
@@ -120,6 +121,10 @@ puppet::PuppetFsm g_puppet;
 stream::UnionGuard g_stream;
 dialogue::DialogueLock g_dialogue;
 flags::FlagBank   g_flags;
+
+// The peer's outbound half of flag sync: rises the mirror observed, waiting for the
+// host to echo them.  On the host it stays empty.
+pending::IntentQueue g_pendingFlags;
 
 // Progression mirror bookkeeping.
 uint32_t          g_lastMirrorMs = 0;
@@ -301,6 +306,10 @@ bool TryInitSaveLayer(uint32_t now)
     g_mirrorCount = 0;
     g_lastFlagCount = -1;
     g_flagsDirty = true;
+    // The queue refers to values in the save that was just replaced (and to echoes the
+    // old container produced), so carrying it over would send progress for a save the
+    // player is no longer in.
+    g_pendingFlags.Reset();
     return s.readOk;
 }
 
@@ -312,6 +321,37 @@ bool TryInitSaveLayer(uint32_t now)
 // order", and it is what a two-instance run is compared against.
 // (MirrorState / g_mirror are declared with the other globals, above.)
 
+// Peer only: a rise the local game produced is a progression event the host does not
+// have.  It is queued rather than sent here because the same frame can produce several
+// of them and because an intent may have to be retried; the pump in LAYER 4 sends.
+// "Rise" includes a key appearing: NamedSaveData has no entry for an unearned key, so
+// its first appearance is the 0 -> value step.  An appearance at 0 is not a rise -- 0
+// is what the bank already reports for an absent key -- and would carry no information.
+void QueueFlagIntent(const char* key, int32_t value)
+{
+    if (!Cfg().flag_sync || !g_net.IsPeer() || !g_net.Connected()) return;
+
+    switch (g_pendingFlags.Observe(key, value)) {
+    case pending::IntentQueue::kQueued:
+        QDLOG(LOG_INFO, "flag intent queued ", key, "=", dec(value));
+        break;
+    case pending::IntentQueue::kCoalesced:
+        QDLOG(LOG_INFO, "flag intent coalesced ", key, "=", dec(value));
+        break;
+    case pending::IntentQueue::kEcho:
+        // The host put this value here; sending it back is the ping-pong.
+        QDLOG(LOG_DEBUG, "flag ", key, "=", dec(value), " came from the host, not an intent");
+        break;
+    case pending::IntentQueue::kDuplicate:
+        break;
+    case pending::IntentQueue::kOverflow:
+        QDLOG(LOG_WARN, "flag intent dropped ", key, "=", dec(value),
+              ": pending list full (", dec(pending::IntentQueue::kMaxPending),
+              "), host has not answered");
+        break;
+    }
+}
+
 void MirrorVisit(const char* key, int32_t value, void* user)
 {
     (void)user;
@@ -320,6 +360,10 @@ void MirrorVisit(const char* key, int32_t value, void* user)
             if (g_mirror[i].last_value != value) {
                 QDLOG(LOG_INFO, "flag CHANGE ", key, " : ",
                       dec(g_mirror[i].last_value), " -> ", dec(value));
+                // A rise only.  The peer's own game never lowers a progression flag, and
+                // an intent for a lower value would be refused by the host's monotone
+                // rule anyway; acting on one would only add a datagram to the refusal.
+                if (value > g_mirror[i].last_value) QueueFlagIntent(key, value);
                 g_mirror[i].last_value = value;
                 g_flagsDirty = true;
             }
@@ -333,6 +377,7 @@ void MirrorVisit(const char* key, int32_t value, void* user)
         m.last_name[i] = 0;
         m.last_value = value;
         QDLOG(LOG_INFO, "flag NEW ", key, " = ", dec(value));
+        if (value > 0) QueueFlagIntent(key, value);
         g_flagsDirty = true;
     }
 }
@@ -356,6 +401,10 @@ void MirrorObserve(const char* key, int32_t value)
             if (g_mirror[i].last_value != value) {
                 QDLOG(LOG_INFO, "flag CHANGE ", key, " : ",
                       dec(g_mirror[i].last_value), " -> ", dec(value));
+                // A rise only.  The peer's own game never lowers a progression flag, and
+                // an intent for a lower value would be refused by the host's monotone
+                // rule anyway; acting on one would only add a datagram to the refusal.
+                if (value > g_mirror[i].last_value) QueueFlagIntent(key, value);
                 g_mirror[i].last_value = value;
                 g_flagsDirty = true;
             }
@@ -369,6 +418,7 @@ void MirrorObserve(const char* key, int32_t value)
         m.last_name[i] = 0;
         m.last_value = value;
         QDLOG(LOG_INFO, "flag ", key, " = ", dec(value));
+        if (value > 0) QueueFlagIntent(key, value);
         g_flagsDirty = true;
     }
 }
@@ -493,6 +543,13 @@ void PeerApplyFlags(wire::Reader& r)
         if (!wire::ReadFlagEntry(r, name, sizeof(name), &value)) break;
         if (!Cfg().flag_sync) continue;
 
+        // The host's body is also its answer to an intent: equal settles it, higher means
+        // the authority is already ahead and the value we asked for is implied.  This is
+        // tested before ApplyRemote because it is about what the HOST holds, not about
+        // whether this peer needed to change its own bank.
+        int32_t asked = 0;
+        pending::IntentQueue::Resolve res = g_pendingFlags.Applied(name, value, &asked);
+
         bool ok = false;
         if (h.rev != 0) {
             // Host authority: ApplyRemote refuses to lower a value.
@@ -502,17 +559,73 @@ void PeerApplyFlags(wire::Reader& r)
             ++applied;
             if (Save().writeOk) {
                 char err[128];
-                if (!NsdWrite(name, value, err, sizeof(err))) {
+                if (NsdWrite(name, value, err, sizeof(err))) {
+                    // This value is now in the local container, so the mirror will see it
+                    // within the second as a local change.  Remember the echo; otherwise
+                    // that observation becomes an intent and the machines ping-pong.
+                    g_pendingFlags.RememberEcho(name, value);
+                } else {
                     QDLOG(LOG_WARN, "apply failed for ", name, ": ", err);
                 }
             }
         } else {
             ++refused;
         }
+
+        if (res == pending::IntentQueue::kConfirmed) {
+            QDLOG(LOG_INFO, "flag intent confirmed ", name, "=", dec(value),
+                  " rev=", dec(h.rev));
+        } else if (res == pending::IntentQueue::kSuperseded) {
+            QDLOG(LOG_INFO, "flag intent superseded ", name, "=", dec(asked),
+                  " by the host's ", dec(value), " rev=", dec(h.rev));
+        }
     }
     if (applied || refused) {
         QDLOG(applied ? LOG_INFO : LOG_DEBUG, "flags applied=", dec(applied), " refused=", dec(refused),
               " rev=", dec(h.rev));
+    }
+}
+
+// Peer side: put the rises the mirror observed on the wire as absolute flag intents.
+// The queue decides how many may go now; the revision is read here, at send time, so a
+// retry always carries the freshest host state this peer is based on.
+void PeerFlagIntentPump(uint32_t now)
+{
+    if (!Cfg().flag_sync || !g_net.IsPeer() || !g_net.Connected()) return;
+
+    pending::IntentQueue::Out out[pending::IntentQueue::kMaxPerTick];
+    int n = g_pendingFlags.Due(now, out, pending::IntentQueue::kMaxPerTick);
+    for (int i = 0; i < n; ++i) {
+        uint32_t rev = g_flags.Revision();
+
+        // kind 1, then str(name) i32(value) u8(mode), which is exactly ReadIntent's
+        // I_SET_FLAG layout.  mode 1 is absolute: the mirror observes totals, never
+        // deltas, and an additive intent would apply the host's arithmetic twice.
+        uint8_t body[256];
+        wire::Writer w(body, sizeof(body));
+        wire::WriteIntentHeader(w, wire::I_SET_FLAG, rev);
+        w.Str(out[i].name);
+        w.I32(out[i].value);
+        w.U8(1);
+
+        bool sent = w.ok && g_net.SendReliable(wire::K_INTENT, body, w.len);
+        if (sent) {
+            QDLOG(LOG_INFO, "flag intent sent ", out[i].name, "=", dec(out[i].value),
+                  " rev=", dec(rev), " try ", dec(out[i].attempt), "/",
+                  dec(pending::IntentQueue::kMaxAttempts));
+        } else {
+            QDLOG(LOG_WARN, "flag intent send failed ", out[i].name, "=",
+                  dec(out[i].value), " rev=", dec(rev));
+        }
+
+        // The attempt is spent whether or not the socket took it: the give-up has to be
+        // bounded, and a lane that keeps refusing the datagram is exactly what the cap is
+        // for.  The host's echo is the only thing that settles an intent other than this.
+        if (out[i].attempt >= pending::IntentQueue::kMaxAttempts) {
+            g_pendingFlags.GiveUp(out[i].name);
+            QDLOG(LOG_WARN, "flag intent given up ", out[i].name, "=", dec(out[i].value),
+                  " after ", dec(out[i].attempt), " attempts, host never echoed it");
+        }
     }
 }
 
@@ -526,12 +639,18 @@ void HostApplyIntent(wire::Reader& r)
 
     if (b.kind == wire::I_SET_FLAG) {
         if (!Cfg().flag_sync) return;
+        // g_flagsRevision is bumped when a body has been FULLY sent, so once anything has
+        // gone out it already names the NEXT revision rather than the one on the wire.  A
+        // peer can only ever have applied the body's revision, so comparing against the
+        // counter refuses every intent by construction; the gate means "the revision I
+        // last published", which is the value below.
+        uint32_t lastSent = g_flagsRevision - 1;
         bool ok = g_flags.ApplyIntent(b.name, b.value, b.mode != 0,
-                                     b.based_on_rev, g_flagsRevision);
+                                      b.based_on_rev, lastSent);
         if (!ok) {
             QDLOG(LOG_INFO, "intent refused (regressive or stale): ", b.name,
                   "=", dec(b.value), " based_on=", dec(b.based_on_rev),
-                  " last_sent=", dec(g_flagsRevision));
+                  " last_sent=", dec(lastSent));
             return;
         }
         char err[128];
@@ -3928,6 +4047,7 @@ bool HK_Tick(void* engineLoop)
     if (tracing) QDLOG(LOG_DEBUG, "  frame ", dec(g_frame), " player sent");
 
     if (g_net.IsHost()) HostPushFlags(now);
+    else PeerFlagIntentPump(now);
     DevAutoLoad(now);
     LocalEquipPump(now);
     DevAvatarTest(now);
