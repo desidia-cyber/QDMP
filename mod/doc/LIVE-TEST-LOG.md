@@ -503,3 +503,45 @@ enemy attack (therefore no `DAMAGE`), no travel follow. Those need gameplay inpu
 cannot drive reliably. `SYNC-GAPS` §5 lists the exact log lines to look for when a player
 does them.
 
+
+---
+
+## Session 5 ? 2026-11-08 (making the rig able to drive a change)
+
+The previous session proved the lanes converge but never carried a *change*: no door, no
+pickup, no enemy attack. This session added the missing levers and found two crashes.
+
+### R47. The rig could not drive gameplay at all, and why
+`PostMessage` keys reach the UI ? the title and file-select screens respond ? but **not
+gameplay**: pressing E or W in the world did nothing, measured twice. The engine reads
+device state for in-world input, not window messages. So the rig now drives the verbs the
+keys are bound to, through the game's own functions:
+- `QDCOOP_TEST_TPFILE=<path>` ? teleport the local pawn to `x,y,z,yaw` whenever the file
+  changes (`mod/tools/rig.ps1 -Action tp`), so a scenario can move a player mid-session.
+- `QDCOOP_TEST_SCAN=1` ? log the local position, the nearest enemy, the five nearest
+  one-shot world objects by name, and the game's own `Current Interact Actor`.
+- `QDCOOP_TEST_ACTFILE=<path>` ? perform the player's `Interact` verb once per file change
+  (`-Action key` remains available for menus).
+
+### R48. FIXED ? the scan probe crashed the peer during a world reload
+Game over -> Continue destroys and recreates the pawn; the probe read an actor name in
+that window and faulted (`WINMM+0x18c36`, inside `DevScanNearest`). The probe bodies are
+now `__try`-guarded (the file-scope statics are separated so MSVC allows it, C2712), and
+the log says `scan: fault while reading actors (world reload?)`.
+
+### R49. FIXED ? the streaming veto crashed the game on a world reload
+The second crash had `WINMM+0x27647` in the stack: that is `LevelManager()`, called from
+`HK_SetShouldBeVisible`, reading `GameInstance` while the world was being torn down
+(`EXCEPTION_ACCESS_VIOLATION reading 0x0000000100000000`). This is a **mod** bug, not a
+probe: any player who dies with `StreamUnion=1` could hit it. `LevelManager` is guarded now.
+
+### What the levers showed
+The save's area contains essentially no interactables near the start: the five nearest
+one-shot objects are all coin pickups, 12-17 m away, and the only enemy is 28 m away. Two
+blind teleports to distant savables killed the peer (a brazier, then a fall). Driving a
+change therefore needs a *safe* target list, not just coordinates.
+
+### Still unproven
+The four change paths: door/chest, pickup, enemy attack (`DAMAGE`), travel follow. The
+plumbing all runs (state converged, zero dropped slots, zero refused intents), but no
+scenario has yet produced the *event*.

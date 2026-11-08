@@ -2580,10 +2580,20 @@ void LevelNameOf(void* ls, char* out, int cap)
 
 void* LevelManager()
 {
-    void* gi = GameInstanceOf(GWorldPtr());
-    if (!gi) return nullptr;
-    void* m = *(void**)((uint8_t*)gi + kMgrSlot);
-    return LooksLikeUObject(m) ? m : nullptr;
+    // Guarded, because this runs from inside the game's own level-streaming call, and a
+    // world teardown (death -> reload, a travel, a level change) can leave the world's
+    // GameInstance half-built: measured as an EXCEPTION_ACCESS_VIOLATION reading
+    // 0x0000000100000000 with WINMM+0x27647 -- this function -- called from the veto, and
+    // it took the game down on Continue from the game-over screen.
+    __try {
+        void* gi = GameInstanceOf(GWorldPtr());
+        if (!gi) return nullptr;
+        void* m = *(void**)((uint8_t*)gi + kMgrSlot);
+        return LooksLikeUObject(m) ? m : nullptr;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return nullptr;
+    }
 }
 
 // The veto's other half (see above).  True if the manager's pending entry was this
@@ -5774,6 +5784,244 @@ void DevTeleport(uint32_t now)
           ok ? "" : " FAILED");
 }
 
+// QDCOOP_TEST_TPFILE=<path>: TEST INSTANCES ONLY -- teleport the local pawn to whatever
+// "x,y,z,yaw" the named file holds, whenever its contents change.
+//
+// The launch-time QDCOOP_TEST_TP can place a player once, at a spot fixed before the
+// process starts. A live test of the co-op lanes needs the player moved to a door, then
+// to a pickup, then to an enemy, inside one session; a file the driver rewrites is the
+// smallest interface that allows it, and it needs no window focus.
+void DevTeleportFile(uint32_t now)
+{
+    static char path[MAX_PATH];
+    static int on = GetEnvironmentVariableA("QDCOOP_TEST_TPFILE", path, sizeof(path)) ? 1 : 0;
+    static uint32_t lastPoll = 0;
+    static char applied[128] = "";
+    if (!on || !IsGameplayPawn(g_localPawn)) return;
+    if (now - lastPoll < 200) return;      // a file read per tick would be a syscall storm
+    lastPoll = now;
+
+    HANDLE h = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return;
+    char buf[128];
+    DWORD got = 0;
+    (void)ReadFile(h, buf, sizeof(buf) - 1, &got, nullptr);
+    CloseHandle(h);
+    buf[got] = 0;
+    for (int i = 0; buf[i]; ++i) {
+        if (buf[i] == '\r' || buf[i] == '\n' || buf[i] == ' ') { buf[i] = 0; break; }
+    }
+    // The same instruction is not a new one: without this the pawn would be pinned to the
+    // file's coordinates every 200 ms, and a scenario that walks into a door could never.
+    if (buf[0] == 0 || strcmp(buf, applied) == 0) return;
+    lstrcpynA(applied, buf, sizeof(applied));
+
+    float v[4] = {0, 0, 0, 0};
+    char* save = nullptr;
+    int n = 0;
+    for (char* t = strtok_s(buf, ",", &save); t && n < 4; t = strtok_s(nullptr, ",", &save))
+        v[n++] = (float)atof(t);
+    if (n < 3) { QDLOG(LOG_WARN, "dev teleport file: need x,y,z[,yaw]"); return; }
+    bool ok = SetActorXform(g_localPawn, v[0], v[1], v[2], v[3]);
+    void* pc = LocalController();
+    int ro = pc ? FindPropertyOffsetIn(ObjClass(pc), "ControlRotation") : -1;
+    if (ro >= 0) { float* r = (float*)((uint8_t*)pc + ro); r[0] = 0.0f; r[1] = v[3]; }
+    QDLOG(LOG_INFO, "dev teleport file -> ", flt(v[0], 0), ",", flt(v[1], 0), ",", flt(v[2], 0),
+          " yaw ", flt(v[3], 0), (ok ? "" : " FAILED"));
+}
+
+// QDCOOP_TEST_SCAN=1: TEST INSTANCES ONLY -- 20 s into gameplay and then every 10 s, log
+// where the local player is and what is nearest to it: an enemy and a one-shot world
+// object (chest, door, barricade).
+//
+// A scenario driver has to be told coordinates to walk to. Reading them off the level
+// layout would be a guess dressed up as a test, and the interesting actors are not where
+// the save starts the player.
+void DevScanNearestBody();
+
+// File scope, not function-local: a dynamically-initialised static (`DevEnvInt(...)`)
+// needs a thread-safe init guard, which makes the frame require object unwinding, and
+// MSVC refuses __try in such a frame (C2712).
+int      g_devScanOn = -1;          // -1 = not read yet
+uint32_t g_devScanT0 = 0, g_devScanLast = 0;
+
+void DevScanNearest(uint32_t now)
+{
+    if (g_devScanOn < 0) g_devScanOn = DevEnvInt("QDCOOP_TEST_SCAN", 0);
+    if (!g_devScanOn) return;
+    if (!IsGameplayPawn(g_localPawn)) { g_devScanT0 = now; return; }
+    if (now - g_devScanT0 < 20000) return;
+    if (g_devScanLast && now - g_devScanLast < 10000) return;
+    g_devScanLast = now;
+
+    // Everything the body does dereferences actors the game may be destroying right now:
+    // it runs during a world reload too (game over -> Continue destroys and recreates the
+    // pawn), and reading a name or a component of an object that died between
+    // `ObjectIsLive` and the read is an access violation.  Measured: the peer crashed on
+    // Continue with WINMM+0x18c36 in the stack, which is inside this probe.  A probe must
+    // never be able to take the session down.
+    __try { DevScanNearestBody(); }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        QDLOG(LOG_WARN, "scan: fault while reading actors (world reload?); scan skipped");
+    }
+}
+
+// Separate function because MSVC refuses __try in a frame that requires object unwinding
+// (C2712), and the wrapper's static initialisers do.
+void DevScanNearestBody()
+{
+    ActorXform me;
+        if (!ReadActorXform(g_localPawn, &me)) return;
+    QDLOG(LOG_INFO, "scan: local at ", flt(me.px, 0), ",", flt(me.py, 0), ",", flt(me.pz, 0),
+          " yaw ", flt(me.yaw, 0));
+
+    float bestD = -1.0f;
+    ActorXform best = {};
+    uint32_t bestGuid[4] = {0, 0, 0, 0};
+    for (int i = 0; i < g_enN; ++i) {
+        EnemyRec& r = g_en[i];
+        if (!r.haveGuid || !ObjectIsLive(r.actor) || EnemyDead(r.actor)) continue;
+        ActorXform x;
+        if (!ReadActorXform(r.actor, &x)) continue;
+        float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
+        float d = sqrtf(dx * dx + dy * dy + dz * dz);
+        if (bestD >= 0.0f && d >= bestD) continue;
+        bestD = d; best = x;
+        memcpy(bestGuid, r.guid, 16);
+    }
+    if (bestD >= 0.0f) {
+        QDLOG(LOG_INFO, "scan: nearest enemy guid=", hex32(bestGuid[0]), " at ", flt(best.px, 0),
+              ",", flt(best.py, 0), ",", flt(best.pz, 0), " dist=", flt(bestD, 0));
+    }
+
+    static ActorStateOwner owners[64];
+    int n = BuildActorStateOwners(owners, 64);
+    bestD = -1.0f;
+    const ActorStateOwner* bestOwner = nullptr;
+    for (int i = 0; i < n; ++i) {
+        if (!owners[i].actor || !ObjectIsLive(owners[i].actor)) continue;
+        ActorXform x;
+        if (!ReadActorXform(owners[i].actor, &x)) continue;
+        float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
+        float d = sqrtf(dx * dx + dy * dy + dz * dz);
+        if (bestD >= 0.0f && d >= bestD) continue;
+        bestD = d; bestOwner = &owners[i]; best = x;
+    }
+    if (bestOwner) {
+        char nm[64] = "";
+        FNameToString(ObjNameRaw(bestOwner->actor), nm, sizeof(nm));
+        char gs[80] = "";
+        EncodeGuidForLog(bestOwner->guid, gs, sizeof(gs));
+        QDLOG(LOG_INFO, "scan: nearest savable ", nm, " guid=", gs, " index=", dec(bestOwner->index),
+              " at ", flt(best.px, 0), ",", flt(best.py, 0), ",", flt(best.pz, 0),
+              " dist=", flt(bestD, 0));
+    } else {
+        QDLOG(LOG_INFO, "scan: no live savable actor in the object graph");
+    }
+
+    // The five nearest one-shot objects, by name: the nearest one is usually a coin in a
+    // corner, and a scenario needs a chest or a door, which it can only choose between if
+    // it can see the names.  Each pick is cleared so the next pass finds a different one.
+    for (int k = 0; k < 5; ++k) {
+        float bd = -1.0f;
+        int bi = -1;
+        for (int i = 0; i < n; ++i) {
+            if (!owners[i].actor || !ObjectIsLive(owners[i].actor)) continue;
+            ActorXform x;
+            if (!ReadActorXform(owners[i].actor, &x)) continue;
+            float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
+            float d = sqrtf(dx * dx + dy * dy + dz * dz);
+            if (bd >= 0.0f && d >= bd) continue;
+            bd = d; bi = i;
+        }
+        if (bi < 0) break;
+        char nm[64] = "";
+        FNameToString(ObjNameRaw(owners[bi].actor), nm, sizeof(nm));
+        ActorXform x;
+        if (!ReadActorXform(owners[bi].actor, &x)) { owners[bi].actor = nullptr; continue; }
+        QDLOG(LOG_INFO, "scan: savable ", dec(k), " ", nm, " at ", flt(x.px, 0), ",", flt(x.py, 0),
+              ",", flt(x.pz, 0), " dist=", flt(bd, 0));
+        owners[bi].actor = nullptr;
+    }
+
+    // What the game itself thinks the player can interact with right now.  A scenario
+    // that has to guess which of forty actors is a chest is not a test.
+    void* tgt = ObjPropC(g_localPawn, "Current Interact Actor");
+    if (!tgt) tgt = ObjPropC(g_localPawn, "CurrentInteractActor");
+    char td[96] = "-";
+    if (tgt) ObjDescribe(tgt, td, sizeof(td));
+    QDLOG(LOG_INFO, "scan: interact target ", td);
+}
+
+// QDCOOP_TEST_ACTFILE=<path>: TEST INSTANCES ONLY -- perform the player's own interact
+// verb once, each time the named file's contents change.
+//
+// Measured on the rig: a synthetic key posted to the game window reaches the UI (the title
+// and file-select screens respond) but NOT gameplay -- pressing E or W in the world moves
+// and interacts with nothing, because the engine reads device state rather than window
+// messages for in-world input.  So the rig drives the verb the key is bound to, through
+// the game's own function: `Interact` on the pawn or on its interaction component, which
+// is the same code path the key press ends in.
+// File-scope, not function-local: a `static Fn` needs a thread-safe init guard, which
+// makes the enclosing frame require object unwinding, and MSVC refuses __try there.
+Fn g_devInteractPawn = {}, g_devInteractHeld = {}, g_devInteractComp = {}, g_devInteractCompHeld = {};
+
+void DevInteractBody()
+{
+    void* tgt = ObjPropC(g_localPawn, "Current Interact Actor");
+    char d[96] = "-";
+    if (tgt) ObjDescribe(tgt, d, sizeof(d));
+
+    bool ok = CallNoArgs(g_localPawn, g_devInteractPawn, "Interact");
+    if (!ok) ok = CallNoArgs(g_localPawn, g_devInteractHeld, "InteractHeld");
+    if (!ok) {
+        void* comp = ObjPropC(g_localPawn, "PlayerInteractionComponent");
+        if (!comp) comp = ObjPropC(g_localPawn, "InteractionComponent");
+        if (comp) {
+            ok = CallNoArgs(comp, g_devInteractComp, "Interact");
+            if (!ok) ok = CallNoArgs(comp, g_devInteractCompHeld, "InteractHeld");
+        }
+    }
+    QDLOG(LOG_INFO, "dev interact: target=", d, (ok ? " called" : " no Interact verb found"));
+}
+
+char     g_devActPath[MAX_PATH];
+int      g_devActOn = -1;
+uint32_t g_devActPoll = 0;
+char     g_devActApplied[64] = "";
+
+void DevInteract(uint32_t now)
+{
+    if (g_devActOn < 0)
+        g_devActOn = GetEnvironmentVariableA("QDCOOP_TEST_ACTFILE", g_devActPath, sizeof(g_devActPath)) ? 1 : 0;
+    if (!g_devActOn || !IsGameplayPawn(g_localPawn)) return;
+    if (now - g_devActPoll < 200) return;
+    g_devActPoll = now;
+
+    HANDLE h = CreateFileA(g_devActPath, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return;
+    char buf[64];
+    DWORD got = 0;
+    (void)ReadFile(h, buf, sizeof(buf) - 1, &got, nullptr);
+    CloseHandle(h);
+    buf[got] = 0;
+    for (int i = 0; buf[i]; ++i) {
+        if (buf[i] == '\r' || buf[i] == '\n' || buf[i] == ' ') { buf[i] = 0; break; }
+    }
+    if (buf[0] == 0 || strcmp(buf, g_devActApplied) == 0) return;
+    lstrcpynA(g_devActApplied, buf, sizeof(g_devActApplied));
+
+    // Same rule as the scan: this dereferences the pawn, its component and whatever the
+    // game currently considers interactable, and it runs while a reload may be tearing
+    // those down.
+    __try { DevInteractBody(); }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        QDLOG(LOG_WARN, "dev interact: fault while resolving the verb; skipped");
+    }
+}
+
 void DevAvatarTest(uint32_t now)
 {
     static int on = DevEnvInt("QDCOOP_AVATAR_TEST", 0);
@@ -6456,6 +6704,9 @@ bool HK_Tick(void* engineLoop)
     StatusPump(now);
     DevTestFire(now);
     DevTeleport(now);
+    DevTeleportFile(now);
+    DevScanNearest(now);
+    DevInteract(now);
     MapPump(now);
     StreamPump(now);
     EnemyPump(now);
