@@ -1,4 +1,4 @@
-﻿// proxy.cpp -- the QD co-op native module.
+// proxy.cpp -- the QD co-op native module.
 //
 // WHAT THIS IS
 // ------------
@@ -1268,6 +1268,7 @@ void PuppetPump(uint32_t now)
 // anything in the peer's world.  Its components still tick: it flies, glows and trails.
 // A lifespan removes it, since without collision it never hits a wall.
 int32_t g_beginPlayIdx = -1;
+extern void* g_enemyBaseCls;         // defined with the enemy section; 0 until it is found
 void* volatile g_fxRing[64];
 volatile long g_fxHead = 0;
 long g_fxTail = 0;
@@ -1513,16 +1514,27 @@ void FxPump(uint32_t now)
         if (!a || !ObjectIsLive(a) || !IsGameplayPawn(g_localPawn)) continue;
         bool ours = false;
         for (int i = 0; i < g_fxOursN; ++i) if (g_fxOurs[i] == a) { ours = true; break; }
-        if (ours || !IsProjectileClass(ObjClass(a))) continue;
+        if (ours) continue;
         void* owner = ActorObjProp(a, "Owner");
         void* inst = ActorObjProp(a, "Instigator");
+        // An enemy's shot is not a dagger and is not "mine", so the class test below
+        // would never accept it: fireballs and spit existed on one machine only
+        // (SYNC-GAPS).  The enemy base class is already cached by the enemy scan, so
+        // this is a pointer comparison; while EnemySync is off the pointer is null and
+        // nothing changes.  Requiring a ProjectileMovement component is what keeps a
+        // flood of enemy-owned VFX actors out of the effect lane.
+        bool enemyShot = Cfg().enemy_sync && g_enemyBaseCls &&
+                         ((owner && DerivesFrom(ObjClass(owner), g_enemyBaseCls)) ||
+                          (inst && DerivesFrom(ObjClass(inst), g_enemyBaseCls))) &&
+                         ActorObjProp(a, "ProjectileMovement") != nullptr;
+        if (!enemyShot && !IsProjectileClass(ObjClass(a))) continue;
         ActorXform x;
         if (!ReadActorXform(a, &x)) continue;
         ActorXform px;
         bool closeBy = ReadActorXform(g_localPawn, &px) &&
                     fabsf(px.px - x.px) + fabsf(px.py - x.py) + fabsf(px.pz - x.pz) < 600.0f;
         bool mine = owner == g_localPawn || inst == g_localPawn || (!owner && !inst && closeBy);
-        if (!mine) continue;
+        if (!mine && !enemyShot) continue;
         wire::EffectBody e;
         memset(&e, 0, sizeof(e));
         e.kind = 1;
