@@ -50,14 +50,18 @@ which cannot corrupt progression and does prove the path.  See
 - the puppet body spawn (the engine deferred-spawn pair — proof pending, `PuppetSync=0`)
 - the level-streaming union (`StreamUnion=0`) — built: vetoes both
   `SetShouldBeVisible` and the byte-verified `SetShouldBeLoaded`, refuses to apply the
-  partner's levels while the two machines are in different maps
+  partner's levels while the two machines are in different maps, and makes the partner
+  follow a travel to the same destination actor
 - enemy sync (`EnemySync=0`) — built: ownership follows the nearer player so an enemy
   fights the player who can actually reach it, driven copies follow the owner's rows,
-  montages and status effects ride `ENEMY_DETAIL`, hits and records go back as intents
+  montages and status effects ride `ENEMY_DETAIL`, hits and records go back as intents,
+  and an enemy the host runs can damage a distant partner
 - two-player dialogue (`DialogueSync=0`) — built: per-slot talk state, partner's NPC
   blocked through `NPC_Base`'s own `BlockInteract` property
 - the inventory mirror (`InventorySync=0`) — built: the host publishes its inventory
-  whole, the peer grants only what it lacks
+  whole, the peer grants only what it lacks, and the peer's own pickups go back as intents
+- one-shot world objects (`ActorStateSync=0`) — built: chests, doors and barricades, host
+  absolute set plus the peer's changes as intents
 - pausing suppression (`SuppressMenuPause=0`)
 
 The peer's own progression now reaches the host (`FlagSync=1`, an `INTENT kind 1` per
@@ -102,12 +106,16 @@ mod/
       qdmotion.h         snapshot interpolation            (pure, tested)
       qdpuppet.h         puppet lifecycle state machine    (pure, tested)
       qdstream.h         level union guard, map divergence (pure, tested)
+      qdtravel.h         who follows whom, and once      (pure, tested)
       qddialogue.h       dialogue lock                     (pure, tested)
       qdflags.h          monotonic flag bank               (pure, tested)
       qdenemy.h          enemy ownership/drive model       (pure, tested)
       qdenemyown.h       ownership by proximity            (pure, tested)
+      qdenemydmg.h       when a host-run enemy hits the peer (pure, tested)
       qdpending.h        the peer's outbound flag intents  (pure, tested)
       qdinventory.h      inventory publication and grants  (pure, tested)
+      qdinvintent.h      the peer's own pickups, cumulative (pure, tested)
+      qdactorstate.h     one-shot world objects            (pure, tested)
     test/                run_tests.bat + one executable per pure module
   third_party/minhook/   vendored, MIT
   rust/                  the canonical wire format + the relay server

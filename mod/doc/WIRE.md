@@ -280,6 +280,23 @@ kind 7 (enemy hit):       guid spawner, i32 damage_frac
 kind 8 (enemy record):    guid spawner, i32 respawn_centi, i32 hp_centi
 ```
 
+**Kind 2** — an item the peer obtained that the host does not have. `count` is the peer's
+**cumulative own contribution** for that path, not a delta: the number of that item the
+peer holds that the host did not give it. The host applies only the increase over the
+highest value it has already applied for that path.
+
+Cumulative rather than a delta, because the grant is additive on the receiving side: a
+delta resent after a lost acknowledgement would add the item twice, while a cumulative
+value is idempotent — a repeat applies nothing, a lower value is a consumption and is
+refused, a higher value applies only the increment. This is deliberately a different rule
+from kind 1's `based_on_rev` gate: for a monotone counter a replay *is* stale, but for a
+cumulative grant a replay is exactly what recovers a lost body. `based_on_rev` is carried
+for diagnostics on this kind and is not the acceptance test.
+
+The peer measures its own contribution as `local − (what the host granted this peer)`,
+never as `local − (the host's total)`: subtracting the host's total would make an item
+both players picked up independently cancel to zero and lose one of the two gains.
+
 **Kind 7** — the peer's player hit a copy the host is driving. `damage_frac` is the HP
 the copy lost, as a fraction of its max in 1/65535 units (it may exceed 65535 for an
 overkill), so the host scales it by its own max and applies it through the enemy's own
