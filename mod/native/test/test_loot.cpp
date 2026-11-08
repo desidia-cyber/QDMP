@@ -117,6 +117,49 @@ static void TestOverflowIsReported()
     CHECK(l.Overflowed(), "overflow/more drops than the table is reported, not silent");
 }
 
+// The build's drop actor exposes no {source, item} property (R62), so the derived key is
+// the lane's identity now.  Its whole requirement is that two machines compute the SAME
+// string from the same class and spawn point, and that genuinely different drops do not.
+static void TestDerivedKey()
+{
+    CHECK(QuantizeCm(149.0f, 100) == 1, "derived/149 cm rounds to the 1 m bucket");
+    CHECK(QuantizeCm(151.0f, 100) == 2, "derived/151 cm rounds to the 2 m bucket");
+    CHECK(QuantizeCm(-149.0f, 100) == -1, "derived/negative rounds away from zero");
+    CHECK(QuantizeCm(49.0f, 100) == 0, "derived/the origin bucket is zero");
+
+    const int32_t q1[3] = {1, 23, 0};
+    const int32_t q2[3] = {12, 3, 0};
+    char a[320], b[320], c[320];
+    DerivedKeyText("/Game/Items/Potion.Potion_C", q1, 0, a, sizeof(a));
+    DerivedKeyText("/Game/Items/Potion.Potion_C", q2, 0, b, sizeof(b));
+    CHECK(strcmp(a, b) != 0, "derived/'1,23' and '12,3' cannot collide");
+    CHECK(strcmp(a, "/Game/Items/Potion.Potion_C@1,23,0#0") == 0,
+          "derived/the spelling is exact");
+    DerivedKeyText("/Game/Items/Potion.Potion_C", q1, 0, c, sizeof(c));
+    CHECK(strcmp(a, c) == 0, "derived/the same inputs produce the same key on both machines");
+    DerivedKeyText("/Game/Items/Potion.Potion_C", q1, 1, c, sizeof(c));
+    CHECK(strcmp(a, c) != 0, "derived/a coincidence index separates identical drops");
+    DerivedKeyText("/Game/Items/Potion.Potion_C", q1, 0, c, sizeof(c));
+    CHECK(HashSource(a) == HashSource(c), "derived/the hash is stable across calls");
+    CHECK(HashSource(a) != HashSource("/Game/Items/Other.Other_C@1,23,0#0"),
+          "derived/a different class is a different key");
+    CHECK(strncmp(a, "/Game/Items/Potion.Potion_C@", 28) == 0,
+          "derived/the class path appears verbatim");
+}
+
+static void TestDropOrdinals()
+{
+    DropOrdinals o;
+    const int32_t p[3] = {5, -7, 100};
+    const int32_t other[3] = {5, -7, 101};
+    uint32_t h = HashSource("/Game/Items/Potion.Potion_C");
+    CHECK(o.Claim(h, p, 1000) == 0, "ordinals/the first drop at a point is 0");
+    CHECK(o.Claim(h, p, 1000) == 1, "ordinals/a coincident second drop is 1");
+    CHECK(o.Claim(h, other, 1000) == 0, "ordinals/a different point restarts at 0");
+    o.Reset();
+    CHECK(o.Claim(h, p, 1000) == 0, "ordinals/a world change resets the table");
+}
+
 int main()
 {
     printf("=== qd loot tests ===\n");
@@ -126,6 +169,8 @@ int main()
     TestMerge();
     TestHashAndSnapshot();
     TestOverflowIsReported();
+    TestDerivedKey();
+    TestDropOrdinals();
     printf("=== %d passed, %d failed ===\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

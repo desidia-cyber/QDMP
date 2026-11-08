@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Generate mod/native/src/targets.h from the shipped Queen's Domain image.
 
 WHY A GENERATOR AND NOT A HAND-WRITTEN TABLE
@@ -93,6 +93,11 @@ TARGETS = [
     # --- pause surface (D1) --------------------------------------------------
     ("UGameplayStatics::SetGamePaused",           0x028F3180, "hook"),
     ("UGameplayStatics::IsGamePaused",            0x028E8DB0, "call"),
+    # Dilation is the SECOND stop mechanism (13b/13c).  A GameMenu_C can leave the world
+    # unpaused but scaled below 0.5, which the pause hook never sees; both the setter and
+    # the getter are needed to keep the shared world at 1.0 while a menu is open.
+    ("UGameplayStatics::SetGlobalTimeDilation",   0x028F3410, "hook"),
+    ("UGameplayStatics::GetGlobalTimeDilation",   0x028DF810, "call"),
 
     # --- owner-see flags (B4) ------------------------------------------------
     ("UPrimitiveComponent::SetOwnerNoSee",        0x027D8340, "call"),

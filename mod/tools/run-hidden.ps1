@@ -29,7 +29,10 @@ param(
     [int]$X = 2200,
     [int]$Y = 1400,
     [switch]$NoMute,
-    [switch]$NoWait
+    [switch]$NoWait,
+    # UE writes its own log only when asked.  A silent process exit has no WER report, so
+    # the engine log is the only record that says whether it shut down or faulted.
+    [string]$AbsLog = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -66,6 +69,10 @@ $args = @(
     '-ResX=1280'
     '-ResY=720'
 )
+if ($AbsLog) {
+    $args += "-abslog=`"$AbsLog`""
+    $args += '-log'
+}
 
 $p = Start-Process -FilePath $Exe -WorkingDirectory $wd -ArgumentList $args -PassThru
 Write-Host "launched pid=$($p.Id) (windowed, will be parked off-screen)"
