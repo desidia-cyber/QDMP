@@ -37,9 +37,11 @@ enum Kind {
     K_EFFECT      = 0x16,
     K_EFFECT_MOVE = 0x17,
     K_STATUS      = 0x18,
+    K_ENEMY_DETAIL= 0x19,
     K_INTENT      = 0x20,
     K_DIALOGUE    = 0x21,
     K_LEVEL_UNION = 0x22,
+    K_TRAVEL      = 0x23,
     K_LOG         = 0x30,
 };
 
@@ -438,6 +440,64 @@ inline bool ReadEnemyRow(Reader& r, EnemyRow* e)
 static const uint8_t kEnemyAlive  = 0x01;
 static const uint8_t kEnemyDriven = 0x02;
 static const uint8_t kEnemyBody   = 0x04;
+// Who runs this enemy.  A row is sent by the machine that OWNS the enemy, and the
+// receiver freezes its own copy.  Ownership follows the nearer player, because the
+// game's enemy AI only ever targets the local player (SYNC-GAPS G4): the only way an
+// enemy attacks the partner is for the partner's own machine to run it.
+//
+// 0 = the sender runs it (the receiver freezes its copy)
+// 1 = the sender has handed it to the receiver (the sender freezes its own copy)
+static const uint8_t kEnemyPeerOwns = 0x08;
+
+// ---- enemy detail (WIRE.md 3.9a) -------------------------------------------
+// An ENEMY row is a SAMPLE: position, health, ownership, 20 Hz, latest wins.  What an
+// enemy is DOING is an EVENT -- a montage starts once, a status mask changes when a
+// debuff lands or expires -- so it rides its own reliable body, sent on change by the
+// machine that owns that enemy.  The montage is identified by its asset path rather
+// than by an index: both machines load the same cooked assets, but the order in which
+// each discovers them is its own, so an index would mean different animations.
+//
+// Body: guid(16), anim(u8 kind, see EnemyAnim), seq(u8, bumps on every new montage),
+//       status(u16 mask, the same StatusBit values STATUS uses for players),
+//       path(str, the montage asset, "" when none is playing).
+enum EnemyAnim {
+    E_NONE   = 0,
+    E_ATTACK = 1,
+    E_HURT   = 2,
+    E_DIE    = 3,
+    E_ROAR   = 4,
+    E_CAST   = 5,
+    E_MOVE   = 6,
+};
+
+static const int kEnemyPathCap = 200;
+
+struct EnemyDetailBody {
+    uint32_t guid[4];
+    uint8_t  anim;
+    uint8_t  seq;
+    uint16_t status;
+    char     path[kEnemyPathCap];
+};
+
+inline void WriteEnemyDetail(Writer& w, const EnemyDetailBody& d)
+{
+    w.Guid(d.guid);
+    w.U8(d.anim);
+    w.U8(d.seq);
+    w.U16(d.status);
+    w.Str(d.path);
+}
+
+inline bool ReadEnemyDetail(Reader& r, EnemyDetailBody* d)
+{
+    r.Guid(d->guid);
+    d->anim = r.U8();
+    d->seq = r.U8();
+    d->status = r.U16();
+    if (r.Str(d->path, sizeof(d->path)) >= (int)sizeof(d->path)) return false;
+    return r.ok;
+}
 
 // ---- dialogue -------------------------------------------------------------
 struct DialogueBody {
@@ -540,6 +600,36 @@ inline bool ReadLevelUnion(Reader& r, LevelUnionBody* b)
             }
         }
     }
+    return r.ok;
+}
+
+// ---- travel ---------------------------------------------------------------
+// The session is one persistent level plus streamed sublevels, but the game also has
+// hard transitions (the cutscene maps, `900_SipehaWorld`, `990_B33sment`).  A hard
+// transition on one machine leaves the two in different worlds, where every absolute
+// body means something different.  So the map is announced rather than inferred:
+// the host sends what it is in, the peer compares, and a peer that disagrees says so
+// (`ack` = 0) instead of quietly applying level names from another world.
+//
+// Body: seq(u32, bumps per change), role(u8 1 = host, 2 = peer), map(str, short name).
+struct TravelBody {
+    uint32_t seq;
+    uint8_t  role;
+    char     map[64];
+};
+
+inline void WriteTravel(Writer& w, const TravelBody& t)
+{
+    w.U32(t.seq);
+    w.U8(t.role);
+    w.Str(t.map);
+}
+
+inline bool ReadTravel(Reader& r, TravelBody* t)
+{
+    t->seq = r.U32();
+    t->role = r.U8();
+    if (r.Str(t->map, sizeof(t->map)) >= (int)sizeof(t->map)) return false;
     return r.ok;
 }
 

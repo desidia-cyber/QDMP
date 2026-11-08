@@ -374,6 +374,41 @@ static void TestWorldBodies()
         Reader rb(bad, 4);
         CHECK(!ReadLevelUnion(rb, &b), "level union with a lying bits_len is refused");
     }
+
+    // ENEMY_DETAIL: the event lane for an enemy the rows only sample.
+    {
+        EnemyDetailBody d, got;
+        memset(&d, 0, sizeof(d));
+        d.guid[0] = 0x5ae3b37bu; d.guid[3] = 9;
+        d.anim = E_ATTACK; d.seq = 3; d.status = ST_POISON | ST_HEAVY;
+        strcpy(d.path, "/Game/Anim/Enemy/Slash_Montage");
+        d.path[sizeof(d.path) - 1] = 0;
+        Writer w(buf, sizeof(buf));
+        WriteEnemyDetail(w, d);
+        Reader r(buf, w.len);
+        CHECK(ReadEnemyDetail(r, &got), "enemy_detail reads");
+        CHECK(got.guid[0] == 0x5ae3b37bu && got.guid[3] == 9, "enemy_detail guid round-trips");
+        CHECK(got.anim == E_ATTACK && got.seq == 3, "enemy_detail anim/seq round-trip");
+        CHECK(got.status == (uint16_t)(ST_POISON | ST_HEAVY), "enemy_detail status round-trips");
+        CHECK(strcmp(got.path, d.path) == 0, "enemy_detail montage path round-trips");
+        CHECK(r.pos == r.len, "enemy_detail body fully consumed");
+    }
+
+    // TRAVEL: the map the session is in.
+    {
+        TravelBody t, got;
+        memset(&t, 0, sizeof(t));
+        t.seq = 0x1234;
+        t.role = 1;
+        strcpy(t.map, "100_GR");
+        Writer w(buf, sizeof(buf));
+        WriteTravel(w, t);
+        Reader r(buf, w.len);
+        CHECK(ReadTravel(r, &got), "travel reads");
+        CHECK(got.seq == 0x1234 && got.role == 1, "travel seq/role round-trip");
+        CHECK(strcmp(got.map, "100_GR") == 0, "travel map round-trips");
+        CHECK(r.pos == r.len, "travel body fully consumed");
+    }
 }
 
 int main()

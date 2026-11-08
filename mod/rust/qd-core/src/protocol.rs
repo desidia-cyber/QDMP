@@ -93,9 +93,11 @@ pub enum Kind {
     Effect = 0x16,
     EffectMove = 0x17,
     Status = 0x18,
+    EnemyDetail = 0x19,
     Intent = 0x20,
     DialogueState = 0x21,
     LevelUnion = 0x22,
+    Travel = 0x23,
     Log = 0x30,
 }
 
@@ -116,9 +118,11 @@ impl Kind {
             0x16 => Effect,
             0x17 => EffectMove,
             0x18 => Status,
+            0x19 => EnemyDetail,
             0x20 => Intent,
             0x21 => DialogueState,
             0x22 => LevelUnion,
+            0x23 => Travel,
             0x30 => Log,
             other => return Err(Error::UnknownKind(other)),
         })
@@ -144,16 +148,26 @@ impl Kind {
             Effect => "effect",
             EffectMove => "effect_move",
             Status => "status",
+            EnemyDetail => "enemy_detail",
             Intent => "intent",
             DialogueState => "dialogue_state",
             LevelUnion => "level_union",
+            Travel => "travel",
             Log => "log",
         }
     }
 
     /// Reliable kinds (WIRE.md §2): retried until acked by the sender.
     pub fn is_reliable(self) -> bool {
-        matches!(self, Kind::Hello | Kind::Welcome | Kind::Intent | Kind::Effect)
+        matches!(
+            self,
+            Kind::Hello
+                | Kind::Welcome
+                | Kind::Intent
+                | Kind::Effect
+                | Kind::EnemyDetail
+                | Kind::Travel
+        )
     }
 
     /// State kinds: unreliable, absolute, and superseded by the next one.
@@ -295,9 +309,12 @@ pub mod player_action {
 /// `ENEMY.flags` bits (WIRE.md §3.9).
 pub mod enemy_flags {
     pub const ALIVE: u8 = 1 << 0;
-    /// Peer copy with AI disabled.
+    /// The receiver must freeze its copy because the sender runs this enemy.
     pub const DRIVEN: u8 = 1 << 1;
     pub const HAS_BODY: u8 = 1 << 2;
+    /// The sender has handed this enemy to the receiver: the SENDER freezes its copy
+    /// and the receiver's own AI runs it.
+    pub const PEER_OWNS: u8 = 1 << 3;
 }
 
 /// `HELLO.role_wanted` / `WELCOME.role_assigned` values.
@@ -512,6 +529,36 @@ pub struct EnemyRows {
     pub rows: Vec<EnemyRow>,
 }
 
+/// `ENEMY_DETAIL` body (WIRE.md §3.9a).
+///
+/// A row is a 20 Hz sample; this is the event lane for the same enemy: which montage
+/// is playing and which status effects are on it. The montage is named by asset path,
+/// not by index — both machines load the same cooked assets but discover them in
+/// their own order, so an index would select a different animation on each side.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct EnemyDetail {
+    pub id: Guid,
+    /// See [`enemy_anim`].
+    pub anim: u8,
+    /// Bumps on every new montage, so the receiver can tell a repeat from a new one.
+    pub seq: u8,
+    /// The same bits as [`Status`] `mask`.
+    pub status: u16,
+    /// Montage asset path, empty when nothing is playing.
+    pub montage_path: String,
+}
+
+/// `ENEMY_DETAIL.anim` values (WIRE.md §3.9a).
+pub mod enemy_anim {
+    pub const NONE: u8 = 0;
+    pub const ATTACK: u8 = 1;
+    pub const HURT: u8 = 2;
+    pub const DIE: u8 = 3;
+    pub const ROAR: u8 = 4;
+    pub const CAST: u8 = 5;
+    pub const MOVE: u8 = 6;
+}
+
 /// `INTENT` payload, by kind (WIRE.md §3.10).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IntentPayload {
@@ -621,6 +668,21 @@ pub struct Log {
     pub bytes: Vec<u8>,
 }
 
+/// `TRAVEL` body (WIRE.md §3.13).
+///
+/// The world is announced, not inferred: the host publishes the map it is in and the
+/// peer compares, so a peer that is somewhere else says so instead of applying level
+/// names that belong to another world.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Travel {
+    /// Bumps on every change.
+    pub seq: u32,
+    /// 1 = host, 2 = peer (see [`roles`]).
+    pub role: u8,
+    /// Short map name, e.g. `100_GR`.
+    pub map: String,
+}
+
 /// A decoded body, tagged by its kind.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Body {
@@ -637,9 +699,11 @@ pub enum Body {
     Effect(Effect),
     EffectMove(Effect),
     Status(Status),
+    EnemyDetail(EnemyDetail),
     Intent(Intent),
     DialogueState(DialogueState),
     LevelUnion(LevelUnion),
+    Travel(Travel),
     Log(Log),
 }
 
@@ -659,9 +723,11 @@ impl Body {
             Body::Effect(_) => Kind::Effect,
             Body::EffectMove(_) => Kind::EffectMove,
             Body::Status(_) => Kind::Status,
+            Body::EnemyDetail(_) => Kind::EnemyDetail,
             Body::Intent(_) => Kind::Intent,
             Body::DialogueState(_) => Kind::DialogueState,
             Body::LevelUnion(_) => Kind::LevelUnion,
+            Body::Travel(_) => Kind::Travel,
             Body::Log(_) => Kind::Log,
         }
     }
@@ -975,6 +1041,13 @@ pub fn encode_body(body: &Body) -> Result<Vec<u8>> {
             w.write_u32(st.rev)?;
             w.write_u32(st.mask)?;
         }
+        Body::EnemyDetail(d) => {
+            write_guid(&mut w, &d.id)?;
+            w.write_u8(d.anim)?;
+            w.write_u8(d.seq)?;
+            w.write_u16(d.status)?;
+            write_str(&mut w, &d.montage_path)?;
+        }
         Body::Effect(e) | Body::EffectMove(e) => {
             w.write_u8(e.kind)?;
             w.write_u16(e.id)?;
@@ -1055,6 +1128,11 @@ pub fn encode_body(body: &Body) -> Result<Vec<u8>> {
             }
         }
         Body::Log(l) => w.write_bytes(&l.bytes)?,
+        Body::Travel(t) => {
+            w.write_u32(t.seq)?;
+            w.write_u8(t.role)?;
+            write_str(&mut w, &t.map)?;
+        }
     }
 
     if !w.is_byte_aligned() {
@@ -1216,6 +1294,13 @@ pub fn decode_body(kind: Kind, bytes: &[u8]) -> Result<Body> {
             Body::Equipment(Equipment { rev, items })
         }
         Kind::Status => Body::Status(Status { rev: r.read_u32()?, mask: r.read_u32()? }),
+        Kind::EnemyDetail => Body::EnemyDetail(EnemyDetail {
+            id: read_guid(&mut r)?,
+            anim: r.read_u8()?,
+            seq: r.read_u8()?,
+            status: r.read_u16()?,
+            montage_path: read_str(&mut r)?,
+        }),
         Kind::Effect | Kind::EffectMove => {
             let e = Effect {
                 kind: r.read_u8()?,
@@ -1309,6 +1394,11 @@ pub fn decode_body(kind: Kind, bytes: &[u8]) -> Result<Body> {
             };
             Body::LevelUnion(LevelUnion { bits, names })
         }
+        Kind::Travel => Body::Travel(Travel {
+            seq: r.read_u32()?,
+            role: r.read_u8()?,
+            map: read_str(&mut r)?,
+        }),
         Kind::Log => {
             // The whole body is the message; nothing to parse.
             Body::Log(Log { bytes: bytes.to_vec() })

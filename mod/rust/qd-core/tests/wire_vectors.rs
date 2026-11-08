@@ -150,6 +150,17 @@ fn vectors() -> Vec<Vector> {
             expected: "14 02 00 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 64 00 00 00 38 ff ff ff 32 00 00 00 00 40 50 00 07 10 11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f d4 fe ff ff 90 01 00 00 e7 ff ff ff 00 c0 00 00 02",
         },
         Vector {
+            name: "enemy_detail",
+            body: Body::EnemyDetail(EnemyDetail {
+                id: sample_guid(),
+                anim: enemy_anim::ATTACK,
+                seq: 7,
+                status: 0x0005,
+                montage_path: "/Game/Anim/Enemy/Slash_Montage".to_owned(),
+            }),
+            expected: "19 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 01 07 05 00 1e 00 2f 47 61 6d 65 2f 41 6e 69 6d 2f 45 6e 65 6d 79 2f 53 6c 61 73 68 5f 4d 6f 6e 74 61 67 65",
+        },
+        Vector {
             name: "intent_set_flag",
             body: Body::Intent(Intent {
                 based_on_rev: 5,
@@ -263,6 +274,15 @@ fn vectors() -> Vec<Vector> {
                 names: None,
             }),
             expected: "22 02 00 05 02 00",
+        },
+        Vector {
+            name: "travel",
+            body: Body::Travel(Travel {
+                seq: 0x123,
+                role: roles::HOST,
+                map: "100_GR".to_owned(),
+            }),
+            expected: "23 23 01 00 00 01 06 00 31 30 30 5f 47 52",
         },
         Vector {
             name: "log",

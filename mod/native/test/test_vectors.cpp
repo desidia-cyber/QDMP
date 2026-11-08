@@ -41,14 +41,20 @@ static const char* g_pathUsed = "";
 
 static bool LoadVectors()
 {
-    // The test may be run from test\, test\build\ or the repo root, so try each.
+    // Walk up from the working directory: the test may be run from test\, from
+    // test\build\, or from mod\.  An absolute path to one particular checkout used to
+    // be in this list, which made a run from a second worktree silently validate the
+    // OTHER checkout's vectors -- a green test for the wrong file.  The search is
+    // bounded and every candidate is reported, so a wrong file is visible.
     static const char* candidates[] = {
         "doc/vectors.txt",
         "../doc/vectors.txt",
         "../../doc/vectors.txt",
-        "G:/Freespace/Queens_Domain/mod/doc/vectors.txt",
+        "../../../doc/vectors.txt",
+        "../../../../doc/vectors.txt",
     };
-    for (int i = 0; i < 4; ++i) {
+    const int n = (int)(sizeof(candidates) / sizeof(candidates[0]));
+    for (int i = 0; i < n; ++i) {
         FILE* f = fopen(candidates[i], "r");
         if (!f) continue;
         g_pathUsed = candidates[i];
@@ -106,8 +112,8 @@ static void Compare(const char* name, const uint8_t* got, int gotLen)
     }
     uint8_t kind = want[0];
     bool kindKnown = (kind >= 0x01 && kind <= 0x04) ||
-                     (kind >= 0x10 && kind <= 0x14) ||
-                     (kind >= 0x20 && kind <= 0x22) ||
+                     (kind >= 0x10 && kind <= 0x19) ||
+                     (kind >= 0x20 && kind <= 0x23) ||
                      (kind == 0x30);
     if (!kindKnown) {
         ++g_fail;
@@ -308,6 +314,21 @@ static void TestAll()
         Compare("intent_enemy_record", buf, w.len);
     }
 
+    // enemy_detail: guid, anim, seq, status, montage path
+    {
+        EnemyDetailBody d;
+        memset(&d, 0, sizeof(d));
+        d.guid[0] = 0x03020100u; d.guid[1] = 0x07060504u;
+        d.guid[2] = 0x0b0a0908u; d.guid[3] = 0x0f0e0d0cu;
+        d.anim = E_ATTACK;
+        d.seq = 7;
+        d.status = 0x0005;
+        strcpy(d.path, "/Game/Anim/Enemy/Slash_Montage");
+        Writer w(buf, sizeof(buf));
+        WriteEnemyDetail(w, d);
+        Compare("enemy_detail", buf, w.len);
+    }
+
     // dialogue_state
     {
         DialogueBody d;
@@ -352,6 +373,18 @@ static void TestAll()
         w.U8(0x02);
         WriteLevelUnionNamesFlag(w, 0);
         Compare("level_union_steady", buf, w.len);
+    }
+
+    // travel: seq, role, map
+    {
+        TravelBody t;
+        memset(&t, 0, sizeof(t));
+        t.seq = 0x123;
+        t.role = 1;
+        strcpy(t.map, "100_GR");
+        Writer w(buf, sizeof(buf));
+        WriteTravel(w, t);
+        Compare("travel", buf, w.len);
     }
 
     // log
