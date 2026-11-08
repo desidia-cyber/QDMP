@@ -33,6 +33,7 @@ struct Config {
 
     // subsystem switches.  0 = observe and log only.
     int  flag_sync;        // NamedSaveData apply/broadcast
+    int  inventory_sync;   // host -> peer InventoryContents mirror + grants
     int  actor_state_sync; // SavableActorStates
     int  enemy_sync;       // enemy rows + StoreEnemySaveState
     int  puppet_sync;      // remote body spawn/drive
@@ -64,6 +65,10 @@ inline void ConfigDefaults()
     c.relay_port = 47800;
 
     c.flag_sync        = 1;
+    // OFF, like every other write path.  This one writes an item container through a
+    // reflective Blueprint call; Enable it only after a live session has shown the
+    // `inventory grant applied ... read back` line (qdwrite.h's WrGrantItem oracle).
+    c.inventory_sync   = 0;
     c.actor_state_sync = 0;
     c.enemy_sync       = 0;
     c.puppet_sync      = 0;
@@ -197,6 +202,7 @@ inline int ConfigLoad()
         else if (detail::StrEq(k, "RelayHost"))     detail::CopyStr(c.relay_host, sizeof(c.relay_host), v);
         else if (detail::StrEq(k, "RelayPort"))     c.relay_port = (uint16_t)detail::ParseInt(v, c.relay_port);
         else if (detail::StrEq(k, "FlagSync"))      c.flag_sync = detail::ParseInt(v, c.flag_sync);
+        else if (detail::StrEq(k, "InventorySync")) c.inventory_sync = detail::ParseInt(v, c.inventory_sync);
         else if (detail::StrEq(k, "ActorStateSync")) c.actor_state_sync = detail::ParseInt(v, c.actor_state_sync);
         else if (detail::StrEq(k, "EnemySync"))     c.enemy_sync = detail::ParseInt(v, c.enemy_sync);
         else if (detail::StrEq(k, "PuppetSync"))    c.puppet_sync = detail::ParseInt(v, c.puppet_sync);

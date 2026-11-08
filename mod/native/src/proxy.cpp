@@ -69,6 +69,7 @@
 #include "qdenemy.h"
 #include "qdflags.h"
 #include "qdpending.h"
+#include "qdinventory.h"
 
 // ---------------------------------------------------------------------------
 // Globals
@@ -129,6 +130,18 @@ flags::FlagBank   g_flags;
 // host to echo them.  On the host it stays empty.
 pending::IntentQueue g_pendingFlags;
 
+// The inventory mirror (section 6d).  Declared here rather than beside its banner
+// because TryInitSaveLayer must reset both halves when the active save is replaced: a
+// snapshot or a pending grant that names an item in the old container is not a fact
+// about the new one.
+inventory::HostPublisher g_invPub;
+inventory::GrantQueue   g_invGrants;
+inventory::Snapshot     g_invNow;
+uint32_t                g_lastInvObserveMs = 0;
+uint32_t                g_peerInvRev = 0;
+void*                   g_invSnapshotSave = nullptr;
+bool                    g_invHaveSnapshot = false;
+
 // Progression mirror bookkeeping.
 uint32_t          g_lastMirrorMs = 0;
 int32_t           g_lastFlagCount = -1;
@@ -170,6 +183,7 @@ void LogConfig()
     QDLOG(LOG_INFO, "config: enabled=", dec(c.enabled), " log=", dec(c.log_level),
           " relay=", c.relay_host, ":", dec(c.relay_port));
     QDLOG(LOG_INFO, "switches: flags=", dec(c.flag_sync),
+          " inventory=", dec(c.inventory_sync),
           " actors=", dec(c.actor_state_sync),
           " enemy=", dec(c.enemy_sync),
           " puppet=", dec(c.puppet_sync),
@@ -289,6 +303,12 @@ bool TryInitSaveLayer(uint32_t now)
         if (s.readOk) QDLOG(LOG_INFO, "active save gone (menu or level transition)");
         s.Reset();
         s.world = world;
+        // There is no container to read or grant into.  Dropping the queued grants here
+        // avoids a retry storm while the player is in a menu; the next save's first body
+        // rebuilds the list from the host's truth.
+        g_invGrants.Reset();
+        g_invHaveSnapshot = false;
+        g_invSnapshotSave = nullptr;
         return false;
     }
     if (save == s.save) {           // same save, new world: a level change
@@ -313,6 +333,13 @@ bool TryInitSaveLayer(uint32_t now)
     // old container produced), so carrying it over would send progress for a save the
     // player is no longer in.
     g_pendingFlags.Reset();
+    // Same rule for inventory: the old snapshot and any un-granted item name the old
+    // container.  The next 4 Hz observation reads the new one and republishes.
+    g_invPub.Reset();
+    g_invGrants.Reset();
+    g_invHaveSnapshot = false;
+    g_invSnapshotSave = nullptr;
+    g_peerInvRev = 0;
     return s.readOk;
 }
 
@@ -679,10 +706,12 @@ void HostApplyIntent(wire::Reader& r)
             QDLOG(LOG_WARN, "actor-state intent: probe failed: ", err);
         }
     } else if (b.kind == wire::I_GRANT_ITEM) {
-        if (!Cfg().flag_sync) return;
-        // The inventory write rides the same save-write switch as the flag path: there is
-        // no separate switch, and adding one would let a half-configured client write
-        // inventory while refusing flags from the same container.
+        if (!Cfg().inventory_sync) return;
+        // Inventory has its OWN switch now (section 6d): it creates items rather than
+        // raising a flag, so riding FlagSync would let a client that never enabled the
+        // mirror still mint items on the authority.  Nothing in this build sends this
+        // intent (peer pickups stay local -- see 6d), but a peer's datagram can, and the
+        // gate must be the switch that names the write.
         char err[160];
         if (WrGrantItem(b.name, b.value, err, sizeof(err))) {
             QDLOG(LOG_INFO, "inventory grant applied: ", b.name, " x", dec(b.value));
@@ -3262,6 +3291,281 @@ void OnDialogue(wire::Reader& r, uint32_t now)
         QDLOG(LOG_DEBUG, "dialogue: partner ", (talking ? "talking" : "free"), " seq=", dec((int)d.seq));
 }
 
+// ===========================================================================
+// 6d. Inventory (qdinventory.h holds the model and the reasons)
+// ===========================================================================
+// WHAT THIS MIRRORS
+// -----------------
+// `InventoryContents` is a TMap<UObject*, int32> at save+0x28 (measured; SYNC-DESIGN
+// section 2.4).  The host publishes the WHOLE set as an absolute body and the peer
+// grants only the difference through `SaveFunctions_C.AddItemToInventory`
+// (WrGrantItem), which reads the game's own counter back and requires it to rise by
+// exactly the requested amount.  The design's reason is the key: a key granted twice is
+// harmless, a key the peer lacks locks that player out of the region alone.
+//
+// WHAT THIS DOES NOT DO
+// ---------------------
+// Peer -> host item changes are NOT sent.  The wire has `INTENT kind 2` (I_GRANT_ITEM)
+// and the host applies it, but nothing in this build observes a peer pickup and turns
+// it into one.  A two-way mirror would need a policy for "the peer picked it up locally
+// and the host's count is lower", which SYNC-DESIGN does not supply; inventing one here
+// would let the next host body undo a local pickup.  So a peer's local pickups stay
+// local and the host never learns of them.  That is a known, deliberate gap and is
+// called out in the report accompanying this change.
+// The state objects (g_invPub, g_invGrants, g_invNow, the snapshot identity) are
+// declared beside g_pendingFlags so the save-reinit path can reset them together.
+
+// Resolving an item path means a GObjects walk (FindClassByName /
+// FindObjectByNameAndClass), and the peer would otherwise pay that for every entry of
+// every body -- a hitch on a large inventory for no benefit.  The cache is bounded and
+// re-resolves when its object has gone away (a level change can unload an asset).
+static const int kInvCache = 256;
+struct InvCached {
+    char  path[inventory::kMaxPath];
+    void* obj;
+};
+InvCached g_invCache[kInvCache];
+int       g_invCacheNext = 0;
+
+void* ResolveInvItem(const char* path)
+{
+    for (int i = 0; i < kInvCache; ++i) {
+        if (g_invCache[i].path[0] && inventory::PathEq(g_invCache[i].path, path)) {
+            if (ObjectIsLive(g_invCache[i].obj)) return g_invCache[i].obj;
+            g_invCache[i].obj = ResolveItemObject(path);
+            return g_invCache[i].obj;
+        }
+    }
+    void* obj = ResolveItemObject(path);
+    InvCached& c = g_invCache[g_invCacheNext++ % kInvCache];
+    inventory::PathCopy(c.path, sizeof(c.path), path);
+    c.obj = obj;
+    return obj;
+}
+
+// Host: one map element -> one soft object path.  The path form is the same helper the
+// equipment and effect lanes use, because it is the identity SYNC-DESIGN section 2.4
+// names (`/Game/.../AquaDoorKey_2.AquaDoorKey_2`) and the same one WrGrantItem resolves
+// back to an object.  Sending pointers would be meaningless across processes.
+struct InvCollect {
+    inventory::Snapshot* snap;
+    int                  dropped;
+};
+
+void CollectInventoryItem(void* item, int32_t count, void* user)
+{
+    InvCollect* c = (InvCollect*)user;
+    // A zero is indistinguishable from absence on this lane and can never grant
+    // anything; keeping it out of the body keeps the body to facts.
+    if (count <= 0) return;
+
+    // Two bytes of headroom over kMaxPath so a path exactly at the limit is accepted and
+    // a longer one is rejected by Snapshot rather than silently truncated into an alias
+    // of a different asset.
+    char path[inventory::kMaxPath + 2];
+    int n = 0;
+    __try {
+        n = avatar::AssetPath(item, path, sizeof(path));
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        n = 0;
+    }
+    if (n <= 0) { ++c->dropped; return; }
+    if (!c->snap->Set(path, count)) ++c->dropped;
+}
+
+void ObserveHostInventory(uint32_t now)
+{
+    g_invNow.Clear();
+    InvCollect c = { &g_invNow, 0 };
+    int live = InventoryEnumerate(&CollectInventoryItem, &c);
+    if (live < 0) {                       // the save was replaced under us; next tick
+        g_invHaveSnapshot = false;
+        return;
+    }
+    g_invSnapshotSave = Save().save;
+    g_invHaveSnapshot = true;
+
+    if (g_invPub.Observe(g_invNow)) {
+        QDLOG(LOG_INFO, "inventory host set ", dec(g_invNow.Count()), " entr",
+              (g_invNow.Count() == 1 ? "y" : "ies"),
+              " (live ", dec(live), ") rev=", dec(g_invPub.Revision()));
+    }
+    if (c.dropped || g_invNow.Overflowed()) {
+        static uint32_t lastLog = 0;
+        if (now - lastLog > 5000) {
+            lastLog = now;
+            QDLOG(LOG_WARN, "inventory host: ", dec(c.dropped), " entr",
+                  (c.dropped == 1 ? "y" : "ies"),
+                  " could not be represented (path too long or table full); "
+                  "they are NOT on the wire");
+        }
+    }
+}
+
+void HostPushInventory(uint32_t now)
+{
+    if (!Cfg().inventory_sync) return;
+    if (!g_net.IsHost() || !g_net.Connected()) return;
+    if (!Save().save) return;
+
+    // Observe at 4 Hz, not at the send rate: a pickup is an event, and waiting for the
+    // 1 Hz heartbeat would make the partner's key arrive up to a second late.  The walk
+    // reads a few dozen map slots and neither creates nor writes anything.
+    if (now - g_lastInvObserveMs >= 250) {
+        g_lastInvObserveMs = now;
+        ObserveHostInventory(now);
+    }
+
+    // A snapshot from a save object that is no longer the active one is another
+    // world's inventory.  Wait for the 4 Hz observation to read the new container
+    // rather than grant items from a save the peer is not in.
+    if (!g_invHaveSnapshot || g_invSnapshotSave != Save().save) return;
+    if (ActiveSaveNoCreate(GWorldPtr()) != g_invSnapshotSave) return;
+
+    if (!g_invPub.Due(now)) return;
+
+    uint8_t body[wire::kMaxBody];
+    inventory::HostPublisher::Chunk c = g_invPub.Peek(body, sizeof(body));
+    if (c.blocked) {
+        // Cannot happen while kMaxPath is far inside kMaxBody, but if it ever does, do
+        // not spin on a datagram that can never hold the next entry.
+        QDLOG(LOG_WARN, "inventory: no entry fits one datagram; the lane is stalled");
+        return;
+    }
+
+    // Capture the revision stamped into THIS body: Commit bumps the counter when the
+    // pass completes, and a log that read it afterwards would name the next one.  A
+    // change-driven pass is INFO (it is the acceptance evidence); the 1 Hz heartbeat
+    // with nothing changed is DEBUG so a quiet session does not fill the log.
+    uint32_t rev = g_invPub.Revision();
+    bool changed = g_invPub.Dirty();
+    if (!g_net.SendUnreliable(wire::K_INVENTORY, body, c.bytes)) return;
+    if (g_invPub.Commit(c.entries, now)) {
+        QDLOG(changed ? LOG_INFO : LOG_DEBUG,
+              "inventory sent rev=", dec(rev), " entries=", dec(g_invPub.Size()));
+    }
+}
+
+// Peer: the peer's own count for a path, through the game's native counter.  A false
+// return means "cannot answer yet" (asset not loaded, no save, no world), not "zero".
+bool PeerInventoryCount(const char* path, int32_t* out)
+{
+    void* item = ResolveInvItem(path);
+    if (!item) return false;
+    void* world = GWorldPtr();
+    if (!world) return false;
+    return InventoryCountNative(world, item, out);
+}
+
+void PeerApplyInventory(wire::Reader& r, uint32_t now)
+{
+    if (!Cfg().inventory_sync) return;
+
+    uint32_t rev = r.U32();
+    uint16_t n   = r.U16();
+    if (!r.ok) return;
+
+    int seen = 0, queued = 0, satisfied = 0, unread = 0, overflow = 0, bad = 0;
+    // `n` is the whole container size, not this datagram's share: a large set is split
+    // across ticks, and the receiver learns how many arrived from where the body ends.
+    // There is deliberately no produced count (the K_WORLD_FLAGS rule).
+    while (r.ok && r.pos < r.len) {
+        char path[inventory::kMaxPath];
+        int len = r.Str(path, sizeof(path));
+        int32_t count = r.I32();
+        if (len < 0 || !r.ok) break;
+        if (len >= inventory::kMaxPath) { ++bad; continue; }   // truncated by the reader
+        ++seen;
+
+        int32_t local = 0;
+        bool haveLocal = PeerInventoryCount(path, &local);
+        if (haveLocal && count <= local) {
+            // The host is not ahead.  This settles (cancels) any pending grant; it does
+            // NOT lower the peer's count, which may be higher from a local pickup.
+            g_invGrants.Done(path);
+            ++satisfied;
+            continue;
+        }
+        if (!haveLocal) ++unread;
+
+        // Queue the ABSOLUTE target, not the difference: the peer's count can move
+        // between this body and the grant, and recomputing the difference at grant time
+        // makes a stale difference a no-op rather than an over-grant.  An unresolvable
+        // item is queued too, so its failure is reported and remembered.
+        inventory::GrantQueue::Observed o = g_invGrants.Observe(path, count, now);
+        if (o == inventory::GrantQueue::kQueued ||
+            o == inventory::GrantQueue::kRaised) {
+            ++queued;
+        } else if (o == inventory::GrantQueue::kOverflow) {
+            ++overflow;
+        }
+    }
+
+    if (rev != g_peerInvRev) {
+        g_peerInvRev = rev;
+        QDLOG(LOG_INFO, "inventory body rev=", dec(rev), " n=", dec((int)n),
+              " entries=", dec(seen), " applied=", dec(satisfied),
+              " queued=", dec(queued));
+    }
+    if (bad) {
+        QDLOG(LOG_WARN, "inventory: ", dec(bad), " entr", (bad == 1 ? "y" : "ies"),
+              " had a truncated path and were refused (nothing granted)");
+    }
+    if (overflow) {
+        QDLOG(LOG_WARN, "inventory: pending-grant table full; ", dec(overflow),
+              " entr", (overflow == 1 ? "y" : "ies"), " were NOT remembered");
+    }
+    if (unread) {
+        QDLOG(LOG_DEBUG, "inventory: ", dec(unread), " entr",
+              (unread == 1 ? "y" : "ies"),
+              " not resolvable yet; queued for retry");
+    }
+}
+
+// Peer: spend at most kMaxPerTick grants per frame.  Each one is a ProcessEvent plus a
+// native read-back, so doing a whole body in one frame is the hitch this bound exists
+// to prevent.
+void PeerGrantPump(uint32_t now)
+{
+    if (!Cfg().inventory_sync) return;
+    if (!g_net.IsPeer() || !g_net.Connected()) return;
+
+    inventory::GrantQueue::Out out[inventory::GrantQueue::kMaxPerTick];
+    int n = g_invGrants.Due(now, out, inventory::GrantQueue::kMaxPerTick);
+    for (int i = 0; i < n; ++i) {
+        int32_t local = 0;
+        if (!PeerInventoryCount(out[i].path, &local)) {
+            // The difference is unknown, so do not guess one: WrGrantItem would then be
+            // asked to add the wrong number.  Keep the item and try after the next body.
+            g_invGrants.Failed(out[i].path, now);
+            QDLOG(LOG_DEBUG, "inventory grant waiting: ", out[i].path,
+                  " (peer count unreadable; kept)");
+            continue;
+        }
+        int32_t need = out[i].target - local;
+        if (need <= 0) {
+            // A local pickup covered it between the body and now.  Nothing to add and
+            // (by the design's rule) nothing to take away.
+            g_invGrants.Done(out[i].path);
+            continue;
+        }
+
+        char err[160];
+        if (WrGrantItem(out[i].path, need, err, sizeof(err))) {
+            g_invGrants.Done(out[i].path);
+            QDLOG(LOG_INFO, "inventory grant applied: ", out[i].path, " +", dec(need),
+                  " (host ", dec(out[i].target), ", peer ", dec(local), ")");
+        } else {
+            // KEPT, not dropped.  The reason is logged and the item is retried after
+            // kRetryMs; a transient "asset not loaded yet" must not lose a key.
+            g_invGrants.Failed(out[i].path, now);
+            QDLOG(LOG_WARN, "inventory grant refused: ", out[i].path, " +", dec(need),
+                  ": ", err, " (kept for retry)");
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Inbound dispatch -- game thread only
 // ---------------------------------------------------------------------------
@@ -3316,6 +3620,11 @@ void DispatchInbound(const InboundPacket& p, uint32_t now)
     }
     case wire::K_WORLD_FLAGS:
         if (g_net.IsPeer()) PeerApplyFlags(r);
+        break;
+    case wire::K_INVENTORY:
+        // Host -> peer only.  The body is absolute and the apply is additive, so an
+        // out-of-order or duplicated datagram cannot lower anything.
+        if (g_net.IsPeer()) PeerApplyInventory(r, now);
         break;
     case wire::K_INTENT:
         if (g_net.IsHost()) HostApplyIntent(r);
@@ -4372,8 +4681,15 @@ bool HK_Tick(void* engineLoop)
     SendLocalPlayer(now);
     if (tracing) QDLOG(LOG_DEBUG, "  frame ", dec(g_frame), " player sent");
 
-    if (g_net.IsHost()) HostPushFlags(now);
-    else PeerFlagIntentPump(now);
+    if (g_net.IsHost()) {
+        HostPushFlags(now);
+        // 6d: the host's inventory is the shared truth.  Off unless InventorySync=1.
+        HostPushInventory(now);
+    } else {
+        PeerFlagIntentPump(now);
+        // 6d: apply at most two grants per frame from the last body.
+        PeerGrantPump(now);
+    }
     DevAutoLoad(now);
     LocalEquipPump(now);
     DevAvatarTest(now);
