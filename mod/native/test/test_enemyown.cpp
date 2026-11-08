@@ -318,6 +318,17 @@ static void TestZeroGuidIsIgnored()
 // ===========================================================================
 static void TestClassifyAnim()
 {
+    // The helpers promise case-insensitivity on BOTH sides.  The first version folded
+    // only the haystack, so a needle with an uppercase letter never matched -- measured
+    // live as a level-visibility guard that always answered "no" (Session 6).
+    CHECK(enemyown::HasCI("VideoConfigMap", "videoconfig"), "hasci/lowercase needle");
+    CHECK(enemyown::HasCI("VideoConfigMap", "VideoConfig"), "hasci/uppercase needle");
+    CHECK(enemyown::HasCI("videoConfigMap", "VIDEOCONFIG"), "hasci/all-caps needle");
+    CHECK(!enemyown::HasCI("VideoConfigMap", "ShaderCompile"), "hasci/absent needle");
+    CHECK(enemyown::EndsCI("Rat_Die", "die"), "endsci/lowercase tail");
+    CHECK(enemyown::EndsCI("Rat_Die", "Die"), "endsci/uppercase tail");
+    CHECK(!enemyown::EndsCI("Rat_Die", "Dead"), "endsci/absent tail");
+
     CHECK(enemyown::ClassifyAnim("Enemy_Attack_01") == wire::E_ATTACK, "anim/attack");
     CHECK(enemyown::ClassifyAnim("Spider_Slash_Right") == wire::E_ATTACK, "anim/slash");
     CHECK(enemyown::ClassifyAnim("Grunt_Hurt_React") == wire::E_HURT, "anim/hurt");
