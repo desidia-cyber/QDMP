@@ -209,7 +209,10 @@ private:
 // run the same talk Blueprint and its one-time actions (turn-ins, gifts) fire twice.
 // So the published state is per slot, and the only enforcement is local: the NPC the
 // partner is talking to is made non-interactable on this machine with the game's own
-// BlockInteract / ReenableInteract pair.
+// switch.  That switch is not a function pair: `BlockInteract` is a BOOLEAN PROPERTY on
+// NPC_Base_C (+0x0613, SYNC-RESEARCH 4), and only `ReenableInteract` is a UFunction
+// (0 arguments).  A name-resolved call to `BlockInteract` finds nothing, which is why
+// the block half did nothing until it was written as a property.
 //
 // A slot's state is latest-wins by `seq` (a lost datagram costs a beat), and it goes
 // stale: a sender that stops publishing (crash, disconnect) must not leave an NPC

@@ -8,6 +8,11 @@
 // (`EnemySpawner_C.GetSaveGUID()`, 14-combat-save-answers D4), never a pointer and
 // never the enemy instance: one spawner owns one enemy (`CurrentManagedEnemy`).
 //
+// NOTE (SYNC-RESEARCH 5): `bIsAIDisabled` is native and is honoured, but the game's own
+// way to stop an enemy is `EnemySpawner_C.SetEnemiesPaused(bool)`, which writes
+// `EnemyBase_C.Paused` (+0x1F4E, a whole byte).  That is the lever to prefer; this
+// header keeps the flag as the second one.
+//
 // One refinement the design did not have, forced by a measured fact: a spawner only
 // spawns while ITS LOCAL player is in activation range (`PlayerIsInActivationRange`,
 // `PlayerDistanceDespawnCheck` -- both Blueprint, both read `GetPlayerCharacter`, i.e.

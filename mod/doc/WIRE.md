@@ -281,8 +281,11 @@ kind 8 (enemy record):    guid spawner, i32 respawn_centi, i32 hp_centi
 
 **Kind 7** — the peer's player hit a copy the host is driving. `damage_frac` is the HP
 the copy lost, as a fraction of its max in 1/65535 units (it may exceed 65535 for an
-overkill), so the host scales it by its own max and applies it through the game's own
-damage path (`UGameplayStatics::ApplyDamage`). This is the one intent that carries a
+overkill), so the host scales it by its own max and applies it through the enemy's own
+damage entry, `TryApplyDamage` (the `FB_Damageable` interface message). It is **not**
+`UGameplayStatics::ApplyDamage`: that function is real (`0x028D2190`), but `EnemyBase_C`
+never imports it and it fires no enemy kill, so a peer hit applied that way is silently
+lost. This is the one intent that carries a
 delta, and deliberately: damage is an event, not a state. It stays within rule E2
 because `INTENT` is reliable and de-duplicated by `seq` (a resent hit is applied once),
 and because the host's next `ENEMY` row is the absolute truth the peer converges to.

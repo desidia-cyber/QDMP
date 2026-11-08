@@ -3167,13 +3167,22 @@ void* FindNpcById(const uint8_t id[16])
 
 void NpcSetBlocked(void* npc, bool block)
 {
-    static Fn fBlock = {}, fUnblock = {};
-    bool ok = block ? CallNoArgs(npc, fBlock, "BlockInteract") : CallNoArgs(npc, fUnblock, "ReenableInteract");
+    // `BlockInteract` is a BOOLEAN PROPERTY on NPC_Base_C (+0x0613), not a function.  The
+    // cooked packages export no UFunction of that name, none of them imports one, and the
+    // string is absent from the exe's name pool -- so the previous version, which called
+    // it through ProcessEvent, resolved nothing and left the partner's NPC interactable.
+    // Setting the bool is the same lever the Blueprint's own gate reads.
+    static Fn fReenable = {};
+    bool wrote = WriteBytePropC(npc, "BlockInteract", block ? 1 : 0);
+    // Reenabling also runs the game's own 0-argument ReenableInteract (a real UFunction,
+    // 58-byte payload, no parameters): it is what restores the interaction state the
+    // Blueprint may have set beyond the flag.  Blocking has no such counterpart.
+    bool re = block ? false : CallNoArgs(npc, fReenable, "ReenableInteract");
     char d[96];
     ObjDescribe(npc, d, sizeof(d));
-    QDLOG(LOG_INFO, "dialogue: ", (block ? "BLOCK " : "unblock "), d, (ok ? "" : " (call FAILED)"));
-    static bool sigShown = false;
-    if (!sigShown && fBlock.fn) { sigShown = true; LogSignature("NPC_Base.BlockInteract", fBlock.sig); }
+    QDLOG(LOG_INFO, "dialogue: ", (block ? "BLOCK " : "unblock "), d,
+          (wrote ? " BlockInteract=" : " BlockInteract NOT FOUND (property absent)"),
+          (block ? "" : (re ? " reenabled" : "")));
 }
 
 void DialoguePump(uint32_t now)
