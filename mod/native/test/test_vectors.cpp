@@ -113,7 +113,7 @@ static void Compare(const char* name, const uint8_t* got, int gotLen)
     uint8_t kind = want[0];
     bool kindKnown = (kind >= 0x01 && kind <= 0x04) ||
                      (kind >= 0x10 && kind <= 0x19) ||
-                     (kind >= 0x20 && kind <= 0x29) ||
+                     (kind >= 0x20 && kind <= 0x2A) ||
                      (kind == 0x30);
     if (!kindKnown) {
         ++g_fail;
@@ -313,6 +313,13 @@ static void TestAll()
         WriteIntentEnemyRecord(w, 12, g, 30000, 0);
         Compare("intent_enemy_record", buf, w.len);
     }
+    {
+        // kind 9: the placed-object key, the shape, the state asked for.
+        Writer w(buf, sizeof(buf));
+        const uint32_t g[4] = { 0x03020100u, 0x07060504u, 0x0b0a0908u, 0x0f0e0d0cu };
+        WriteIntentObjectState(w, 13, g, 1, 1);
+        Compare("intent_object_state", buf, w.len);
+    }
 
     // enemy_detail: guid, anim, seq, status, boss, montage path
     {
@@ -470,6 +477,20 @@ static void TestAll()
         WriteLootHeader(w, 9, 1);
         WriteLootChunk(w, &e, 1, 0);
         Compare("loot", buf, w.len);
+    }
+
+    // objects: rev, n, one 18-byte row (key, shape, state)
+    {
+        ObjectRow r;
+        memset(&r, 0, sizeof(r));
+        r.key[0] = 0x03020100u; r.key[1] = 0x07060504u;
+        r.key[2] = 0x0b0a0908u; r.key[3] = 0x0f0e0d0cu;
+        r.shape = 1;      // chest
+        r.state = 1;      // opened
+        Writer w(buf, sizeof(buf));
+        WriteObjectsHeader(w, 7, 1);
+        WriteObjectsChunk(w, &r, 1, 0);
+        Compare("objects", buf, w.len);
     }
 
     // suspend: seq, state, slot

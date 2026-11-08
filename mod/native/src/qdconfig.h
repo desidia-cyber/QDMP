@@ -35,6 +35,7 @@ struct Config {
     int  flag_sync;        // NamedSaveData apply/broadcast
     int  inventory_sync;   // host -> peer InventoryContents mirror + grants
     int  actor_state_sync; // SavableActorStates
+    int  object_sync;      // placed world objects that are NOT SavableActors (K_OBJECTS)
     int  enemy_sync;       // enemy rows + StoreEnemySaveState
     int  puppet_sync;      // remote body spawn/drive
     int  player_body;      // ... as the game's own player class (B7 / G4 / G5)
@@ -76,6 +77,10 @@ inline void ConfigDefaults()
     // `inventory grant applied ... read back` line (qdwrite.h's WrGrantItem oracle).
     c.inventory_sync   = 0;
     c.actor_state_sync = 0;
+    // OFF, like every other write path.  This one calls a Blueprint's visual/restore entry
+    // and writes the object's own state bool, so enable it only on a run that is looking
+    // for the `object apply:` line (`SYNC-GAPS` section 5.5).
+    c.object_sync      = 0;
     c.enemy_sync       = 0;
     c.puppet_sync      = 0;
     // OFF, like every other write path.  This one asks the engine to CONSTRUCT a full
@@ -222,6 +227,7 @@ inline int ConfigLoad()
         else if (detail::StrEq(k, "FlagSync"))      c.flag_sync = detail::ParseInt(v, c.flag_sync);
         else if (detail::StrEq(k, "InventorySync")) c.inventory_sync = detail::ParseInt(v, c.inventory_sync);
         else if (detail::StrEq(k, "ActorStateSync")) c.actor_state_sync = detail::ParseInt(v, c.actor_state_sync);
+        else if (detail::StrEq(k, "ObjectSync"))    c.object_sync = detail::ParseInt(v, c.object_sync);
         else if (detail::StrEq(k, "EnemySync"))     c.enemy_sync = detail::ParseInt(v, c.enemy_sync);
         else if (detail::StrEq(k, "PuppetSync"))    c.puppet_sync = detail::ParseInt(v, c.puppet_sync);
         else if (detail::StrEq(k, "PlayerBody"))    c.player_body = detail::ParseInt(v, c.player_body);

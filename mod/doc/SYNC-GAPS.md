@@ -31,7 +31,7 @@ encoding — not the game.
 | `ENEMY_DETAIL` | both | both | montage asset + status mask + boss phase, reliable, on change, relevance-rate-limited |
 | `BOSS` | both | both | **new**: boss bar on/off, observed phase, arena exit — each machine makes its own local call |
 | `EQUIPMENT` / `EFFECT` / `EFFECT_MOVE` / `STATUS` | both | both | proven live |
-| `INTENT` | peer | host | kinds 1 (flag), 2 (item pickup), 3 (item use), 6 (actor state), 7 (enemy hit), 8 (enemy record) |
+| `INTENT` | peer | host | kinds 1 (flag), 2 (item pickup), 3 (item use), 6 (actor state), 7 (enemy hit), 8 (enemy record), **9 (placed object state)** |
 | `DAMAGE` | host | peer | **new**: a host-run enemy's hit, applied to the partner's own pawn |
 | `DIALOGUE` | both | both | per-slot talk state |
 | `LEVEL_UNION` | both | both | what each machine's own game wants |
@@ -40,6 +40,7 @@ encoding — not the game.
 | `MOVERS` | owner → follower | follower | **new**: owner-authoritative elevator/platform transforms, 10 Hz |
 | `LOOT` | both | both | **new**: the shared drop set plus permanent tombstones, 1 Hz |
 | `SUSPEND` | both | both | **new**: the peer's `BlockSuspendSaves` hold and a suspend-load repair |
+| `OBJECTS` | host | peer | **new**: placed interactables that are NOT SavableActors — the chest R67 measured, levers, placed pickups, gates — keyed by the cooked path hash; the partner is opened through the class' visual entry and its own state bool, never the interaction verb |
 
 Every kind in `WIRE.md` §2 now has a producer and a consumer.
 
@@ -189,14 +190,24 @@ both `SetShouldBeVisible` and the byte-verified `SetShouldBeLoaded`.
 
 ## 2. What still breaks the co-op promise
 
-**G2 is implemented but unproven.** The container, the actor's cached `MySaveData` and
-the in-level visual state now converge through the writer plus the one-shot
-`RestoreFromSave` refresh described in §1. The remaining risk is behavioural, not
-structural: a subclass' `Restore State From Save Data` is the game's load path, so it
-must not award loot or replay a one-time effect; the read-back logs `opened=1` (or
-`opened=0`) so the live run can see whether the actor actually followed. `ActorStateSync`
-stays `0` until §5.6 shows the door/chest open on the partner's screen and a looted
-chest refuses a second interaction.
+**G2 has two halves now, and the measured half was the wrong lane.** Session 8 R67
+answered the identity question with one line: `SG_Chest_BP2 [SG_Chest_BP_C] savable=no
+guid=- index=-1 ... opened=0 mySaveData=1 guids=0`. The chest has no GUID and no
+`SavableActorStates` entry, so `ACTOR_STATES` **cannot represent it at all** — its identity
+is a GUID and there is none. That is what `OBJECTS` (0x2A, §5.5) is for: a placed actor's
+cooked path hash, the object's own state bool, and the class' visual entry. The container
+half above remains the right lane for the actors that *are* savables (doors with an authored
+GUID, barricades, a chest the Blueprint itself registered), and the two lanes do not overlap:
+a class instance with a non-empty `GUIDs` array is skipped by the new lane and belongs to
+`ACTOR_STATES`.
+
+The `ACTOR_STATES` half is still unproven, and the remaining risk there is behavioural:
+a subclass' `Restore State From Save Data` is the game's load path, so it must not award
+loot or replay a one-time effect; the read-back logs `opened=1` (or `opened=0`) so the live
+run can see whether the actor actually followed. `ActorStateSync` stays `0` until §5.6 shows
+the door/chest open on the partner's screen and a looted chest refuses a second interaction.
+`ObjectSync` stays `0` until §5.5 shows the placed chest open on the partner **and the
+partner's `TotalChestsOpened` unchanged**.
 
 **G3's remaining caveats are policy, not plumbing.** A peer's *pickup* is still
 cumulative, so if both players independently pick up the same item the gains are added
@@ -613,6 +624,83 @@ took an enemy from `34.9` to `-165.0`. Its script gates the HP write behind
 (API-GAPS §5A.2). Writing `Health` is the same scalar the game's `Set Health Points` and
 the rig's own god floor already write, so it is the class's own state, not a fake.
 
+### 5.5 The placed-object round — `ObjectSync=1`
+
+The lane `OBJECTS` (0x2A, WIRE.md §3.20) is for interactables that are **not**
+`SavableActorStates` entries. R67 measured the case: `SG_Chest_BP2 [SG_Chest_BP_C]
+savable=no guid=- index=-1 ... opened=0`, so `ACTOR_STATES` cannot carry it. Run with
+`ObjectSync=1`, `FlagSync=1`, `LogLevel=2`, and `ActorStateSync=0` — the two object lanes
+must be proven separately, because the new lane skips any actor that has a `GUIDs` entry.
+
+**1. The two machines must name the same objects with the same keys.** One line per object
+the first time it is classified, at INFO. The key is the same 8 hex digits on both, and the
+shape is the one the cooked-package survey predicts:
+
+```
+[1] INFO object sync: tracking chest SG_Chest_BP2 [SG_Chest_BP_C] key=1A2B3C4D state=0 prop=Opened visual=SetToFinalState
+[2] INFO object sync: tracking chest SG_Chest_BP2 [SG_Chest_BP_C] key=1A2B3C4D state=0 prop=Opened visual=SetToFinalState
+```
+
+A door that arrives as `tracking door Door_Base_7 [Door_Base_C] ... prop=Opened
+visual=SetToOpenState` and a placed pickup as `tracking pickup Herb_Item_BP
+[ItemPickup_Base_C] ... prop=PickedUp visual=none` are the same proof for the other shapes.
+These counted lines are the **failure** forms, and each says which object was not carried:
+
+| If this appears | Then |
+|---|---|
+| `object sync: <class> carries no readable state property; not published (<path>)` | the class gained (or lost) a property name between builds: re-run the survey, do not guess |
+| `object sync: N object(s) could not be represented (table full)` | more than 256 placed interactables in the loaded world; the bound is named, nothing is silently dropped |
+| a `dev state:` line for the same actor says `guids=` > 0 | the actor is a savable and belongs to `ActorStateSync`, not here — expected, not a bug |
+
+**2. An opened chest reaches the partner as an intent, then an absolute echo.** The rig
+opens the chest on the **host** (`near:closedchest`, then the interact lever) and the
+sequence on the two machines is:
+
+```
+[1] INFO object local change: queued=1 coalesced=0 echoes=0 overflow=0
+[1] INFO object intent sent key=1A2B3C4D chest state=1 rev=3 try 1/5
+[2] INFO object intent applied: SG_Chest_BP2 key=1A2B3C4D state=1 visual=SetToFinalState prop=Opened 0->1
+[2] INFO objects applied=1 held=0 confirmed=1 failed=0 unknown=0 close-ignored=0 rev=4 n=6
+[1] INFO object intent confirmed: key=1A2B3C4D state=1 host=1
+```
+
+(The mirror image — the peer opens it — prints `object intent sent` on the **peer** and
+`object apply: chest SG_Chest_BP2 key=… state=1 rev=N visual=SetToFinalState prop=Opened
+0->1` on the host, followed by `objects applied=1 … confirmed=1` on the peer when the echo
+arrives. R73's gate is what makes the `rev=0` case work: `based_on_rev == 0` means "no
+baseline yet", not stale.)
+
+**3. The state converged and the visuals followed.** The partner's own `dev state:` probe
+must show the gate moved, which is the same line R67 used to prove the chest was closed:
+
+```
+[2] INFO dev state: SG_Chest_BP2 [SG_Chest_BP_C] savable=no guid=- index=-1 value=-1 isset=? opened=1 isOpen=n/a mySaveData=1 guids=0
+```
+
+and the partner's chest must **refuse the interaction** (the `IsInteractible` gate reads
+`Opened`). On screen: the lid is open on both machines.
+
+**4. Nothing paid out twice.** This is the half a screenshot cannot show, so it is a grep:
+
+- the partner logs **no** `write api: AddItemToInventory` for the chest's contents, and
+  **no** `object apply failed … refused: interaction/payout verb` line (a refusal means a
+  ladder member named a verb it must not; the ladder is in `qdobjectstate.h`);
+- `TotalChestsOpened` on the partner arrives through the **flags** lane, as an absolute
+  write, and is `2` — not `3`. The accepted lines are the existing ones:
+  `flag CHANGE TotalChestsOpened : 1 -> 2` on the machine that opened it, and on the
+  partner either nothing (it was already 2) or a single absolute write of `2`;
+- the chest's own loot appears **once**, on the machine the player was standing at.
+
+**5. The lane is bounded and repairs itself.** `objects sent rev=… objects=N` must appear
+once per change and once per 5 s of quiet (the repair pass), never at 1 Hz — this lane is
+reliable, so a 1 Hz body would be a retransmission budget spent on nothing. A newly joined
+peer shows `objects sent rev=…` within the first 5 s of the session without any action.
+`object intent given up key=… after 5 attempts, the host never echoed it` is the failure
+line: it means the host never had that key, which is a key disagreement to investigate,
+not a lost datagram.
+
+
+
 ## 6. Suggested order from here
 
 1. **Run §5 and §5.3.** Every correction so far came from measurement rather than from
@@ -624,7 +712,8 @@ the rig's own god floor already write, so it is the class's own state, not a fak
 3. **G2's live follow-up.** If §5.6 shows `INCOMPLETE`, inspect that subclass' own
    `Restore State From Save Data` override before changing the container path; if the
    live pass shows the in-level actor does not follow the container at all, start from
-   the visual refresh the second round added.
+   the visual refresh the second round added. §5.5 is the other half: an actor with no
+   GUID at all is `ObjectSync`'s, and the two lanes are proven separately.
 4. **Boss bar, arena exit, and phases.** The bar and the arena exit are two reflective
    calls, both measured and both driven. Boss phases remain unexpressible unless a boss
    turns out to expose a phase to a sync layer after all — the `BOSS` and `ENEMY_DETAIL`
