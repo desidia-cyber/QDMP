@@ -49,7 +49,7 @@ against the level manager.
 | 3 mirror | `MirrorPump()` | reads | `Enabled` |
 | 4 flag sync | `HostPushFlags()` / `PeerApplyFlags()` | **writes** | `FlagSync` |
 | 5 body | `PuppetPump()` / `SpawnPuppetOnce()` | **writes** | `PuppetSync`, `PlayerBody` |
-| 6 world | `StreamPump()`, `TravelPump()`, `CutscenePump()`, `MoverPump()`, `LootPump()`, `SuspendPump()`, `DialoguePump()` | **writes** | `StreamUnion`, `TravelSync`, `CutsceneSync`, `MoverSync`, `LootSync`, `SuspendGuard`, `DialogueSync` |
+| 6 world | `StreamPump()`, `TravelPump()`, `CutscenePump()`, `MoverPump()`, `LootPump()`, `SuspendPump()`, `DialoguePump()`, `ActorStatePump()`, `ObjectsPump()` | **writes** | `StreamUnion`, `TravelSync`, `CutsceneSync`, `MoverSync`, `LootSync`, `SuspendGuard`, `DialogueSync`, `ActorStateSync`, `ObjectSync` |
 
 Layer 2's no-op write is the exception that makes the ordering work: it is a write to
 the game's own save container, but it writes back the value that is already there, so
