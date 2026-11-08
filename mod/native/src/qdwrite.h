@@ -997,11 +997,38 @@ inline bool ReadActorBool(void* obj, const char* prop, bool* out)
     return true;
 }
 
-// A live SavableActor carrying this placement GUID.  `CurrentGUID` is the actor's own
-// current key -- the design rule is to key on that runtime value, never on `GUIDs[0]`.
-// `GUIDs` is deliberately NOT inspected here: it is an ArrayProperty, whose
-// ElementSize is the 16-byte TArray header, not an inline GUID, so walking it at a
-// 16-byte stride would read Data/Num/Max as a GUID and "find" a false match.
+// The actor's own GUIDs.  `CurrentGUID` is a LOCAL inside `CheckGUID`/`Save Data Index to
+// World Save`, not a class property (the cooked class tag list is
+// GUIDs:Array<FGuid>, SaveDataCount:int, MySaveData:Array<SavableActorState>), so the
+// old lookup on a `CurrentGUID` property could never match.  The durable identity is the
+// authored GUID in `GUIDs`, and the index of that GUID is exactly the `Index` the game's
+// own writer takes.
+inline bool FindGuidIndexInActor(void* actor, const QdGuid& guid, int* index)
+{
+    if (!actor || !index) return false;
+    int sz = 0;
+    int off = FindPropertyOffsetIn(ObjClass(actor), "GUIDs", &sz);
+    (void)sz;
+    if (off < 0) return false;
+    __try {
+        const uint8_t* arr = *(const uint8_t* const*)((const uint8_t*)actor + off);
+        int32_t num = *(const int32_t*)((const uint8_t*)actor + off + 8);
+        if (!arr || num <= 0 || num > 64) return false;
+        // `GUIDs` is TArray<FGuid>: Data at +0, Num at +8, elements are 16 raw bytes.
+        for (int32_t i = 0; i < num; ++i) {
+            QdGuid g;
+            memcpy(&g, arr + (size_t)i * 16, sizeof(g));
+            if (g == guid) { *index = (int)i; return true; }
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    return false;
+}
+
+// A live SavableActor carrying this placement GUID.  Every savable actor (doors, chests,
+// barricades, breakable walls, spawners) derives from SavableActor_C and keeps its
+// authored GUIDs in that array; the map is keyed by one of them.
 inline void* FindSavableActorByGuid(const QdGuid& guid)
 {
     void* base = FindClassByName("SavableActor_C");
@@ -1014,17 +1041,12 @@ inline void* FindSavableActorByGuid(const QdGuid& guid)
         __try {
             void* cls = ObjClass(o);
             if (!cls || !IsSubclassOf(cls, base)) continue;
-
-            int sz = 0;
-            int off = FindPropertyOffsetIn(cls, "CurrentGUID", &sz);
-            if (off >= 0 && sz >= 16) {
-                QdGuid g = *(const QdGuid*)((const uint8_t*)o + off);
-                if (g == guid) return o;
-            }
         }
         __except (EXCEPTION_EXECUTE_HANDLER) {
-            // An unreadable slot is skipped; a probe must never die for one.
+            continue;
         }
+        int idx = 0;
+        if (FindGuidIndexInActor(o, guid, &idx)) return o;
     }
     return nullptr;
 }
@@ -1180,6 +1202,582 @@ inline bool WrProbeActorState(const QdGuid& guid, int32_t* out, char* err, int c
           hex32(guid.c), "-", hex32(guid.d), " value=", dec(v), " via=", via,
           " actor=", desc);
     return true;
+}
+
+// ===========================================================================
+// Part 6 -- SavableActorStates: the measured container and its writer
+// ===========================================================================
+// WHAT WAS MEASURED, AND WHERE
+// ----------------------------
+// * The container is a reflected `MapProperty` on `FS_SaveSlot_C`, keyed by a 16-byte
+//   `StructProperty` (FGuid) with a 4-byte `IntProperty` value.  The class tag dump in
+//   SYNC-RESEARCH section A.8 is the artefact.  So the member offset is DISCOVERED by
+//   `FindPropertyOffsetIn`, not a hardcoded `save+0x168`; that lead was never a
+//   measurement of this container.
+//
+// * The geometry is the engine's own TMap geometry, read from `TMap::Find` (0x007FB070,
+//   the instantiation the measured `GetInventoryItemCount` calls) and from the
+//   GUID-keyed `TMap::Add` instantiation (0x00E19FC0, the one `StoreEnemySaveState`
+//   uses).  Key at +0x00, value at +0x10, HashNextId at +0x14, HashIndex at +0x18,
+//   element stride 0x1C.  `HashNextId` sits at `sizeof(TPair)`, and the stride is
+//   `sizeof(TPair)+8`: FGuid(16)+int32(4) = 20, +4+4 = 28.  The enemy writer proves the
+//   rule with a different value size (16+12 -> 36).
+//
+// * Enumerating through the hash buckets and each element's HashNextId visits only LIVE
+//   elements.  A free slot in the sparse array is on the free list and has no bucket, so
+//   this needs no bitset heuristic (the flag lane's reject-each-element rule is the
+//   alternative, and it works there only because an invalid FName is detectable).
+//
+// THE WRITE, IN THE ORDER THE DESIGN ASKS FOR
+// -------------------------------------------
+// (a) There is no Blueprint setter on the save object family that takes a GUID and a
+//     value: `SaveFunctions_C`'s 24 exports contain nothing of the kind, and
+//     `SavableActorStates` is written by `SavableActor_C` itself.
+// (b) `SavableActor_C.Save Data Index to World Save(Index, Data)` is the game's own
+//     writer.  Its bytecode does `Map_Add(GetCurrentlyActiveSave().SavableActorStates,
+//     GUIDs[Index], Data)` and `Array_Set(MySaveData, Index, ...)`; the parameter tags
+//     are exactly `Index:int, Data:int` (SYNC-RESEARCH section A.8).  It therefore
+//     INSERTs as well as updates, and it keeps the actor's cached array in step.  This
+//     is the preferred path whenever the owning actor is live.
+// (c) A key that exists but whose actor is not loaded can still be updated in place
+//     through the measured TSet geometry.  That is the fallback, used only when (b) is
+//     unavailable, and it is refused for a key that does not exist: a raw insert would
+//     have to grow the sparse array through the engine's allocator and re-bucket the
+//     hash, which is not something to hand-roll into a running game.
+//
+// WHAT IS NOT DONE, AND WHY
+// -------------------------
+// The visible refresh pair `CacheSaveData` + `Restore State From Save Data` is NOT
+// called.  `CacheSaveData` uses `Array_Add`, the package imports no clear/remove, and
+// calling it repeatedly would grow `MySaveData`; the one-shot writer above updates the
+// cached entry with `Array_Set`, which is safe.  Whether the in-level actor reacts to
+// that alone is the live question G2 leaves open.  A write the mod cannot verify must
+// not be dressed up as one, and the read-back below is the verification that does run.
+
+// sizeof(TMap) on this build: the cooked MapProperty tag declares size=80, and the
+// engine header fields below end exactly at 0x50.  Used only as a sanity check.
+static const int kActorStateMapSize = 0x50;
+
+// TMap / TSet header, from TMap::Find (0x007FB070):
+//   +0x00 Data pointer        +0x08 ArrayNum           +0x0C ArrayMax
+//   +0x34 NumFreeIndices      +0x38 inline hash array  +0x40 hash array pointer
+//   +0x48 HashSize
+static const int kAsData       = 0x00;
+static const int kAsNum        = 0x08;
+static const int kAsMax        = 0x0C;
+static const int kAsNumFree    = 0x34;
+static const int kAsHashInline = 0x38;
+static const int kAsHashPtr    = 0x40;
+static const int kAsHashSize   = 0x48;
+
+// The element, from the same walk and from TMap::Add (0x00E19FC0).
+static const int kAsStride    = 0x1C;   // FGuid 16 + int32 4 + HashNextId 4 + HashIndex 4
+static const int kAsKeyOff    = 0x00;
+static const int kAsValueOff  = 0x10;
+static const int kAsHashNext  = 0x14;
+
+static const int32_t kAsNoIndex = -1;
+
+struct ActorStateMap {
+    bool           ok;
+    void*          save;
+    int            offset;
+    int            size;
+    int32_t        num;
+    int32_t        numFree;
+    int32_t        hashSize;
+    const uint8_t* data;
+    const uint32_t* buckets;
+    char           why[160];
+};
+
+inline bool ReadActorStateHeaderGuarded(const uint8_t* base, ActorStateMap* m)
+{
+    __try {
+        m->data     = *(const uint8_t* const*)(base + kAsData);
+        m->num      = *(const int32_t*)(base + kAsNum);
+        m->numFree  = *(const int32_t*)(base + kAsNumFree);
+        m->hashSize = *(const int32_t*)(base + kAsHashSize);
+        m->buckets  = *(const uint32_t* const*)(base + kAsHashPtr);
+        if (!m->buckets) m->buckets = (const uint32_t*)(base + kAsHashInline);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return true;
+}
+
+// Locate the container on the active save and validate its header.  The validation is
+// what makes a wrong property offset fail closed instead of walking garbage: a non-empty
+// TSet always has a power-of-two HashSize, `0 <= NumFreeIndices <= Num`, a Data pointer
+// when Num > 0, and every bucket either -1 or an index below Num.
+inline bool ActorStateMapLocate(ActorStateMap* m)
+{
+    if (!m) return false;
+    m->ok = false;
+    m->why[0] = 0;
+    m->save = nullptr;
+    m->offset = -1;
+    m->size = 0;
+    m->num = m->numFree = m->hashSize = 0;
+    m->data = nullptr;
+    m->buckets = nullptr;
+
+    if (!ReflectionReady()) {
+        CopyNote(m->why, sizeof(m->why), "property layout not validated");
+        return false;
+    }
+    void* world = GWorldPtr();
+    if (!world) { CopyNote(m->why, sizeof(m->why), "no world"); return false; }
+    void* save = ActiveSaveNoCreate(world);
+    if (!save) { CopyNote(m->why, sizeof(m->why), "no active save object"); return false; }
+
+    int sz = 0;
+    int off = FindPropertyOffsetIn(ObjClass(save), "SavableActorStates", &sz);
+    if (off < 0) {
+        CopyNote(m->why, sizeof(m->why), "reflected property SavableActorStates not found");
+        return false;
+    }
+    // A different property size does not necessarily invalidate the header fields, but
+    // it is worth naming: the whole geometry below was measured for the 0x50-byte
+    // TMap/FScriptMap this build serialises (the cooked MapProperty tag says size=80).
+    if (sz != kActorStateMapSize) {
+        QDLOG(LOG_WARN, "actor-state: SavableActorStates property size ", dec(sz),
+              " (measured ", dec(kActorStateMapSize), "); validating the header anyway");
+    }
+
+    ActorStateMap probe = {};
+    probe.save = save;
+    probe.offset = off;
+    probe.size = sz;
+    const uint8_t* base = (const uint8_t*)save + off;
+    if (!ReadActorStateHeaderGuarded(base, &probe)) {
+        CopyNote(m->why, sizeof(m->why), "container header unreadable");
+        return false;
+    }
+
+    if (probe.num < 0 || probe.num > 300000) {
+        CopyNote(m->why, sizeof(m->why), "ArrayNum out of range (wrong offset?)");
+        return false;
+    }
+    if (probe.numFree < 0 || probe.numFree > probe.num) {
+        CopyNote(m->why, sizeof(m->why), "NumFreeIndices out of range (wrong offset?)");
+        return false;
+    }
+    if (probe.num > 0 && !probe.data) {
+        CopyNote(m->why, sizeof(m->why), "no element array for a non-empty map");
+        return false;
+    }
+    if (probe.hashSize < 0 || probe.hashSize > (1 << 20) ||
+        (probe.hashSize & (probe.hashSize - 1)) != 0) {
+        CopyNote(m->why, sizeof(m->why), "HashSize is not a power of two (wrong offset?)");
+        return false;
+    }
+    if (probe.num > probe.numFree && probe.hashSize <= 0) {
+        CopyNote(m->why, sizeof(m->why), "non-empty map with no hash buckets");
+        return false;
+    }
+    if (probe.hashSize > 0) {
+        bool bad = false;
+        __try {
+            for (int32_t b = 0; b < probe.hashSize; ++b) {
+                int32_t idx = (int32_t)probe.buckets[b];
+                if (idx != kAsNoIndex && (idx < 0 || idx >= probe.num)) { bad = true; break; }
+            }
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+            bad = true;
+        }
+        if (bad) {
+            CopyNote(m->why, sizeof(m->why), "a hash bucket points outside the element array");
+            return false;
+        }
+    }
+
+    probe.ok = true;
+    *m = probe;
+    return true;
+}
+
+// The element for `guid`, or null.  Walks the hash buckets and each bucket's chain --
+// the same walk TMap::Find does, except that it compares all live elements rather than
+// hashing the key, because the container is small and hashing a GUID is engine code we
+// do not need to reproduce.
+inline const uint8_t* ActorStateFindGuarded(const ActorStateMap& m, const QdGuid& guid)
+{
+    if (!m.ok || !m.data) return nullptr;
+    const uint8_t* found = nullptr;
+    __try {
+        for (int32_t b = 0; b < m.hashSize && !found; ++b) {
+            int32_t idx = (int32_t)m.buckets[b];
+            int guard = 0;
+            while (idx != kAsNoIndex && guard++ < 300000) {
+                if (idx < 0 || idx >= m.num) break;
+                const uint8_t* e = m.data + (size_t)idx * kAsStride;
+                QdGuid g;
+                memcpy(&g, e + kAsKeyOff, sizeof(g));
+                if (g == guid) { found = e; break; }
+                idx = *(const int32_t*)(e + kAsHashNext);
+            }
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return nullptr;
+    }
+    return found;
+}
+
+inline bool ActorStateElementValueGuarded(const uint8_t* elem, int32_t* out)
+{
+    __try {
+        *out = *(const int32_t*)(elem + kAsValueOff);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return true;
+}
+
+inline bool ActorStateWriteValueGuarded(const uint8_t* elem, int32_t value)
+{
+    __try {
+        *(int32_t*)((uint8_t*)elem + kAsValueOff) = value;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return true;
+}
+
+typedef void (*ActorStateVisitor)(const QdGuid& guid, int32_t value, void* user);
+
+inline int ActorStateEnumerateGuarded(const ActorStateMap& m, ActorStateVisitor visit,
+                                      void* user)
+{
+    if (!m.ok) return -1;
+    // An empty container has no element array and no buckets; that is a valid empty set,
+    // not an unreadable one -- publishing it is how the lane proves it is alive.
+    if (m.num <= 0) return 0;
+    if (!m.data) return -1;
+    int n = 0;
+    __try {
+        for (int32_t b = 0; b < m.hashSize; ++b) {
+            int32_t idx = (int32_t)m.buckets[b];
+            int guard = 0;
+            while (idx != kAsNoIndex && guard++ < 300000) {
+                if (idx < 0 || idx >= m.num) return -1;
+                const uint8_t* e = m.data + (size_t)idx * kAsStride;
+                QdGuid g;
+                memcpy(&g, e + kAsKeyOff, sizeof(g));
+                int32_t v = *(const int32_t*)(e + kAsValueOff);
+                if (visit) visit(g, v, user);
+                ++n;
+                idx = *(const int32_t*)(e + kAsHashNext);
+            }
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return -1;
+    }
+    return n;
+}
+
+inline int ActorStateEnumerate(ActorStateVisitor visit, void* user)
+{
+    ActorStateMap m;
+    if (!ActorStateMapLocate(&m)) return -1;
+    return ActorStateEnumerateGuarded(m, visit, user);
+}
+
+inline bool ActorStateRead(const QdGuid& guid, int32_t* out)
+{
+    ActorStateMap m;
+    if (!ActorStateMapLocate(&m)) return false;
+    const uint8_t* e = ActorStateFindGuarded(m, guid);
+    if (!e) return false;
+    int32_t v = 0;
+    if (!ActorStateElementValueGuarded(e, &v)) return false;
+    if (out) *out = v;
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// The game's own writer, and its two read-backs
+// ---------------------------------------------------------------------------
+inline bool WriteActorStateViaActorGuarded(void* actor, int index, int32_t value,
+                                           char* err, int cap)
+{
+    void* fn = FindFunction(actor, "Save Data Index to World Save");
+    if (!fn) {
+        ErrSet(err, cap, "SavableActor has no Save Data Index to World Save", "");
+        return false;
+    }
+    LayoutResult sig = Signature(fn);
+    if (!sig.valid) {
+        ErrSet(err, cap, "writer signature: ", sig.note);
+        return false;
+    }
+    // Choose the two int pins by what the function actually declares: `Index` and
+    // `Data` in this cook, but a recompile that renames a pin must fail loudly rather
+    // than write one value into the other slot.
+    const PropDesc* pIndex = FindProp(sig, "Index");
+    if (!pIndex) pIndex = FindPropPrefix(sig, "Index");
+    const PropDesc* pData = FindProp(sig, "Data");
+    if (!pData) pData = FindPropPrefix(sig, "Data");
+    if (!pIndex || !pData || pIndex == pData) {
+        ErrSet(err, cap, "writer has no distinct Index/Data int pins", "");
+        return false;
+    }
+    ArgList args;
+    args.AddInt(pIndex->name, index);
+    args.AddInt(pData->name, value);
+    ReadBack rb;
+    return Invoke(actor, fn, sig, args, &rb, err, cap);
+}
+
+// `GetSavableActorDataAtIndex(Index)` returns what `CacheSaveData` put in
+// `MySaveData[Index]`.  It is the game's own view of the value and therefore the second,
+// independent read-back: the first is the container element itself.
+inline bool ReadActorStateViaGetterGuarded(void* actor, int index, int32_t* value,
+                                           bool* isSet, char* err, int cap)
+{
+    void* fn = FindFunction(actor, "GetSavableActorDataAtIndex");
+    if (!fn) {
+        ErrSet(err, cap, "SavableActor has no GetSavableActorDataAtIndex", "");
+        return false;
+    }
+    LayoutResult sig = Signature(fn);
+    if (!sig.valid) {
+        ErrSet(err, cap, "getter signature: ", sig.note);
+        return false;
+    }
+    const PropDesc* pIndex = FindProp(sig, "Index");
+    if (!pIndex) pIndex = FindPropPrefix(sig, "Index");
+    if (!pIndex) {
+        ErrSet(err, cap, "getter has no Index input", "");
+        return false;
+    }
+    ArgList args;
+    args.AddInt(pIndex->name, index);
+
+    alignas(16) uint8_t outBuf[1024];
+    ReadBack rb;
+    if (!Invoke(actor, fn, sig, args, &rb, err, cap, outBuf)) return false;
+
+    const PropDesc* pVal = FindProp(sig, "Value");
+    if (!pVal) pVal = FindPropPrefix(sig, "Value");
+    const PropDesc* pSet = FindProp(sig, "IsSet");
+    if (!pSet) pSet = FindPropPrefix(sig, "IsSet");
+    if (!pVal || pVal->size < 4) {
+        ErrSet(err, cap, "getter has no readable Value output", "");
+        return false;
+    }
+    *value = *(const int32_t*)(outBuf + pVal->offset);
+    if (isSet) *isSet = pSet && pSet->size >= 1 ? (outBuf[pSet->offset] != 0) : true;
+    return true;
+}
+
+// One live savable actor and the index of a GUID inside its `GUIDs` array.  Built in one
+// GObjects pass for a body: resolving every entry separately would be one class walk per
+// GUID per datagram, which on the host's full set is a frame hitch for a value that
+// changes once a second.
+struct ActorStateOwner {
+    QdGuid guid;
+    void*  actor;
+    int    index;
+};
+
+inline int BuildActorStateOwnersGuarded(void* base, ActorStateOwner* out, int cap)
+{
+    int n = 0;
+    int count = ObjectCount();
+    for (int i = 0; i < count && n < cap; ++i) {
+        void* o = ObjectAt(i);
+        if (!o) continue;
+        __try {
+            void* cls = ObjClass(o);
+            if (!cls || !IsSubclassOf(cls, base)) continue;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+            continue;
+        }
+        int sz = 0;
+        int off = FindPropertyOffsetIn(ObjClass(o), "GUIDs", &sz);
+        (void)sz;
+        if (off < 0) continue;
+        __try {
+            const uint8_t* arr = *(const uint8_t* const*)((const uint8_t*)o + off);
+            int32_t num = *(const int32_t*)((const uint8_t*)o + off + 8);
+            if (!arr || num <= 0 || num > 64) continue;
+            for (int32_t k = 0; k < num && n < cap; ++k) {
+                memcpy(&out[n].guid, arr + (size_t)k * 16, sizeof(QdGuid));
+                out[n].actor = o;
+                out[n].index = (int)k;
+                ++n;
+            }
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+        }
+    }
+    return n;
+}
+
+inline int BuildActorStateOwners(ActorStateOwner* out, int cap)
+{
+    if (!out || cap <= 0) return 0;
+    void* base = FindClassByName("SavableActor_C");
+    if (!base) return 0;
+    return BuildActorStateOwnersGuarded(base, out, cap);
+}
+
+inline bool EncodeGuidForLog(const QdGuid& g, char* out, int cap)
+{
+    if (!out || cap <= 0) return false;
+    char tmp[80];
+    int w = 0;
+    const char* hex = "0123456789abcdef";
+    uint32_t parts[4] = { g.a, g.b, g.c, g.d };
+    for (int p = 0; p < 4; ++p) {
+        for (int s = 28; s >= 0; s -= 4) {
+            if (w < (int)sizeof(tmp) - 1) tmp[w++] = hex[(parts[p] >> s) & 0xF];
+        }
+        if (p != 3 && w < (int)sizeof(tmp) - 1) tmp[w++] = '-';
+    }
+    tmp[w] = 0;
+    CopyNote(out, cap, tmp);
+    return true;
+}
+
+// The write.  `actorHint`/`indexHint` let a body-level caller reuse the owner pass;
+// pass nullptr/-1 and the actor is resolved here.  Read-back is mandatory: "the call
+// returned" is not evidence (DollsMP F-12.17), and a successful ProcessEvent with the
+// wrong frame changes nothing.
+inline bool WrSetActorState(const QdGuid& guid, int32_t value, void* actorHint,
+                            int indexHint, char* err, int errCap)
+{
+    if (err && errCap > 0) err[0] = 0;
+    if (guid.IsZero()) {
+        ErrSet(err, errCap, "zero GUID", "");
+        return false;
+    }
+
+    // The pre-state is read first, so a key that the game never created can be refused
+    // rather than inserted by hand.
+    int32_t before = 0;
+    bool present = ActorStateRead(guid, &before);
+
+    // Already equal: there is nothing to write and nothing to verify.  This is the common
+    // case when a peer joins a set it has already loaded, and skipping it keeps a
+    // 60-entry first body from becoming 60 ProcessEvent round trips for no state change.
+    if (present && before == value) {
+        QDLOG(LOG_DEBUG, "actor-state: guid already holds ", dec(value), "; nothing to write");
+        if (err && errCap > 0) err[0] = 0;
+        return true;
+    }
+
+    void* actor = actorHint;
+    int index = indexHint;
+    if (!actor || index < 0) {
+        actor = FindSavableActorByGuid(guid);
+        if (actor && !FindGuidIndexInActor(actor, guid, &index)) {
+            actor = nullptr;
+            index = -1;
+        }
+    }
+
+    // (b) the game's own writer: inserts if needed and updates MySaveData.
+    if (actor && index >= 0) {
+        char werr[160];
+        if (WriteActorStateViaActorGuarded(actor, index, value, werr, sizeof(werr))) {
+            int32_t after = 0;
+            bool haveAfter = ActorStateRead(guid, &after);
+            if (!haveAfter || after != value) {
+                char gbuf[80];
+                EncodeGuidForLog(guid, gbuf, sizeof(gbuf));
+                ErrSet(err, errCap,
+                       "writer returned but the container did not change: wrote ",
+                       "");
+                QDLOG(LOG_ERROR, "actor-state: game writer for guid=", gbuf,
+                      " value=", dec(value), " read back ", dec(haveAfter ? after : -999999),
+                      " (WRITE FAILED)");
+                return false;
+            }
+
+            // The second oracle: the actor's cached value, which the writer just set.
+            int32_t cached = 0;
+            bool isSet = false;
+            char gerr[160];
+            bool haveCached = ReadActorStateViaGetterGuarded(actor, index, &cached, &isSet,
+                                                             gerr, sizeof(gerr));
+            if (haveCached && (cached != value || !isSet)) {
+                char gbuf[80];
+                EncodeGuidForLog(guid, gbuf, sizeof(gbuf));
+                QDLOG(LOG_WARN, "actor-state: container guid=", gbuf, " value=", dec(after),
+                      " but cached=", dec(cached), " isSet=", dec(isSet ? 1 : 0),
+                      " at index ", dec(index));
+            }
+
+            char gbuf[80];
+            EncodeGuidForLog(guid, gbuf, sizeof(gbuf));
+            QDLOG(LOG_INFO, "actor-state: wrote guid=", gbuf, " value=", dec(value),
+                  " via SavableActor.Save Data Index to World Save index=", dec(index),
+                  " read back container=", dec(after),
+                  (haveCached ? (isSet ? " cached=ok" : " cached=NOT SET") : " cached=n/a"));
+            return true;
+        }
+        // Fall through to the in-place path only if the key exists; the reason is kept
+        // so a failure is not reported as the other failure.
+        CopyNote(err, errCap, werr);
+    }
+
+    // (c) in-place update of an existing key.  This cannot create a key: a raw insert
+    // would need the engine allocator and a hash re-bucket, and a wrong stride here
+    // would corrupt the container rather than fail.
+    if (!present) {
+        char gbuf[80];
+        EncodeGuidForLog(guid, gbuf, sizeof(gbuf));
+        ErrSet(err, errCap,
+               "GUID not present in SavableActorStates and no live SavableActor owns it; "
+               "refusing to insert without the game's Map_Add path: ", gbuf);
+        return false;
+    }
+
+    ActorStateMap m;
+    if (!ActorStateMapLocate(&m)) {
+        ErrSet(err, errCap, "container not located: ", m.why);
+        return false;
+    }
+    const uint8_t* e = ActorStateFindGuarded(m, guid);
+    if (!e) {
+        ErrSet(err, errCap, "container changed between read and write", "");
+        return false;
+    }
+    if (!ActorStateWriteValueGuarded(e, value)) {
+        ErrSet(err, errCap, "in-place value store faulted", "");
+        return false;
+    }
+    int32_t after = 0;
+    bool haveAfter = ActorStateRead(guid, &after);
+    if (!haveAfter || after != value) {
+        char gbuf[80];
+        EncodeGuidForLog(guid, gbuf, sizeof(gbuf));
+        QDLOG(LOG_ERROR, "actor-state: in-place store for guid=", gbuf, " value=",
+              dec(value), " read back ", dec(haveAfter ? after : -999999),
+              " (WRITE FAILED)");
+        ErrSet(err, errCap, "in-place store did not read back", "");
+        return false;
+    }
+    char gbuf[80];
+    EncodeGuidForLog(guid, gbuf, sizeof(gbuf));
+    QDLOG(LOG_INFO, "actor-state: wrote guid=", gbuf, " value=", dec(value),
+          " in place (no live SavableActor), read back ", dec(after));
+    if (err && errCap > 0) err[0] = 0;
+    return true;
+}
+
+inline bool WrSetActorState(const QdGuid& guid, int32_t value, char* err, int errCap)
+{
+    return WrSetActorState(guid, value, nullptr, -1, err, errCap);
 }
 
 } // namespace qd
