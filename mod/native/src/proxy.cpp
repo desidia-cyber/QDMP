@@ -68,6 +68,7 @@
 #include "qddialogue.h"
 #include "qdenemy.h"
 #include "qdenemyown.h"
+#include "qdenemydmg.h"
 #include "qdflags.h"
 #include "qdpending.h"
 #include "qdinventory.h"
@@ -2174,6 +2175,19 @@ bool IntPropC(void* obj, const char* name, int32_t* out)
     return true;
 }
 
+// Float properties are read the same way.  The player has no `GetHP` (its class tag
+// list carries `Health`), and the enemy's per-swing multiplier is
+// `ActiveHitboxDamageMult`; both are values, not function calls, so they are read
+// directly rather than through a getter that may not exist.
+bool FloatPropC(void* obj, const char* name, float* out)
+{
+    if (!obj) return false;
+    int off = PropOff(ObjClass(obj), name);
+    if (off < 0) return false;
+    memcpy(out, (uint8_t*)obj + off, 4);
+    return true;
+}
+
 // The value a getter produced: its ReturnValue, or -- for a Blueprint function, which
 // returns through output parameters -- its first output parameter of the right size.
 uint8_t* OutParm(Call& c, int size)
@@ -2814,6 +2828,7 @@ enemy::HostView g_hostView;        // the other machine's rows (either direction
 enemy::KillLog  g_killLog;         // deaths this machine ran, re-broadcast as dead rows
 enemy::RowCursor g_rowCursor;
 enemyown::OwnerSet g_own;          // who runs each enemy (qdenemyown.h)
+enemydmg::SwingGate g_dmgGate;     // one K_DAMAGE per swing, bounded per second
 int             g_deadCursor = 0;
 bool            g_inOwnRecord = false;
 bool            g_inRemoteDeath = false;   // a death being applied FROM the other machine
@@ -2963,22 +2978,110 @@ static bool TargetField(const char* n)
            NameEquals(n, "Target") || NameEquals(n, "Victim");
 }
 
-struct EnemyDamageApi {
-    Fn     fn;
-    bool   tried;
-    bool   ok;
-    const PropDesc* param;     // the DamageToApply parameter
-    LayoutResult    fields;    // that struct's own properties
-    int    amountOff;
-    int    amountSize;
-    char   amountName[64];
-    bool   haveAmount;
+// --- the payload struct, resolved once and shared by both directions -------------
+// `TryApplyDamage` is the `FB_Damageable` interface message, and every implementing
+// class (NPC_Base_C, EnemyBase_C, FS_PlayerChar_C) declares the same signature with the
+// same `FB_DamageAttributeSet` payload.  So the struct's layout is a property of the
+// build, not of the class, and it is resolved once for BOTH uses: an enemy copy on the
+// host and the peer's own pawn on the receive lane.
+//
+// The old lookup asked for a ScriptStruct *named* "DamageToApply".  That is the
+// parameter's name, not the type's: the cooked tag lists the parameter as
+// `StructProperty DamageToApply` whose type is `FB_DamageAttributeSet` (measured in
+// EnemyBase_C's `ApplyDamageToHitboxTarget`).  Asking for the parameter name finds
+// nothing on a build that names the type correctly, which would have disabled every
+// damage path in silence.  The real name is tried first; the old one remains as a
+// fallback for a build that exports it differently.
+struct DamageStruct {
+    bool         tried;
+    bool         ok;
+    LayoutResult fields;
+    int          amountOff;
+    int          amountSize;
+    char         amountName[64];
+    bool         haveAmount;
 };
-EnemyDamageApi g_enDmg = {};
+DamageStruct g_dmgStruct = {};
 
-bool EnemyDamageApiInit(void* actor)
+bool DamageStructInit()
 {
-    EnemyDamageApi& a = g_enDmg;
+    DamageStruct& s = g_dmgStruct;
+    if (s.tried) return s.ok;
+    s.tried = true;
+
+    // The walk reads the class's FField chain with the discovered Layout.  Without a
+    // validated Layout every candidate offset is a guess, and a guessed struct fill is
+    // exactly the silent failure this path exists to make visible.
+    if (!Lay().valid) {
+        ReflectionReady();
+        if (!Lay().valid) {
+            QDLOG(LOG_ERROR, "damage: property layout not validated (", Lay().note,
+                  "); damage refused");
+            return false;
+        }
+    }
+
+    void* ss = FindObjectByNameAndClass("FB_DamageAttributeSet", "ScriptStruct");
+    if (!ss) ss = FindObjectByNameAndClass("DamageToApply", "ScriptStruct");
+    if (!ss) ss = FindObjectByNameAndClass("FB_DamageAttributeSet", "UserDefinedStruct");
+    if (!ss) {
+        QDLOG(LOG_ERROR, "damage: the FB_DamageAttributeSet UScriptStruct is not loaded; "
+                         "damage cannot be built");
+        return false;
+    }
+    if (!WalkFieldsRaw(ss, Lay(), false, &s.fields)) {
+        QDLOG(LOG_ERROR, "damage: FB_DamageAttributeSet properties could not be walked");
+        return false;
+    }
+    int best = 0;
+    for (int i = 0; i < s.fields.props; ++i) {
+        const PropDesc& d = s.fields.p[i];
+        bool isFloat = NameEquals(d.type, "FloatProperty") && d.size == 4;
+        bool isDouble = NameEquals(d.type, "DoubleProperty") && d.size == 8;
+        if (!isFloat && !isDouble) continue;
+        int sc = DamageAmountScore(d.name);
+        if (sc > best) {
+            best = sc;
+            s.amountOff = d.offset;
+            s.amountSize = d.size;
+            memcpy(s.amountName, d.name, sizeof(s.amountName));
+            s.amountName[sizeof(s.amountName) - 1] = 0;
+            s.haveAmount = true;
+        }
+    }
+    // Dump the struct once at INFO: the live run then has the real field set, which is
+    // the only way a wrong fill is diagnosable rather than mysterious.
+    for (int i = 0; i < s.fields.props; ++i)
+        QDLOG(LOG_INFO, "    FB_DamageAttributeSet.", s.fields.p[i].name, " : ",
+              s.fields.p[i].type, " @", dec(s.fields.p[i].offset),
+              " size=", dec(s.fields.p[i].size));
+    if (!s.haveAmount) {
+        QDLOG(LOG_ERROR, "damage: no plausible damage-amount field in FB_DamageAttributeSet");
+        return false;
+    }
+    s.ok = true;
+    QDLOG(LOG_INFO, "damage: FB_DamageAttributeSet fields=", dec(s.fields.props),
+          ", amount -> ", s.amountName, " @", dec(s.amountOff),
+          " size=", dec(s.amountSize));
+    return true;
+}
+
+// One resolved TryApplyDamage PER CLASS.  The UFunction pointer is class-specific even
+// though the signature is not: calling an enemy's implementation with the player pawn
+// as `this` would run Blueprint bytecode against the wrong object layout, which fails
+// as an access violation the __try cannot catch.  So the enemy's lane and the peer's
+// own-pawn lane keep separate resolved functions, and only the payload struct is shared.
+struct DamageApi {
+    Fn              fn;
+    bool            tried;
+    bool            ok;
+    const PropDesc* param;     // the DamageToApply parameter of THIS class's function
+};
+DamageApi g_enDmg = {};        // enemies (host-side convergence and peer hit intents)
+DamageApi g_pawnDmg = {};      // the peer's own pawn (the G4 receive lane)
+
+bool DamageApiInit(DamageApi& a, void* actor, const char* label)
+{
     if (a.tried) return a.ok;
     a.tried = true;
     if (!a.fn.Resolve(actor, "TryApplyDamage")) {
@@ -2988,10 +3091,11 @@ bool EnemyDamageApiInit(void* actor)
         if (a.fn.fn) a.fn.sig = Signature(a.fn.fn);
     }
     if (!a.fn.fn || !a.fn.sig.valid) {
-        QDLOG(LOG_ERROR, "enemy damage: TryApplyDamage (FB_Damageable) not found; "
-                         "enemy HP cannot be driven from this module");
+        QDLOG(LOG_ERROR, "damage: TryApplyDamage (FB_Damageable) not found on ", label,
+              "; its HP cannot be driven from this module");
         return false;
     }
+    a.param = nullptr;
     for (int i = 0; i < a.fn.sig.props; ++i) {
         const PropDesc& d = a.fn.sig.p[i];
         if (!NameEquals(d.type, "StructProperty")) continue;
@@ -2999,76 +3103,78 @@ bool EnemyDamageApiInit(void* actor)
         if (!a.param || enemyown::HasCI(d.name, "DamageToApply")) a.param = &d;
     }
     if (!a.param) {
-        QDLOG(LOG_ERROR, "enemy damage: TryApplyDamage has no DamageToApply struct parameter");
+        QDLOG(LOG_ERROR, "damage: TryApplyDamage on ", label,
+              " has no DamageToApply struct parameter");
         return false;
     }
-    void* ss = FindObjectByNameAndClass("DamageToApply", "ScriptStruct");
-    if (!ss) ss = FindObjectByNameAndClass("DamageToApply", "UserDefinedStruct");
-    if (!ss) {
-        QDLOG(LOG_ERROR, "enemy damage: the DamageToApply UScriptStruct is not loaded");
+    if (!DamageStructInit()) return false;
+    // Never write outside the parameter: a struct whose PropertiesSize disagrees with
+    // the function's parm block would otherwise scribble over the next one.
+    if (g_dmgStruct.amountOff + g_dmgStruct.amountSize > a.param->size) {
+        QDLOG(LOG_ERROR, "damage: ", g_dmgStruct.amountName, " lies outside ",
+              a.param->name, " size=", dec(a.param->size), " on ", label);
         return false;
     }
-    if (!WalkFieldsRaw(ss, Lay(), false, &a.fields)) {
-        QDLOG(LOG_ERROR, "enemy damage: DamageToApply properties could not be walked");
-        return false;
-    }
-    int best = 0;
-    for (int i = 0; i < a.fields.props; ++i) {
-        const PropDesc& d = a.fields.p[i];
-        bool isFloat = NameEquals(d.type, "FloatProperty") && d.size == 4;
-        bool isDouble = NameEquals(d.type, "DoubleProperty") && d.size == 8;
-        if (!isFloat && !isDouble) continue;
-        // Never write outside the parameter: a struct whose PropertiesSize disagrees
-        // with the function's parm block would otherwise scribble over the next one.
-        if (d.offset < 0 || d.offset + d.size > a.param->size) continue;
-        int s = DamageAmountScore(d.name);
-        if (s > best) {
-            best = s;
-            a.amountOff = d.offset;
-            a.amountSize = d.size;
-            memcpy(a.amountName, d.name, sizeof(a.amountName));
-            a.amountName[sizeof(a.amountName) - 1] = 0;
-            a.haveAmount = true;
-        }
-    }
-    QDLOG(LOG_INFO, "enemy damage: TryApplyDamage param ", a.param->name, " size=",
-          dec(a.param->size), ", DamageToApply fields=", dec(a.fields.props),
-          ", amount -> ", (a.haveAmount ? a.amountName : "NONE"),
-          " @", dec(a.amountOff), " size=", dec(a.amountSize));
-    // Dump the struct once at INFO: the live run then has the real field set, which is
-    // the only way a wrong fill is diagnosable rather than mysterious.
-    for (int i = 0; i < a.fields.props; ++i)
-        QDLOG(LOG_INFO, "    DamageToApply.", a.fields.p[i].name, " : ",
-              a.fields.p[i].type, " @", dec(a.fields.p[i].offset),
-              " size=", dec(a.fields.p[i].size));
-    if (!a.haveAmount) {
-        QDLOG(LOG_ERROR, "enemy damage: no plausible damage-amount field in DamageToApply");
-        return false;
-    }
+    QDLOG(LOG_INFO, "damage: TryApplyDamage param ", a.param->name, " size=",
+          dec(a.param->size), " on ", label, ", amount -> ", g_dmgStruct.amountName,
+          " @", dec(g_dmgStruct.amountOff));
     a.ok = true;
     return true;
 }
 
-bool ApplyEnemyDamage(void* actor, float amount, void* causer)
+// The HP oracle for each kind of target.  Enemies answer GetHP/GetMaxHP (the same
+// read-back the enemy convergence path already trusts).  The player does not have
+// `GetHP` -- its current HP is the `Health` FloatProperty in its own tag list -- so it
+// is read as a value; asking for a function that is not there would report "no effect"
+// for a hit that actually landed.
+bool ActorHp(void* actor, bool player, float* hp, float* maxHp)
 {
+    if (!actor || !hp) return false;
+    if (player) {
+        if (!FloatPropC(actor, "Health", hp)) return false;
+        if (maxHp) {
+            static Fn fMax = {};
+            if (!CallGetFloat(actor, fMax, "GetMaxHP", maxHp)) *maxHp = 0.0f;
+        }
+        return true;
+    }
+    return EnemyHp(actor, hp, maxHp);
+}
+
+// Apply an amount to ANY implementer.  This is the part `ApplyEnemyDamage` already did
+// correctly: the payload is walked from reflection and filled by field name, the HP is
+// read before and after, and the HP movement is the only proof it worked.  Factoring it
+// out is what lets the peer apply the same message to its own pawn instead of the two
+// directions drifting apart.
+//
+// `before`/`after`/`haveHp` are optional out-parameters so the caller can log the
+// outcome with the attacker's identity in one line.
+bool ApplyDamageToActor(void* actor, float amount, void* causer, bool player,
+                        float* beforeOut, float* afterOut, bool* haveHpOut)
+{
+    if (beforeOut) *beforeOut = 0.0f;
+    if (afterOut) *afterOut = 0.0f;
+    if (haveHpOut) *haveHpOut = false;
     if (!actor || !ObjectIsLive(actor) || !(amount > 0.0f)) return false;
-    if (!EnemyDamageApiInit(actor)) return false;
-    EnemyDamageApi& a = g_enDmg;
+
+    DamageApi& a = player ? g_pawnDmg : g_enDmg;
+    const char* label = player ? "the local player" : "an enemy";
+    if (!DamageApiInit(a, actor, label)) return false;
 
     float before = 0, after = 0, mx = 0;
-    bool haveBefore = EnemyHp(actor, &before, &mx);
+    bool haveBefore = ActorHp(actor, player, &before, &mx);
 
     Call c(a.fn);
     uint8_t* base = c.At(a.param->name, a.param->size);
     if (!base) return false;
-    if (a.amountSize == 8) {
+    if (g_dmgStruct.amountSize == 8) {
         double v = (double)amount;
-        memcpy(base + a.amountOff, &v, 8);
+        memcpy(base + g_dmgStruct.amountOff, &v, 8);
     } else {
-        memcpy(base + a.amountOff, &amount, 4);
+        memcpy(base + g_dmgStruct.amountOff, &amount, 4);
     }
-    for (int i = 0; i < a.fields.props; ++i) {
-        const PropDesc& d = a.fields.p[i];
+    for (int i = 0; i < g_dmgStruct.fields.props; ++i) {
+        const PropDesc& d = g_dmgStruct.fields.p[i];
         if (!NameEquals(d.type, "ObjectProperty") || d.size < 8) continue;
         if (d.offset + 8 > a.param->size) continue;
         void* v = nullptr;
@@ -3081,15 +3187,148 @@ bool ApplyEnemyDamage(void* actor, float amount, void* causer)
     float ret = 0.0f;
     if (c.Ret()) memcpy(&ret, c.Ret(), 4);
 
-    bool haveAfter = EnemyHp(actor, &after, &mx);
+    bool haveAfter = ActorHp(actor, player, &after, &mx);
     bool took = haveBefore && haveAfter && after < before;
+    if (beforeOut) *beforeOut = before;
+    if (afterOut) *afterOut = after;
+    if (haveHpOut) *haveHpOut = haveBefore && haveAfter;
+
     static int failures = 0;
-    if (!took && haveBefore && haveAfter && failures++ < 5)
-        QDLOG(LOG_WARN, "enemy damage had NO effect: TryApplyDamage ", (ran ? "ran" : "did not run"),
-              " asked ", flt(amount, 1), " returned ", flt(ret, 2),
-              " hp ", flt(before, 1), " -> ", flt(after, 1),
-              " (if this repeats, the DamageToApply fill is wrong)");
+    if (!took && haveBefore && haveAfter && failures++ < 5) {
+        // The enemy variant is SYNC-GAPS section 5's acceptance criterion; keep the
+        // exact "enemy damage had NO effect" wording so a live run can grep for it.
+        if (player)
+            QDLOG(LOG_WARN, "player damage had NO effect: TryApplyDamage ",
+                  (ran ? "ran" : "did not run"), " asked ", flt(amount, 1),
+                  " returned ", flt(ret, 2), " hp ", flt(before, 1), " -> ",
+                  flt(after, 1), " (if this repeats, the FB_DamageAttributeSet fill is wrong)");
+        else
+            QDLOG(LOG_WARN, "enemy damage had NO effect: TryApplyDamage ",
+                  (ran ? "ran" : "did not run"), " asked ", flt(amount, 1),
+                  " returned ", flt(ret, 2), " hp ", flt(before, 1), " -> ",
+                  flt(after, 1), " (if this repeats, the FB_DamageAttributeSet fill is wrong)");
+    }
     return took;
+}
+
+bool ApplyEnemyDamage(void* actor, float amount, void* causer)
+{
+    return ApplyDamageToActor(actor, amount, causer, false, nullptr, nullptr, nullptr);
+}
+
+// ---------------------------------------------------------------------------
+// The two numbers the K_DAMAGE lane must not invent (SYNC-RESEARCH 1c, section A)
+// ---------------------------------------------------------------------------
+// DAMAGE.  The value the game applies is the `DamageAmount` field of the
+// `FB_DamageAttributeSet` that `GetAttackDamageForSelectedAttack` returns.
+// `ApplyDamageToHitboxTarget` calls exactly that getter (its bytecode references
+// `CallFunc_GetAttackDamageForSelectedAttack_FB_DamageAttributeSet` and reads
+// `ActiveHitboxDamageMult`, which it passes as `ExtraMult`) and hands the result to
+// `TryApplyDamage`.  Reproducing that call is therefore the game's own number.
+//
+// The chain it is built on, measured from the cooked packages:
+//     EnemyBase_C.Data          ObjectProperty -> the EnemyData_C asset
+//     EnemyData_C.BaseDamage    FloatProperty  (Enemies/Shared/EnemyData.uasset)
+//     EnemyBase_C.Get Enemy Base Damage  7 BaseDamage FName sites; returns that value
+//     EnemyBase_C.Get Attack Damage(ExtraMult, AttackIndex) -> FB_DamageAttributeSet
+//     EnemyBase_C.GetAttackDamageForSelectedAttack(ExtraMult) -> that struct
+// So if the getter cannot be called, `Data.BaseDamage * ActiveHitboxDamageMult` is
+// still a measured property read (every factor named), and only if that also fails is
+// the constant an estimate.
+bool EnemySwingDamage(void* actor, float* out, const char** source)
+{
+    if (out) *out = 0.0f;
+    if (source) *source = "none";
+    if (!out || !actor || !DamageStructInit()) return false;
+
+    // ActiveHitboxDamageMult is the per-swing multiplier `Activate Hitbox Advanced`
+    // writes and `ApplyDamageToHitboxTarget` passes as ExtraMult.
+    float mult = 1.0f;
+    FloatPropC(actor, "ActiveHitboxDamageMult", &mult);
+
+    static Fn fSel = {};
+    if (fSel.Resolve(actor, "GetAttackDamageForSelectedAttack")) {
+        Call c(fSel);
+        bool put = false;
+        if (fSel.Off("ExtraMult") >= 0) {
+            c.F32("ExtraMult", mult);
+            put = true;
+        } else if (fSel.sig.props > 0) {
+            c.F32(fSel.sig.p[0].name, mult);
+            put = true;
+        }
+        uint8_t* ret = (put && c.Run(actor)) ? c.Ret() : nullptr;
+        if (ret) {
+            const PropDesc* rp = nullptr;
+            for (int i = 0; i < fSel.sig.props; ++i)
+                if (fSel.sig.p[i].flags & CPF_ReturnParm) rp = &fSel.sig.p[i];
+            // The return is the same struct type the payload walk measured; comparing
+            // the offset against the return's own size is what keeps a different
+            // struct from being read past its end.
+            if (rp && g_dmgStruct.amountOff + g_dmgStruct.amountSize <= rp->size) {
+                float v = 0.0f;
+                if (g_dmgStruct.amountSize == 8) {
+                    double dv = 0.0;
+                    memcpy(&dv, ret + g_dmgStruct.amountOff, 8);
+                    v = (float)dv;
+                } else {
+                    memcpy(&v, ret + g_dmgStruct.amountOff, 4);
+                }
+                if (v > 0.0f && v < 1.0e6f) {
+                    *out = v;
+                    if (source) *source = "GetAttackDamageForSelectedAttack";
+                    return true;
+                }
+            }
+        }
+    }
+
+    // The property the getter is built on.  This is a measured value, not an estimate;
+    // it just omits the selected attack's own extra multiplier.
+    void* data = ObjPropC(actor, "Data");
+    float base = 0.0f;
+    if (data && FloatPropC(data, "BaseDamage", &base) && base > 0.0f && base < 1.0e6f) {
+        *out = base * (mult > 0.0f ? mult : 1.0f);
+        if (source) *source = "Data.BaseDamage";
+        return *out > 0.0f;
+    }
+    static Fn fBase = {};
+    if (CallGetFloat(actor, fBase, "Get Enemy Base Damage", &base) &&
+        base > 0.0f && base < 1.0e6f) {
+        *out = base * (mult > 0.0f ? mult : 1.0f);
+        if (source) *source = "Get Enemy Base Damage";
+        return *out > 0.0f;
+    }
+    return false;
+}
+
+// RANGE.  `GetAttackRange()` is the AI's reach for the attack it currently has
+// selected: its payload references `SelectedAttackConfig` and
+// `GetAttackRange_Base.{MinRange,MaxRange}`, and returns the `Range` FloatProperty.
+// `LargestAttackRange` is the enemy's own cached maximum (read by
+// `CacheAndInitializeData`), so it is a conservative second choice.  Only if neither
+// resolves does the caller send with the stated approximation constant.
+bool EnemyAttackRange(void* actor, float* out, const char** source)
+{
+    if (out) *out = 0.0f;
+    if (source) *source = "none";
+    if (!out || !actor) return false;
+
+    static Fn fRange = {};
+    float v = 0.0f;
+    if (CallGetFloat(actor, fRange, "GetAttackRange", &v) && v > 0.0f && v < 1.0e6f) {
+        *out = v;
+        if (source) *source = "GetAttackRange";
+        return true;
+    }
+    if (FloatPropC(actor, "LargestAttackRange", &v) && v > 0.0f && v < 1.0e6f) {
+        *out = v;
+        if (source) *source = "LargestAttackRange";
+        return true;
+    }
+    *out = enemydmg::kFallbackRangeCm;
+    if (source) *source = "APPROXIMATION";
+    return false;
 }
 
 // Freeze a copy (the other machine runs it) or hand it back to its own AI.
@@ -3220,11 +3459,126 @@ void MirrorEnemyStatus(void* actor, uint16_t mask)
           " stagger ", (stag ? (wroteStag ? "ok" : "WRITE FAILED") : "property absent"));
 }
 
+// ---------------------------------------------------------------------------
+// The host describes a swing the partner could not have felt (G4)
+// ---------------------------------------------------------------------------
+// The trigger is the same montage change the detail lane already detects.  One
+// K_DAMAGE per new montage, keyed by the detail sequence, so a re-classification of the
+// same swing (a status byte changed, the pump ran again) cannot send it twice.
+//
+// The condition is deliberately conservative.  The host only describes a swing when it
+// is the machine actually running the enemy, the partner is in the game world, the two
+// machines agree on the map, the partner's interpolated body exists, and that body is
+// inside the attack's own range.  Every one of those is a reason NOT to invent a hit
+// that the game never decided.
+void TrySendEnemyDamage(EnemyRec& r, uint32_t seq, uint8_t anim, uint32_t now)
+{
+    if (!Cfg().enemy_sync) return;
+    if (!g_net.IsHost() || !g_net.Connected()) return;
+    // The detail caller already filters O_LOCAL, but the gate is repeated because this
+    // is the function that decides who may describe a hit; a future caller must not be
+    // able to make a frozen follower send one.
+    if (!r.haveGuid || g_own.State(r.guid) != enemyown::O_LOCAL) return;
+
+    // E_ATTACK is the melee vocabulary (attack/slash/swing/claw/bite/sting/punch/swipe)
+    // and E_CAST is the ranged one (cast/spell/magic/summon/spit) in ClassifyAnim.  The
+    // range test below is what keeps a self-centred buff from being read as a hit.
+    bool melee = (anim == wire::E_ATTACK);
+    bool ranged = (anim == wire::E_CAST);
+    if (!melee && !ranged) return;
+
+    enemydmg::Context c;
+    c.host_owns     = true;
+    c.peer_in_world = g_peerInGameplay;
+    c.worlds_agree  = g_map.PeerStateApplies(now);
+
+    // The peer's drawn body, exactly as the player lane maintains it.  A frozen body is
+    // no position at all (qdmotion.h), and a hit cannot be decided against it.
+    motion::MoveOut m = g_peerInterp.Sample(now);
+    c.have_peer_pos = m.valid && !m.frozen && !m.should_hide;
+
+    ActorXform x = {};
+    bool haveEnemy = ReadActorXform(r.actor, &x);
+    c.have_enemy_pos = haveEnemy;
+
+    float range = 0.0f;
+    const char* rangeSrc = "none";
+    EnemyAttackRange(r.actor, &range, &rangeSrc);
+    c.range_cm = range;
+
+    float ex[3] = {x.px, x.py, x.pz};
+    float peer[3] = {m.px, m.py, m.pz};
+    if (!enemydmg::ShouldSend(c, ex, peer)) {
+        // Debug level and rate-limited: an out-of-range swing is the normal case and
+        // must not fill the log of a fight that is working.
+        static uint32_t lastRefusal = 0;
+        if (now - lastRefusal > 5000) {
+            lastRefusal = now;
+            QDLOG(LOG_DEBUG, "damage: swing not sent guid=", hex32(r.guid[0]),
+                  " owner=", dec(c.host_owns ? 1 : 0),
+                  " peerInWorld=", dec(c.peer_in_world ? 1 : 0),
+                  " worldsAgree=", dec(c.worlds_agree ? 1 : 0),
+                  " havePos=", dec((c.have_enemy_pos && c.have_peer_pos) ? 1 : 0),
+                  " range=", flt(range, 0), " (", rangeSrc, ")");
+        }
+        return;
+    }
+
+    // The gate consumes the swing only after the range test passed, so a partner who
+    // was out of reach does not use up the per-second budget.
+    if (!g_dmgGate.Admit(r.guid, (uint8_t)seq, now)) {
+        static uint32_t lastGate = 0;
+        if (now - lastGate > 5000) {
+            lastGate = now;
+            QDLOG(LOG_DEBUG, "damage: gate dropped guid=", hex32(r.guid[0]),
+                  " seq=", dec((int)seq), " repeats=", dec(g_dmgGate.RepeatDrops()),
+                  " rate=", dec(g_dmgGate.RateDrops()));
+        }
+        return;
+    }
+
+    float amount = 0.0f;
+    const char* dmgSrc = "none";
+    bool measured = EnemySwingDamage(r.actor, &amount, &dmgSrc);
+    if (!measured) {
+        // The one case the wire has a bit for: no reliable property resolved, so say
+        // so.  An estimate that is silently presented as measured turns a balance bug
+        // into a sync bug.
+        amount = enemydmg::kFallbackDamage;
+        dmgSrc = "ESTIMATE";
+    }
+    int32_t centi = enemydmg::Centi(amount);
+    if (centi <= 0) {
+        QDLOG(LOG_WARN, "damage: refusing to send a non-positive amount for guid=",
+              hex32(r.guid[0]));
+        return;
+    }
+
+    wire::DamageBody d;
+    memset(&d, 0, sizeof(d));
+    memcpy(d.guid, r.guid, sizeof(d.guid));
+    d.amount_centi = centi;
+    d.flags = melee ? wire::kDamageMelee : wire::kDamageRanged;
+    if (!measured) d.flags |= wire::kDamageGuessed;
+
+    uint8_t body[wire::kMaxBody];
+    wire::Writer w(body, sizeof(body));
+    wire::WriteDamage(w, d);
+    if (w.ok && g_net.SendReliable(wire::K_DAMAGE, body, w.len)) {
+        QDLOG(LOG_INFO, "damage sent guid=", hex32(r.guid[0]), " seq=", dec((int)seq),
+              " ", (melee ? "melee" : "ranged"), " amount=", flt(amount, 1),
+              " centi=", dec(centi), " (", dmgSrc, ")", " range=", flt(range, 0),
+              " (", rangeSrc, ")", (!measured ? " ESTIMATED" : ""));
+    } else {
+        QDLOG(LOG_WARN, "damage: K_DAMAGE send failed guid=", hex32(r.guid[0]),
+              " seq=", dec((int)seq));
+    }
+}
+
 // The owner publishes what the enemy is doing.  Sent on change only: a montage is an
 // event, not a sample, and a status mask only changes when a debuff lands or expires.
 void SendEnemyDetail(EnemyRec& r, uint32_t now)
 {
-    (void)now;
     void* mesh = EnemyMesh(r.actor);
     void* mon = mesh ? MeshActiveMontage(mesh) : nullptr;
     uint16_t mask = EnemyStatusMask(r.actor);
@@ -3254,6 +3608,12 @@ void SendEnemyDetail(EnemyRec& r, uint32_t now)
     wire::Writer w(body, sizeof(body));
     wire::WriteEnemyDetail(w, d);
     if (w.ok) g_net.SendReliable(wire::K_ENEMY_DETAIL, body, w.len);
+    // A new attack montage is also the moment to describe the hit to the partner: the
+    // owner is the only machine that saw the swing, and the peer is the only machine
+    // that can apply it to its own pawn.  Keyed by the same seq, so it is one per
+    // occurrence rather than one per pump.
+    if (monChanged && mon && (d.anim == wire::E_ATTACK || d.anim == wire::E_CAST))
+        TrySendEnemyDamage(r, d.seq, d.anim, now);
     r.pubMon = mon;
     r.pubStatus = mask;
     QDLOG(LOG_INFO, "enemy detail sent guid=", hex32(r.guid[0]), " anim=", dec((int)d.anim),
@@ -3530,6 +3890,86 @@ void PeerApplyEnemyIntent(wire::Reader& r)
     if (b.kind == wire::I_ENEMY_HIT) ApplyEnemyHitIntent(b);
 }
 
+// ---------------------------------------------------------------------------
+// The peer performs the hit the host could not (G4, WIRE.md 3.15b)
+// ---------------------------------------------------------------------------
+// This is the other half of TrySendEnemyDamage: the host described an enemy's swing,
+// and only this machine can apply it because only this machine owns the pawn.  The
+// application goes through the SAME TryApplyDamage message the game would have sent --
+// so hit reactions, resist, status and the death path all run -- and the HP read-back
+// is the proof, exactly as on the enemy path.
+void OnPlayerDamage(wire::Reader& r, uint32_t now)
+{
+    if (!Cfg().enemy_sync) return;
+    // K_DAMAGE is host -> peer.  A host that receives one is looking at a stale or
+    // misdirected packet and must not damage its own player with it.
+    if (!g_net.IsPeer()) return;
+
+    wire::DamageBody d;
+    if (!wire::ReadDamage(r, &d)) return;
+    float amount = (float)d.amount_centi / 100.0f;
+    if (!(amount > 0.0f)) return;
+
+    // A world the two machines disagree about has its own enemies and its own FGuids.
+    // The pre-switch divergence filter does not name K_DAMAGE (that filter belongs to
+    // the streaming stream), so the same gate is asked here.
+    if (!g_map.PeerStateApplies(now)) {
+        QDLOG(LOG_WARN, "damage dropped: worlds differ (local ", g_map.Local(),
+              ", partner ", (g_map.Peer()[0] ? g_map.Peer() : "?"), ")");
+        return;
+    }
+
+    // The attacker must still be an enemy this machine can place.  It does NOT need a
+    // local actor: G4 is exactly the case where the host runs an enemy the peer's
+    // spawner never spawned.  A GUID the host has published a row for is enough to
+    // attribute the hit; anything else is a packet about a spawn this machine has no
+    // record of, and applying it would be damage from nothing.
+    EnemyRec* er = EnemyByGuid(d.guid);
+    bool haveActor = (er && ObjectIsLive(er->actor));
+    if (!haveActor && !g_hostView.Get(d.guid)) {
+        static int dropped = 0;
+        if (dropped++ < 5)
+            QDLOG(LOG_WARN, "damage dropped: attacker guid=", hex32(d.guid[0]),
+                  " does not resolve on this machine");
+        return;
+    }
+
+    if (!IsGameplayPawn(g_localPawn)) {
+        QDLOG(LOG_INFO, "damage dropped: the local pawn is not in the game world");
+        return;
+    }
+    uint8_t dead = 0;
+    bool isDead = (BytePropC(g_localPawn, "IsDead", &dead) && dead != 0) ||
+                  (BytePropC(g_localPawn, "bDead", &dead) && dead != 0);
+    if (isDead) {
+        QDLOG(LOG_INFO, "damage dropped: the local player is dead");
+        return;
+    }
+
+    // The causer is the enemy actor when this machine has it; a null causer is what the
+    // game itself passes for an environmental hit, and the payload simply carries none.
+    void* causer = haveActor ? er->actor : nullptr;
+    const char* kind = (d.flags & wire::kDamageMelee) ? "melee"
+                     : (d.flags & wire::kDamageRanged) ? "ranged" : "untyped";
+
+    float before = 0.0f, after = 0.0f;
+    bool haveHp = false;
+    bool applied = ApplyDamageToActor(g_localPawn, amount, causer, true,
+                                      &before, &after, &haveHp);
+    if (haveHp)
+        QDLOG(applied ? LOG_INFO : LOG_WARN, "damage from enemy ", hex32(d.guid[0]), " ",
+              kind, (d.flags & wire::kDamageGuessed) ? " (ESTIMATED amount)" : "",
+              ": ", flt(amount, 1), (applied ? " applied" : " NO effect"),
+              " hp ", flt(before, 1), " -> ", flt(after, 1),
+              (causer ? "" : " (no local actor for the attacker)"));
+    else
+        QDLOG(applied ? LOG_INFO : LOG_WARN, "damage from enemy ", hex32(d.guid[0]), " ",
+              kind, (d.flags & wire::kDamageGuessed) ? " (ESTIMATED amount)" : "",
+              ": ", flt(amount, 1), (applied ? " applied" : " NO effect"),
+              " (the pawn's Health property was unreadable)",
+              (causer ? "" : " (no local actor for the attacker)"));
+}
+
 void EnemyPump(uint32_t now)
 {
     if (!Cfg().enemy_sync) return;
@@ -3547,6 +3987,9 @@ void EnemyPump(uint32_t now)
         g_hostView.Reset();
         g_killLog.Clear();
         g_deadCursor = 0;
+        // A swing sequence is per-world too; carrying it across a map change would
+        // treat the first attack in the new world as already described.
+        g_dmgGate.Reset();
     }
     EnemyScanStep();
     if (!g_net.Connected()) {
@@ -3554,6 +3997,7 @@ void EnemyPump(uint32_t now)
         // a stale claim from the last session must not freeze a copy on reconnect.
         g_own.Reset();
         g_hostView.Reset();
+        g_dmgGate.Reset();
         for (int i = 0; i < g_enN; ++i) if (g_en[i].driven && ObjectIsLive(g_en[i].actor)) EnemyDrive(g_en[i], false);
         return;
     }
@@ -4105,6 +4549,12 @@ void DispatchInbound(const InboundPacket& p, uint32_t now)
     case wire::K_ENEMY_DETAIL:
         // The owner's animation and status, replayed on the follower's frozen copy.
         if (Cfg().enemy_sync) OnEnemyDetail(r, now);
+        break;
+    case wire::K_DAMAGE:
+        // Host -> peer: an enemy the HOST runs attacked the partner across the
+        // distance, and only the machine that owns the pawn can apply it.  This case
+        // is last on purpose -- it is the newest kind and touches no other lane.
+        if (Cfg().enemy_sync) OnPlayerDamage(r, now);
         break;
     default:
         break;
