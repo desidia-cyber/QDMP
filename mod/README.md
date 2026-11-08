@@ -48,12 +48,25 @@ which cannot corrupt progression and does prove the path.  See
 **NOT yet proven live** (each has its own switch in `qdcoop.ini`, default OFF):
 
 - the puppet body spawn (the engine deferred-spawn pair — proof pending, `PuppetSync=0`)
-- the level-streaming union (`StreamUnion=0`) — built: veto at `SetShouldBeVisible`
-- enemy sync (`EnemySync=0`) — built: host rows, driven/local copies, hit and record intents
-- two-player dialogue (`DialogueSync=0`) — built: per-slot talk state, partner's NPC blocked
-
-What is still not synced at all is listed in [`doc/SYNC-GAPS.md`](doc/SYNC-GAPS.md).
+- the level-streaming union (`StreamUnion=0`) — built: vetoes both
+  `SetShouldBeVisible` and the byte-verified `SetShouldBeLoaded`, refuses to apply the
+  partner's levels while the two machines are in different maps
+- enemy sync (`EnemySync=0`) — built: ownership follows the nearer player so an enemy
+  fights the player who can actually reach it, driven copies follow the owner's rows,
+  montages and status effects ride `ENEMY_DETAIL`, hits and records go back as intents
+- two-player dialogue (`DialogueSync=0`) — built: per-slot talk state, partner's NPC
+  blocked through `NPC_Base`'s own `BlockInteract` property
+- the inventory mirror (`InventorySync=0`) — built: the host publishes its inventory
+  whole, the peer grants only what it lacks
 - pausing suppression (`SuppressMenuPause=0`)
+
+The peer's own progression now reaches the host (`FlagSync=1`, an `INTENT kind 1` per
+raised `NamedSaveData` key), which is what makes quest steps, barricades and
+`CheckpointUnlockCount` shared rather than local.
+
+What is still not synced at all is listed in [`doc/SYNC-GAPS.md`](doc/SYNC-GAPS.md);
+what has been *measured* about the game behind those gaps is in
+[`doc/SYNC-RESEARCH.md`](doc/SYNC-RESEARCH.md).
 
 Enabling one of those before its proof has passed will most likely work, and will
 certainly not be diagnosable if it does not.
@@ -83,18 +96,25 @@ mod/
       qdsubstrate.h      image base, FName, GObjects, ProcessEvent, runtime validation
       qdreflect.h        UFunction lookup, property-layout discovery, reflective calls
       qdsave.h           save object, NamedSaveData read/write, TMap decoding
+      qdwrite.h          the oracle-gated save writes (NamedSaveData, AddItemToInventory)
       qdwire.h           the wire format, native side
       qdnet.h            UDP relay transport, reliability, game-thread handoff
       qdmotion.h         snapshot interpolation            (pure, tested)
       qdpuppet.h         puppet lifecycle state machine    (pure, tested)
-      qdstream.h         level union guard                 (pure, tested)
+      qdstream.h         level union guard, map divergence (pure, tested)
       qddialogue.h       dialogue lock                     (pure, tested)
       qdflags.h          monotonic flag bank               (pure, tested)
+      qdenemy.h          enemy ownership/drive model       (pure, tested)
+      qdenemyown.h       ownership by proximity            (pure, tested)
+      qdpending.h        the peer's outbound flag intents  (pure, tested)
+      qdinventory.h      inventory publication and grants  (pure, tested)
     test/                run_tests.bat + one executable per pure module
   third_party/minhook/   vendored, MIT
   rust/                  the canonical wire format + the relay server
   tools/                 generators, save tooling, install script
-  doc/                   WIRE.md, IMPLEMENTATION.md, REUSE.md, SYNC-DESIGN.md, API-GAPS.md
+  doc/                   WIRE.md, IMPLEMENTATION.md, REUSE.md, SYNC-DESIGN.md, API-GAPS.md,
+                         SYNC-GAPS.md (what is not synced), SYNC-RESEARCH.md (what the
+                         game actually does behind those gaps)
   qdcoop.ini             the shipped default configuration
 ```
 
