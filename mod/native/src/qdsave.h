@@ -189,6 +189,55 @@ inline SaveLayer& Save() { static SaveLayer s; return s; }
 // {TPair (FName 8 + int32 4), HashNextId int32, HashIndex int32} = 20 bytes, but the
 // stride is still LEARNED, then accepted only if it reproduces the native getter on
 // at least two keys with no disagreement.
+//
+// The array length at +8 counts FREE SLOTS as well as live entries (a removed TSet
+// element becomes an entry on the free list, not a compaction).  Every walker below
+// therefore rejects each element individually; an index bound is not a liveness test.
+struct MapStorage {
+    const uint8_t* arr;
+    int32_t        num;
+};
+
+inline bool MapStorageOf(const void* save, int mapOffset, MapStorage* out)
+{
+    if (!out) return false;
+    out->arr = nullptr;
+    out->num = 0;
+    if (!save || mapOffset < 0) return false;
+
+    void*   arr = nullptr;
+    int32_t num = 0;
+    __try {
+        const uint8_t* base = (const uint8_t*)save + mapOffset;
+        arr = *(void**)base;
+        num = *(int32_t*)(base + 8);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    // `arr == null` with `num == 0` is an EMPTY container; bad counts are unreadable.
+    // Keeping those distinct matters for inventory: an unreadable map must not be
+    // published as "the host has nothing", which the peer would echo as an empty body.
+    if (num < 0 || num > 100000) return false;
+    if (num > 0 && !arr) return false;
+    out->arr = (const uint8_t*)arr;
+    out->num = num;
+    return true;
+}
+
+// The measured InventoryContents geometry.  `GetInventoryItemCount` (0x00E2EA40) does
+// `element = data + index*0x18` and reads the value at `[element+8]` (SYNC-DESIGN
+// section 2.4 quotes the disassembly), so this is not a guess to be probed -- it is the
+// game's own arithmetic.  Kept as named constants so the inventory walker and any
+// reader agree, and so the reason travels with the number.
+static const int kInventoryStride   = 0x18;
+static const int kInventoryValueOff = 0x08;
+
+// `save+0x28` is the same container's measured member offset.  SaveInit prefers the
+// reflected property offset; this is the fallback for a build where the property walk
+// has not run yet, and it is the value the shipped image's own reader uses.
+static const int kInventoryContentsOffsetMeasured = 0x28;
+
 struct MapProbe {
     bool valid;
     int  stride;
@@ -202,11 +251,18 @@ inline MapProbe ProbeMap(void* world, void* save, int mapOffset, int maxProbes)
     MapProbe p = {false, 0, 0, 0, 0};
     if (!save || mapOffset < 0) return p;
 
-    const uint8_t* base = (const uint8_t*)save + mapOffset;
-    void*   arr = *(void**)base;
-    int32_t num = *(int32_t*)(base + 8);
-    if (!arr || num <= 0 || num > 100000) return p;
+    MapStorage m;
+    if (!MapStorageOf(save, mapOffset, &m)) return p;
+    const uint8_t* arr = m.arr;
+    int32_t num = m.num;
 
+    // 20 = TPair<FName,int32> plus the two hash-link words: the NamedSaveData shape this
+    // probe exists for.  24 = 0x18, the MEASURED InventoryContents shape (a UObject* key
+    // and the int32 value at +8, followed by hash bookkeeping).  The old list was
+    // 12/16-shaped, and 12 is the item-drop cache's KEY size -- a different container --
+    // not a TMap element size; SYNC-DESIGN warns about exactly that substitution.  A
+    // wrong stride cannot pass the getter cross-check below, so listing the measured one
+    // costs nothing.
     static const int strides[] = {20, 24, 16, 12, 32};
     static const int voffs[]   = {8, 12, 16};
     for (int si = 0; si < (int)(sizeof(strides) / sizeof(strides[0])); ++si) {
@@ -393,12 +449,68 @@ inline int NsdEnumerate(NsdVisitor visit, void* user)
     SaveLayer& s = Save();
     if (!s.enumerateOk || !s.save) return -1;
     if (ActiveSaveNoCreate(GWorldPtr()) != s.save) return -1;   // replaced under us
-    const uint8_t* base = (const uint8_t*)s.save + s.nsdOffset;
-    const uint8_t* arr = *(const uint8_t**)base;
-    int32_t num = *(const int32_t*)(base + 8);
-    if (!arr || num <= 0) return 0;
-    if (num > 100000) return -1;
-    return NsdEnumerateGuarded(arr, num, s.mapStride, s.mapValueOff, visit, user);
+    MapStorage m;
+    if (!MapStorageOf(s.save, s.nsdOffset, &m)) return -1;      // unreadable
+    if (m.num <= 0) return 0;                                   // empty
+    return NsdEnumerateGuarded(m.arr, m.num, s.mapStride, s.mapValueOff, visit, user);
+}
+
+// ---------------------------------------------------------------------------
+// InventoryContents -- the TMap<UObject*, int32> reader
+// ---------------------------------------------------------------------------
+// One walker, not two: the storage header and the measured 0x18 stride live above and
+// are shared with MapProbe.  Only the element's meaning differs -- the key is a UObject*
+// and the value is the count.
+//
+// Free slots are the reason this cannot simply test the key for null.  A removed TSet
+// element is overlaid by `{int32 PrevFreeIndex; int32 NextFreeIndex}`, so the first
+// eight bytes read as a small non-null integer pair, and handing that to ObjOuter is an
+// access violation.  Each element is therefore guarded, and a candidate must pass
+// LooksLikeUObject AND ObjectIsLive before the visitor sees it: liveness, not nullness,
+// is the test.  The walker returns the number of LIVE entries it saw, which is what the
+// inventory publisher logs; it is not the sparse array length.
+typedef void (*InvVisitor)(void* item, int32_t count, void* user);
+
+inline int InventoryWalkGuarded(const uint8_t* arr, int32_t num, InvVisitor visit, void* user)
+{
+    int n = 0;
+    for (int32_t i = 0; i < num; ++i) {
+        const uint8_t* e = arr + (size_t)i * kInventoryStride;
+        void* item = nullptr;
+        int32_t v = 0;
+        __try {
+            item = *(void**)e;
+            v = *(const int32_t*)(e + kInventoryValueOff);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+            continue;
+        }
+        __try {
+            if (!LooksLikeUObject(item) || !ObjectIsLive(item)) continue;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+            continue;
+        }
+        if (visit) visit(item, v, user);
+        ++n;
+    }
+    return n;
+}
+
+inline int InventoryEnumerate(InvVisitor visit, void* user)
+{
+    SaveLayer& s = Save();
+    if (!s.save) return -1;
+    if (ActiveSaveNoCreate(GWorldPtr()) != s.save) return -1;   // replaced under us
+    // The reflected property offset wins when it exists; 0x28 is the measured member
+    // offset and the fallback for a build that has not run the property walk.  Both name
+    // the same container on this image.
+    int off = s.inventoryOffset;
+    if (off < 0) off = kInventoryContentsOffsetMeasured;
+    MapStorage m;
+    if (!MapStorageOf(s.save, off, &m)) return -1;              // unreadable
+    if (m.num <= 0) return 0;                                   // empty
+    return InventoryWalkGuarded(m.arr, m.num, visit, user);
 }
 
 // ---------------------------------------------------------------------------
