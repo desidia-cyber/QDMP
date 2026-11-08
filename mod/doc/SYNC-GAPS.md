@@ -547,6 +547,72 @@ the log text the code emits, so a run either shows it or does not.
     never exceed 10 in any rolling second, and `budgetDrops` should be 0 with two players
     together in an ordinary fight.
 
+### 5.4 The exact G3 grant / G4 damage-effect lines now required
+
+Session 6's two failures have both been root-caused and fixed (API-GAPS §5A), so a run
+with the same scenario must now produce these instead of the failure lines. Grep them
+literally; the `->` is `count -> count` and `hp -> hp`.
+
+**G3 — the grant lands.** The success line is the one the native counter oracle prints;
+it only appears when the count rose by exactly the requested amount.
+
+```
+write api: AddItemToInventory /Game/Items/KeyItems/AquaDoorKey/AquaDoorKey_2_Data.AquaDoorKey_2_Data +1 read back 0 -> 1
+inventory grant applied: <path> x1 (peer total <N> rev=<R>)
+```
+
+and the peer settles:
+
+```
+item intent confirmed: <path> host=1
+```
+
+The **failure** forms that must be gone, and what each now means if it appears:
+
+| If this appears | Then |
+|---|---|
+| `count did not rise by the requested amount: 0 -> 0` | the soft record still does not resolve: check the `AddItemToInventory` size line says `size=40`, and that `ResolveItemObject` found an `FS_ItemData_C` |
+| `cannot resolve the item object for read-back` | the item asset is not loaded on the host — a load-order fact, not an offset bug |
+| `the item soft reference has neither a live object nor a sub-path` | the path had no `.Object` segment, so nothing could be written |
+| `SoftObjectProperty is smaller than an FSoftObjectPtr` | the build changed the soft form; re-measure before anything else |
+
+**G4 — the player really takes the damage.** Two lines are accepted, in this priority;
+the first is the game's own path, the second is the proven degradation, and each says
+which one ran.
+
+```
+damage: player hp via TryApplyDamage 20.0 (TryApplyDamage returned 0.00) hp 400.0 -> 380.0
+damage: player hp via Health (TryApplyDamage had no effect) 20.0 (TryApplyDamage returned 0.00) hp 400.0 -> 380.0
+```
+
+and, when the amount is enough to empty the bar:
+
+```
+damage: the player reached 0 hp; Kill called
+```
+
+The K_DAMAGE receiver's summary line must show the movement too:
+
+```
+damage from enemy <guid> melee: 20.0 applied hp 400.0 -> 380.0
+```
+
+The failure forms:
+
+| If this appears | Then |
+|---|---|
+| `player damage had NO effect: TryApplyDamage ran asked 20.0 returned 0.00 hp 400.0 -> 400.0 (both the message and the Health write failed)` | the message still does not apply **and** `Health` could not be written — the pawn had no readable `Health`, which is the thing to investigate |
+| `damage: the player reached 0 hp; Kill called` missing while hp reached 0 | `Kill` did not resolve on the pawn class; `LogFunctionsOf` on `FS_PlayerChar_C` says whether the verb is there |
+| `hp 400.0 -> 380.0` absent because the **rig floor** refilled it | the floor is `qd.god` (400); the G4 step must not run with the floor armed if the HP movement itself is what is being measured. The `damage:` line is printed from the value read back inside the call, so it is still the proof the write happened |
+
+**Why the second form is accepted rather than a failure.** Session 6 measured the player's
+own `TryApplyDamage` running and returning `AppliedDamage = 0` while the identical payload
+took an enemy from `34.9` to `-165.0`. Its script gates the HP write behind
+`IncomingDamageMult`, `GetSimpleSumStat`, `TakenDamageMultiplier`, `IsDead`,
+`HasPitInvincibility`/`KnockedDown`, and a `bCanBeDamaged` branch that skips the write
+(API-GAPS §5A.2). Writing `Health` is the same scalar the game's `Set Health Points` and
+the rig's own god floor already write, so it is the class's own state, not a fake.
+
 ## 6. Suggested order from here
 
 1. **Run §5 and §5.3.** Every correction so far came from measurement rather than from

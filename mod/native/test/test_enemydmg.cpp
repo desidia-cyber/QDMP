@@ -160,12 +160,66 @@ static void TestReset()
     CHECK(g.Admit(kGuid, 1, 0), "reset/the same swing is new after a world/session change");
 }
 
+// ---------------------------------------------------------------------------
+// The HP rule G4's second half uses (LIVE-TEST-LOG Session 6: the player's own
+// `TryApplyDamage` returns with `AppliedDamage` 0 while the same payload applies in
+// full to an enemy class, so the receive lane falls back to the one scalar the game
+// writes on the player).
+// ---------------------------------------------------------------------------
+static void TestApplyHpDamage()
+{
+    // The ordinary hit: 400 - 20 = 380, and it says it changed so the caller logs it.
+    {
+        enemydmg::HpAfter r = enemydmg::ApplyHpDamage(400.0f, 20.0f);
+        CHECK(r.value == 380.0f, "hp/a hit subtracts the amount");
+        CHECK(r.changed, "hp/a hit reports that it changed");
+    }
+
+    // The clamp: 10 hp against a 25-point hit lands on exactly 0, never negative.  The
+    // death entry is driven off `<= 0`, so overshooting would be invisible there but the
+    // HUD and the save would both carry a negative number.
+    {
+        enemydmg::HpAfter r = enemydmg::ApplyHpDamage(10.0f, 25.0f);
+        CHECK(r.value == 0.0f, "hp/an overkill clamps to exactly zero");
+        CHECK(r.changed, "hp/an overkill still reports a change");
+    }
+
+    // A landed hit that exactly empties the bar.
+    {
+        enemydmg::HpAfter r = enemydmg::ApplyHpDamage(25.0f, 25.0f);
+        CHECK(r.value == 0.0f && r.changed, "hp/an exact kill reaches zero and reports it");
+    }
+
+    // No hit: a non-positive amount must not move anything and must not claim a change,
+    // or a zero-damage packet would be logged as a landed hit.
+    {
+        enemydmg::HpAfter r = enemydmg::ApplyHpDamage(400.0f, 0.0f);
+        CHECK(r.value == 400.0f && !r.changed, "hp/a zero amount changes nothing");
+        r = enemydmg::ApplyHpDamage(400.0f, -5.0f);
+        CHECK(r.value == 400.0f && !r.changed, "hp/a negative amount cannot heal");
+    }
+
+    // Already dead or unreadable: the answer is 0 and no change is claimed from 0, so the
+    // death test does not re-fire on every packet.
+    {
+        enemydmg::HpAfter r = enemydmg::ApplyHpDamage(0.0f, 20.0f);
+        CHECK(r.value == 0.0f && !r.changed, "hp/a hit on a dead pawn changes nothing");
+    }
+
+    // Damage never raises HP, whatever the starting value.
+    {
+        enemydmg::HpAfter r = enemydmg::ApplyHpDamage(1.0f, 0.5f);
+        CHECK(r.value == 0.5f && r.value < 1.0f, "hp/the result is always below the start");
+    }
+}
+
 int main()
 {
     printf("=== qd enemy-damage tests ===\n");
     TestEveryConditionIsRequired();
     TestDistanceBoundary();
     TestCenti();
+    TestApplyHpDamage();
     TestOnePerSwing();
     TestZeroGuidIsNotAnEnemy();
     TestRateBound();
