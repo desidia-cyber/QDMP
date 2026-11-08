@@ -98,6 +98,7 @@ pub enum Kind {
     DialogueState = 0x21,
     LevelUnion = 0x22,
     Travel = 0x23,
+    Damage = 0x24,
     Log = 0x30,
 }
 
@@ -123,6 +124,7 @@ impl Kind {
             0x21 => DialogueState,
             0x22 => LevelUnion,
             0x23 => Travel,
+            0x24 => Damage,
             0x30 => Log,
             other => return Err(Error::UnknownKind(other)),
         })
@@ -153,6 +155,7 @@ impl Kind {
             DialogueState => "dialogue_state",
             LevelUnion => "level_union",
             Travel => "travel",
+            Damage => "damage",
             Log => "log",
         }
     }
@@ -167,6 +170,7 @@ impl Kind {
                 | Kind::Effect
                 | Kind::EnemyDetail
                 | Kind::Travel
+                | Kind::Damage
         )
     }
 
@@ -681,6 +685,33 @@ pub struct Travel {
     pub role: u8,
     /// Short map name, e.g. `100_GR`.
     pub map: String,
+    /// The destination the sender just took: the placed actor carrying the game's own
+    /// `LocationData`, named so the other machine can resolve the same actor. Empty
+    /// when the sender is not travelling.
+    pub dest: String,
+}
+
+/// `DAMAGE` body (WIRE.md §3.14a).
+///
+/// Host → peer, for the one case ownership-by-proximity cannot cover: an enemy the host
+/// runs attacking the partner across the distance. Only the partner can apply damage to
+/// its own pawn (the payload goes through `TryApplyDamage` on a `FB_Damageable` the host
+/// has no object for), so the host describes the hit and the peer performs it.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Damage {
+    /// The attacking enemy's key; all zero for an environmental hit.
+    pub attacker: Guid,
+    /// 1/100 of the game's damage unit.
+    pub amount_centi: i32,
+    pub flags: u8,
+}
+
+/// `DAMAGE.flags` bits (WIRE.md §3.14a).
+pub mod damage_flags {
+    pub const MELEE: u8 = 1 << 0;
+    pub const RANGED: u8 = 1 << 1;
+    /// The sender could not resolve the damage source, so the amount is an estimate.
+    pub const GUESSED: u8 = 1 << 2;
 }
 
 /// A decoded body, tagged by its kind.
@@ -704,6 +735,7 @@ pub enum Body {
     DialogueState(DialogueState),
     LevelUnion(LevelUnion),
     Travel(Travel),
+    Damage(Damage),
     Log(Log),
 }
 
@@ -728,6 +760,7 @@ impl Body {
             Body::DialogueState(_) => Kind::DialogueState,
             Body::LevelUnion(_) => Kind::LevelUnion,
             Body::Travel(_) => Kind::Travel,
+            Body::Damage(_) => Kind::Damage,
             Body::Log(_) => Kind::Log,
         }
     }
@@ -1132,6 +1165,12 @@ pub fn encode_body(body: &Body) -> Result<Vec<u8>> {
             w.write_u32(t.seq)?;
             w.write_u8(t.role)?;
             write_str(&mut w, &t.map)?;
+            write_str(&mut w, &t.dest)?;
+        }
+        Body::Damage(d) => {
+            write_guid(&mut w, &d.attacker)?;
+            w.write_i32(d.amount_centi)?;
+            w.write_u8(d.flags)?;
         }
     }
 
@@ -1398,6 +1437,12 @@ pub fn decode_body(kind: Kind, bytes: &[u8]) -> Result<Body> {
             seq: r.read_u32()?,
             role: r.read_u8()?,
             map: read_str(&mut r)?,
+            dest: read_str(&mut r)?,
+        }),
+        Kind::Damage => Body::Damage(Damage {
+            attacker: read_guid(&mut r)?,
+            amount_centi: r.read_i32()?,
+            flags: r.read_u8()?,
         }),
         Kind::Log => {
             // The whole body is the message; nothing to parse.

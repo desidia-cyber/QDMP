@@ -394,20 +394,39 @@ static void TestWorldBodies()
         CHECK(r.pos == r.len, "enemy_detail body fully consumed");
     }
 
-    // TRAVEL: the map the session is in.
+    // TRAVEL: the map the session is in, and where the sender went.
     {
         TravelBody t, got;
         memset(&t, 0, sizeof(t));
         t.seq = 0x1234;
         t.role = 1;
         strcpy(t.map, "100_GR");
+        strcpy(t.dest, "Teleporter_500_AUT_02/100_GR");
         Writer w(buf, sizeof(buf));
         WriteTravel(w, t);
         Reader r(buf, w.len);
         CHECK(ReadTravel(r, &got), "travel reads");
         CHECK(got.seq == 0x1234 && got.role == 1, "travel seq/role round-trip");
         CHECK(strcmp(got.map, "100_GR") == 0, "travel map round-trips");
+        CHECK(strcmp(got.dest, t.dest) == 0, "travel destination round-trips");
         CHECK(r.pos == r.len, "travel body fully consumed");
+    }
+
+    // DAMAGE: a host-run enemy's hit on the partner.
+    {
+        DamageBody d, got;
+        memset(&d, 0, sizeof(d));
+        d.guid[0] = 0x5ae3b37bu; d.guid[3] = 11;
+        d.amount_centi = 3500;
+        d.flags = kDamageMelee | kDamageGuessed;
+        Writer w(buf, sizeof(buf));
+        WriteDamage(w, d);
+        Reader r(buf, w.len);
+        CHECK(ReadDamage(r, &got), "damage reads");
+        CHECK(got.guid[0] == 0x5ae3b37bu && got.guid[3] == 11, "damage attacker round-trips");
+        CHECK(got.amount_centi == 3500, "damage amount round-trips");
+        CHECK(got.flags == (kDamageMelee | kDamageGuessed), "damage flags round-trip");
+        CHECK(r.pos == r.len, "damage body fully consumed");
     }
 }
 

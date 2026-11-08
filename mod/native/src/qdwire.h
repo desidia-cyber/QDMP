@@ -42,6 +42,7 @@ enum Kind {
     K_DIALOGUE    = 0x21,
     K_LEVEL_UNION = 0x22,
     K_TRAVEL      = 0x23,
+    K_DAMAGE      = 0x24,
     K_LOG         = 0x30,
 };
 
@@ -611,11 +612,20 @@ inline bool ReadLevelUnion(Reader& r, LevelUnionBody* b)
 // the host sends what it is in, the peer compares, and a peer that disagrees says so
 // (`ack` = 0) instead of quietly applying level names from another world.
 //
-// Body: seq(u32, bumps per change), role(u8 1 = host, 2 = peer), map(str, short name).
+// `dest` is what makes the announcement actionable.  It names the destination the
+// sender just took -- the placed actor that carries the game's own `LocationData`
+// (a teleporter, a checkpoint, a cutscene trigger) -- by its short object name plus
+// world, e.g. "Teleporter_500_AUT_02/100_GR".  Both machines run the same cooked
+// world, so the same names exist on both: the receiver resolves the actor itself and
+// drives its own travel entry point.  Empty when the sender is not travelling.
+//
+// Body: seq(u32, bumps per change), role(u8 1 = host, 2 = peer), map(str, short name),
+//       dest(str, destination identity, "" = not travelling).
 struct TravelBody {
     uint32_t seq;
     uint8_t  role;
     char     map[64];
+    char     dest[96];
 };
 
 inline void WriteTravel(Writer& w, const TravelBody& t)
@@ -623,6 +633,7 @@ inline void WriteTravel(Writer& w, const TravelBody& t)
     w.U32(t.seq);
     w.U8(t.role);
     w.Str(t.map);
+    w.Str(t.dest);
 }
 
 inline bool ReadTravel(Reader& r, TravelBody* t)
@@ -630,8 +641,48 @@ inline bool ReadTravel(Reader& r, TravelBody* t)
     t->seq = r.U32();
     t->role = r.U8();
     if (r.Str(t->map, sizeof(t->map)) >= (int)sizeof(t->map)) return false;
+    if (r.Str(t->dest, sizeof(t->dest)) >= (int)sizeof(t->dest)) return false;
     return r.ok;
 }
+
+// ---- damage to a player ---------------------------------------------------
+// Ownership follows the nearer player, so an enemy next to the partner is run BY the
+// partner and hurts it through the game's own attack path.  What that does not cover
+// is the opposite case: an enemy the HOST runs (the partner is too far for its spawner,
+// or ownership is mid-handoff) attacking across the distance.  The host sees the attack
+// -- it owns the enemy and the montage is already an event here -- and the partner is
+// the only machine that can apply damage to its own pawn, because damage goes through
+// `TryApplyDamage` on a `FB_Damageable` that the host has no object for.
+//
+// Body: guid(16, the attacking enemy; all-zero for an environmental hit),
+//       i32 amount_centi (1/100 of the game's damage unit), u8 flags.
+// flags: bit0 melee, bit1 ranged, bit2 the sender could not resolve the damage source
+//        and the amount is an estimate (logged as such, never silent).
+struct DamageBody {
+    uint32_t guid[4];
+    int32_t  amount_centi;
+    uint8_t  flags;
+};
+
+static const uint8_t kDamageMelee   = 0x01;
+static const uint8_t kDamageRanged  = 0x02;
+static const uint8_t kDamageGuessed = 0x04;
+
+inline void WriteDamage(Writer& w, const DamageBody& d)
+{
+    w.Guid(d.guid);
+    w.I32(d.amount_centi);
+    w.U8(d.flags);
+}
+
+inline bool ReadDamage(Reader& r, DamageBody* d)
+{
+    r.Guid(d->guid);
+    d->amount_centi = r.I32();
+    d->flags = r.U8();
+    return r.ok;
+}
+
 
 // ---- inventory ------------------------------------------------------------
 // Body: rev(u32), n(u16), then n x {str path, i32 count}.  Cross-checked against

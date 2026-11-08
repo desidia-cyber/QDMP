@@ -66,6 +66,7 @@ arrives late is still correct.
 | `0x21` | `DIALOGUE` | each → other | unreliable, latest wins | on change + 1 Hz |
 | `0x22` | `LEVEL_UNION` | both | unreliable, latest wins | 2 Hz + on change |
 | `0x23` | `TRAVEL` | both | reliable | on change + 0.5 Hz |
+| `0x24` | `DAMAGE` | host → peer | reliable | event |
 | `0x30` | `LOG` | both | unreliable | event |
 
 The design rule being followed (DollsMP 12 §4.6 E8): **the event channel is a
@@ -449,6 +450,7 @@ mesh-free look in the game's content; the buffs (7-9) have no world visual in th
 u32  seq             bumps on every change
 u8   role            1 = host, 2 = peer
 str  map             short map name, e.g. `100_GR`
+str  dest            the destination the sender just took, "" when not travelling
 ```
 
 The world is announced rather than inferred. The session normally lives inside one
@@ -457,14 +459,43 @@ maps, `900_SipehaWorld`, `990_B33sment`), and after one the two machines are in
 different worlds where every absolute body means something different.
 
 Both machines send this (on change and every 2 s). A receiver that disagrees does not
-act: it logs the divergence once and stops applying the partner's `LEVEL_UNION` names
-and enemy rows until the names match again. The mismatch is debounced, because a
-transition produces a second or two of disagreement while levels finish loading.
+act: it logs the divergence once and stops applying the partner's `LEVEL_UNION` names,
+enemy rows, enemy detail and dialogue until the names match again. The mismatch is
+debounced, because a transition produces a second or two of disagreement while levels
+finish loading.
+
+`dest` is what makes the announcement actionable. It names the placed actor carrying the
+game's own `LocationData` (a teleporter, a checkpoint, a cutscene trigger) as
+`<actor>/<world>`. Both machines run the same cooked world, so the same actor exists on
+both: the receiver resolves it by name and drives its own travel entry point, rather than
+the sender teleporting somebody else's pawn. Empty when the sender is not travelling.
+
+The measured entry point is `FS_PlayerChar.TeleportToLocation(LocationData, GreenFX)`,
+with `EnemySpawner_C.PlayerTeleported()` as the world notification. `OpenLevel` is **not**
+the travel path: only menus, death and cheats import it.
 
 There is deliberately no "follow me" command in v1: the only measured travel entry
 point is `UGameplayStatics::OpenLevel`, and driving it from the mod is unproven
 (`API-GAPS.md` §4). Refusing to cross-apply state is the honest outcome — a silent
 half-applied world is worse than a named warning.
+
+### 3.15b `DAMAGE` (0x24)
+
+```
+guid guid            the attacking enemy (its spawner's FGuid); all zero for other causes
+i32  amount_centi    1/100 of the game's damage unit
+u8   flags           bit0 melee, bit1 ranged, bit2 the amount is an estimate
+```
+
+Host → peer, and it exists for exactly one case: an enemy the **host** runs (the partner
+is too far for its spawner, or ownership is mid-handoff) attacking the partner across the
+distance. Damage has to be applied by the machine that owns the pawn, through
+`TryApplyDamage` on a `FB_Damageable`; the host has no object for the partner's body, so
+it describes the hit and the peer performs it.
+
+`flags` bit2 is not decoration: when the host cannot resolve the attack's real damage
+value, it says so, and the peer logs a guessed hit as guessed. An estimate that is
+silently presented as measured is how a balance bug becomes a sync bug.
 
 ### Reliable kinds: ack and duplicate suppression
 

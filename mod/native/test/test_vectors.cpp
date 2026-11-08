@@ -113,7 +113,7 @@ static void Compare(const char* name, const uint8_t* got, int gotLen)
     uint8_t kind = want[0];
     bool kindKnown = (kind >= 0x01 && kind <= 0x04) ||
                      (kind >= 0x10 && kind <= 0x19) ||
-                     (kind >= 0x20 && kind <= 0x23) ||
+                     (kind >= 0x20 && kind <= 0x24) ||
                      (kind == 0x30);
     if (!kindKnown) {
         ++g_fail;
@@ -375,16 +375,30 @@ static void TestAll()
         Compare("level_union_steady", buf, w.len);
     }
 
-    // travel: seq, role, map
+    // travel: seq, role, map, destination
     {
         TravelBody t;
         memset(&t, 0, sizeof(t));
         t.seq = 0x123;
         t.role = 1;
         strcpy(t.map, "100_GR");
+        strcpy(t.dest, "Teleporter_500_AUT_02/100_GR");
         Writer w(buf, sizeof(buf));
         WriteTravel(w, t);
         Compare("travel", buf, w.len);
+    }
+
+    // damage: attacker guid, amount in 1/100, flags
+    {
+        DamageBody d;
+        memset(&d, 0, sizeof(d));
+        d.guid[0] = 0x03020100u; d.guid[1] = 0x07060504u;
+        d.guid[2] = 0x0b0a0908u; d.guid[3] = 0x0f0e0d0cu;
+        d.amount_centi = 3500;
+        d.flags = kDamageMelee;
+        Writer w(buf, sizeof(buf));
+        WriteDamage(w, d);
+        Compare("damage", buf, w.len);
     }
 
     // log

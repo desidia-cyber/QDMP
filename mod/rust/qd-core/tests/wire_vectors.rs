@@ -281,8 +281,18 @@ fn vectors() -> Vec<Vector> {
                 seq: 0x123,
                 role: roles::HOST,
                 map: "100_GR".to_owned(),
+                dest: "Teleporter_500_AUT_02/100_GR".to_owned(),
             }),
-            expected: "23 23 01 00 00 01 06 00 31 30 30 5f 47 52",
+            expected: "23 23 01 00 00 01 06 00 31 30 30 5f 47 52 1c 00 54 65 6c 65 70 6f 72 74 65 72 5f 35 30 30 5f 41 55 54 5f 30 32 2f 31 30 30 5f 47 52",
+        },
+        Vector {
+            name: "damage",
+            body: Body::Damage(Damage {
+                attacker: sample_guid(),
+                amount_centi: 3500,
+                flags: damage_flags::MELEE,
+            }),
+            expected: "24 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f ac 0d 00 00 01",
         },
         Vector {
             name: "log",
