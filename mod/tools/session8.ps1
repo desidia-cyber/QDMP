@@ -71,6 +71,8 @@ function Get-RigPaths([int]$i) {
         Menu   = Join-Path $root 'qd.menu'
         EFunc  = Join-Path $root 'qd.efunc'
         EAtk   = Join-Path $root 'qd.eattack'
+        Use    = Join-Path $root 'qd.use'
+        Pdmg   = Join-Path $root 'qd.pdmg'
         Pid    = "$root.pid"
     }
 }
@@ -159,8 +161,20 @@ function Check([string]$step, [int]$i, [string]$pattern, [int]$secs, [string]$la
     else { Note "  --   [$i] $label $(if ($Absent) { '(the line APPEARED)' } else { "(no line matches '$pattern' in ${secs}s)" })" }
     return $ok
 }
-function Step([string]$title, [string]$body) {
-    Note ''
+# The `switches:` line is written before `hooked FEngineLoop`, so Get-RunLines (which
+# starts at that marker) never sees it.  Load evidence must read the raw current log.
+function Check-Raw([string]$step, [int]$i, [string]$pattern, [string]$label) {
+    $p = $inst[$i].Log
+    $m = @()
+    if (Test-Path -LiteralPath $p) {
+        $m = @(Get-Content -LiteralPath $p -ErrorAction SilentlyContinue | Where-Object { $_ -match $pattern })
+    }
+    $ok = ($m.Count -gt 0)
+    $script:verdicts.Add([pscustomobject]@{ Step = $step; Inst = $i; What = $label; Ok = $ok; Line = ($m | Select-Object -Last 1) }) | Out-Null
+    if ($ok) { Note "  PASS [$i] $label" }
+    else { Note "  --   [$i] $label (no raw line matches '$pattern')" }
+}
+function Step([string]$title, [string]$body) {    Note ''
     Note "### $title"
     if ($body) { Note $body }
 }
@@ -239,7 +253,8 @@ Say "wrote $ini (every write path on, PlayerBody on, SuppressMenuPause on, LogLe
 
 foreach ($i in 1, 2) {
     foreach ($leaf in 'qd.tp','qd.act','qd.hit','qd.cheat','qd.cheatarg','qd.travel','qd.hard',
-                      'qd.level','qd.near','qd.drops','qd.menu','qd.efunc','qd.eattack') {
+                      'qd.level','qd.near','qd.drops','qd.menu','qd.efunc','qd.eattack',
+                      'qd.use','qd.pdmg') {
         Set-Control $i $leaf $null
     }
     Set-Control $i 'qd.scan' '1'
@@ -313,7 +328,7 @@ foreach ($i in 1, 2) {
 Step 'LOAD -- switches, oracle, containers, class, hooks, dilation hook'
 foreach ($i in 1, 2) {
     Show-Log $i 'switches:|NAMED-SAVE ORACLE|container offsets:|enemy sync: FS_EnemyCharacterBase|hooked ULevelStreaming|hooked UGameplayStatics::SetGlobalTimeDilation|hooks installed|LoadMapWithLoadingScreen' 18
-    Check 'load' $i 'switches: .*pause=1' 5 'SuppressMenuPause is on' 0 | Out-Null
+    Check-Raw 'load' $i 'switches: .*pause=1' 'SuppressMenuPause is on'
     Check 'load' $i 'hooked UGameplayStatics::SetGlobalTimeDilation' 5 'the dilation setter is hooked' 0 | Out-Null
 }
 
@@ -336,7 +351,7 @@ foreach ($i in 1, 2) {
     $ok = [bool](Get-Process -Id $script:pids[$i] -ErrorAction SilentlyContinue)
     $script:verdicts.Add([pscustomobject]@{ Step = 'item1'; Inst = $i; What = "alive after ${IdleSeconds}s idle"; Ok = $ok; Line = '' }) | Out-Null
     Note "  $(if ($ok) { 'PASS' } else { 'FAIL' }) [$i] alive after ${IdleSeconds}s idle"
-    $err = Get-Matches $i 'ERR |EXCEPTION|ACCESS_VIOLATION|fatal|fault'
+    $err = Get-Matches $i 'ERR |EXCEPTION|ACCESS_VIOLATION|fatal|\bfault'
     Note "  [$i] error/fault lines: $($err.Count)"
     $err | Select-Object -Last 6 | ForEach-Object { Note "  [$i] $_" }
 }
@@ -353,14 +368,14 @@ foreach ($i in 1, 2) {
 }
 Start-Sleep -Seconds 25
 foreach ($i in 1, 2) {
-    Show-Since $i 'enemy id: (spawner|placed|summon|adopted|no summoner)' $mPar[$i] 12
-    Note "  [$i] identity lines:"
+    Show-Log $i 'enemy id: (spawner|placed|summon|adopted|no summoner)' 12
+    Note "  [$i] identity lines (whole run):"
     foreach ($kind in 'spawner','placed','summon','adopted','no summoner') {
-        $c = @(Get-Since $i $mPar[$i] | Where-Object { $_ -match ("enemy id: " + $kind) }).Count
+        $c = @(Get-Matches $i ("enemy id: " + $kind)).Count
         Note "    $kind = $c"
     }
     Show-Since $i 'enemy anim: Montage_Play' $mPar[$i] 6
-    Show-Since $i 'enemy detail: candidates=' $mPar[$i] 4
+    Show-Log $i 'enemy detail: candidates=' 4
 }
 # The shared-key check: the same 32-bit lane of the key on both machines for the same
 # source.  The full key is 128 bits but the INFO line names the first lane, which is
@@ -368,7 +383,7 @@ foreach ($i in 1, 2) {
 $keys = @{}
 foreach ($i in 1, 2) {
     $keys[$i] = New-Object System.Collections.Generic.HashSet[string]
-    foreach ($line in (Get-Since $i $mPar[$i] | Where-Object { $_ -match 'enemy id: (spawner|placed|summon)' })) {
+    foreach ($line in (Get-Matches $i 'enemy id: (spawner|placed|summon)')) {
         if ($line -match 'enemy id: spawner ([0-9a-f]{8})') { [void]$keys[$i].Add("spawner:$($Matches[1])") }
         elseif ($line -match 'enemy id: placed .* key=([0-9a-f]{8})') { [void]$keys[$i].Add("placed:$($Matches[1])") }
         elseif ($line -match 'enemy id: summon .* key=([0-9a-f]{8})') { [void]$keys[$i].Add("summon:$($Matches[1])") }
@@ -380,7 +395,7 @@ $common | Select-Object -First 10 | ForEach-Object { Note "    same key on both:
 $script:verdicts.Add([pscustomobject]@{ Step = 'item2'; Inst = 0; What = 'at least one identical enemy key on both machines'; Ok = ($common.Count -gt 0); Line = ($common | Select-Object -First 1) }) | Out-Null
 Note "  $(if ($common.Count -gt 0) { 'PASS' } else { 'FAIL' }) identical key on both: $($common.Count)"
 foreach ($i in 1, 2) {
-    Check 'item2' $i 'enemy detail: candidates=' 20 'the bandwidth line is present' $mPar[$i] | Out-Null
+    Check 'item2' $i 'enemy detail: candidates=' 20 'the bandwidth line is present' 0 | Out-Null
 }
 
 # ===========================================================================
@@ -417,12 +432,48 @@ foreach ($i in 1, 2) {
     Check 'item7' $i 'damage from enemy .* applied hp' 15 'the owner applies the hit (G4 effect)' $mAtk[$i] | Out-Null
 }
 foreach ($i in 1, 2) { Set-Control $i 'qd.eattack' $null; Set-Control $i 'qd.efunc' $null }
+# The bandwidth line is DEBUG and only appears once an enemy actually animates; the
+# item-2 window is too early.  Re-run the check over the whole raw log now.
+foreach ($i in 1, 2) {
+    Check-Raw 'item2' $i 'enemy detail: candidates=' 'the bandwidth line is present (raw)'
+    Check-Raw 'item2' $i 'enemy anim: Montage_Play' 'a montage read-back appears (raw)'
+}
+
+# ===========================================================================
+# 8b. item 9: the G4 receiver -- the peer's HP must actually move
+# ===========================================================================
+Step 'ITEM 9 -- G4: the peer takes the hit, names the path, and the HP moves'
+$mPdH = Get-Mark $H
+$mPdP = Get-Mark $P
+# The rig's god floor refills anything under 400.  For the effect measurement the floor
+# is lowered so a 20-point hit is visible, then restored.
+Set-Control $P 'qd.god' '1'
+Start-Sleep -Seconds 3
+Set-Control $H 'qd.pdmg' '20'
+Check 'item9' $H 'rig: pdmg -> guid=' 12 'the host sends one K_DAMAGE' $mPdH | Out-Null
+Check 'item9' $P 'damage from enemy .* applied hp' 25 'the peer applies the described hit' $mPdP | Out-Null
+Check 'item9' $P 'damage: player hp via (TryApplyDamage|Health)' 25 'the G4 receiver moves the HP and names the path' $mPdP | Out-Null
+Check 'item9' $P 'player damage had NO effect' 3 'NO player-damage no-effect line' $mPdP -Absent | Out-Null
+Show-Since $P 'damage from enemy|damage: player hp|player damage had NO effect' $mPdP 10
+Show-Since $H 'rig: pdmg' $mPdH 4
+Set-Control $P 'qd.god' '400'
+Set-Control $H 'qd.pdmg' $null
 
 # ===========================================================================
 # 9. item 3: G2 on a chest that is still closed
 # ===========================================================================
 if ($Phase -eq 'full') {
 Step 'ITEM 3 -- G2: a CLOSED chest opens, the partner refreshes it, it cannot be reopened'
+# The hub world has no chest near the spawn; the chests are in the area sublevels.  Stream
+# 200_AQ into the running hub, which is the engine's own mechanism (Session 7 did the same)
+# and keeps the player in a world that has a GameMode.
+Step 'WORLD -- stream 200_AQ (chests live in the area sublevel)'
+foreach ($i in 1, 2) { Set-Control $i 'qd.level' '200_AQ' }
+Start-Sleep -Seconds 45
+foreach ($i in 1, 2) {
+    Show-Log $i 'rig: level lever|scan: chest |scan: kind chest' 10
+    Note "  [$i] alive after the sublevel stream: $(Test-Alive $i)"
+}
 $mG2P = Get-Mark $P
 $mG2H = Get-Mark $H
 foreach ($i in 1, 2) { Show-Log $i 'scan: chest |scan: kind chest' 10 }
@@ -460,15 +511,15 @@ Show-Since $P 'dev interact:|actor-state' $mG2bP 8
 # 10. item 4: in-world teleport follow
 # ===========================================================================
 Step 'ITEM 4 -- in-world teleport follow (the resolver keeps the actor it found)'
-$mTravH = Get-Mark $H
 $mTravP = Get-Mark $P
-Say "  host=inst$H drives TeleportToLocation through the nearest teleporter"
-Set-Control $H 'qd.travel' 'near:teleport'
-Check 'item4' $H 'rig: travel lever -> .*TeleportToLocation ran=1' 25 'the host calls the game teleport entry' $mTravH | Out-Null
-Check 'item4' $H 'travel: local destination ' 25 'the host announces the destination' $mTravH | Out-Null
-Check 'item4' $P 'travel: followed ' 45 'the peer follows through its own TeleportToLocation' $mTravP | Out-Null
-Show-Since $H 'rig: travel|travel: ' $mTravH 10
-Show-Since $P 'travel: ' $mTravP 8
+$mTravH = Get-Mark $H
+Say "  peer=inst$P drives TeleportToLocation through the nearest teleporter (the host follows)"
+Set-Control $P 'qd.travel' 'near:teleport'
+Check 'item4' $P 'rig: travel lever -> .*TeleportToLocation ran=1' 25 'the peer calls the game teleport entry' $mTravP | Out-Null
+Check 'item4' $P 'travel: local destination ' 25 'the peer announces the destination' $mTravP | Out-Null
+Check 'item4' $H 'travel: followed ' 45 'the host follows through its own TeleportToLocation' $mTravH | Out-Null
+Show-Since $P 'rig: travel|travel: ' $mTravP 10
+Show-Since $H 'travel: ' $mTravH 8
 foreach ($i in 1, 2) { Note "  [$i] alive after the teleport: $(Test-Alive $i)" }
 
 # ===========================================================================
@@ -489,14 +540,60 @@ Show-Since $P 'rig: drop probe|loot: ' $mLootP 14
 Show-Since $H 'rig: drop probe|loot: ' $mLootH 14
 Check 'item5' $P 'loot: drop ' 30 'the killer ledger learns a drop' $mLootP | Out-Null
 Check 'item5' $H 'loot: merged ' 30 'the host merges the drop set' $mLootH | Out-Null
-Say "  peer=inst$P walks to the nearest drop and picks it up"
-Invoke-Go $P 'drop' 40
+Say "  peer=inst$P walks to the nearest RECORDED drop and picks it up"
+Invoke-Go $P 'loot' 40
 Start-Sleep -Seconds 5
-Invoke-ActNear $P 'drop'
+Invoke-ActNear $P 'loot'
 Check 'item5' $P 'loot: local pickup .* -- tombstoned for the partner' 40 'the pickup is tombstoned' $mLootP | Out-Null
 Check 'item5' $H 'loot: hiding local drop .* -- the partner took it' 40 'the other machine hides the drop' $mLootH | Out-Null
 Show-Since $P 'dev interact: resolved .drop.|loot: ' $mLootP 10
 Show-Since $H 'loot: ' $mLootH 10
+
+# ===========================================================================
+# 11b. item 8: G3 key pickup and the consumption half
+# ===========================================================================
+Step 'ITEM 8 -- G3: the key grant lands on the host, then the consumption path'
+$mG3P = Get-Mark $P
+$mG3H = Get-Mark $H
+Say "  peer=inst$P walks to the nearest key pickup and takes it"
+Invoke-Go $P 'key' 140
+Start-Sleep -Seconds 6
+Invoke-ActNear $P 'key'
+Check 'item8' $P 'item intent sent' 30 'the peer proposes the key' $mG3P | Out-Null
+Check 'item8' $H 'write api: AddItemToInventory .* \+1 read back 0 -> 1|write api: AddItemToInventory .* \+1 read back' 40 'the host grant lands (native read-back)' $mG3H | Out-Null
+Check 'item8' $H 'inventory grant applied' 20 'the host reports the grant' $mG3H | Out-Null
+Check 'item8' $P 'item intent confirmed' 30 'the peer settles the intent' $mG3P | Out-Null
+Show-Since $P 'dev interact:|item intent|inventory body' $mG3P 12
+Show-Since $H 'write api: AddItemToInventory|inventory grant' $mG3H 8
+# The consumption half: consume the item the host just granted, through the game's own
+# consumer on the peer, so the local count falls and the existing detector sends kind 3.
+# The exact soft-object path is not reconstructable by the scenario, so it is taken from
+# the host's own read-back line (an explicit [regex]::Match: the -match operator on a
+# collection filters and does NOT set $Matches, which produced a stale GUID here).
+$grantLine = ''
+$grantLines = @(Get-Since $H $mG3H | Where-Object { $_ -match 'write api: AddItemToInventory' })
+if ($grantLines.Count -gt 0) { $grantLine = [string]$grantLines[-1] }
+$itemPath = ''
+if ($grantLine) {
+    $rx = [regex]::Match($grantLine, 'AddItemToInventory\s+(\S+)\s+\+1\s+read back')
+    if ($rx.Success) { $itemPath = $rx.Groups[1].Value }
+}
+$mUseP = Get-Mark $P
+$mUseH = Get-Mark $H
+if ($itemPath) {
+    Say "  peer=inst$P consumes the granted item through TryConsumingItemFromInventory: $itemPath"
+    Set-Control $P 'qd.use' $itemPath
+    Check 'item8' $P 'rig: use lever -> ' 15 'the peer consumer ran' $mUseP | Out-Null
+    Check 'item8' $P 'item consume sent' 30 'the peer sends the consumption' $mUseP | Out-Null
+    Check 'item8' $H 'inventory consume applied' 30 'the host removes the count' $mUseH | Out-Null
+    Check 'item8' $P 'item consume confirmed' 30 'the consumption settles on the peer' $mUseP | Out-Null
+    Show-Since $P 'rig: use lever|item consume|inventory body' $mUseP 10
+    Show-Since $H 'inventory consume|write api: TryConsumingItemFromInventory' $mUseH 8
+} else {
+    Note "  -- item8: no granted item path was readable, so the consumption half did not run"
+    $script:verdicts.Add([pscustomobject]@{ Step = 'item8'; Inst = $P; What = 'consumption path (no granted path)'; Ok = $false; Line = '' }) | Out-Null
+}
+Set-Control $P 'qd.use' $null
 
 # ===========================================================================
 # 12. item 6: menu time dilation
@@ -534,7 +631,18 @@ $script:verdicts.Add([pscustomobject]@{ Step = 'item6'; Inst = 0; What = 'dilati
 Note "  $(if ($h2 -gt $h1) { 'PASS' } else { 'FAIL' }) world advanced under a blocked dilation"
 Show-Since $H 'rig: menu lever|BLOCK global|restored global|clock:' $mDilH 12
 Set-Control $H 'qd.menu' '0'
-# The peer side too: the same path on the other machine.
+# The no-menu case measured on the peer in the previous run: a stray 0.00 with no menu
+# froze its world.  `dilatenomenu` issues the low value with no pretend menu, so the
+# only thing that can save the world is the strengthened rule.
+$mNoMenu = Get-Mark $H
+$n0 = Get-Unpaused $H
+Set-Control $H 'qd.menu' 'dilatenomenu'
+Start-Sleep -Seconds 10
+$n1 = Get-Unpaused $H
+Check 'item6' $H 'restored global time dilation .*menu none|BLOCK global time dilation .*menu none' 12 'a no-menu low dilation is blocked/restored' $mNoMenu | Out-Null
+$script:verdicts.Add([pscustomobject]@{ Step = 'item6'; Inst = 0; What = 'a stray low dilation with no menu did not stop the world'; Ok = ($n1 -gt $n0); Line = "unpaused $n0 -> $n1" }) | Out-Null
+Note "  $(if ($n1 -gt $n0) { 'PASS' } else { 'FAIL' }) no-menu dilation: host unpaused $n0 -> $n1"
+Set-Control $H 'qd.menu' '0'
 $mMenuP2 = Get-Mark $P
 $p3 = Get-Unpaused $P
 Set-Control $P 'qd.menu' '1'
@@ -555,7 +663,7 @@ foreach ($i in 1, 2) {
     $alive = Test-Alive $i
     $script:verdicts.Add([pscustomobject]@{ Step = 'survival'; Inst = $i; What = 'alive at the end'; Ok = $alive; Line = '' }) | Out-Null
     Note "  $(if ($alive) { 'PASS' } else { 'FAIL' }) [$i] process alive=$alive"
-    $err = Get-Matches $i 'ERR |EXCEPTION|ACCESS_VIOLATION|fatal|fault'
+    $err = Get-Matches $i 'ERR |EXCEPTION|ACCESS_VIOLATION|fatal|\bfault'
     Note "  [$i] error/fault lines: $($err.Count)"
     $err | Select-Object -Last 6 | ForEach-Object { Note "  [$i] $_" }
     $body = Get-Matches $i 'player damage had NO effect|player body: the hit payload|player body: spawn of the player class failed|player body: the spawn took over'

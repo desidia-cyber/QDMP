@@ -977,6 +977,11 @@ inline const wr::Field* ItemParam(const wr::ParamLayout& l,
 // `Map_Find`/`Add_IntInt` under `InventoryContents`, so the read-back must happen after
 // the ProcessEvent returns -- which it does, and which the `read back a -> b` line
 // proves.
+// The most recent item this machine granted through the game's own AddItemToInventory.
+// The G3 consumption half needs the exact path (a soft-object path is not something a
+// scenario can reconstruct), so the writer remembers the one it just proved.
+inline char g_qdLastGrant[192] = "";
+
 inline bool WrGrantItem(const char* itemPath, int32_t count, char* err, int errCap)
 {
     if (err && errCap > 0) err[0] = 0;
@@ -1079,6 +1084,12 @@ inline bool WrGrantItem(const char* itemPath, int32_t count, char* err, int errC
     if (delta == count) {
         QDLOG(LOG_INFO, "write api: AddItemToInventory ", itemPath, " +", dec(count),
               " read back ", dec(before), " -> ", dec(after));
+        {
+            int i = 0;
+            for (; itemPath && itemPath[i] && i < (int)sizeof(g_qdLastGrant) - 1; ++i)
+                g_qdLastGrant[i] = itemPath[i];
+            g_qdLastGrant[i] = 0;
+        }
         return true;
     }
 

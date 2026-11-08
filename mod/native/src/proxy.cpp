@@ -3466,7 +3466,9 @@ bool FollowTravelActor(void* actor, const char* actorName, void* pawn,
 
     Fn fTp;
     if (!fTp.Resolve(pawn, "TeleportToLocation")) {
-        ErrSet(err, errCap, "FS_PlayerChar.TeleportToLocation not found", "");
+        char pc[64] = "?";
+        if (IsGameplayPawn(pawn)) FNameToString(ObjNameRaw(ObjClass(pawn)), pc, sizeof(pc));
+        ErrSet(err, errCap, "FS_PlayerChar.TeleportToLocation not found on ", pc);
         return false;
     }
     const PropDesc* pObj = FindProp(fTp.sig, "Location Data");
@@ -5468,16 +5470,15 @@ void EnemyDetailPump(uint32_t now)
               (c.mon ? " " : " (no montage)"), (c.mon ? c.body.path : ""));
     }
 
-    // One line per second at DEBUG when the lane is under pressure, so a live run can see
-    // the fight's cost without a packet-per-enemy log.
+    // One line per second at DEBUG so a live run can see the fight's cost and prove the
+    // budget: SYNC-GAPS 5.3 expects this line even when nothing was dropped.
     static uint32_t lastReport = 0;
     if (now - lastReport > 1000) {
         lastReport = now;
-        if (g_detailBw.BudgetDrops() || g_detailBw.FarSkips() || g_detailBw.Overflows())
-            QDLOG(LOG_DEBUG, "enemy detail: candidates=", dec(n), " sent=", dec(got),
-                  " budgetDrops=", dec((int)g_detailBw.BudgetDrops()),
-                  " farSkips=", dec((int)g_detailBw.FarSkips()),
-                  " overflows=", dec((int)g_detailBw.Overflows()));
+        QDLOG(LOG_DEBUG, "enemy detail: candidates=", dec(n), " sent=", dec(got),
+              " budgetDrops=", dec((int)g_detailBw.BudgetDrops()),
+              " farSkips=", dec((int)g_detailBw.FarSkips()),
+              " overflows=", dec((int)g_detailBw.Overflows()));
     }
 }
 
@@ -8912,6 +8913,35 @@ void* RigFindNear(const char* sub, float* distOut, ActorXform* xfOut, char* name
     ActorXform bestXf = {};
     const bool wantEnemy = (enemyown::HasCI(sub, "enemy") || enemyown::HasCI("enemy", sub));
 
+    // `near:loot` (or `near:lootdrop`): the nearest actor in the LOOT LEDGER, not the
+    // nearest placed pickup.  Measured Session 8: the class walk matched a placed herb and
+    // the pickup produced an item while never touching the spawned drop the ledger held.
+    if (enemyown::HasCI(sub, "loot")) {
+        void* bestL = nullptr;
+        float bdL = -1.0f;
+        ActorXform bxL = {};
+        for (int i = 0; i < g_lootActorN; ++i) {
+            if (g_lootActors[i].gone) continue;
+            void* a = g_lootActors[i].actor;
+            if (!a || !ObjectIsLive(a)) continue;
+            ActorXform lx;
+            if (!ReadActorXform(a, &lx)) continue;
+            float dx = lx.px - me.px, dy = lx.py - me.py, dz = lx.pz - me.pz;
+            float d = sqrtf(dx * dx + dy * dy + dz * dz);
+            if (bdL >= 0.0f && d >= bdL) continue;
+            bdL = d; bestL = a; bxL = lx;
+        }
+        if (bestL) {
+            if (distOut) *distOut = bdL;
+            if (xfOut) *xfOut = bxL;
+            if (nameOut && nameCap > 0) {
+                nameOut[0] = 0;
+                FNameToString(ObjNameRaw(bestL), nameOut, nameCap);
+            }
+            return bestL;
+        }
+    }
+
     static ActorStateOwner owners[256];
     int n = BuildActorStateOwners(owners, 256);
     // `closedchest`: a chest whose CONTAINER still says it is unopened.  G2's failure in
@@ -8967,6 +8997,12 @@ void* RigFindNear(const char* sub, float* distOut, ActorXform* xfOut, char* name
             {"teleport", "Teleporter_C"},
             {"drop", "CoreItemPickupActor_C"},
             {"itemdrop", "CoreItemPickupActor_C"},
+            // A chest can be a plain placed Blueprint rather than a Savable with a GUID,
+            // in which case the container walk above never sees it.  The class walk is the
+            // only way to reach one; `DevActorStateDump` then says where its state lives.
+            {"chest", "SG_Chest_BP_C"},
+            {"chest", "Chest_00_C"},
+            {"chest", "Chest_C"},
         };
         for (int k = 0; k < (int)(sizeof(kKeys) / sizeof(kKeys[0])) && !best; ++k) {
             if (!enemyown::HasCI(sub, kKeys[k].key) && !enemyown::HasCI(kKeys[k].key, sub)) continue;
@@ -10062,13 +10098,16 @@ void DevMenuLever(uint32_t now)
     float before = GlobalDilation();
     if (!strcmp(spec, "0") || !strcmp(spec, "close") || !strcmp(spec, "false"))
         g_devMenuPretend = 0;
-    if (!strcmp(spec, "dilate") || !strcmp(spec, "undilate")) {
-        bool on2 = !strcmp(spec, "dilate");
-        g_devMenuPretend = on2 ? 1 : 0;
+    if (!strcmp(spec, "dilate") || !strcmp(spec, "undilate") ||
+        !strcmp(spec, "dilatenomenu")) {
+        bool noMenu = !strcmp(spec, "dilatenomenu");
+        bool on2 = (!strcmp(spec, "dilate") || noMenu);
+        g_devMenuPretend = (!noMenu && on2) ? 1 : 0;
         float want = on2 ? 0.2f : 1.0f;
         if (g_oSetGlobalDilation)
             g_oSetGlobalDilation(GWorldPtr(), want);
-        QDLOG(LOG_INFO, "rig: menu lever -> pretend menu ", (on2 ? "open" : "closed"),
+        QDLOG(LOG_INFO, "rig: menu lever -> ", (noMenu ? "no menu, " : ""),
+              "pretend menu ", (on2 && !noMenu ? "open" : "closed"),
               ", SetGlobalTimeDilation(", flt(want, 2), ") issued; dilation ",
               flt(before, 2), " -> ", flt(GlobalDilation(), 2));
         return;
@@ -10162,6 +10201,88 @@ void DevEFuncLever(uint32_t now)
 
 
 uint32_t g_devDropLast = 0;
+
+// QDCOOP_TEST_USE / QDCOOP_TEST_PDMG: TEST INSTANCES ONLY.
+//   qd.use  = an item path; consume one through the game's own
+//             TryConsumingItemFromInventory, which makes the peer's inventory fall and
+//             lets the existing local detector emit the consume intent (G3's other half).
+//   qd.pdmg = an amount; send one K_DAMAGE from a locally-run enemy to the partner.  This
+//             exercises the G4 RECEIVER (`damage: player hp via ...`) without waiting for
+//             an AI swing; it is the module's own send path, not a simulated apply.
+char     g_devUseApplied[192] = "";
+char     g_devPdmgApplied[64] = "";
+uint32_t g_devUsePoll = 0;
+
+void DevUseLever(uint32_t now)
+{
+    static char upath[MAX_PATH], ppath[MAX_PATH];
+    static int on = -1;
+    if (on < 0) {
+        DevRigPath("QDCOOP_TEST_USE", "qd.use", upath, sizeof(upath));
+        DevRigPath("QDCOOP_TEST_PDMG", "qd.pdmg", ppath, sizeof(ppath));
+        on = (upath[0] || ppath[0]) ? 1 : 0;
+        if (on) QDLOG(LOG_INFO, "rig: use controls use='", upath, "' pdmg='", ppath, "' enabled");
+    }
+    if (!on || !IsGameplayPawn(g_localPawn)) return;
+    if (now - g_devUsePoll < 500) return;
+    g_devUsePoll = now;
+
+    char spec[192];
+    if (upath[0] && DevRigText("QDCOOP_TEST_USE", "qd.use", spec, sizeof(spec)) &&
+        strcmp(spec, g_devUseApplied) != 0) {
+        lstrcpynA(g_devUseApplied, spec, sizeof(g_devUseApplied));
+        char usePath[192] = "";
+        if (!strcmp(spec, "last")) lstrcpynA(usePath, g_qdLastGrant, sizeof(usePath));
+        else lstrcpynA(usePath, spec, sizeof(usePath));
+        int32_t removed = 0;
+        char err[160];
+        if (!usePath[0]) {
+            QDLOG(LOG_WARN, "rig: use lever -- 'last' but this machine has granted nothing yet");
+        } else {
+            bool ok = WrConsumeItem(usePath, 1, &removed, err, sizeof(err));
+            QDLOG(LOG_INFO, "rig: use lever -> ", usePath, " removed=", dec(removed),
+                  " ok=", dec(ok ? 1 : 0), (ok ? "" : " err="), (ok ? "" : err));
+        }
+    }
+
+    if (ppath[0] && DevRigText("QDCOOP_TEST_PDMG", "qd.pdmg", spec, sizeof(spec)) &&
+        strcmp(spec, g_devPdmgApplied) != 0) {
+        lstrcpynA(g_devPdmgApplied, spec, sizeof(g_devPdmgApplied));
+        float amount = (float)atof(spec);
+        if (!(amount > 0.0f)) amount = 20.0f;
+        // The attacker must be one the partner can resolve: a row this machine published
+        // for an enemy it runs.  That is exactly what the host's normal lane emits.
+        EnemyRec* best = nullptr;
+        float bd = -1.0f;
+        ActorXform me = {};
+        ReadActorXform(g_localPawn, &me);
+        for (int i = 0; i < g_enN; ++i) {
+            EnemyRec& r = g_en[i];
+            if (!r.haveGuid || !ObjectIsLive(r.actor) || EnemyDead(r.actor)) continue;
+            if (!g_own.Running(r.guid)) continue;
+            ActorXform x;
+            if (!ReadActorXform(r.actor, &x)) continue;
+            float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
+            float d = sqrtf(dx * dx + dy * dy + dz * dz);
+            if (bd >= 0.0f && d >= bd) continue;
+            bd = d; best = &r;
+        }
+        if (!best) { QDLOG(LOG_WARN, "rig: pdmg -- no locally-run enemy to attribute"); return; }
+        wire::DamageBody d;
+        memset(&d, 0, sizeof(d));
+        memcpy(d.guid, best->guid, sizeof(d.guid));
+        d.amount_centi = enemydmg::Centi(amount);
+        d.flags = wire::kDamageMelee;
+        uint8_t body[wire::kMaxBody];
+        wire::Writer w(body, sizeof(body));
+        wire::WriteDamage(w, d);
+        bool sent = w.ok && g_net.SendReliable(wire::K_DAMAGE, body, w.len);
+        QDLOG(LOG_INFO, "rig: pdmg -> guid=", hex32(best->guid[0]), " amount=", flt(amount, 1),
+              " centi=", dec(d.amount_centi), " sent=", dec(sent ? 1 : 0),
+              " (G4 receiver provocation)");
+    }
+}
+
 
 void DevDropProbeBody()
 {
@@ -10877,15 +10998,23 @@ const char* LocalOpenMenuName()
     // R64 fixed in PuppetPump; here the value is only a diagnostic, so a fault must
     // answer "no menu" instead of taking the session down.
     __try {
-        static const char* const kMenus[] = {
-            "CurrentGameMenu", "CurrentSaveMenu", "CurrentShopMenu",
-            "KeyMenu", "CurrentSearchMenu", "QuickSubmenu"
+        // `requireOpen` marks a widget the pawn keeps for the whole session (KeyUseMenu_C
+        // was measured to be permanently non-null).  For those, a missing IsOpen bool is
+        // NOT evidence of an open menu; the widget must say it is open itself.
+        static const struct { const char* name; bool requireOpen; } kMenus[] = {
+            {"CurrentGameMenu", false}, {"CurrentSaveMenu", false},
+            {"CurrentShopMenu", false}, {"KeyMenu", true},
+            {"CurrentSearchMenu", true}, {"QuickSubmenu", true}
         };
         for (unsigned i = 0; i < sizeof(kMenus) / sizeof(kMenus[0]) && !s_menu[0]; ++i) {
-            void* m = ObjPropC(p, kMenus[i]);
+            void* m = ObjPropC(p, kMenus[i].name);
             if (!m) continue;
+            uint8_t open = 0;
+            bool haveOpen = BytePropC(m, "IsOpen", &open);
+            if (kMenus[i].requireOpen && !haveOpen) continue;
+            if (haveOpen && !open) continue;
             if (FNameToString(ObjNameRaw(ObjClass(m)), s_menu, sizeof(s_menu)) <= 0)
-                CopyText2(s_menu, sizeof(s_menu), kMenus[i]);
+                CopyText2(s_menu, sizeof(s_menu), kMenus[i].name);
         }
         if (!s_menu[0]) {
             uint8_t b = 0;
@@ -10910,14 +11039,19 @@ float GlobalDilation()
 void HK_SetGlobalTimeDilation(void* worldContext, float dilation)
 {
     if (Cfg().suppress_pause && g_net.Connected() && dilation < 0.5f) {
+        // Measured Session 8: the peer's world reached dilation 0.00 with NO menu open (its
+        // `unpaused` clock froze at 840.3 while the host kept running).  A stray local
+        // dilation is the same hazard as a menu's, so the rule is now "no low dilation in
+        // a live session", with the Escape PauseMenu_C as the one named exception.
         const char* menu = LocalOpenMenuName();
-        if (menu) {
+        bool escapePause = menu && ContainsCI(menu, "PauseMenu");
+        if (!escapePause) {
             static uint32_t lastLog = 0;
             uint32_t now = Net::Now();
             if (now - lastLog > 1000) {
                 lastLog = now;
                 QDLOG(LOG_WARN, "BLOCK global time dilation ", flt(dilation, 2),
-                      " during a live session (menu ", menu,
+                      " during a live session (menu ", (menu ? menu : "none"),
                       "; the peer would see a frozen world)");
             }
             return;
@@ -10933,16 +11067,16 @@ void MenuDilationPump(uint32_t now)
     if (now - last < 250) return;
     last = now;
     const char* menu = LocalOpenMenuName();
-    if (menu) {
-        float d = GlobalDilation();
-        if (d < 0.5f) {
-            // A direct AWorldSettings write bypasses the setter; the poll restores it.
-            if (g_oSetGlobalDilation) g_oSetGlobalDilation(GWorldPtr(), 1.0f);
-            if (now - lastLog > 1000) {
-                lastLog = now;
-                QDLOG(LOG_WARN, "restored global time dilation ", flt(d, 2),
-                      " -> 1.00 (menu ", menu, ")");
-            }
+    bool escapePause = menu && ContainsCI(menu, "PauseMenu");
+    float d = GlobalDilation();
+    if (!escapePause && d < 0.5f) {
+        // A direct AWorldSettings write bypasses the setter, and Session 8 measured a
+        // stray 0.00 with no menu at all; the poll restores the world either way.
+        if (g_oSetGlobalDilation) g_oSetGlobalDilation(GWorldPtr(), 1.0f);
+        if (now - lastLog > 1000) {
+            lastLog = now;
+            QDLOG(LOG_WARN, "restored global time dilation ", flt(d, 2),
+                  " -> 1.00 (menu ", (menu ? menu : "none"), ")");
         }
     }
     // The clock proof.  `UWorld::UnpausedTimeSeconds` (+0x5A4) advances only while the
@@ -11037,6 +11171,7 @@ bool HK_Tick(void* engineLoop)
     DevLevelLever(now);
     DevMenuLever(now);
     DevEFuncLever(now);
+    DevUseLever(now);
     DevDropProbe(now);
     TravelPump(now);
     StreamPump(now);
