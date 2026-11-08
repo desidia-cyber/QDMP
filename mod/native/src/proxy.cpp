@@ -66,6 +66,7 @@
 #include "qdstream.h"
 #include "qddialogue.h"
 #include "qdenemy.h"
+#include "qdenemyown.h"
 #include "qdflags.h"
 
 // ---------------------------------------------------------------------------
@@ -516,7 +517,8 @@ void PeerApplyFlags(wire::Reader& r)
     }
 }
 
-void HostApplyEnemyIntent(const wire::IntentBody& b);   // LAYER 6
+void ApplyEnemyHitIntent(const wire::IntentBody& b);      // LAYER 6
+void ApplyEnemyRecordIntent(const wire::IntentBody& b);   // LAYER 6 (host only)
 
 // Peer side: an intent is a request, the host decides.
 void HostApplyIntent(wire::Reader& r)
@@ -544,8 +546,13 @@ void HostApplyIntent(wire::Reader& r)
     } else if (b.kind == wire::I_ACTOR_STATE) {
         QDLOG(LOG_INFO, "actor-state intent from peer guid=", hex32(b.guid[0]),
               " value=", dec(b.value), " (apply path pending)");
-    } else if (b.kind == wire::I_ENEMY_HIT || b.kind == wire::I_ENEMY_RECORD) {
-        HostApplyEnemyIntent(b);
+    } else if (b.kind == wire::I_ENEMY_HIT) {
+        // The owner applies a hit the non-owner's player landed on its frozen copy.
+        // Either machine can own an enemy, so this path serves both roles.
+        ApplyEnemyHitIntent(b);
+    } else if (b.kind == wire::I_ENEMY_RECORD) {
+        // Persistence is host-authoritative whichever machine ran the enemy.
+        ApplyEnemyRecordIntent(b);
     } else if (b.kind == wire::I_DIALOGUE_ANS) {
         // The wire carries {npc, line, option}; `entry` is the cursor within the
         // sequence and is known locally on both machines, so it is not sent.  The
@@ -2313,32 +2320,41 @@ void OnLevelUnion(wire::Reader& r, uint32_t now)
 // ===========================================================================
 // 6b. Enemies (qdenemy.h holds the model and the reasons)
 // ===========================================================================
-typedef float (*FnApplyDamage)(void* damagedActor, float baseDamage, void* instigator,
-                               void* causer, void* damageTypeClass);
-
 struct EnemyRec {
     void*    actor;
     void*    spawner;
     uint32_t guid[4];
     bool     haveGuid;
-    bool     driven;
-    bool     killedByUs;     // a KILL from the host was applied (one shot)
+    bool     driven;         // this copy is frozen and following the owner's rows
+    bool     killedByUs;     // a KILL from the owner was applied (one shot)
     uint8_t  savedMoveMode;
+    uint8_t  savedPaused;    // EnemyBase_C.Paused before this mod froze the copy
     float    lastHp, maxHp;
     float    pos[3], yaw;
     uint32_t seenPass;
+    // The detail lane (WIRE.md 3.9a).  `pub*` is what this machine last published as
+    // the owner; `got*` is what it last applied as the follower.  The montage is
+    // identified by asset path, never by index: the two machines discover cooked
+    // assets in their own order.
+    void*    pubMon;
+    uint8_t  pubSeq;
+    uint16_t pubStatus;
+    uint8_t  gotSeq;
+    uint16_t gotStatus;
+    char     gotPath[wire::kEnemyPathCap];
 };
 EnemyRec        g_en[256];
 int             g_enN = 0;
 void*           g_enemyBaseCls = nullptr;
 uint32_t        g_enPass = 1;
 int             g_enCursor = 0;
-enemy::HostView g_hostView;
-enemy::KillLog  g_killLog;
+enemy::HostView g_hostView;        // the other machine's rows (either direction)
+enemy::KillLog  g_killLog;         // deaths this machine ran, re-broadcast as dead rows
 enemy::RowCursor g_rowCursor;
+enemyown::OwnerSet g_own;          // who runs each enemy (qdenemyown.h)
 int             g_deadCursor = 0;
-bool            g_inOwnDamage = false;
 bool            g_inOwnRecord = false;
+bool            g_inRemoteDeath = false;   // a death being applied FROM the other machine
 void*           g_clsYes[32];  int g_clsYesN = 0;    // class -> derives from the enemy base
 void*           g_clsNo[256];  int g_clsNoN = 0;     // (reset with the world: classes unload)
 
@@ -2441,32 +2457,198 @@ void EnemyScanStep()
     }
 }
 
-// The game's own damage path, read back.
-bool DamageEnemy(void* actor, float amount, void* causer)
+// ---------------------------------------------------------------------------
+// Enemy damage: through the message the enemy actually answers
+// ---------------------------------------------------------------------------
+// MEASURED, and the reason the previous round's damage path was inert:
+// `UGameplayStatics::ApplyDamage` (0x028D2190) IS the engine entry -- its body guards
+// and calls `AActor::TakeDamage` through vtable+0x598 -- but `EnemyBase_C` never
+// imports it and a live pass recorded it never firing during a real enemy kill.  HP
+// movement built on it (convergence on a driven copy, a peer's I_ENEMY_HIT, a dead
+// I_ENEMY_RECORD) therefore changed nothing, while the read-back said "no effect" and
+// nothing acted on it.  This function is named for what it does, not for what the
+// engine calls its damage entry.
+//
+// The entry the enemy DOES answer is `TryApplyDamage`, the `FB_Damageable` interface
+// message declared by EnemyBase_C (and by the player class).  Its payload is a
+// `DamageToApply` UScriptStruct.  The struct's fields are WALKED from reflection and
+// filled by name: a hardcoded layout is one content change away from writing the
+// amount into the wrong field.  The HP read-back is the only proof it worked, and the
+// "had NO effect" line below now names the struct fill as the suspect.
+static int DamageAmountScore(const char* n)
 {
-    FnApplyDamage ad = (FnApplyDamage)Ptr<void*>(0x028D2190u);
-    if (!ad || !actor || !ObjectIsLive(actor) || !(amount > 0.0f)) return false;
+    if (NameEquals(n, "DamageAmount")) return 4;
+    if (NameEquals(n, "Damage") || NameEquals(n, "Amount") || NameEquals(n, "BaseDamage")) return 3;
+    if (NameEquals(n, "DamageValue") || NameEquals(n, "Value")) return 2;
+    if (enemyown::HasCI(n, "damage") &&
+        (enemyown::HasCI(n, "amount") || enemyown::HasCI(n, "value"))) return 1;
+    return 0;
+}
+
+// The struct names the party, not the amount.  Filled only when a field with the name
+// exists; a struct without them simply carries none.
+static bool CauserField(const char* n)
+{
+    return NameEquals(n, "Instigator") || NameEquals(n, "DamageInstigator") ||
+           NameEquals(n, "DamageCauser") || NameEquals(n, "Causer") ||
+           NameEquals(n, "SourceActor") || NameEquals(n, "DamageSource") ||
+           NameEquals(n, "Attacker") || NameEquals(n, "Applier");
+}
+
+static bool TargetField(const char* n)
+{
+    return NameEquals(n, "DamagedActor") || NameEquals(n, "TargetActor") ||
+           NameEquals(n, "Target") || NameEquals(n, "Victim");
+}
+
+struct EnemyDamageApi {
+    Fn     fn;
+    bool   tried;
+    bool   ok;
+    const PropDesc* param;     // the DamageToApply parameter
+    LayoutResult    fields;    // that struct's own properties
+    int    amountOff;
+    int    amountSize;
+    char   amountName[64];
+    bool   haveAmount;
+};
+EnemyDamageApi g_enDmg = {};
+
+bool EnemyDamageApiInit(void* actor)
+{
+    EnemyDamageApi& a = g_enDmg;
+    if (a.tried) return a.ok;
+    a.tried = true;
+    if (!a.fn.Resolve(actor, "TryApplyDamage")) {
+        // A Blueprint interface message can live on the interface rather than on the
+        // implementing class; the object scan is the fallback for that case.
+        a.fn.fn = FindObjectByNameAndClass("TryApplyDamage", "Function");
+        if (a.fn.fn) a.fn.sig = Signature(a.fn.fn);
+    }
+    if (!a.fn.fn || !a.fn.sig.valid) {
+        QDLOG(LOG_ERROR, "enemy damage: TryApplyDamage (FB_Damageable) not found; "
+                         "enemy HP cannot be driven from this module");
+        return false;
+    }
+    for (int i = 0; i < a.fn.sig.props; ++i) {
+        const PropDesc& d = a.fn.sig.p[i];
+        if (!NameEquals(d.type, "StructProperty")) continue;
+        if (d.flags & CPF_OutParm) continue;
+        if (!a.param || enemyown::HasCI(d.name, "DamageToApply")) a.param = &d;
+    }
+    if (!a.param) {
+        QDLOG(LOG_ERROR, "enemy damage: TryApplyDamage has no DamageToApply struct parameter");
+        return false;
+    }
+    void* ss = FindObjectByNameAndClass("DamageToApply", "ScriptStruct");
+    if (!ss) ss = FindObjectByNameAndClass("DamageToApply", "UserDefinedStruct");
+    if (!ss) {
+        QDLOG(LOG_ERROR, "enemy damage: the DamageToApply UScriptStruct is not loaded");
+        return false;
+    }
+    if (!WalkFieldsRaw(ss, Lay(), false, &a.fields)) {
+        QDLOG(LOG_ERROR, "enemy damage: DamageToApply properties could not be walked");
+        return false;
+    }
+    int best = 0;
+    for (int i = 0; i < a.fields.props; ++i) {
+        const PropDesc& d = a.fields.p[i];
+        bool isFloat = NameEquals(d.type, "FloatProperty") && d.size == 4;
+        bool isDouble = NameEquals(d.type, "DoubleProperty") && d.size == 8;
+        if (!isFloat && !isDouble) continue;
+        // Never write outside the parameter: a struct whose PropertiesSize disagrees
+        // with the function's parm block would otherwise scribble over the next one.
+        if (d.offset < 0 || d.offset + d.size > a.param->size) continue;
+        int s = DamageAmountScore(d.name);
+        if (s > best) {
+            best = s;
+            a.amountOff = d.offset;
+            a.amountSize = d.size;
+            memcpy(a.amountName, d.name, sizeof(a.amountName));
+            a.amountName[sizeof(a.amountName) - 1] = 0;
+            a.haveAmount = true;
+        }
+    }
+    QDLOG(LOG_INFO, "enemy damage: TryApplyDamage param ", a.param->name, " size=",
+          dec(a.param->size), ", DamageToApply fields=", dec(a.fields.props),
+          ", amount -> ", (a.haveAmount ? a.amountName : "NONE"),
+          " @", dec(a.amountOff), " size=", dec(a.amountSize));
+    // Dump the struct once at INFO: the live run then has the real field set, which is
+    // the only way a wrong fill is diagnosable rather than mysterious.
+    for (int i = 0; i < a.fields.props; ++i)
+        QDLOG(LOG_INFO, "    DamageToApply.", a.fields.p[i].name, " : ",
+              a.fields.p[i].type, " @", dec(a.fields.p[i].offset),
+              " size=", dec(a.fields.p[i].size));
+    if (!a.haveAmount) {
+        QDLOG(LOG_ERROR, "enemy damage: no plausible damage-amount field in DamageToApply");
+        return false;
+    }
+    a.ok = true;
+    return true;
+}
+
+bool ApplyEnemyDamage(void* actor, float amount, void* causer)
+{
+    if (!actor || !ObjectIsLive(actor) || !(amount > 0.0f)) return false;
+    if (!EnemyDamageApiInit(actor)) return false;
+    EnemyDamageApi& a = g_enDmg;
+
     float before = 0, after = 0, mx = 0;
     bool haveBefore = EnemyHp(actor, &before, &mx);
-    g_inOwnDamage = true;
-    float dealt = ad(actor, amount, nullptr, causer, nullptr);
-    g_inOwnDamage = false;
+
+    Call c(a.fn);
+    uint8_t* base = c.At(a.param->name, a.param->size);
+    if (!base) return false;
+    if (a.amountSize == 8) {
+        double v = (double)amount;
+        memcpy(base + a.amountOff, &v, 8);
+    } else {
+        memcpy(base + a.amountOff, &amount, 4);
+    }
+    for (int i = 0; i < a.fields.props; ++i) {
+        const PropDesc& d = a.fields.p[i];
+        if (!NameEquals(d.type, "ObjectProperty") || d.size < 8) continue;
+        if (d.offset + 8 > a.param->size) continue;
+        void* v = nullptr;
+        if (CauserField(d.name)) v = causer;
+        else if (TargetField(d.name)) v = actor;
+        else continue;
+        memcpy(base + d.offset, &v, 8);
+    }
+    bool ran = c.Run(actor);
+    float ret = 0.0f;
+    if (c.Ret()) memcpy(&ret, c.Ret(), 4);
+
     bool haveAfter = EnemyHp(actor, &after, &mx);
     bool took = haveBefore && haveAfter && after < before;
     static int failures = 0;
     if (!took && haveBefore && haveAfter && failures++ < 5)
-        QDLOG(LOG_WARN, "enemy damage had NO effect: asked ", flt(amount, 1), " dealt ", flt(dealt, 1),
-              " hp ", flt(before, 1), " -> ", flt(after, 1));
+        QDLOG(LOG_WARN, "enemy damage had NO effect: TryApplyDamage ", (ran ? "ran" : "did not run"),
+              " asked ", flt(amount, 1), " returned ", flt(ret, 2),
+              " hp ", flt(before, 1), " -> ", flt(after, 1),
+              " (if this repeats, the DamageToApply fill is wrong)");
     return took;
 }
 
-// Peer: hand the copy to the host (AI off) or back to its own AI.
+// Freeze a copy (the other machine runs it) or hand it back to its own AI.
+// Idempotent on purpose: freeze/unfreeze is driven by an ownership state that can be
+// re-evaluated every frame, and a second freeze would read the movement mode it last
+// wrote (MOVE_None) into savedMoveMode, so the copy would come back walking in place.
 void EnemyDrive(EnemyRec& r, bool on)
 {
+    if (r.driven == on) return;
     static Fn fTick = {}, fTickCtl = {}, fMode = {}, fStop = {};
     void* a = r.actor;
     void* ctl = ObjPropC(a, "Controller");
     void* cmc = ObjPropC(a, "CharacterMovement");
+    // The game's own stop is EnemySpawner_C.SetEnemiesPaused(bool), which writes
+    // EnemyBase_C.Paused (BoolProperty, +0x1F4E).  That is the first lever; the native
+    // bIsAIDisabled is the second.  Both are logged, because a copy that was frozen by
+    // neither is a statue that still attacks.  Paused is saved on freeze and restored on
+    // release: the game may have set it for its own reasons.
+    if (on) BytePropC(a, "Paused", &r.savedPaused);
+    uint8_t pausedWant = on ? 1 : (r.savedPaused ? 1 : 0);
+    bool paused = WriteBytePropC(a, "Paused", pausedWant);
     bool aiFlag = WriteBytePropC(a, "bIsAIDisabled", on ? 1 : 0);
     bool tick = CallBool1(a, fTick, "SetActorTickEnabled", !on);
     if (ctl) {
@@ -2487,13 +2669,283 @@ void EnemyDrive(EnemyRec& r, bool on)
         }
     }
     r.driven = on;
-    QDLOG(LOG_INFO, "enemy ", hex32(r.guid[0]), (on ? " DRIVEN by host" : " released to local AI"),
-          " (bIsAIDisabled ", (aiFlag ? "set" : "MISSING"), ", tick ", (tick ? "ok" : "FAILED"),
+    QDLOG(LOG_INFO, "enemy ", hex32(r.guid[0]), (on ? " DRIVEN by owner" : " released to local AI"),
+          " (Paused ", (paused ? "ok" : "MISSING"), "=", dec((int)pausedWant),
+          ", bIsAIDisabled ", (aiFlag ? "ok" : "MISSING"),
+          ", tick ", (tick ? "ok" : "FAILED"),
           ", controller ", (ctl ? "yes" : "none"), ")");
 }
 
-// Host: rows for every live enemy with a key, then a few recent deaths.
-void EnemyHostSend(uint32_t now)
+// ---------------------------------------------------------------------------
+// Animation: what an enemy is playing, read from its mesh and replayed on the copy
+// ---------------------------------------------------------------------------
+// The same chain the player's arms use (LocalArmsMontage): SkeletalMeshComponent ->
+// GetAnimInstance -> GetCurrentActiveMontage.  An enemy is an ACharacter, so its
+// montage runs on the inherited `Mesh`, not on the first person `Arms`.
+void* EnemyMesh(void* actor)
+{
+    void* m = ObjPropC(actor, "Mesh");
+    if (!m) m = ObjPropC(actor, "CharacterMesh0");   // a build that renamed it
+    return m;
+}
+
+void* MeshAnimInstance(void* mesh)
+{
+    static Fn f = {};
+    if (!mesh || !f.Resolve(mesh, "GetAnimInstance")) return nullptr;
+    Call c(f);
+    if (!c.Run(mesh) || !c.Ret()) return nullptr;
+    void* ai = *(void**)c.Ret();
+    return LooksLikeUObject(ai) ? ai : nullptr;
+}
+
+void* MeshActiveMontage(void* mesh)
+{
+    void* ai = MeshAnimInstance(mesh);
+    static Fn f = {};
+    if (!ai || !f.Resolve(ai, "GetCurrentActiveMontage")) return nullptr;
+    Call c(f);
+    if (!c.Run(ai) || !c.Ret()) return nullptr;
+    return *(void**)c.Ret();
+}
+
+// Play one montage on a copy.  "called=yes is not evidence the call ran", so the active
+// montage is read back afterwards and logged: a live run can then tell a working
+// reflective Montage_Play from one that silently did nothing.
+bool PlayEnemyMontage(void* mesh, void* montage)
+{
+    void* ai = MeshAnimInstance(mesh);
+    static Fn f = {};
+    if (!ai || !montage || !f.Resolve(ai, "Montage_Play")) return false;
+    Call c(f);
+    c.Obj("MontageToPlay", montage);
+    if (f.Off("InPlayRate") >= 0) c.F32("InPlayRate", 1.0f);
+    // bStopAllMontages defaults to true; the argument block is zeroed, so it has to be
+    // set explicitly or an attack montage would layer over whatever is playing.
+    if (f.Off("bStopAllMontages") >= 0) c.U8("bStopAllMontages", 1);
+    bool ran = c.Run(ai);
+    void* back = MeshActiveMontage(mesh);
+    QDLOG(LOG_INFO, "enemy detail: Montage_Play ", (ran ? "called" : "FAILED"),
+          " read-back ", (back == montage ? "ok" : (back ? "a different montage" : "none")));
+    return ran && back == montage;
+}
+
+// The status byte properties this build actually carries.  `bEnemyPoisoned` is the
+// shipped name (analysis/exe_names.txt); `Poisoned` is a fallback.  A missing property
+// is reported, never invented.
+uint16_t EnemyStatusMask(void* actor)
+{
+    uint8_t v = 0;
+    // One name, not a fallback chain: if `bEnemyPoisoned` exists its zero means "not
+    // poisoned", and reading a second name for the same fact could contradict it.
+    bool havePoison = BytePropC(actor, "bEnemyPoisoned", &v) || BytePropC(actor, "Poisoned", &v);
+    bool poisoned = havePoison && v != 0;
+    uint8_t s = 0;
+    bool staggered = BytePropC(actor, "bIsStaggered", &s) && s != 0;
+    return enemyown::StatusMask(poisoned, staggered);
+}
+
+void MirrorEnemyStatus(void* actor, uint16_t mask)
+{
+    uint8_t cur = 0;
+    const char* poison = BytePropC(actor, "bEnemyPoisoned", &cur) ? "bEnemyPoisoned"
+                       : (BytePropC(actor, "Poisoned", &cur) ? "Poisoned" : nullptr);
+    const char* stag = BytePropC(actor, "bIsStaggered", &cur) ? "bIsStaggered" : nullptr;
+    bool wrotePoison = poison && WriteBytePropC(actor, poison, (mask & (uint16_t)wire::ST_POISON) ? 1 : 0);
+    bool wroteStag = stag && WriteBytePropC(actor, stag, (mask & (uint16_t)wire::ST_HEAVY) ? 1 : 0);
+    QDLOG(LOG_INFO, "enemy status applied mask=", hex32(mask),
+          " poison ", (poison ? (wrotePoison ? "ok" : "WRITE FAILED") : "property absent"),
+          " stagger ", (stag ? (wroteStag ? "ok" : "WRITE FAILED") : "property absent"));
+}
+
+// The owner publishes what the enemy is doing.  Sent on change only: a montage is an
+// event, not a sample, and a status mask only changes when a debuff lands or expires.
+void SendEnemyDetail(EnemyRec& r, uint32_t now)
+{
+    (void)now;
+    void* mesh = EnemyMesh(r.actor);
+    void* mon = mesh ? MeshActiveMontage(mesh) : nullptr;
+    uint16_t mask = EnemyStatusMask(r.actor);
+    bool monChanged = (mon != r.pubMon);
+    // Nothing to say on the first tick of an idle enemy: pubMon is null and pubStatus 0
+    // already, so an unchanged idle enemy sends nothing rather than one packet per
+    // enemy per session.
+    if (!monChanged && mask == r.pubStatus) return;
+
+    wire::EnemyDetailBody d;
+    memset(&d, 0, sizeof(d));
+    memcpy(d.guid, r.guid, 16);
+    d.status = mask;
+    if (mon) {
+        char nm[128] = "";
+        FNameToString(ObjNameRaw(mon), nm, sizeof(nm));
+        d.anim = enemyown::ClassifyAnim(nm);
+        if (avatar::AssetPath(mon, d.path, sizeof(d.path)) <= 0)
+            QDLOG(LOG_WARN, "enemy detail: montage ", nm, " has no asset path");
+    }
+    // The counter bumps per NEW montage.  A status-only change keeps it, so the copy
+    // does not restart a one-shot animation because poison ticked.
+    if (monChanged && mon) { if (++r.pubSeq == 0) r.pubSeq = 1; }
+    d.seq = r.pubSeq;
+
+    uint8_t body[wire::kMaxBody];
+    wire::Writer w(body, sizeof(body));
+    wire::WriteEnemyDetail(w, d);
+    if (w.ok) g_net.SendReliable(wire::K_ENEMY_DETAIL, body, w.len);
+    r.pubMon = mon;
+    r.pubStatus = mask;
+    QDLOG(LOG_INFO, "enemy detail sent guid=", hex32(r.guid[0]), " anim=", dec((int)d.anim),
+          " seq=", dec((int)d.seq), " status=", hex32(mask),
+          (mon ? " " : " (no montage)"), (mon ? d.path : ""));
+}
+
+// The follower applies the owner's animation and status to its frozen copy.
+void OnEnemyDetail(wire::Reader& r, uint32_t now)
+{
+    wire::EnemyDetailBody d;
+    if (!wire::ReadEnemyDetail(r, &d)) return;
+    EnemyRec* er = EnemyByGuid(d.guid);
+    if (!er || !ObjectIsLive(er->actor)) return;
+    // Only a frozen follower applies it; the owner is the source of truth.
+    if (!er->driven || g_own.State(d.guid) != enemyown::O_FROZEN) return;
+    // A detail is the continuation of a row stream, so it is only valid while that
+    // stream is live.  This is the detail lane's world-divergence guard: when the peer
+    // is in another map its K_ENEMY rows stop applying (the travel gate refuses them)
+    // and this GUID's row goes stale; an animation from the other world must not then
+    // be played on a same-GUID enemy here.
+    const enemy::HostRow* row = g_hostView.Get(d.guid);
+    uint32_t age = (row && now > row->rx_ms) ? now - row->rx_ms : 0xFFFFFFFFu;
+    if (!row || age > enemy::HostView::kFreshMs) {
+        static int stale = 0;
+        if (stale++ < 5)
+            QDLOG(LOG_WARN, "enemy detail dropped: no fresh row for guid=", hex32(d.guid[0]));
+        return;
+    }
+
+    if (d.status != er->gotStatus) {
+        MirrorEnemyStatus(er->actor, d.status);
+        er->gotStatus = d.status;
+    }
+    if (d.anim == wire::E_NONE || !d.path[0]) return;
+    if (d.seq == er->gotSeq && strcmp(d.path, er->gotPath) == 0) return;
+
+    void* montage = avatar::LoadAsset(d.path);
+    void* mesh = EnemyMesh(er->actor);
+    bool played = (montage && mesh) ? PlayEnemyMontage(mesh, montage) : false;
+    if (!montage) QDLOG(LOG_WARN, "enemy detail: could not load ", d.path);
+    er->gotSeq = d.seq;
+    memcpy(er->gotPath, d.path, sizeof(er->gotPath));
+    QDLOG(LOG_INFO, "enemy detail applied guid=", hex32(d.guid[0]), " anim=", dec((int)d.anim),
+          " seq=", dec((int)d.seq), (played ? " played" : " NOT played"));
+}
+
+void SendEnemyIntentHit(const uint32_t guid[4], int32_t frac)
+{
+    uint8_t body[64];
+    wire::Writer w(body, sizeof(body));
+    wire::WriteIntentEnemyHit(w, 0, guid, frac);
+    if (w.ok) g_net.SendReliable(wire::K_INTENT, body, w.len);
+}
+
+// ---------------------------------------------------------------------------
+// Ownership by proximity (qdenemyown.h), applied to the local records
+// ---------------------------------------------------------------------------
+// Whichever machine runs an enemy publishes its rows; both machines apply incoming rows
+// to their own copies.  Today K_ENEMY is no longer host -> peer only.
+void EnemyOwnPump(uint32_t now)
+{
+    static uint32_t lastMs = 0, lastHpMs = 0;
+    float dt = lastMs ? (float)(now - lastMs) / 1000.0f : 0.0f;
+    lastMs = now;
+    bool hpTick = now - lastHpMs >= 100;
+    if (hpTick) lastHpMs = now;
+
+    float mine[3] = {0, 0, 0};
+    bool haveMine = false;
+    { ActorXform x; if (IsGameplayPawn(g_localPawn) && ReadActorXform(g_localPawn, &x)) {
+          mine[0] = x.px; mine[1] = x.py; mine[2] = x.pz; haveMine = true; } }
+    float theirs[3] = {0, 0, 0};
+    bool haveTheirs = false;
+    // The partner's drawn position is slightly in the past, which the 800 cm margin in
+    // qdenemyown.h absorbs; a frozen (silent) partner is no position at all.
+    { motion::MoveOut m = g_peerInterp.Sample(now);
+      if (m.valid && !m.frozen) {
+          theirs[0] = m.px; theirs[1] = m.py; theirs[2] = m.pz; haveTheirs = true; } }
+
+    for (int i = 0; i < g_enN; ++i) {
+        EnemyRec& r = g_en[i];
+        if (!r.haveGuid || !ObjectIsLive(r.actor)) continue;
+
+        float ex[3] = {0, 0, 0};
+        bool haveEx = false;
+        float exYaw = 0.0f;
+        { ActorXform x; if (ReadActorXform(r.actor, &x)) {
+              ex[0] = x.px; ex[1] = x.py; ex[2] = x.pz; exYaw = x.yaw; haveEx = true; } }
+
+        enemyown::OwnerState st = g_own.Tick(r.guid, true, ex, haveEx,
+                                            mine, haveMine, theirs, haveTheirs, now);
+        const enemy::HostRow* row = g_hostView.Get(r.guid);
+        if (st == enemyown::O_FROZEN && row) {
+            // A death the other machine ran reaches the machine that did not kill it.
+            // Only a FOLLOWER takes a death from a row: an owner never gives up an enemy
+            // it is simulating because the other machine's stale kill log still lists
+            // it, and the owner's own game path already handles every death it causes.
+            uint32_t age = (now > row->rx_ms) ? now - row->rx_ms : 0;
+            if (!(row->flags & enemy::kAlive) && age <= enemy::HostView::kDeadStaleMs) {
+                if (!r.killedByUs && !EnemyDead(r.actor)) {
+                    float hp = 0, mx = 0;
+                    if (EnemyHp(r.actor, &hp, &mx) && hp > 0.0f) {
+                        QDLOG(LOG_INFO, "enemy ", hex32(r.guid[0]), ": the owner says dead, killing the copy");
+                        // This death must not be re-broadcast as our own (no echo of a
+                        // kill the other machine already recorded).
+                        g_inRemoteDeath = true;
+                        ApplyEnemyDamage(r.actor, enemy::ConvergeDamage(hp, mx, 0, false), g_localPawn);
+                        g_inRemoteDeath = false;
+                    }
+                    r.killedByUs = true;
+                }
+                continue;
+            }
+            r.killedByUs = false;
+            if (!r.driven) {
+                EnemyDrive(r, true);
+                if (haveEx) { r.pos[0] = ex[0]; r.pos[1] = ex[1]; r.pos[2] = ex[2]; r.yaw = exYaw; }
+                r.lastHp = -1.0f;
+            }
+            // A frozen copy is not a statue: it follows the owner's position and yaw
+            // exactly the way the old host-driven path did.
+            float tgt[3] = {wire::DequantizePos(row->px), wire::DequantizePos(row->py),
+                            wire::DequantizePos(row->pz)};
+            enemy::Follow(r.pos, tgt, dt);
+            r.yaw = enemy::FollowYaw(r.yaw, wire::DequantizeAngle(row->yaw), dt);
+            SetActorXform(r.actor, r.pos[0], r.pos[1], r.pos[2], r.yaw);
+            if (hpTick) {
+                float hp = 0, mx = 0;
+                if (EnemyHp(r.actor, &hp, &mx)) {
+                    // A drop this mod did not cause is the local player hitting the
+                    // copy: the OWNER decides what it did, so send it the delta.
+                    int32_t hit = (r.lastHp >= 0.0f) ? enemy::HitFrac(r.lastHp, hp, mx) : 0;
+                    if (hit > 0) SendEnemyIntentHit(r.guid, hit);
+                    // The owner's HP is the truth and is never converged downward from
+                    // the other machine's row.  Only a follower converges.
+                    float d = enemy::ConvergeDamage(hp, mx, row->hp, true);
+                    if (d > 0.0f) { ApplyEnemyDamage(r.actor, d, g_localPawn); EnemyHp(r.actor, &hp, &mx); }
+                    r.lastHp = hp;
+                    r.maxHp = mx;
+                }
+            }
+        } else {
+            // LOCAL or an in-flight HAND-OFF: the copy runs its own AI.  A hand-off
+            // keeps simulating until the other machine's rows confirm it (qdenemyown.h).
+            r.killedByUs = false;
+            if (r.driven) EnemyDrive(r, false);
+        }
+    }
+}
+
+// Publish rows for the enemies this machine runs, plus a few recent deaths.  The
+// kEnemyPeerOwns bit says "I have handed it to you"; a clear bit says "I run it".
+void EnemySendPump(uint32_t now)
 {
     static uint32_t last = 0;
     if (now - last < 50) return;      // 20 Hz (WIRE.md 3.9)
@@ -2503,18 +2955,29 @@ void EnemyHostSend(uint32_t now)
     for (int i = 0; i < g_enN; ++i) {
         EnemyRec& r = g_en[i];
         if (!r.haveGuid || !ObjectIsLive(r.actor) || EnemyDead(r.actor)) continue;
+        enemyown::Publish pub = g_own.Publishing(r.guid);
+        if (pub == enemyown::PUB_NONE) continue;
         ActorXform x;
         if (!ReadActorXform(r.actor, &x)) continue;
         float hp = 0, mx = 0;
         if (!EnemyHp(r.actor, &hp, &mx) || hp <= 0.0f) continue;
-        if (g_killLog.Count()) g_killLog.Remove(r.guid);    // alive again: it respawned
+        if (pub == enemyown::PUB_OWN && g_killLog.Count()) g_killLog.Remove(r.guid);  // respawned
         wire::EnemyRow& w = rows[n++];
         memcpy(w.guid, r.guid, 16);
         w.px = wire::QuantizePos(x.px); w.py = wire::QuantizePos(x.py); w.pz = wire::QuantizePos(x.pz);
         w.yaw = wire::QuantizeAngle(x.yaw);
         w.hp = enemy::HpFrac(hp, mx);
         w.flags = enemy::kAlive | enemy::kBody;
+        if (pub == enemyown::PUB_HANDOFF) w.flags |= wire::kEnemyPeerOwns;
     }
+    // Detail for the enemies this machine runs.  Reliable and on change only.
+    for (int i = 0; i < g_enN; ++i) {
+        EnemyRec& r = g_en[i];
+        if (!r.haveGuid || !ObjectIsLive(r.actor)) continue;
+        if (g_own.State(r.guid) != enemyown::O_LOCAL) continue;
+        SendEnemyDetail(r, now);
+    }
+
     int count = 0;
     int first = g_rowCursor.Take(n, 16, &count);     // 16 live + up to 4 dead = 20 rows
     wire::EnemyRow out[20];
@@ -2535,69 +2998,6 @@ void EnemyHostSend(uint32_t now)
     if (w.ok) g_net.SendUnreliable(wire::K_ENEMY, body, w.len);
 }
 
-void SendEnemyIntentHit(const uint32_t guid[4], int32_t frac)
-{
-    uint8_t body[64];
-    wire::Writer w(body, sizeof(body));
-    wire::WriteIntentEnemyHit(w, 0, guid, frac);
-    if (w.ok) g_net.SendReliable(wire::K_INTENT, body, w.len);
-}
-
-// Peer: drive, follow, converge, report hits.
-void EnemyPeerPump(uint32_t now)
-{
-    static uint32_t lastMs = 0, lastHpMs = 0;
-    float dt = lastMs ? (float)(now - lastMs) / 1000.0f : 0.0f;
-    lastMs = now;
-    bool hpTick = now - lastHpMs >= 100;
-    if (hpTick) lastHpMs = now;
-    for (int i = 0; i < g_enN; ++i) {
-        EnemyRec& r = g_en[i];
-        if (!r.haveGuid || !ObjectIsLive(r.actor)) continue;
-        enemy::Owner o = g_hostView.Decide(r.guid, r.driven, now);
-        const enemy::HostRow* row = g_hostView.Get(r.guid);
-        if (o == enemy::KILL) {
-            if (!r.killedByUs && !EnemyDead(r.actor)) {
-                float hp = 0, mx = 0;
-                if (EnemyHp(r.actor, &hp, &mx) && hp > 0.0f) {
-                    QDLOG(LOG_INFO, "enemy ", hex32(r.guid[0]), ": host says dead, killing the copy");
-                    DamageEnemy(r.actor, enemy::ConvergeDamage(hp, mx, 0, false), g_localPawn);
-                }
-                r.killedByUs = true;
-            }
-            continue;
-        }
-        r.killedByUs = false;
-        if (o == enemy::DRIVEN) {
-            if (!r.driven) {
-                EnemyDrive(r, true);
-                ActorXform x;
-                if (ReadActorXform(r.actor, &x)) { r.pos[0] = x.px; r.pos[1] = x.py; r.pos[2] = x.pz; r.yaw = x.yaw; }
-                r.lastHp = -1.0f;
-            }
-            float tgt[3] = {wire::DequantizePos(row->px), wire::DequantizePos(row->py), wire::DequantizePos(row->pz)};
-            enemy::Follow(r.pos, tgt, dt);
-            r.yaw = enemy::FollowYaw(r.yaw, wire::DequantizeAngle(row->yaw), dt);
-            SetActorXform(r.actor, r.pos[0], r.pos[1], r.pos[2], r.yaw);
-            if (hpTick) {
-                float hp = 0, mx = 0;
-                if (EnemyHp(r.actor, &hp, &mx)) {
-                    // A drop this mod did not cause is the local player's hit: the host
-                    // decides what it did.
-                    int32_t hit = (r.lastHp >= 0.0f) ? enemy::HitFrac(r.lastHp, hp, mx) : 0;
-                    if (hit > 0) SendEnemyIntentHit(r.guid, hit);
-                    float d = enemy::ConvergeDamage(hp, mx, row->hp, true);
-                    if (d > 0.0f) { DamageEnemy(r.actor, d, g_localPawn); EnemyHp(r.actor, &hp, &mx); }
-                    r.lastHp = hp;
-                    r.maxHp = mx;
-                }
-            }
-        } else if (r.driven) {
-            EnemyDrive(r, false);
-        }
-    }
-}
-
 void OnEnemyRows(wire::Reader& r, uint32_t now)
 {
     uint16_t n = 0;
@@ -2606,40 +3006,66 @@ void OnEnemyRows(wire::Reader& r, uint32_t now)
         wire::EnemyRow e;
         if (!wire::ReadEnemyRow(r, &e)) break;
         g_hostView.OnRow(e.guid, e.px, e.py, e.pz, e.yaw, e.hp, e.flags, now);
+        // The owner says it is alive: a death this machine still held from when IT ran
+        // the enemy is stale and must stop being broadcast.
+        if ((e.flags & enemy::kAlive) && g_killLog.Count() &&
+            g_own.State(e.guid) == enemyown::O_FROZEN)
+            g_killLog.Remove(e.guid);
+        // The claim bit is the sender's own statement of who runs it.  Feed it even for
+        // a dead row: a frozen copy must not sit waiting on a stale claim.
+        g_own.OnRemoteRow(e.guid, (e.flags & wire::kEnemyPeerOwns) != 0, now);
     }
     if (g_hostView.Overflowed()) {
         static bool said = false;
-        if (!said) { said = true; QDLOG(LOG_WARN, "enemy sync: host view full; some enemies run locally"); }
+        if (!said) { said = true; QDLOG(LOG_WARN, "enemy sync: row view full; some enemies run locally"); }
+    }
+    if (g_own.Overflowed()) {
+        static bool said = false;
+        if (!said) { said = true; QDLOG(LOG_WARN, "enemy sync: ownership table full; some enemies run locally"); }
     }
 }
 
-// Host: a peer hit or a peer-made persistence record.
-void HostApplyEnemyIntent(const wire::IntentBody& b)
+// The owner applies a hit the other player landed on its frozen copy.
+void ApplyEnemyHitIntent(const wire::IntentBody& b)
 {
     if (!Cfg().enemy_sync) return;
     EnemyRec* r = EnemyByGuid(b.guid);
-    if (b.kind == wire::I_ENEMY_HIT) {
-        if (!r || !ObjectIsLive(r->actor) || EnemyDead(r->actor)) return;
-        float hp = 0, mx = 0;
-        if (!EnemyHp(r->actor, &hp, &mx) || mx <= 0.0f) return;
-        float dmg = mx * (float)b.value / 65535.0f;
-        bool ok = DamageEnemy(r->actor, dmg, g_puppetActor ? g_puppetActor : g_localPawn);
-        QDLOG(LOG_INFO, "peer hit enemy ", hex32(b.guid[0]), " for ", flt(dmg, 1), (ok ? "" : " (no effect)"));
-    } else if (b.kind == wire::I_ENEMY_RECORD) {
-        QdGuid g = {b.guid[0], b.guid[1], b.guid[2], b.guid[3]};
-        float respawn = (float)b.value / 100.0f, hp = (float)b.value2 / 100.0f;
-        void* ctx = (r && ObjectIsLive(r->spawner)) ? r->spawner : GWorldPtr();
-        g_inOwnRecord = true;
-        StoreEnemySaveState(ctx, g, respawn, hp);       // through the hook: lands in the kill log
-        g_inOwnRecord = false;
-        QDLOG(LOG_INFO, "peer enemy record applied guid=", hex32(b.guid[0]), " hp=", flt(hp, 1),
-              " respawn=", flt(respawn, 1));
-        // The host could have spawned it meanwhile: the record is the truth.
-        if (hp <= 0.0f && r && ObjectIsLive(r->actor) && !EnemyDead(r->actor)) {
-            float cur = 0, mx = 0;
-            if (EnemyHp(r->actor, &cur, &mx)) DamageEnemy(r->actor, enemy::ConvergeDamage(cur, mx, 0, false), g_localPawn);
-        }
+    if (!r || !ObjectIsLive(r->actor) || EnemyDead(r->actor)) return;
+    float hp = 0, mx = 0;
+    if (!EnemyHp(r->actor, &hp, &mx) || mx <= 0.0f) return;
+    float dmg = mx * (float)b.value / 65535.0f;
+    bool ok = ApplyEnemyDamage(r->actor, dmg, g_puppetActor ? g_puppetActor : g_localPawn);
+    QDLOG(LOG_INFO, "hit on enemy ", hex32(b.guid[0]), " from the other player, ", flt(dmg, 1),
+          (ok ? "" : " (no effect)"));
+}
+
+// A persistence record for an enemy the other machine ran.  Host-authoritative: the
+// host owns the save, so it applies the record to its own copy of the world.
+void ApplyEnemyRecordIntent(const wire::IntentBody& b)
+{
+    if (!Cfg().enemy_sync) return;
+    EnemyRec* r = EnemyByGuid(b.guid);
+    QdGuid g = {b.guid[0], b.guid[1], b.guid[2], b.guid[3]};
+    float respawn = (float)b.value / 100.0f, hp = (float)b.value2 / 100.0f;
+    void* ctx = (r && ObjectIsLive(r->spawner)) ? r->spawner : GWorldPtr();
+    g_inOwnRecord = true;
+    StoreEnemySaveState(ctx, g, respawn, hp);       // through the hook: lands in the kill log
+    g_inOwnRecord = false;
+    QDLOG(LOG_INFO, "enemy record applied guid=", hex32(b.guid[0]), " hp=", flt(hp, 1),
+          " respawn=", flt(respawn, 1));
+    // The host could have spawned it meanwhile: the record is the truth.
+    if (hp <= 0.0f && r && ObjectIsLive(r->actor) && !EnemyDead(r->actor)) {
+        float cur = 0, mx = 0;
+        if (EnemyHp(r->actor, &cur, &mx)) ApplyEnemyDamage(r->actor, enemy::ConvergeDamage(cur, mx, 0, false), g_localPawn);
     }
+}
+
+// A non-host receives only the enemy hit intent; the rest belong to the host's world.
+void PeerApplyEnemyIntent(wire::Reader& r)
+{
+    wire::IntentBody b;
+    if (!wire::ReadIntent(r, &b)) return;
+    if (b.kind == wire::I_ENEMY_HIT) ApplyEnemyHitIntent(b);
 }
 
 void EnemyPump(uint32_t now)
@@ -2654,15 +3080,24 @@ void EnemyPump(uint32_t now)
         g_propCacheN = 0;           // classes reload with the world
         g_enemyBaseCls = nullptr;
         g_clsYesN = g_clsNoN = 0;
+        // Ownership, remote rows and the kill log are all per-world.
+        g_own.Reset();
+        g_hostView.Reset();
+        g_killLog.Clear();
+        g_deadCursor = 0;
     }
     EnemyScanStep();
     if (!g_net.Connected()) {
-        // Never leave a copy frozen after the session ends.
+        // Never leave a copy frozen after the session ends, and forget who owned what:
+        // a stale claim from the last session must not freeze a copy on reconnect.
+        g_own.Reset();
+        g_hostView.Reset();
         for (int i = 0; i < g_enN; ++i) if (g_en[i].driven && ObjectIsLive(g_en[i].actor)) EnemyDrive(g_en[i], false);
         return;
     }
-    if (g_net.IsHost()) EnemyHostSend(now);
-    else EnemyPeerPump(now);
+    g_own.SetHost(g_net.IsHost());
+    EnemyOwnPump(now);
+    EnemySendPump(now);
 }
 
 // ===========================================================================
@@ -2866,7 +3301,10 @@ void DispatchInbound(const InboundPacket& p, uint32_t now)
         if (g_net.IsPeer()) PeerApplyFlags(r);
         break;
     case wire::K_INTENT:
+        // Progression intents are requests to the host.  An enemy hit is a message to
+        // whichever machine OWNS that enemy, which may be either one.
         if (g_net.IsHost()) HostApplyIntent(r);
+        else if (Cfg().enemy_sync) PeerApplyEnemyIntent(r);
         break;
     case wire::K_DIALOGUE:
         // Per-slot talk state, both directions (qddialogue.h TalkBoard).
@@ -2894,7 +3332,12 @@ void DispatchInbound(const InboundPacket& p, uint32_t now)
         break;
     }
     case wire::K_ENEMY:
-        if (Cfg().enemy_sync && g_net.IsPeer()) OnEnemyRows(r, now);
+        // Rows travel both ways: whoever owns an enemy publishes it.
+        if (Cfg().enemy_sync) OnEnemyRows(r, now);
+        break;
+    case wire::K_ENEMY_DETAIL:
+        // The owner's animation and status, replayed on the follower's frozen copy.
+        if (Cfg().enemy_sync) OnEnemyDetail(r, now);
         break;
     default:
         break;
@@ -3964,19 +4407,19 @@ void HK_StoreEnemySaveState(void* self, const QdGuid* guid, float respawn, float
     // GUID (D5 closed live: a kill is hp 0).
     if (!Cfg().enemy_sync || !guid || !g_net.Connected()) return;
     uint32_t g[4] = {guid->a, guid->b, guid->c, guid->d};
-    if (g_net.IsHost()) {
-        // A death joins the kill log, re-broadcast as dead rows (qdenemy.h KillLog).
-        if (hp <= 0.0f) {
-            g_killLog.Add(g);
-            QDLOG(LOG_INFO, "enemy death recorded guid=", hex32(g[0]), " respawn=", flt(respawn, 1),
-                  (g_inOwnRecord ? " (peer's record)" : ""));
-        }
-        return;
+    // Whichever machine RAN the enemy re-broadcasts the death, as dead rows
+    // (qdenemy.h KillLog), so the machine that did not kill it learns it.  A death
+    // being applied FROM the other machine's row is not re-broadcast: that would echo
+    // the kill straight back.
+    if (hp <= 0.0f && !g_inRemoteDeath && g_own.Running(g)) {
+        g_killLog.Add(g);
+        QDLOG(LOG_INFO, "enemy death recorded guid=", hex32(g[0]), " respawn=", flt(respawn, 1),
+              (g_inOwnRecord ? " (record from the other player)" : ""));
     }
-    // Peer: forward only a record for an enemy THIS machine ran.  A driven copy or a
-    // host-ordered kill writes the same record the host already has.
-    EnemyRec* r = EnemyByGuid(g);
-    if (g_hostView.Decide(g, r ? r->driven : false, Net::Now()) != enemy::LOCAL) return;
+    if (g_net.IsHost()) return;
+    // Peer: forward a persistence record only for an enemy THIS machine ran.  A frozen
+    // copy or an owner-ordered kill writes the record the host already has.
+    if (!g_own.Running(g)) return;
     uint8_t body[64];
     wire::Writer w(body, sizeof(body));
     wire::WriteIntentEnemyRecord(w, 0, g, (int32_t)(respawn * 100.0f), (int32_t)(hp * 100.0f));
@@ -3984,9 +4427,11 @@ void HK_StoreEnemySaveState(void* self, const QdGuid* guid, float respawn, float
     QDLOG(LOG_INFO, "enemy record sent to host guid=", hex32(g[0]), " hp=", flt(hp, 1));
 }
 
-// A rest clears every enemy record on the host (ClearAllEnemySaveStates, called from
-// Checkpoint_C), so its kill log must forget them too, or the peer would keep killing
-// enemies the rest brought back.  Seen as the local pawn's PlayerRested event.
+// A rest clears every enemy record in this machine's save (ClearAllEnemySaveStates,
+// called from Checkpoint_C), so the kill log must forget them too, or this machine
+// would keep telling the other that an enemy the rest brought back is still dead.  Seen
+// as the local pawn's PlayerRested event.  Each machine's log only holds enemies it
+// ran, so a local rest forgets exactly the deaths this machine is broadcasting.
 void RestObserve(void* self, void* func)
 {
     static void* fnRest = nullptr;
@@ -4001,7 +4446,7 @@ void RestObserve(void* self, void* func)
         if (strcmp(fn, "PlayerRested") != 0) { if (nOther < 256) other[nOther++] = func; return; }
         fnRest = func;
     }
-    if (g_net.IsHost() && g_killLog.Count()) {
+    if (g_killLog.Count()) {
         QDLOG(LOG_INFO, "enemy sync: rest -- ", dec(g_killLog.Count()), " death(s) forgotten");
         g_killLog.Clear();
     }
