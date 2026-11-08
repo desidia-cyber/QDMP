@@ -65,6 +65,7 @@
 #include "qdmotion.h"
 #include "qdpuppet.h"
 #include "qdstream.h"
+#include "qdtravel.h"
 #include "qddialogue.h"
 #include "qdenemy.h"
 #include "qdenemyown.h"
@@ -123,6 +124,10 @@ motion::Interp    g_peerInterp;
 puppet::PuppetFsm g_puppet;
 stream::UnionGuard g_stream;
 stream::MapBoard   g_map;
+// The follow half of G6 (qdtravel.h): what the partner's `dest` means here, and
+// whether this machine has already acted on it.  Separate from g_map because the
+// divergence debounce and the follow dedup reset for different reasons.
+travel::Board      g_travel;
 uint32_t           g_travelSeq = 0;
 dialogue::DialogueLock g_dialogue;
 flags::FlagBank   g_flags;
@@ -2693,10 +2698,16 @@ void OnLevelUnion(wire::Reader& r, uint32_t now)
 }
 
 // ---- travel announcement (SYNC-GAPS G6) -----------------------------------
-// The session is not torn down on a transition.  API-GAPS 4 refuses hard travel in
-// co-op v1, so the honest behaviour is to DETECT the split, say it once, and stop
-// applying the partner's absolute bodies until the two names agree again.  Nothing
-// here tries to make the partner follow, and nothing calls OpenLevel.
+// The session is not torn down on a transition.  The first half of G6 is announcement
+// plus refusal: each machine says which world it is in, a disagreement is logged once,
+// and the partner's absolute bodies are not applied while the names differ.  That half
+// is still here unchanged.
+//
+// The second half is the follow, further down: `dest` names the placed actor carrying
+// the game's own LocationData, and the receiver drives ITS OWN pawn through the game's
+// own entry point.  Nothing here calls OpenLevel, and nothing ever writes the partner's
+// pawn -- a hard map switch still ends in the explicit refusal below, because the
+// destination actor is not in this world.
 void LocalMapName(char* out, int cap)
 {
     out[0] = 0;
@@ -2714,6 +2725,190 @@ void LocalMapName(char* out, int cap)
         stream::ShortLevelName(raw, out, cap);
 }
 
+// ---- travel follow: the game's own state -----------------------------------
+// qdtravel.h owns the decision; this owns the measurement.  Every fact below is the
+// game's, read from the pawn, not inferred from input: `FS_PlayerChar_C` carries
+// `Teleporting`, `QuickTeleporting`, `DoingTeleportCrystal` and the after-move latch
+// `TeleportedRecently` as Blueprint bools, and the destination is one of four object
+// properties that carry the game's own `LocationData`.
+bool LocalTeleporting(void* pawn)
+{
+    if (!IsGameplayPawn(pawn)) return false;
+    uint8_t b = 0;
+    if (BytePropC(pawn, "Teleporting", &b) && b) return true;
+    if (BytePropC(pawn, "QuickTeleporting", &b) && b) return true;
+    if (BytePropC(pawn, "DoingTeleportCrystal", &b) && b) return true;
+    // The after-move latch is what makes a fast teleport still announce itself: the
+    // move can finish inside one tick, and the announcement has to survive that tick.
+    if (BytePropC(pawn, "TeleportedRecently", &b) && b) return true;
+    return false;
+}
+
+// "Do not fight the player".  Each condition is a state the game itself would use to
+// refuse a teleport.  A follow that interrupts a local transition is worse than a
+// missed one, so every one of these skips.
+bool LocalTravelBusy(void* pawn)
+{
+    if (!IsGameplayPawn(pawn)) return true;   // menu world / no pawn: never drive it
+    uint8_t b = 0;
+    if (BytePropC(pawn, "Teleporting", &b) && b) return true;
+    if (BytePropC(pawn, "QuickTeleporting", &b) && b) return true;
+    if (BytePropC(pawn, "DoingTeleportCrystal", &b) && b) return true;
+    if (BytePropC(pawn, "TeleportingDisabled", &b) && b) return true;
+    // A menu is an object property that is null when the menu is closed.
+    if (ObjPropC(pawn, "CurrentGameMenu")) return true;
+    if (ObjPropC(pawn, "CurrentSaveMenu")) return true;
+    if (ObjPropC(pawn, "KeyMenu")) return true;
+    if (ObjPropC(pawn, "CurrentShopMenu")) return true;
+    // A cutscene is a manager object; the intro flag is the same test the game uses.
+    if (ObjPropC(pawn, "CurrentCutsceneManager")) return true;
+    if (BytePropC(pawn, "InIntroCutscene", &b) && b) return true;
+    // The dialogue manager is a persistent component, so its own running bool is the
+    // fact -- the same test DialoguePump uses for the local conversation.
+    void* dm = ObjPropC(pawn, "DialogueManager");
+    if (dm && BytePropC(dm, "RunningDialogue", &b) && b) return true;
+    return false;
+}
+
+// The placed actor carrying the LocationData this machine is travelling through.  We do
+// not guess which of the pawn's travel properties the game filled; we take the first
+// live one that actually HAS a `LocationData` property, which is the same test the
+// receiver applies to the actor it resolves.  Naming an actor that does not carry the
+// data is how a follow lands on the wrong place.
+void LocalTravelDest(void* pawn, const char* world, char* out, int cap)
+{
+    if (!out || cap <= 0) return;
+    out[0] = 0;
+    if (!IsGameplayPawn(pawn) || !world || !world[0]) return;
+    static const char* kFields[] = {
+        "CurrentTeleporterTarget", "TeleportLocationTarget",
+        "TempTeleporter", "TeleporterStartActor"
+    };
+    for (unsigned i = 0; i < sizeof(kFields) / sizeof(kFields[0]); ++i) {
+        void* a = ObjPropC(pawn, kFields[i]);
+        if (!a || !ObjectIsLive(a)) continue;
+        if (PropOff(ObjClass(a), "LocationData") < 0) continue;   // not a carrier
+        char an[64];
+        if (FNameToString(ObjNameRaw(a), an, sizeof(an)) <= 0) continue;
+        if (travel::MakeDest(an, world, out, cap)) return;
+    }
+}
+
+bool ActorOuterReachesWorld(void* actor, void* world)
+{
+    void* p = ObjOuter(actor);
+    for (int depth = 0; p && depth < 8; p = ObjOuter(p), ++depth) {
+        if (p == world) return true;
+    }
+    return false;
+}
+
+// The receiver's half of the identity: the same short actor name, alive in OUR world.
+// Both machines run the same cooked world, so a placed actor has the same object name
+// on both; the outer-chain test is what separates it from a CDO, an asset, or an actor
+// in a level this machine has not streamed in.
+void* FindTravelActor(const char* name, void* world)
+{
+    if (!name || !name[0] || !world) return nullptr;
+    static void* actorBase = nullptr;
+    if (!actorBase || !ObjectIsLive(actorBase)) actorBase = FindClassByName("Actor");
+    if (!actorBase) return nullptr;
+
+    int n = ObjectCount();
+    for (int i = 0; i < n; ++i) {
+        void* o = ObjectAt(i);
+        if (!o) continue;
+        // The whole read is fault-contained: a probe that walks GObjects must never
+        // die for one slot, and the name decode is a read of game memory like any other.
+        __try {
+            if (!ObjectIsLive(o) || !ObjNameIs(o, name)) continue;
+            void* c = ObjClass(o);
+            if (!c || !IsSubclassOf(c, actorBase)) continue;
+            if (ActorOuterReachesWorld(o, world)) return o;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+            // An unreadable slot is skipped; a follow must never die for one.
+        }
+    }
+    return nullptr;
+}
+
+// The LocationData the actor carries.  The property is measured (ObjectProperty on both
+// `Teleporter_C` and `Checkpoint_C`); the game's own `GetLocationData` is the fallback
+// for a carrier that exposes it only through the interface.
+void* ActorLocationData(void* actor)
+{
+    void* data = ObjPropC(actor, "LocationData");
+    if (data) return data;
+    Fn fGet;
+    if (!fGet.Resolve(actor, "GetLocationData")) return nullptr;
+    Call c(fGet);
+    if (!c.Run(actor)) return nullptr;
+    uint8_t* p = OutParm(c, 8);
+    return p ? *(void**)p : nullptr;
+}
+
+// Drive our own pawn through the game's own travel entry point.  The signature is
+// measured: `TeleportToLocation(Location Data: ObjectProperty, GreenFX: BoolProperty)`.
+// The parameter's name really contains a space (a Blueprint pin name), so it is passed
+// by that exact name and a type-based fallback follows it.  `GreenFX` is the full-screen
+// effect; a follow drives it with 0 so the partner's transition is not doubled on this
+// screen.
+bool FollowTravelDest(const char* dest, void* pawn, char* err, int errCap)
+{
+    if (err && errCap > 0) err[0] = 0;
+    travel::DestParts p;
+    if (!travel::SplitDest(dest, &p)) {
+        ErrSet(err, errCap, "malformed destination: ", dest);
+        return false;
+    }
+    if (!IsGameplayPawn(pawn)) {
+        ErrSet(err, errCap, "no local gameplay pawn", "");
+        return false;
+    }
+    void* world = GWorldPtr();
+    if (!world) { ErrSet(err, errCap, "no world", ""); return false; }
+    if (!ReflectionReady()) {
+        ErrSet(err, errCap, "property layout not validated: ", Lay().note);
+        return false;
+    }
+
+    char local[stream::kMaxNameLen];
+    LocalMapName(local, sizeof(local));
+    if (!travel::SameText(p.world, local)) {
+        ErrSet(err, errCap, "destination world is ", p.world);
+        return false;
+    }
+
+    void* actor = FindTravelActor(p.actor, world);
+    if (!actor) { ErrSet(err, errCap, "no live actor named ", p.actor); return false; }
+    void* data = ActorLocationData(actor);
+    if (!data) { ErrSet(err, errCap, p.actor, " carries no LocationData"); return false; }
+
+    Fn fTp;
+    if (!fTp.Resolve(pawn, "TeleportToLocation")) {
+        ErrSet(err, errCap, "FS_PlayerChar.TeleportToLocation not found", "");
+        return false;
+    }
+    const PropDesc* pObj = FindProp(fTp.sig, "Location Data");
+    if (!pObj) pObj = FindPropOfType(fTp.sig, "ObjectProperty", CPF_OutParm | CPF_ReturnParm);
+    const PropDesc* pFx = FindProp(fTp.sig, "GreenFX");
+    if (!pFx) pFx = FindPropOfType(fTp.sig, "BoolProperty", CPF_OutParm | CPF_ReturnParm);
+    if (!pObj) {
+        ErrSet(err, errCap, "TeleportToLocation has no LocationData parameter", "");
+        return false;
+    }
+
+    Call c(fTp);
+    c.Obj(pObj->name, data);
+    if (pFx) c.U8(pFx->name, 0);
+    if (!c.Run(pawn)) {
+        ErrSet(err, errCap, "TeleportToLocation faulted", "");
+        return false;
+    }
+    return true;
+}
+
 void MapPump(uint32_t now)
 {
     if (!Cfg().stream_union) return;
@@ -2723,6 +2918,10 @@ void MapPump(uint32_t now)
 
     if (!g_net.Connected()) {
         if (g_map.Local()[0] || g_map.Peer()[0]) g_map.Reset();
+        // The follow memory names actors in a session that has ended; a new partner
+        // must be judged on its own transitions, not on what this machine followed
+        // before.  Without this a rejoin would suppress the first travel it should take.
+        g_travel.Reset();
         sent = false;
         wasDiverged = false;
         return;
@@ -2731,11 +2930,29 @@ void MapPump(uint32_t now)
     char local[stream::kMaxNameLen];
     LocalMapName(local, sizeof(local));
     bool changed = g_map.OnLocal(local, now);
-    if (changed) ++g_travelSeq;
+
+    // The destination this machine is taking, if any.  "" is "not travelling", which is
+    // the wire's own encoding (WIRE.md 3.15a): the partner must never have to infer a
+    // travel from a map change.  NoteLocal also suppresses the echo of a travel this
+    // machine just followed for the partner -- announcing it would invite a teleport
+    // back, and the dedup on the other side is not enough to stop the first hop.
+    char dest[travel::kDestCap];
+    dest[0] = 0;
+    bool travelling = LocalTeleporting(g_localPawn);
+    if (travelling) LocalTravelDest(g_localPawn, local, dest, sizeof(dest));
+    bool destChanged = g_travel.NoteLocal(dest, travelling, now);
+
+    if (changed || destChanged) ++g_travelSeq;
+    // One line per change, so a live run can see the announcement the partner is about
+    // to act on.  "(none)" is the end of a travel, not a missing measurement.
+    if (destChanged)
+        QDLOG(LOG_INFO, "travel: local destination ",
+              (g_travel.Announce()[0] ? g_travel.Announce() : "(none)"),
+              " seq=", dec((int)g_travelSeq));
 
     // On change at once, then every 2 s.  A change announcement can be lost with the
     // session; the heartbeat is what makes a rejoin converge without a new event.
-    if ((changed || !sent || now - lastSend >= 2000) && local[0]) {
+    if ((changed || destChanged || !sent || now - lastSend >= 2000) && local[0]) {
         wire::TravelBody t;
         memset(&t, 0, sizeof(t));
         t.seq = g_travelSeq;
@@ -2743,6 +2960,10 @@ void MapPump(uint32_t now)
         int i = 0;
         for (; local[i] && i < (int)sizeof(t.map) - 1; ++i) t.map[i] = local[i];
         t.map[i] = 0;
+        const char* d = g_travel.Announce();
+        i = 0;
+        for (; d[i] && i < (int)sizeof(t.dest) - 1; ++i) t.dest[i] = d[i];
+        t.dest[i] = 0;
         uint8_t body[wire::kMaxBody];
         wire::Writer w(body, sizeof(body));
         wire::WriteTravel(w, t);
@@ -2777,6 +2998,55 @@ void OnTravel(wire::Reader& r, uint32_t now)
     if (g_map.OnPeer(t.map, now))
         QDLOG(LOG_INFO, "travel: partner role ", dec((int)t.role), " is in ",
               (t.map[0] ? t.map : "(no map)"), " seq=", dec((int)t.seq));
+
+    // An empty dest is the heartbeat's "not travelling", not news.
+    if (!t.dest[0]) return;
+
+    // The decision is pure (qdtravel.h).  This half only answers the questions the
+    // decision needs -- is the local player free, which world are we in -- and performs
+    // the drive.  Nothing here writes the partner's pawn: each machine moves its own.
+    //
+    // The local map is read NOW rather than from g_map: DispatchInbound runs before
+    // MapPump, so g_map.Local() is one frame old, and a one-frame-old world is exactly
+    // the "not this world" that would wrongly give up on a follow during a load.
+    char cur[stream::kMaxNameLen];
+    LocalMapName(cur, sizeof(cur));
+    bool busy = LocalTravelBusy(g_localPawn);
+    travel::Verdict v = g_travel.OnPeer(t.seq, t.dest, cur, busy);
+    switch (v) {
+    case travel::V_FOLLOW: {
+        char err[160];
+        if (FollowTravelDest(t.dest, g_localPawn, err, sizeof(err))) {
+            g_travel.OnFollowResult(true, now);
+            QDLOG(LOG_INFO, "travel: followed ", t.dest, " (seq ", dec((int)t.seq),
+                  ") -- local pawn driven through TeleportToLocation");
+        } else {
+            // Explicit failure, then silence for this destination: the acceptance
+            // criteria forbid retrying a name that cannot resolve.
+            g_travel.OnFollowResult(false, now);
+            QDLOG(LOG_WARN, "travel: cannot follow ", t.dest, ": ", err,
+                  " (recorded; this destination is not retried)");
+        }
+        break;
+    }
+    case travel::V_BUSY:
+        QDLOG(LOG_INFO, "travel: partner is travelling to ", t.dest,
+              " but the local player is busy; skipped (not remembered)");
+        break;
+    case travel::V_WRONG_WORLD:
+        QDLOG(LOG_WARN, "travel: cannot follow ", t.dest, ": its world is not this "
+              "machine's (", (cur[0] ? cur : "?"), "); recorded, not retried");
+        break;
+    case travel::V_BAD_DEST:
+        QDLOG(LOG_WARN, "travel: malformed destination '", t.dest,
+              "' from the partner; ignored");
+        break;
+    case travel::V_DUPLICATE:
+    case travel::V_GAVE_UP:
+    case travel::V_NONE:
+    default:
+        break;      // already acted on (or already refused): a heartbeat is not news
+    }
 }
 
 // ===========================================================================
