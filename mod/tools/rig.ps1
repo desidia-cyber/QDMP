@@ -26,7 +26,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('ps', 'near', 'tp', 'key', 'click', 'log', 'wait', 'shot')]
+    [ValidateSet('ps', 'near', 'tp', 'key', 'click', 'log', 'wait', 'shot', 'act')]
     [string]$Action,
 
     # 1 = inst1 (suffix qd1), 2 = inst2 (suffix qd2)
@@ -46,7 +46,8 @@ $root    = 'G:\Freespace\Queens_Domain\_test\inst' + $Instance
 $suffix  = 'qd' + $Instance
 $gameDir = 'G:\Freespace\Queens_Domain\QueensDomain\QueensDomain\Binaries\Win64'
 $log     = Join-Path $gameDir ('qdcoop-' + $suffix + '.log')
-$tpFile  = $root + '.tp'
+$tpFile  = $root + '\qd.tp'
+$actFile = $root + '\qd.act'
 $pidFile = $root + '.pid'
 
 function Get-GamePid {
@@ -103,6 +104,13 @@ switch ($Action) {
         Write-Output "teleport $Instance -> $Value"
     }
 
+    'act' {
+        $n = 0
+        if (Test-Path -LiteralPath $actFile) { $n = [int](Get-Content -LiteralPath $actFile -ErrorAction SilentlyContinue | Select-Object -First 1) }
+        Set-Content -LiteralPath $actFile -Value ([string]($n + 1)) -NoNewline
+        Write-Output "interact $Instance -> $($n + 1)"
+    }
+
     'key' {
         $gamePid = Get-GamePid
         $vk = switch ($Value.ToUpper()) {
@@ -145,4 +153,5 @@ switch ($Action) {
         $rows | Select-Object -Last $Lines | ForEach-Object { Write-Output $_ }
     }
 }
+
 

@@ -5784,6 +5784,23 @@ void DevTeleport(uint32_t now)
           ok ? "" : " FAILED");
 }
 
+// The rig's control files.  The environment is not the place for them: measured twice, an
+// instance launched through the harness did not see QDCOOP_TEST_TPFILE even though its
+// parent did inherit it, and the scenario silently drove nothing.  A test instance always
+// has -UserDir, so the control file lives there and needs no configuration; the
+// environment variable stays as an override.
+void DevRigPath(const char* envName, const char* leaf, char* out, int cap)
+{
+    out[0] = 0;
+    if (GetEnvironmentVariableA(envName, out, cap) && out[0]) return;
+    char ud[260];
+    if (!CmdArg("-UserDir", ud, sizeof(ud)) || !ud[0]) { out[0] = 0; return; }
+    lstrcpynA(out, ud, cap);
+    int n = lstrlenA(out);
+    if (n > 0 && n < cap - 1 && out[n - 1] != '\\') { out[n++] = '\\'; out[n] = 0; }
+    lstrcpynA(out + n, leaf, cap - n);
+}
+
 // QDCOOP_TEST_TPFILE=<path>: TEST INSTANCES ONLY -- teleport the local pawn to whatever
 // "x,y,z,yaw" the named file holds, whenever its contents change.
 //
@@ -5794,9 +5811,15 @@ void DevTeleport(uint32_t now)
 void DevTeleportFile(uint32_t now)
 {
     static char path[MAX_PATH];
-    static int on = GetEnvironmentVariableA("QDCOOP_TEST_TPFILE", path, sizeof(path)) ? 1 : 0;
+    static int on = (DevRigPath("QDCOOP_TEST_TPFILE", "qd.tp", path, sizeof(path)), path[0] != 0) ? 1 : 0;
     static uint32_t lastPoll = 0;
     static char applied[128] = "";
+    static bool said = false;
+    if (!said) {
+        said = true;
+        QDLOG(LOG_INFO, "rig: tp control '", path, "' ", (on ? "enabled" : "DISABLED"),
+              " exists=", (path[0] && GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES ? "yes" : "no"));
+    }
     if (!on || !IsGameplayPawn(g_localPawn)) return;
     if (now - lastPoll < 200) return;      // a file read per tick would be a syscall storm
     lastPoll = now;
@@ -5994,7 +6017,7 @@ char     g_devActApplied[64] = "";
 void DevInteract(uint32_t now)
 {
     if (g_devActOn < 0)
-        g_devActOn = GetEnvironmentVariableA("QDCOOP_TEST_ACTFILE", g_devActPath, sizeof(g_devActPath)) ? 1 : 0;
+        g_devActOn = (DevRigPath("QDCOOP_TEST_ACTFILE", "qd.act", g_devActPath, sizeof(g_devActPath)), g_devActPath[0] != 0) ? 1 : 0;
     if (!g_devActOn || !IsGameplayPawn(g_localPawn)) return;
     if (now - g_devActPoll < 200) return;
     g_devActPoll = now;
@@ -6020,6 +6043,40 @@ void DevInteract(uint32_t now)
     __except (EXCEPTION_EXECUTE_HANDLER) {
         QDLOG(LOG_WARN, "dev interact: fault while resolving the verb; skipped");
     }
+}
+
+// QDCOOP_TEST_GOD=1: TEST INSTANCES ONLY -- keep the local player alive while a scenario
+// teleports it around looking for a door, a chest or an enemy.
+//
+// Measured: two blind teleports ended a session, one into a brazier and one into a fall,
+// and each death reloaded the world -- which is how the two crash paths below were found,
+// but it makes a scenario unreliable.  This drives the game's own cheat object, so the
+// player is still hurtable in the sense that matters (the damage lane still fires and is
+// still logged); it just cannot die from arriving somewhere.
+Fn g_devGodFn = {}, g_devHealFn = {};
+int      g_devGodOn = -1;
+uint32_t g_devGodLast = 0;
+
+void DevGodBody()
+{
+    void* ch = FindInstanceOf("FS_Cheats_C");
+    if (!ch) { QDLOG(LOG_WARN, "god: FS_Cheats_C not found"); return; }
+    bool god = CallNoArgs(ch, g_devGodFn, "GodModeOn");
+    bool heal = CallNoArgs(ch, g_devHealFn, "HealToFull");
+    QDLOG(LOG_INFO, "god: GodModeOn=", (god ? "ok" : "no"),
+          " HealToFull=", (heal ? "ok" : "no"));
+}
+
+void DevGod(uint32_t now)
+{
+    if (g_devGodOn < 0) g_devGodOn = DevEnvInt("QDCOOP_TEST_GOD", 0);
+    if (!g_devGodOn || !IsGameplayPawn(g_localPawn)) return;
+    // Every 5 s: the game restores health on its own events, and re-asserting costs two
+    // reflective calls.
+    if (g_devGodLast && now - g_devGodLast < 5000) return;
+    g_devGodLast = now;
+    __try { DevGodBody(); }
+    __except (EXCEPTION_EXECUTE_HANDLER) { QDLOG(LOG_WARN, "god: fault while applying"); }
 }
 
 void DevAvatarTest(uint32_t now)
@@ -6707,6 +6764,7 @@ bool HK_Tick(void* engineLoop)
     DevTeleportFile(now);
     DevScanNearest(now);
     DevInteract(now);
+    DevGod(now);
     MapPump(now);
     StreamPump(now);
     EnemyPump(now);
