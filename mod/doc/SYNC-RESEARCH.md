@@ -810,3 +810,123 @@ for tgt, cs in C.items():
 ```
 
 Output is reproduced verbatim in §3.
+
+### A.8 G2 — `SavableActorStates`: a reflected property, its geometry, and its writer
+
+Run from the worktree root with the §A.1 preamble. Every claim below is the output of one
+of the three snippets, not an inference from the `NamedSaveData`/`InventoryContents`
+geometry.
+
+**A.8.1 The class declares the container (so no RVA is needed).** The class export of
+`FS_SaveSlot.uasset` (`BlueprintGeneratedClass`, serial 8 592) carries these tags:
+
+```python
+for i, e in enumerate(exps):
+    if e["class"] != "BlueprintGeneratedClass": continue
+    o = info["tail_fields"][3] + i*104
+    ss, so = struct.unpack("<2q", ua[o+28:o+44])
+    body = ux[so-len(ua): so-len(ua)+ss]
+    # the §A.2 tag scan over `body`
+```
+
+```
++0x0024  MapProperty     SavableActorStates            flags=0x200001 size=80
++0x0053  StructProperty  SavableActorStates            flags=0x000001 size=16
++0x0086  IntProperty     SavableActorStates_Value      flags=0x000001 size=4
+```
+
+A `MapProperty` with a 16-byte `StructProperty` key and a 4-byte `IntProperty` value is
+`TMap<FGuid,int32>`. `FindPropertyOffsetIn(ObjClass(save), "SavableActorStates")` therefore
+returns the runtime member offset; `save+0x168` is retired as a lead (it was never a
+`SavableActorStates` measurement — the only `+0x168` in the corpus is an unrelated pause
+surface read). The class also declares `Inventory` (the same shape) separately from
+`InventoryContents`, which is why the inventory lane's offset must not be reused here.
+
+**A.8.2 Geometry — the engine's own `TMap::Find` pins it.** The measured inventory reader
+`GetInventoryItemCount` (`0x00E2EA40`) calls `0x007FB070` with the map pointer and a key.
+That body is a `TMap::Find` instantiation and reads the whole header:
+
+```
+007FB07A  eax = [rcx+8]        ; Data.Num
+007FB086  cmp eax, [rcx+0x34]  ; NumFreeIndices -> map empty when equal
+007FB08F  rdx = [rcx+0x40]     ; hash array (allocated), else inline at rcx+0x38
+007FB119  rax = [rcx+0x48]     ; HashSize (a power of two; mask = HashSize-1)
+007FB140  rcx = element index
+007FB143  lea rdx,[rcx+rcx*2]  ; index*3
+007FB147  cmp [Data+rdx*8], key          ; key at element+0
+007FB14D  eax = [Data+rdx*8+0x10]        ; HashNextId at element+sizeof(TPair)
+```
+
+For `TMap<UObject*,int32>` (this instantiation) the element stride is `0x18`: `TPair` is
+8+4 rounded to 16, and `HashNextId`/`HashIndex` add 8. The same rule on `TMap<FGuid,int32>`
+gives:
+
+```
+key            FGuid          16 bytes, alignment 4
+value          int32           4 bytes
+sizeof(TPair)                 20 (0x14)
+HashNextId    int32          +0x14
+HashIndex     int32          +0x18
+stride                        28 (0x1C)
+```
+
+This is confirmed independently by the game's own GUID-keyed writer:
+`StoreEnemySaveState` (`0x00E3BF10`) calls the `TMap::Add` instantiation at
+`0x00E19FC0` with `save+0x270`. That body bakes a 36-byte stride (`lea r8,[rdi+rdi*8]`
+then `+4`), writes the 16-byte key with `movups [rsi]`, and writes the value at
+`[rsi+0x10]` -- i.e. `sizeof(TPair)=16+12=28` plus the same 8 bytes. So value offset =
+key size, stride = `sizeof(TPair)+8`, exactly as for `TMap<FGuid,int32>`.
+
+Header layout (also cross-checked: the cooked tag's `size=80` is `sizeof(FScriptMap)`):
+
+```
+map+0x00 Data        map+0x08 Num         map+0x0C Max
+map+0x10 AllocationFlags (inline bits)  map+0x20 flags secondary pointer
+map+0x30 FirstFreeIndex                 map+0x34 NumFreeIndices
+map+0x38 inline hash array              map+0x40 hash array pointer
+map+0x48 HashSize
+```
+
+Enumerating through the bucket array and `HashNextId` visits only live elements, so no
+free-slot heuristic is needed; a free slot in the sparse array never has a bucket.
+
+**A.8.3 The writer is the actor's own `Save Data Index to World Save(Index, Data)`.**
+`SavableActor_C`'s class tags are `GUIDs : Array<FGuid>`, `SaveDataCount : int`,
+`MySaveData : Array<SavableActorState>`. The function payloads (the same §A.2 scan
+applied to each `Function` export) give:
+
+```
+Save Data Index to World Save  Index:int, Data:int, then CallFunc_* locals
+  Array_Get(GUIDs, Index) -> CurrentGUID
+  Map_Add(GetCurrentlyActiveSave().SavableActorStates, CurrentGUID, Data)
+  Array_Set(MySaveData, Index, MakeStruct_SavableActorState)
+GetSavableActorDataAtIndex     Index:int -> IsSet:bool, ValueAsBool:bool, Value:int
+RestoreFromSave                (0 params) -> CacheSaveData(); Restore State From Save Data(MySaveData)
+CacheSaveData                  Map_Find(SavableActorStates, GUIDs[i]) -> Array_Add(MySaveData, …)
+```
+
+So `Save Data Index to World Save(Index, Data)` is the game's own setter: it **inserts or
+updates** the map entry (handling a key that does not exist yet) and keeps `MySaveData`
+in step. The read-back oracle is the other direction: `CacheSaveData` copies the map into
+`MySaveData`, and `GetSavableActorDataAtIndex(Index)` returns `MySaveData[Index].Value`.
+
+`CacheSaveData` uses `Array_Add` and the package imports no `Array_Clear`/`Array_Remove`;
+calling `RestoreFromSave` repeatedly would grow `MySaveData`. The mod therefore calls the
+one-shot writer, not the refresh pair, and says so in the G2 notes.
+
+The actor family is checked against the classes the design names:
+
+```
+Checkpoint_C            parent = Actor           Map_Clear only; no savable-state writer
+BreakableBarricade_C    parent = SavableActor_C  inherits the writer; no own map imports
+Door_Base_C             parent = SavableActor_C  inherits the writer; Map_Find only
+```
+
+So `Checkpoint_C` is **not** a `SavableActor_C`: checkpoints persist through
+`NamedSaveData`/`SaveGameToDisk`, which is why §2.4 and G1 already cover them. The
+one-shot objects this lane exists for are the `SavableActor_C` subclasses, and they all
+reach the base class's writer through `FindFunction`'s super-chain walk.
+
+The static evidence is in the corpus this file already describes
+(`analysis/pak/blueprint-surface.md` §SavableActor); the three probes above are the
+reproduction, and the raw tag dumps are the artefacts the G2 implementation quotes.

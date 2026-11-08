@@ -22,11 +22,11 @@ been run on two machines yet; §5 lists what a first live session has to show.
 | `PLAYER` | both | both | proven live |
 | `WORLD_FLAGS` | host | peer | absolute set, chunked, 1 Hz + on change |
 | `INVENTORY` | host | peer | **new**: absolute set, chunked, gated `InventorySync` |
-| `ACTOR_STATES` | **nobody** | **nobody** | the container is still unlocated — G2 |
+| `ACTOR_STATES` | host | peer | **new**: absolute set, chunked, gated `ActorStateSync`; the container is a reflected property (G2) |
 | `ENEMY` | **both** | **both** | **new**: bidirectional; whoever owns an enemy publishes its rows |
 | `ENEMY_DETAIL` | both | both | **new**: montage asset + status mask, reliable, on change |
 | `EQUIPMENT` / `EFFECT` / `EFFECT_MOVE` / `STATUS` | both | both | proven live |
-| `INTENT` | peer | host | kinds 1 (flag), 7 (enemy hit), 8 (enemy record) |
+| `INTENT` | peer | host | kinds 1 (flag), 6 (actor state), 7 (enemy hit), 8 (enemy record) |
 | `DIALOGUE` | both | both | per-slot talk state |
 | `LEVEL_UNION` | both | both | what each machine's own game wants |
 | `TRAVEL` | both | both | **new**: the map each machine is in, 2 s + on change |
@@ -91,15 +91,34 @@ enemy rows, enemy detail and dialogue are not applied at all.
 
 ## 2. Gaps that still break the co-op promise
 
-**G2. One-shot world objects are still not synced.** Chests, doors, breakable barricades
-and `ActivatableGroup` setters live on one machine only, so both players can loot the same
-chest and a door opened by one player is shut for the other. The blocker is unchanged and
-is a *write* blocker: `SavableActorStates` has no native writer and its container offset is
-a LOW/MEDIUM lead (`save+0x168`), not a measurement. What now exists is the other half of
-the recipe — `WrProbeActorState` asks the game's own reflective getter what value an actor
-holds, for a given GUID, and logs it. A live pass reads that value, snaps its own save, and
-the map that changes with it is the container. Until then `ActorStateSync` stays `0` and
-the intent path only logs.
+**G2. One-shot world objects are now synced host→peer, with one measured caveat.**
+Chests, doors, breakable barricades and `ActivatableGroup` setters live in
+`SavableActorStates` on the save object. That container is **not** an unlocated
+`save+0x168`: it is a reflected `MapProperty` on `FS_SaveSlot_C`, keyed `FGuid` with an
+`int32` value. `FindPropertyOffsetIn(ObjClass(save), "SavableActorStates")` returns its
+member offset at runtime, so no RVA and no lead is involved. The element geometry is the
+engine's own `TMap` geometry, measured from `TMap::Find` (`0x007FB070`) and the GUID-keyed
+`TMap::Add` instantiation (`0x00E19FC0`): key `+0x00`, value `+0x10`, `HashNextId`
+`+0x14`, stride `0x1C`. `SYNC-RESEARCH` §A.8 is the probe and the tag dump.
+
+The writer is the game's own actor function, not a direct `TMap::Add`:
+`SavableActor_C.Save Data Index to World Save(Index, Data)` does
+`Map_Add(GetCurrentlyActiveSave().SavableActorStates, GUIDs[Index], Data)` and
+`Array_Set(MySaveData, Index, …)`, so it inserts *and* updates and keeps the actor's cache
+in step. The mod finds the live `SavableActor_C` that owns a GUID through its `GUIDs`
+array, calls that function, and reads the value back **two ways** — the direct container
+walk and `GetSavableActorDataAtIndex(Index)` (which reads `MySaveData`). A key with no
+live actor falls back to an in-place container update if the key already exists; a key
+that exists nowhere is refused with the GUIDs named, because a raw insert would need the
+engine's allocator and hash re-bucketing.
+
+What is still not proven live: the *visible* reaction. `CacheSaveData` appends to
+`MySaveData` (`Array_Add`, and the package imports no clear/remove), so calling the
+refresh pair `RestoreFromSave` repeatedly would grow it; the mod deliberately does not run
+it. The durable container therefore converges immediately, the actor's cached
+`MySaveData` converges through the writer, and the visible door/chest state follows the
+game's own load path. A live pass has to show whether the in-level actor reacts without
+that refresh; until it does, `ActorStateSync` stays `0`.
 
 **G3. Inventory is shared in one direction only.** The host's inventory reaches the peer; a
 pickup the *peer* makes stays local and the host never learns of it. So SYNC-DESIGN §2.4's
@@ -226,6 +245,8 @@ Ordered, because each one makes the next diagnosable.
    as for the puppet body, and the enemy ownership work is the best test bed for it.
 3. **The peer → host item lane** (G3): a small intent producer plus a policy decision that
    `SYNC-DESIGN` §2.4 does not make.
-4. **G2.** The read oracle exists; one live pass with a known chest value locates the
-   container.
+4. **G2's live reaction.** The read/write path is measured and implemented; one live pass
+   must show a chest opened on the host changing the peer's container, and whether the
+   in-level actor's visible state follows without `RestoreFromSave`. If it does not, the
+   next step is a safe one-shot refresh, not a different container.
 5. **Boss bar and arena exit**, which are two reflective calls, and then G6 travel.

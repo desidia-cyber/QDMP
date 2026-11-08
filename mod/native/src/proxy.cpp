@@ -71,6 +71,7 @@
 #include "qdflags.h"
 #include "qdpending.h"
 #include "qdinventory.h"
+#include "qdactorstate.h"
 
 // ---------------------------------------------------------------------------
 // Globals
@@ -142,6 +143,21 @@ uint32_t                g_lastInvObserveMs = 0;
 uint32_t                g_peerInvRev = 0;
 void*                   g_invSnapshotSave = nullptr;
 bool                    g_invHaveSnapshot = false;
+
+// The one-shot world-object lane (G2).  Declared beside the inventory state for the
+// same reason: TryInitSaveLayer must reset all of it when the active save is replaced,
+// because a GUID, a revision or a pending intent from the old container is not a fact
+// about the new one.
+actorstate::HostPublisher g_actorPub;
+actorstate::IntentQueue   g_pendingActors;
+actorstate::Snapshot      g_actorNow;
+actorstate::LocalDetector g_actorMirror;
+uint32_t                  g_lastActorObserveMs = 0;
+uint32_t                  g_lastActorLocalObserveMs = 0;
+uint32_t                  g_peerActorRev = 0;     // last host revision this peer applied
+uint32_t                  g_actorHostRev = 0;     // the revision an intent is based on
+void*                     g_actorSnapshotSave = nullptr;
+bool                      g_actorHaveSnapshot = false;
 
 // Progression mirror bookkeeping.
 uint32_t          g_lastMirrorMs = 0;
@@ -310,6 +326,16 @@ bool TryInitSaveLayer(uint32_t now)
         g_invGrants.Reset();
         g_invHaveSnapshot = false;
         g_invSnapshotSave = nullptr;
+        // The actor-state lane names GUIDs in the same vanished container.  Keeping a
+        // pending intent would make the peer retry a write into a save it is not in.
+        g_actorPub.Reset();
+        g_pendingActors.Reset();
+        g_actorMirror.Reset();
+        g_actorNow.Clear();
+        g_actorHaveSnapshot = false;
+        g_actorSnapshotSave = nullptr;
+        g_peerActorRev = 0;
+        g_actorHostRev = 0;
         return false;
     }
     if (save == s.save) {           // same save, new world: a level change
@@ -341,6 +367,16 @@ bool TryInitSaveLayer(uint32_t now)
     g_invHaveSnapshot = false;
     g_invSnapshotSave = nullptr;
     g_peerInvRev = 0;
+    // Same rule for the actor-state lane: a GUID is authored per level, and a pending
+    // intent that names a GUID from the previous save must not be replayed into this one.
+    g_actorPub.Reset();
+    g_pendingActors.Reset();
+    g_actorMirror.Reset();
+    g_actorNow.Clear();
+    g_actorHaveSnapshot = false;
+    g_actorSnapshotSave = nullptr;
+    g_peerActorRev = 0;
+    g_actorHostRev = 0;
     return s.readOk;
 }
 
@@ -694,18 +730,28 @@ void HostApplyIntent(wire::Reader& r)
         }
     } else if (b.kind == wire::I_ACTOR_STATE) {
         if (!Cfg().actor_state_sync) return;
-        // The SavableActorStates offset is unproven (save+0x168 is a LOW/MEDIUM lead),
-        // so this branch does NOT write.  It runs the read-back oracle: find the actor
-        // by GUID, ask the game's own reflective getter what value it holds, and log it.
-        // A live pass then searches memory for a map that returns this same value.
+        // The host is the authority for the container, so a peer's change is applied to
+        // the host's own SavableActorStates and then echoed by the next publish.  The
+        // gate is the flag lane's: `based_on_rev` must not predate the revision the host
+        // last published, or the peer would be acting on a view it has already been
+        // told is old.  A refusal is not a loss -- the peer's bounded queue retries with
+        // the freshest revision it has.
+        uint32_t lastSent = g_actorPub.Revision() - 1;
+        if (b.based_on_rev < lastSent) {
+            QDLOG(LOG_INFO, "actor-state intent refused (stale): based_on=",
+                  dec(b.based_on_rev), " last_sent=", dec(lastSent));
+            return;
+        }
         QdGuid g = { b.guid[0], b.guid[1], b.guid[2], b.guid[3] };
-        int32_t v = 0;
-        char err[160];
-        if (WrProbeActorState(g, &v, err, sizeof(err))) {
-            QDLOG(LOG_INFO, "actor-state intent: peer value=", dec(b.value),
-                  " reflective=", dec(v), " (oracle only; nothing written)");
+        char err[192];
+        if (WrSetActorState(g, b.value, err, sizeof(err))) {
+            QDLOG(LOG_INFO, "actor-state intent applied: guid=", hex32(g.a), "-",
+                  hex32(g.b), "-", hex32(g.c), "-", hex32(g.d), " value=", dec(b.value));
+            // ObserveHostActorStates runs at 4 Hz and its Observe() sees this write, which
+            // marks the publisher dirty and sends the echo.  Doing it here as well would
+            // race the enumerator for no benefit.
         } else {
-            QDLOG(LOG_WARN, "actor-state intent: probe failed: ", err);
+            QDLOG(LOG_WARN, "actor-state intent failed: ", err);
         }
     } else if (b.kind == wire::I_GRANT_ITEM) {
         if (!Cfg().inventory_sync) return;
@@ -4002,6 +4048,246 @@ void PeerGrantPump(uint32_t now)
 }
 
 // ---------------------------------------------------------------------------
+// LAYER 4b -- one-shot world objects (SavableActorStates)
+// ---------------------------------------------------------------------------
+// Measured in SYNC-RESEARCH section A.8: the container is a reflected
+// `TMap<FGuid,int32>` on the save object, and the game's own writer is
+// `SavableActor_C.Save Data Index to World Save(Index, Data)`.  This is the host ->
+// peer absolute set plus the peer -> host intent lane; the peer's local changes become
+// `INTENT kind 6`, and the host applies them to its own container.
+struct ActorCollect {
+    actorstate::Snapshot* snap;
+    int                   dropped;
+};
+
+void CollectActorStateRow(const QdGuid& guid, int32_t value, void* user)
+{
+    ActorCollect* c = (ActorCollect*)user;
+    uint32_t g[4] = { guid.a, guid.b, guid.c, guid.d };
+    if (!c->snap->Set(g, value)) ++c->dropped;
+}
+
+// Read the whole container through the measured hash-bucket walk.  A false/negative
+// result means the save was replaced under us or the geometry refused; the caller does
+// not publish a partial set as the truth.
+bool ReadLocalActorStates(actorstate::Snapshot* out, int* live, int* dropped)
+{
+    out->Clear();
+    ActorCollect c = { out, 0 };
+    int n = ActorStateEnumerate(&CollectActorStateRow, &c);
+    if (live) *live = n;
+    if (dropped) *dropped = c.dropped;
+    return n >= 0;
+}
+
+void ObserveHostActorStates()
+{
+    int live = 0, dropped = 0;
+    if (!ReadLocalActorStates(&g_actorNow, &live, &dropped)) {
+        g_actorHaveSnapshot = false;
+        return;
+    }
+    g_actorSnapshotSave = Save().save;
+    g_actorHaveSnapshot = true;
+
+    if (g_actorPub.Observe(g_actorNow)) {
+        QDLOG(LOG_INFO, "actor-state host set ", dec(g_actorNow.Count()), " entr",
+              (g_actorNow.Count() == 1 ? "y" : "ies"), " (live ", dec(live),
+              ") rev=", dec(g_actorPub.Revision()));
+    }
+    if (dropped || g_actorNow.Overflowed()) {
+        static uint32_t lastLog = 0;
+        uint32_t now = Net::Now();
+        if (now - lastLog > 5000) {
+            lastLog = now;
+            QDLOG(LOG_WARN, "actor-state host: ", dec(dropped), " entr",
+                  (dropped == 1 ? "y" : "ies"),
+                  " could not be represented (table full); they are NOT on the wire");
+        }
+    }
+}
+
+// Host: the whole container, chunked across ticks exactly as HostPushFlags does.  `n` is
+// the container size, never a produced count, and the cursor is a continuation rather
+// than a fragment.
+void HostPushActorStates(uint32_t now)
+{
+    if (!Cfg().actor_state_sync) return;
+    if (!g_net.IsHost() || !g_net.Connected()) return;
+    if (!Save().save) return;
+
+    // 4 Hz observation so an interaction reaches the partner promptly; the send is still
+    // on change plus 1 Hz.
+    if (now - g_lastActorObserveMs >= actorstate::kObserveMs) {
+        g_lastActorObserveMs = now;
+        ObserveHostActorStates();
+    }
+
+    if (!g_actorHaveSnapshot || g_actorSnapshotSave != Save().save) return;
+    if (ActiveSaveNoCreate(GWorldPtr()) != g_actorSnapshotSave) return;
+    if (!g_actorPub.Due(now)) return;
+
+    uint8_t body[wire::kMaxBody];
+    actorstate::HostPublisher::Chunk c = g_actorPub.Peek(body, sizeof(body));
+    if (c.blocked) {
+        QDLOG(LOG_WARN, "actor-state: no entry fits one datagram; the lane is stalled");
+        return;
+    }
+
+    uint32_t rev = g_actorPub.Revision();
+    bool changed = g_actorPub.Dirty();
+    if (!g_net.SendUnreliable(wire::K_ACTOR_STATES, body, c.bytes)) return;
+    if (g_actorPub.Commit(c.entries, now)) {
+        QDLOG(changed ? LOG_INFO : LOG_DEBUG, "actor states sent rev=", dec(rev),
+              " entries=", dec(g_actorPub.Size()));
+    }
+}
+
+// Peer: apply the host's absolute set.  The rule is AbsoluteAccept (a chest stays open,
+// a door can close); the one exception is a GUID whose local intent is still in flight,
+// which OnHostEntry holds rather than letting a 1 Hz heartbeat undo it.
+void PeerApplyActorStates(wire::Reader& r, uint32_t now)
+{
+    (void)now;
+    if (!Cfg().actor_state_sync) return;
+
+    uint32_t rev = r.U32();
+    uint16_t n   = r.U16();
+    if (!r.ok) return;
+
+    // Absolute state over an unreliable lane: a body older than the last applied one is
+    // not stale data about a newer world, it is an older world.  Ignore it whole.
+    if (rev < g_peerActorRev) return;
+
+    static ActorStateOwner owners[actorstate::kMaxEntries];
+    // -1 = not built.  A body where every entry is held needs no GObjects pass at all,
+    // and an empty heartbeat body is common once per second; building the owner table for
+    // those would be a needless walk of every live object.
+    int ownerCount = -1;
+
+    int seen = 0, applied = 0, held = 0, confirmed = 0, failed = 0;
+    while (r.ok && r.pos < r.len) {
+        uint32_t g[4];
+        r.Guid(g);
+        int32_t v = r.I32();
+        if (!r.ok) break;
+        ++seen;
+
+        bool apply = true;
+        actorstate::IntentQueue::Resolve res = g_pendingActors.OnHostEntry(g, v, &apply);
+        if (res == actorstate::IntentQueue::kHeld) { ++held; continue; }
+        if (res == actorstate::IntentQueue::kConfirmed) ++confirmed;
+        if (!apply) { ++held; continue; }
+
+        if (ownerCount < 0) {
+            ownerCount = BuildActorStateOwners(owners, actorstate::kMaxEntries);
+        }
+
+        void* actor = nullptr;
+        int index = -1;
+        for (int k = 0; k < ownerCount; ++k) {
+            const QdGuid& og = owners[k].guid;
+            if (og.a == g[0] && og.b == g[1] && og.c == g[2] && og.d == g[3]) {
+                actor = owners[k].actor;
+                index = owners[k].index;
+                break;
+            }
+        }
+
+        QdGuid q = { g[0], g[1], g[2], g[3] };
+        char err[192];
+        if (WrSetActorState(q, v, actor, index, err, sizeof(err))) {
+            ++applied;
+            // The host's value is now in our container.  The 4 Hz local detector will
+            // see the write a moment later; remembering it here is what stops it being
+            // offered back as an intent.
+            g_pendingActors.RememberEcho(g, v);
+            g_actorMirror.Note(g, v);
+        } else {
+            ++failed;
+            if (failed <= 4) {
+                QDLOG(LOG_WARN, "actor-state apply failed rev=", dec(rev), ": ", err);
+            }
+        }
+    }
+
+    if (rev > g_peerActorRev) g_peerActorRev = rev;
+    g_actorHostRev = g_peerActorRev;
+    if (seen) {
+        QDLOG((failed ? LOG_WARN : LOG_DEBUG), "actor states applied=", dec(applied),
+              " held=", dec(held), " confirmed=", dec(confirmed), " failed=", dec(failed),
+              " rev=", dec(rev), " n=", dec((int)n));
+    }
+}
+
+// Peer: turn local container changes into INTENT kind 6 and spend at most kMaxPerTick
+// sends per frame.  The revision stamped into each intent is read at send time, so a
+// retry always names the freshest host state this peer has seen.
+void PeerActorIntentPump(uint32_t now)
+{
+    if (!Cfg().actor_state_sync) return;
+    if (!g_net.IsPeer() || !g_net.Connected()) return;
+    if (!Save().save) return;
+
+    if (now - g_lastActorLocalObserveMs >= actorstate::kObserveMs) {
+        g_lastActorLocalObserveMs = now;
+        int live = 0, dropped = 0;
+        if (ReadLocalActorStates(&g_actorNow, &live, &dropped)) {
+            actorstate::LocalDetector::Stats st;
+            g_actorMirror.Observe(g_actorNow, g_pendingActors, &st);
+            if (st.queued || st.coalesced || st.overflow) {
+                QDLOG(LOG_INFO, "actor-state local change: queued=", dec(st.queued),
+                      " coalesced=", dec(st.coalesced), " echoes=", dec(st.echoes),
+                      " overflow=", dec(st.overflow));
+            }
+        }
+    }
+
+    actorstate::IntentQueue::Out out[actorstate::IntentQueue::kMaxPerTick];
+    int n = g_pendingActors.Due(now, out, actorstate::IntentQueue::kMaxPerTick);
+    for (int i = 0; i < n; ++i) {
+        // kind 6, then guid(16) i32(value): exactly ReadIntent's I_ACTOR_STATE layout.
+        uint8_t body[64];
+        wire::Writer w(body, sizeof(body));
+        wire::WriteIntentHeader(w, wire::I_ACTOR_STATE, g_actorHostRev);
+        w.Guid(out[i].guid);
+        w.I32(out[i].value);
+
+        bool sent = w.ok && g_net.SendReliable(wire::K_INTENT, body, w.len);
+        if (sent) {
+            QDLOG(LOG_INFO, "actor-state intent sent guid=", hex32(out[i].guid[0]), "-",
+                  hex32(out[i].guid[1]), "-", hex32(out[i].guid[2]), "-",
+                  hex32(out[i].guid[3]), " value=", dec(out[i].value),
+                  " rev=", dec(g_actorHostRev), " try ", dec(out[i].attempt), "/",
+                  dec(actorstate::IntentQueue::kMaxAttempts));
+        } else {
+            QDLOG(LOG_WARN, "actor-state intent send failed value=", dec(out[i].value));
+        }
+
+        // The attempt is spent whether or not the socket took it: the give-up has to be
+        // bounded, and the host's echo is the only thing that settles an intent other
+        // than this.  After the give-up the next host body wins.
+        if (out[i].attempt >= actorstate::IntentQueue::kMaxAttempts) {
+            g_pendingActors.GiveUp(out[i].guid);
+            QDLOG(LOG_WARN, "actor-state intent given up guid=", hex32(out[i].guid[0]),
+                  "-", hex32(out[i].guid[1]), "-", hex32(out[i].guid[2]), "-",
+                  hex32(out[i].guid[3]), " value=", dec(out[i].value), " after ",
+                  dec(out[i].attempt), " attempts, host never echoed it");
+        }
+    }
+}
+
+// The single tick hook the pump block calls.  Host and peer work are different directions
+// of the same lane, but they share the save-snapshot identity, so one entry point keeps
+// the reset rule in one place.
+void ActorStatePump(uint32_t now)
+{
+    if (!Cfg().actor_state_sync) return;
+    if (g_net.IsHost()) HostPushActorStates(now);
+    else if (g_net.IsPeer()) PeerActorIntentPump(now);
+}
+
+// ---------------------------------------------------------------------------
 // Inbound dispatch -- game thread only
 // ---------------------------------------------------------------------------
 void DispatchInbound(const InboundPacket& p, uint32_t now)
@@ -4056,6 +4342,11 @@ void DispatchInbound(const InboundPacket& p, uint32_t now)
     }
     case wire::K_WORLD_FLAGS:
         if (g_net.IsPeer()) PeerApplyFlags(r);
+        break;
+    case wire::K_ACTOR_STATES:
+        // Host -> peer only.  The body is the absolute set; the peer applies it through
+        // the game's own SavableActor writer and reads every value back.
+        if (g_net.IsPeer()) PeerApplyActorStates(r, now);
         break;
     case wire::K_INVENTORY:
         // Host -> peer only.  The body is absolute and the apply is additive, so an
@@ -5149,6 +5440,7 @@ bool HK_Tick(void* engineLoop)
     MapPump(now);
     StreamPump(now);
     EnemyPump(now);
+    ActorStatePump(now);
     DialoguePump(now);
 
     if (tracing) QDLOG(LOG_DEBUG, "  frame ", dec(g_frame), " end");
