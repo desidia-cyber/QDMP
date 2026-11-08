@@ -71,6 +71,7 @@
 #include "qdflags.h"
 #include "qdpending.h"
 #include "qdinventory.h"
+#include "qdinvintent.h"
 
 // ---------------------------------------------------------------------------
 // Globals
@@ -142,6 +143,18 @@ uint32_t                g_lastInvObserveMs = 0;
 uint32_t                g_peerInvRev = 0;
 void*                   g_invSnapshotSave = nullptr;
 bool                    g_invHaveSnapshot = false;
+
+// The other direction of the same lane (qdinvintent.h): the peer's own pickups, as a
+// cumulative contribution per path, and the host's monotone record of how much of each
+// it has already added.  Both are reset with the inventory state above because an
+// in-flight contribution names a path in the container being replaced.
+invintent::PickupQueue  g_invIntents;
+invintent::GrantLedger  g_invGrantLedger;
+
+// A host grant landed in the save; the next host publisher pass must read the new
+// container now rather than at the 4 Hz observation tick, so the peer's confirmation
+// (and the line a live run is compared against) follows the apply within one frame.
+bool                    g_invForceObserve = false;
 
 // Progression mirror bookkeeping.
 uint32_t          g_lastMirrorMs = 0;
@@ -310,6 +323,11 @@ bool TryInitSaveLayer(uint32_t now)
         g_invGrants.Reset();
         g_invHaveSnapshot = false;
         g_invSnapshotSave = nullptr;
+        // Both directions name the replaced container.  The peer's baseline is rebuilt
+        // from the next host body and the host's ledger from the next peer intent.
+        g_invIntents.Reset();
+        g_invGrantLedger.Reset();
+        g_invForceObserve = false;
         return false;
     }
     if (save == s.save) {           // same save, new world: a level change
@@ -341,6 +359,9 @@ bool TryInitSaveLayer(uint32_t now)
     g_invHaveSnapshot = false;
     g_invSnapshotSave = nullptr;
     g_peerInvRev = 0;
+    g_invIntents.Reset();
+    g_invGrantLedger.Reset();
+    g_invForceObserve = false;
     return s.readOk;
 }
 
@@ -709,17 +730,55 @@ void HostApplyIntent(wire::Reader& r)
         }
     } else if (b.kind == wire::I_GRANT_ITEM) {
         if (!Cfg().inventory_sync) return;
-        // Inventory has its OWN switch now (section 6d): it creates items rather than
+        // Inventory has its OWN switch (section 6d): it creates items rather than
         // raising a flag, so riding FlagSync would let a client that never enabled the
-        // mirror still mint items on the authority.  Nothing in this build sends this
-        // intent (peer pickups stay local -- see 6d), but a peer's datagram can, and the
-        // gate must be the switch that names the write.
-        char err[160];
-        if (WrGrantItem(b.name, b.value, err, sizeof(err))) {
-            QDLOG(LOG_INFO, "inventory grant applied: ", b.name, " x", dec(b.value));
+        // mirror still mint items on the authority.
+        //
+        // The payload is the peer's CUMULATIVE own count for the path, not an increment
+        // (qdinvintent.h explains why).  WrGrantItem only adds, so applying `b.value`
+        // directly on every copy would turn one pickup into two whenever the reliable
+        // lane retried or the peer retried after a lost result body.  The ledger grants
+        // only the increase over what this path has already had added, which is what
+        // makes the additive field exactly-once.
+        //
+        // `based_on_rev` is carried for diagnostics but is NOT the gate here.  For an
+        // ABSOLUTE flag a stale view is dangerous and the host must refuse it; for a
+        // CUMULATIVE grant a replay is simply the same peer count and the ledger makes
+        // it a no-op.  Gating on the host's last published revision would refuse the
+        // very retry that recovers a lost result body -- the class of bug SYNC-GAPS G1
+        // records, where comparing against the next revision refused every intent
+        // forever.  The ledger's monotone `applied` value is the structural guard.
+        int32_t need = 0;
+        invintent::GrantLedger::Result lr = g_invGrantLedger.Need(b.name, b.value, &need);
+        if (lr == invintent::GrantLedger::kAlreadyApplied) {
+            QDLOG(LOG_INFO, "inventory grant duplicate: ", b.name, " peer total ",
+                  dec(b.value), " already applied");
+        } else if (lr == invintent::GrantLedger::kBelowApplied) {
+            // The peer's own count fell after it sent (a consumption), so what it now
+            // asks for is behind what it already had granted.  Never lower: the host's
+            // stock is authoritative and there is no removal path.
+            QDLOG(LOG_INFO, "inventory grant superseded: ", b.name, " peer total ",
+                  dec(b.value), " is below applied ", dec(g_invGrantLedger.Applied(b.name)));
+        } else if (lr == invintent::GrantLedger::kLedgerFull) {
+            QDLOG(LOG_WARN, "inventory grant refused: ", b.name, " x", dec(b.value),
+                  " (ledger full; untracked grants are not applied)");
         } else {
-            QDLOG(LOG_WARN, "inventory grant failed: ", b.name, " x", dec(b.value),
-                  ": ", err);
+            char err[160];
+            if (WrGrantItem(b.name, need, err, sizeof(err))) {
+                g_invGrantLedger.Commit(b.name, b.value);
+                // Publish the result in this same tick: the peer's confirmation is the
+                // next body, and the line below is the one a live run is matched against
+                // ("inventory grant applied:" on the host, "item intent confirmed" on
+                // the peer).
+                g_invForceObserve = true;
+                QDLOG(LOG_INFO, "inventory grant applied: ", b.name, " x", dec(need),
+                      " (peer total ", dec(b.value), " rev=", dec(b.based_on_rev), ")");
+            } else {
+                // Not committed: a refused write must be retried, and committing now
+                // would make the retry look like a duplicate and lose the item.
+                QDLOG(LOG_WARN, "inventory grant failed: ", b.name, " x", dec(need),
+                      ": ", err);
+            }
         }
     } else if (b.kind == wire::I_ENEMY_HIT) {
         // The owner applies a hit the non-owner's player landed on its frozen copy.
@@ -3740,15 +3799,20 @@ void OnDialogue(wire::Reader& r, uint32_t now)
 //
 // WHAT THIS DOES NOT DO
 // ---------------------
-// Peer -> host item changes are NOT sent.  The wire has `INTENT kind 2` (I_GRANT_ITEM)
-// and the host applies it, but nothing in this build observes a peer pickup and turns
-// it into one.  A two-way mirror would need a policy for "the peer picked it up locally
-// and the host's count is lower", which SYNC-DESIGN does not supply; inventing one here
-// would let the next host body undo a local pickup.  So a peer's local pickups stay
-// local and the host never learns of them.  That is a known, deliberate gap and is
-// called out in the report accompanying this change.
-// The state objects (g_invPub, g_invGrants, g_invNow, the snapshot identity) are
-// declared beside g_pendingFlags so the save-reinit path can reset them together.
+// It does not remove anything, in either direction.  The host is the authority and
+// `WrGrantItem` only adds; a count that falls is a consumption and is never sent,
+// because re-granting a consumed item is the failure this lane must not have.  A
+// peer's consumption is replenished by the next host body (the mirror is additive),
+// and a host's consumption is not propagated to the peer at all (SYNC-DESIGN
+// section 2.4 accepts that: the peer keeps its copy until it uses it).
+//
+// THE OTHER DIRECTION (G3)
+// ------------------------
+// A pickup the peer makes becomes `INTENT kind 2` (I_GRANT_ITEM).  `qdinvintent.h`
+// holds the model: the peer sends its cumulative own contribution per path, the host
+// applies only the increase, and the host's published body is the resolution.  The
+// state objects (g_invPub, g_invGrants, g_invNow, the snapshot identity) are declared
+// beside g_pendingFlags so the save-reinit path can reset them together.
 
 // Resolving an item path means a GObjects walk (FindClassByName /
 // FindObjectByNameAndClass), and the peer would otherwise pay that for every entry of
@@ -3846,8 +3910,11 @@ void HostPushInventory(uint32_t now)
 
     // Observe at 4 Hz, not at the send rate: a pickup is an event, and waiting for the
     // 1 Hz heartbeat would make the partner's key arrive up to a second late.  The walk
-    // reads a few dozen map slots and neither creates nor writes anything.
-    if (now - g_lastInvObserveMs >= 250) {
+    // reads a few dozen map slots and neither creates nor writes anything.  A grant the
+    // host just applied forces the walk now, so the peer's confirmation follows within
+    // one frame instead of up to 250 ms later.
+    if (g_invForceObserve || now - g_lastInvObserveMs >= 250) {
+        g_invForceObserve = false;
         g_lastInvObserveMs = now;
         ObserveHostInventory(now);
     }
@@ -3901,6 +3968,19 @@ void PeerApplyInventory(wire::Reader& r, uint32_t now)
     uint16_t n   = r.U16();
     if (!r.ok) return;
 
+    // The host's publisher restarts at revision 1 when its save is replaced.  A large
+    // backwards step is that, not an out-of-order datagram: the peer's whole host view
+    // (floors, confirmations, in-flight intents) names a container that no longer
+    // exists.  A one-step regression is just reordering and is absorbed by the
+    // high-water floors.
+    if (g_invIntents.HaveHostBaseline() &&
+        (int32_t)(rev - g_invIntents.HostRevision()) < -1) {
+        QDLOG(LOG_INFO, "inventory host view reset: rev ", dec(rev), " after ",
+              dec(g_invIntents.HostRevision()));
+        g_invIntents.ResetHostView();
+    }
+    g_invIntents.BeginHostBody(rev, n);
+
     int seen = 0, queued = 0, satisfied = 0, unread = 0, overflow = 0, bad = 0;
     // `n` is the whole container size, not this datagram's share: a large set is split
     // across ticks, and the receiver learns how many arrived from where the body ends.
@@ -3912,6 +3992,18 @@ void PeerApplyInventory(wire::Reader& r, uint32_t now)
         if (len < 0 || !r.ok) break;
         if (len >= inventory::kMaxPath) { ++bad; continue; }   // truncated by the reader
         ++seen;
+
+        // Feed the peer -> host model the host's absolute count.  This is the set the
+        // peer compares its own container against on the next local pass; the floor is
+        // a high-water mark (qdinvintent.h) so a host consumption is never mistaken for
+        // a peer surplus and granted back.
+        invintent::PickupQueue::HostResult hr = g_invIntents.HostItem(path, count);
+        if (hr == invintent::PickupQueue::kHostConfirmed) {
+            QDLOG(LOG_INFO, "item intent confirmed: ", path, " host=", dec(count));
+        } else if (hr == invintent::PickupQueue::kHostSuperseded) {
+            QDLOG(LOG_INFO, "item intent superseded: ", path, " host=", dec(count),
+                  " is already at or above the peer's ask");
+        }
 
         int32_t local = 0;
         bool haveLocal = PeerInventoryCount(path, &local);
@@ -3937,6 +4029,10 @@ void PeerApplyInventory(wire::Reader& r, uint32_t now)
         }
     }
 
+    if (g_invIntents.EndHostBody(seen)) {
+        QDLOG(LOG_INFO, "item intent baseline: host set complete at rev=", dec(rev),
+              " n=", dec((int)n));
+    }
     if (rev != g_peerInvRev) {
         g_peerInvRev = rev;
         QDLOG(LOG_INFO, "inventory body rev=", dec(rev), " n=", dec((int)n),
@@ -3989,6 +4085,10 @@ void PeerGrantPump(uint32_t now)
         char err[160];
         if (WrGrantItem(out[i].path, need, err, sizeof(err))) {
             g_invGrants.Done(out[i].path);
+            // This much of the peer's local count was put there by the HOST, so it is
+            // not the peer's own contribution and must not travel back (the echo rule in
+            // qdinvintent.h).  Record it before the next local enumeration.
+            g_invIntents.HostGranted(out[i].path, need);
             QDLOG(LOG_INFO, "inventory grant applied: ", out[i].path, " +", dec(need),
                   " (host ", dec(out[i].target), ", peer ", dec(local), ")");
         } else {
@@ -3997,6 +4097,126 @@ void PeerGrantPump(uint32_t now)
             g_invGrants.Failed(out[i].path, now);
             QDLOG(LOG_WARN, "inventory grant refused: ", out[i].path, " +", dec(need),
                   ": ", err, " (kept for retry)");
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Peer: a pickup the peer made becomes an INTENT kind 2 (G3's other half)
+// ---------------------------------------------------------------------------
+// qdinvintent.h owns the model; this only supplies the container walk, the clock and
+// the socket.  The walk is the SAME `InventoryEnumerate` the host publisher uses, so
+// the two directions cannot disagree about what "the local inventory" is.
+struct InvIntentCollect {
+    invintent::PickupQueue* q;
+    int unreadable;
+};
+
+void CollectInvIntentItem(void* item, int32_t count, void* user)
+{
+    InvIntentCollect* c = (InvIntentCollect*)user;
+    // A zero is indistinguishable from absence on this lane and can never be a pickup.
+    if (count <= 0) return;
+
+    // Two bytes of headroom over kMaxPath so an exactly-limit path is accepted and a
+    // longer one is refused by the queue rather than truncated into a different asset.
+    char path[inventory::kMaxPath + 2];
+    int n = 0;
+    __try {
+        n = avatar::AssetPath(item, path, sizeof(path));
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        n = 0;
+    }
+    if (n <= 0) { ++c->unreadable; return; }
+
+    switch (c->q->LocalItem(path, count)) {
+    case invintent::PickupQueue::kQueued:
+        QDLOG(LOG_INFO, "item intent queued ", path, " x", dec(count));
+        break;
+    case invintent::PickupQueue::kCoalesced:
+        QDLOG(LOG_INFO, "item intent superseded ", path, " by local ", dec(count));
+        break;
+    case invintent::PickupQueue::kDropped:
+        QDLOG(LOG_INFO, "item intent dropped (no longer held) ", path);
+        break;
+    default:
+        break;
+    }
+}
+
+void PeerInventoryIntentPump(uint32_t now)
+{
+    if (!Cfg().inventory_sync) return;
+    if (!g_net.IsPeer() || !g_net.Connected()) return;
+    if (!Save().save) return;
+    // No complete host set yet: every local item is either pre-existing or one whose
+    // host entry is still in a later chunk, and neither is a pickup.  Testing this
+    // before the walk avoids paying the GObjects cost for a view that cannot be used.
+    if (!g_invIntents.HaveHostBaseline()) return;
+
+    InvIntentCollect c = { &g_invIntents, 0 };
+    g_invIntents.BeginLocalPass();
+    int live = InventoryEnumerate(&CollectInvIntentItem, &c);
+    if (live < 0) {
+        // The active save was replaced under us.  TryInitSaveLayer will reset the model;
+        // do not compute a delta against a container that is no longer there, and do not
+        // end the pass (an empty first pass would absorb nothing and upload later).
+        g_invIntents.AbortLocalPass();
+        return;
+    }
+    int vanished = g_invIntents.EndLocalPass();
+    if (vanished) {
+        QDLOG(LOG_INFO, "item intent dropped: ", dec(vanished),
+              " contribution", (vanished == 1 ? "" : "s"),
+              " the peer no longer holds");
+    }
+
+    // Both of these are table-full conditions, and both are the kind that would
+    // otherwise be silent.  Rate-limited so a corrupt container cannot fill the log.
+    if (c.unreadable || g_invIntents.PendingOverflowed() || g_invIntents.ItemOverflowed() ||
+        g_invIntents.PathOverflowed()) {
+        static uint32_t lastLog = 0;
+        if (now - lastLog > 5000) {
+            lastLog = now;
+            QDLOG(LOG_WARN, "item intent: ", dec(c.unreadable),
+                  " unreadable path(s); pending overflow=",
+                  dec(g_invIntents.PendingOverflowed() ? 1 : 0),
+                  " item overflow=", dec(g_invIntents.ItemOverflowed() ? 1 : 0),
+                  " path overflow=", dec(g_invIntents.PathOverflowed() ? 1 : 0),
+                  "; those pickups are NOT on the wire");
+        }
+    }
+
+    invintent::PickupQueue::Out out[invintent::PickupQueue::kMaxPerTick];
+    int n = g_invIntents.Due(now, out, invintent::PickupQueue::kMaxPerTick);
+    for (int i = 0; i < n; ++i) {
+        // kind 2, then str(item_path) i32(count), which is ReadIntent's I_GRANT_ITEM
+        // layout.  `count` is the peer's CUMULATIVE own contribution for the path, not
+        // an increment; the host's ledger (GrantLedger) grants only the increase, which
+        // is what makes retries safe on an additive field.
+        uint8_t body[inventory::kMaxPath + 32];
+        wire::Writer w(body, sizeof(body));
+        wire::WriteIntentHeader(w, wire::I_GRANT_ITEM, out[i].basedOnRev);
+        w.Str(out[i].path);
+        w.I32(out[i].count);
+
+        bool sent = w.ok && g_net.SendReliable(wire::K_INTENT, body, w.len);
+        if (sent) {
+            QDLOG(LOG_INFO, "item intent sent ", out[i].path, " x", dec(out[i].count),
+                  " rev=", dec(out[i].basedOnRev), " try ", dec(out[i].attempt), "/",
+                  dec(invintent::PickupQueue::kMaxAttempts));
+        } else {
+            QDLOG(LOG_WARN, "item intent send failed ", out[i].path, " x",
+                  dec(out[i].count));
+        }
+
+        // The attempt is spent whether or not the socket took it: the give-up must be
+        // bounded, and the host's echo is the only thing that settles an intent.
+        if (out[i].attempt >= invintent::PickupQueue::kMaxAttempts) {
+            g_invIntents.GiveUp(out[i].path);
+            QDLOG(LOG_WARN, "item intent given up ", out[i].path, " x", dec(out[i].count),
+                  " after ", dec(out[i].attempt), " attempts, the host never showed it");
         }
     }
 }
@@ -5133,6 +5353,10 @@ bool HK_Tick(void* engineLoop)
         PeerFlagIntentPump(now);
         // 6d: apply at most two grants per frame from the last body.
         PeerGrantPump(now);
+        // 6d: and send the peer's own pickups.  AFTER PeerGrantPump on purpose: the
+        // local walk must see the grants that landed this frame, and HostGranted has
+        // already raised their host-derived share, so they cannot be read as pickups.
+        PeerInventoryIntentPump(now);
     }
     DevAutoLoad(now);
     LocalEquipPump(now);

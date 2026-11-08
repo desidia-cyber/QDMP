@@ -20,13 +20,13 @@
 //
 // WHAT IS DELIBERATELY NOT HERE
 // -----------------------------
-// Peer -> host item changes are NOT in this header or in this round.  The design covers
-// host *inventory* as a shared bank, and `INTENT kind 2` (I_GRANT_ITEM) exists on the
-// wire, but nothing observes a peer pickup and turns it into an intent.  Adding one
-// would be a two-way merge dressed up as a one-way mirror, and the corpus has no policy
-// for resolving a peer pickup against the host's count.  So the peer's local pickups
-// stay local; the failure this accepts is the one SYNC-DESIGN section 2.4 is willing to
-// accept to keep the key path host-owned.  See the report accompanying this change.
+// Peer -> host item changes are NOT in this header.  They are the other half of the
+// lane and live in `qdinvintent.h`, because the payload and the idempotency rule are
+// different: an item path is far longer than a flag name, and an additive grant needs
+// a cumulative value plus a host-side ledger rather than the flag queue's absolute
+// assignment.  Keeping them apart means this host publisher stays the proven, tested
+// one-way mirror, and the new direction cannot regress it.  test/test_invintent.cpp
+// drives the sibling; test/test_inventory.cpp still drives this one.
 #pragma once
 #include <stdint.h>
 #include <string.h>
