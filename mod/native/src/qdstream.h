@@ -363,13 +363,13 @@ inline bool PlausibleLevelName(const char* name)
 // body means something different: a level name from the partner's map matches
 // nothing here, an enemy row addresses an actor that does not exist here, and a
 // dialogue cursor points into another conversation.  Applying any of them is worse
-// than dropping it, so the rule is ANNOUNCEMENT PLUS REFUSAL, not travel.
+// than dropping it, so this class is ANNOUNCEMENT PLUS REFUSAL -- it detects the split
+// and gates cross-world state, and nothing more.
 //
-// API-GAPS 4 is explicit that hard travel is refused in co-op v1, so this class
-// deliberately has no "make the partner follow" path.  It detects the split, the
-// caller logs it once, and the application sites ask PeerStateApplies() before
-// touching cross-world state.  The session is never torn down: a cutscene can load
-// and return, and a transition is not instantaneous.
+// Actually crossing the split is `travel::HardBoard`'s job (qdtravel.h), because the
+// game's own hard-load entry exists (`GameInstance.LoadMapWithLoadingScreen`) and it
+// needs a two-sided arrival handshake.  Keeping the two separate means the divergence
+// debounce below and the follow handshake's dedup have independent resets.
 //
 // The debounce is load-bearing.  During an ordinary level load the old world is
 // current for a frame or two and the new world's name is already known, so the two

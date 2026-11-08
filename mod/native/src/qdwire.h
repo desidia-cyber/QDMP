@@ -43,6 +43,10 @@ enum Kind {
     K_LEVEL_UNION = 0x22,
     K_TRAVEL      = 0x23,
     K_DAMAGE      = 0x24,
+    K_CUTSCENE    = 0x25,
+    K_MOVERS      = 0x26,
+    K_LOOT        = 0x27,
+    K_SUSPEND     = 0x28,
     K_LOG         = 0x30,
 };
 
@@ -70,7 +74,7 @@ inline bool IsReliableKind(uint8_t kind)
 {
     return kind == K_HELLO || kind == K_WELCOME || kind == K_INTENT ||
            kind == K_EFFECT || kind == K_ENEMY_DETAIL || kind == K_TRAVEL ||
-           kind == K_DAMAGE;
+           kind == K_DAMAGE || kind == K_SUSPEND;
 }
 
 // --------------------------------------------------------------------------
@@ -640,14 +644,26 @@ inline bool ReadLevelUnion(Reader& r, LevelUnionBody* b)
 struct TravelBody {
     uint32_t seq;
     uint8_t  role;
+    uint8_t  phase;      // see TravelPhase
     char     map[64];
     char     dest[96];
+};
+
+// TRAVEL.phase (WIRE.md 3.15a).  An in-world travel is one announcement; a hard
+// transition is a handshake because both machines must be in the new UWorld before
+// either resumes applying absolute state.
+enum TravelPhase {
+    TP_NONE       = 0,
+    TP_HARD_BEGIN = 1,
+    TP_ARRIVED    = 2,
+    TP_RESUME     = 3,
 };
 
 inline void WriteTravel(Writer& w, const TravelBody& t)
 {
     w.U32(t.seq);
     w.U8(t.role);
+    w.U8(t.phase);
     w.Str(t.map);
     w.Str(t.dest);
 }
@@ -656,6 +672,7 @@ inline bool ReadTravel(Reader& r, TravelBody* t)
 {
     t->seq = r.U32();
     t->role = r.U8();
+    t->phase = r.U8();
     if (r.Str(t->map, sizeof(t->map)) >= (int)sizeof(t->map)) return false;
     if (r.Str(t->dest, sizeof(t->dest)) >= (int)sizeof(t->dest)) return false;
     return r.ok;
@@ -696,6 +713,197 @@ inline bool ReadDamage(Reader& r, DamageBody* d)
     r.Guid(d->guid);
     d->amount_centi = r.I32();
     d->flags = r.U8();
+    return r.ok;
+}
+
+// ---- cutscene (WIRE.md 3.16) ----------------------------------------------
+// Body: seq(u32), slot(u8 0 host / 1 peer / 0xFF free), state(u8), name(str).
+// A cutscene is per-machine Blueprint state, so the sender publishes which manager it
+// is running and the receiver either resolves the same manager in its own cooked
+// world or is held consistently with the game's own cutscene-mode switch.
+enum CutsceneState {
+    CS_NONE    = 0,
+    CS_PLAYING = 1,
+    CS_ENDED   = 2,
+};
+
+struct CutsceneBody {
+    uint32_t seq;
+    uint8_t  slot;
+    uint8_t  state;
+    char     name[96];
+};
+
+inline void WriteCutscene(Writer& w, const CutsceneBody& c)
+{
+    w.U32(c.seq);
+    w.U8(c.slot);
+    w.U8(c.state);
+    w.Str(c.name);
+}
+
+inline bool ReadCutscene(Reader& r, CutsceneBody* c)
+{
+    c->seq = r.U32();
+    c->slot = r.U8();
+    c->state = r.U8();
+    if (c->state > CS_ENDED) return false;
+    if (r.Str(c->name, sizeof(c->name)) >= (int)sizeof(c->name)) return false;
+    return r.ok;
+}
+
+// ---- movers (WIRE.md 3.17) -------------------------------------------------
+// Owner-authoritative absolute state for moving world objects (elevators, platforms,
+// `Activatable` movers).  Body: rev(u32), n(u16), n x {guid(16), i32 x,y,z,
+// i16 yaw, i16 pitch, u8 flags}.  Row size 16+12+2+2+1 = 33 bytes.
+static const uint8_t kMoverMoving = 0x01;
+static const uint8_t kMoverOwner  = 0x02;
+
+struct MoverRow {
+    uint32_t id[4];
+    int32_t  px, py, pz;
+    int16_t  yaw, pitch;
+    uint8_t  flags;
+};
+
+struct MoversBody {
+    uint32_t rev;
+    uint16_t n_sent;
+    uint16_t n;              // rows stored (bounded by kMoversMax)
+    MoverRow row[24];
+};
+
+static const int kMoversMax = 24;
+
+inline void WriteMoversHeader(Writer& w, uint32_t rev, uint16_t n)
+{
+    w.U32(rev);
+    w.U16(n);
+}
+
+inline int WriteMoversChunk(Writer& w, const MoverRow* e, int n, int first)
+{
+    int i = first;
+    int rows = 0;
+    while (i < n && rows < 20 && w.len + 33 <= w.cap) {
+        w.Guid(e[i].id);
+        w.I32(e[i].px); w.I32(e[i].py); w.I32(e[i].pz);
+        w.I16(e[i].yaw); w.I16(e[i].pitch);
+        w.U8(e[i].flags);
+        ++i;
+        ++rows;
+        if (!w.ok) break;
+    }
+    return i;
+}
+
+inline bool ReadMovers(Reader& r, MoversBody* b)
+{
+    b->rev = r.U32();
+    b->n_sent = r.U16();
+    b->n = 0;
+    for (int i = 0; i < b->n_sent && r.ok; ++i) {
+        MoverRow tmp;
+        r.Guid(tmp.id);
+        tmp.px = r.I32(); tmp.py = r.I32(); tmp.pz = r.I32();
+        tmp.yaw = r.I16(); tmp.pitch = r.I16();
+        tmp.flags = r.U8();
+        if (b->n < kMoversMax) b->row[b->n++] = tmp;
+    }
+    return r.ok;
+}
+
+// ---- loot (WIRE.md 3.18) ---------------------------------------------------
+// A shared drop set plus tombstones.  Body: rev(u32), n(u16), n x {u32 source_hash,
+// i32 drop_index, u8 taken, str item_path}.  The host is authoritative; a peer's own
+// rolls are merged as proposals.  `taken` wins: a drop one player picked up must
+// disappear for the other.
+static const int kLootMax = 40;
+
+struct LootEntry {
+    uint32_t source_hash;
+    int32_t  drop_index;
+    uint8_t  taken;
+    char     item_path[200];
+};
+
+struct LootBody {
+    uint32_t  rev;
+    uint16_t  n_sent;
+    uint16_t  n;
+    LootEntry entry[kLootMax];
+};
+
+inline void WriteLootHeader(Writer& w, uint32_t rev, uint16_t n)
+{
+    w.U32(rev);
+    w.U16(n);
+}
+
+inline int WriteLootChunk(Writer& w, const LootEntry* e, int n, int first)
+{
+    int i = first;
+    while (i < n) {
+        int pl = 0;
+        while (e[i].item_path[pl]) ++pl;
+        int need = 4 + 4 + 1 + 2 + pl;
+        if (w.len + need > w.cap) break;
+        w.U32(e[i].source_hash);
+        w.I32(e[i].drop_index);
+        w.U8(e[i].taken);
+        w.Str(e[i].item_path);
+        ++i;
+        if (!w.ok) break;
+    }
+    return i;
+}
+
+inline bool ReadLoot(Reader& r, LootBody* b)
+{
+    b->rev = r.U32();
+    b->n_sent = r.U16();
+    b->n = 0;
+    for (int i = 0; i < b->n_sent && r.ok; ++i) {
+        LootEntry tmp;
+        tmp.source_hash = r.U32();
+        tmp.drop_index = r.I32();
+        tmp.taken = r.U8();
+        if (r.Str(tmp.item_path, sizeof(tmp.item_path)) >= (int)sizeof(tmp.item_path)) return false;
+        if (b->n < kLootMax) b->entry[b->n++] = tmp;
+    }
+    return r.ok;
+}
+
+// ---- suspend saves (WIRE.md 3.19) -----------------------------------------
+// Body: seq(u32), state(u8), slot(str).  The peer holds the game's own
+// `BlockSuspendSaves` while a session is live, and a suspend load it does take is
+// announced so the host can re-apply its absolute state.
+enum SuspendState {
+    SS_CLEAR     = 0,
+    SS_HOLD      = 1,
+    SS_LOADED    = 2,
+    SS_REAPPLIED = 3,
+};
+
+struct SuspendBody {
+    uint32_t seq;
+    uint8_t  state;
+    char     slot[64];
+};
+
+inline void WriteSuspend(Writer& w, const SuspendBody& s)
+{
+    w.U32(s.seq);
+    w.U8(s.state);
+    w.Str(s.slot);
+}
+
+inline bool ReadSuspend(Reader& r, SuspendBody* s)
+{
+    s->seq = r.U32();
+    s->state = r.U8();
+    if (s->state > SS_REAPPLIED) return false;
+    if (r.Str(s->slot, sizeof(s->slot)) >= (int)sizeof(s->slot)) return false;
     return r.ok;
 }
 

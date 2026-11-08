@@ -59,12 +59,26 @@ which cannot corrupt progression and does prove the path.  See
   `SetShouldBeVisible` and the byte-verified `SetShouldBeLoaded`, refuses to apply the
   partner's levels while the two machines are in different maps, and makes the partner
   follow a travel to the same destination actor
+- travel coordination (`TravelSync=0`) — built: in-world follows through
+  `TeleportToLocation`, and **hard map switches** through the game's own
+  `GameInstance.LoadMapWithLoadingScreen` with a `BEGIN → ARRIVED → RESUME` handshake.
+  Independent of `StreamUnion`, so it works with the union off.
+- cutscenes (`CutsceneSync=0`) — built: the partner either plays the same manager
+  (`BeginCutsceneWithManager`) or is held with `EnterCutsceneMode` + the input lock until
+  `ENDED`, then both resume together
+- moving world objects (`MoverSync=0`) — built: owner-authoritative transforms for
+  elevators/platforms/`Activatable` movers
+- loot (`LootSync=0`) — built: one host-authoritative drop set keyed by the game's own
+  `{source, dropIndex}`; a take is a permanent tombstone that hides the other copy
+- suspend saves (`SuspendGuard=0`) — built: the peer holds `BlockSuspendSaves`, and a
+  suspend load makes the host re-apply its absolute state
 - enemy sync (`EnemySync=0`) — built: ownership follows the nearer player so an enemy
   fights the player who can actually reach it, driven copies follow the owner's rows,
   montages and status effects ride `ENEMY_DETAIL`, hits and records go back as intents,
   and an enemy the host runs can damage a distant partner
 - two-player dialogue (`DialogueSync=0`) — built: per-slot talk state, partner's NPC
-  blocked through `NPC_Base`'s own `BlockInteract` property
+  blocked through `NPC_Base`'s own `BlockInteract` property, a concurrent start on the
+  same NPC is ended by the loser, and a death ends the conversation immediately
 - the inventory mirror (`InventorySync=0`) — built: the host publishes its inventory
   whole, the peer grants only what it lacks, the peer's own pickups and consumptions go
   back as cumulative intents, and a use is removed exactly once

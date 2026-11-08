@@ -99,6 +99,10 @@ pub enum Kind {
     LevelUnion = 0x22,
     Travel = 0x23,
     Damage = 0x24,
+    Cutscene = 0x25,
+    Movers = 0x26,
+    Loot = 0x27,
+    Suspend = 0x28,
     Log = 0x30,
 }
 
@@ -125,6 +129,10 @@ impl Kind {
             0x22 => LevelUnion,
             0x23 => Travel,
             0x24 => Damage,
+            0x25 => Cutscene,
+            0x26 => Movers,
+            0x27 => Loot,
+            0x28 => Suspend,
             0x30 => Log,
             other => return Err(Error::UnknownKind(other)),
         })
@@ -156,6 +164,10 @@ impl Kind {
             LevelUnion => "level_union",
             Travel => "travel",
             Damage => "damage",
+            Cutscene => "cutscene",
+            Movers => "movers",
+            Loot => "loot",
+            Suspend => "suspend",
             Log => "log",
         }
     }
@@ -171,6 +183,7 @@ impl Kind {
                 | Kind::EnemyDetail
                 | Kind::Travel
                 | Kind::Damage
+                | Kind::Suspend
         )
     }
 
@@ -191,6 +204,9 @@ impl Kind {
                 | Kind::Status
                 | Kind::DialogueState
                 | Kind::LevelUnion
+                | Kind::Cutscene
+                | Kind::Movers
+                | Kind::Loot
         )
     }
 }
@@ -683,12 +699,127 @@ pub struct Travel {
     pub seq: u32,
     /// 1 = host, 2 = peer (see [`roles`]).
     pub role: u8,
+    /// Where this announcement sits in the hard-transition handshake (see
+    /// [`travel_phase`]). `NONE` is the ordinary in-world announcement.
+    pub phase: u8,
     /// Short map name, e.g. `100_GR`.
     pub map: String,
     /// The destination the sender just took: the placed actor carrying the game's own
-    /// `LocationData`, named so the other machine can resolve the same actor. Empty
-    /// when the sender is not travelling.
+    /// `LocationData`, named so the other machine can resolve the same actor. For a
+    /// hard transition, the destination map package path. Empty when the sender is not
+    /// travelling.
     pub dest: String,
+}
+
+/// `TRAVEL.phase` (WIRE.md §3.15a).
+///
+/// The in-world half is a single announcement. A hard transition is a handshake
+/// because both machines must arrive before either resumes applying absolute state:
+/// `HARD_BEGIN` names the map, `ARRIVED` is sent by each machine once its own world is
+/// that map, and `RESUME` is the host releasing the pair.
+pub mod travel_phase {
+    pub const NONE: u8 = 0;
+    pub const HARD_BEGIN: u8 = 1;
+    pub const ARRIVED: u8 = 2;
+    pub const RESUME: u8 = 3;
+}
+
+/// `CUTSCENE` body (WIRE.md §3.16).
+///
+/// A cutscene is per-machine Blueprint state; there is no host-side switch that makes
+/// the other machine play one. The sender publishes which manager it is running, and
+/// the receiver either resolves the same manager in its own cooked world
+/// (`BeginCutsceneWithManager`) or is held consistently with the game's own
+/// cutscene-mode switch until the sender reports `ENDED`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Cutscene {
+    /// Bumps on every change; an older state is discarded.
+    pub seq: u32,
+    /// 0 = host, 1 = peer, 0xFF = free.
+    pub slot: u8,
+    /// See [`cutscene_state`].
+    pub state: u8,
+    /// Short name of the manager/sequence actor; empty when none.
+    pub name: String,
+}
+
+pub mod cutscene_state {
+    pub const NONE: u8 = 0;
+    pub const PLAYING: u8 = 1;
+    pub const ENDED: u8 = 2;
+}
+
+/// One row of `MOVERS` (WIRE.md §3.17): a moving world object's transform.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct MoverRow {
+    /// Stable 128-bit id for the placed actor (FNV-1a over its path, the same scheme
+    /// the dialogue identity uses).
+    pub id: Guid,
+    /// 1/8 cm.
+    pub x: i32,
+    pub y: i32,
+    pub z: i32,
+    /// 1/65536 turn.
+    pub yaw: i16,
+    pub pitch: i16,
+    /// See [`mover_flags`].
+    pub flags: u8,
+}
+
+pub mod mover_flags {
+    /// The owner moved it this frame (as opposed to a settled position).
+    pub const MOVING: u8 = 1;
+    /// The sender is the authority for this mover.
+    pub const OWNER: u8 = 2;
+}
+
+/// `MOVERS` body (WIRE.md §3.17). Owner-authoritative absolute state.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Movers {
+    pub rev: u32,
+    pub rows: Vec<MoverRow>,
+}
+
+/// One `LOOT` entry (WIRE.md §3.18).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct LootEntry {
+    /// FNV-1a of the drop source id (the object name the game keys the roll with).
+    pub source_hash: u32,
+    /// The per-source drop index the game keys the roll with.
+    pub drop_index: i32,
+    /// A tombstone: this drop was taken and must disappear on both machines.
+    pub taken: bool,
+    /// The item the roll produced, as a soft object path; empty for a tombstone.
+    pub item_path: String,
+}
+
+/// `LOOT` body (WIRE.md §3.18). A shared drop set plus tombstones.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Loot {
+    pub rev: u32,
+    pub entries: Vec<LootEntry>,
+}
+
+/// `SUSPEND` body (WIRE.md §3.19).
+///
+/// The game writes a timed suspend save on its own schedule, gated by
+/// `BlockSuspendSaves`. In a live session the peer holds the block so its own save
+/// cannot advance past the host, and a suspend load it does take tells the host to
+/// re-apply its absolute state.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Suspend {
+    pub seq: u32,
+    /// See [`suspend_state`].
+    pub state: u8,
+    /// The suspend slot name when known, otherwise empty.
+    pub slot: String,
+}
+
+pub mod suspend_state {
+    pub const CLEAR: u8 = 0;
+    pub const HOLD: u8 = 1;
+    pub const LOADED: u8 = 2;
+    pub const REAPPLIED: u8 = 3;
 }
 
 /// `DAMAGE` body (WIRE.md §3.14a).
@@ -736,6 +867,10 @@ pub enum Body {
     LevelUnion(LevelUnion),
     Travel(Travel),
     Damage(Damage),
+    Cutscene(Cutscene),
+    Movers(Movers),
+    Loot(Loot),
+    Suspend(Suspend),
     Log(Log),
 }
 
@@ -761,6 +896,10 @@ impl Body {
             Body::LevelUnion(_) => Kind::LevelUnion,
             Body::Travel(_) => Kind::Travel,
             Body::Damage(_) => Kind::Damage,
+            Body::Cutscene(_) => Kind::Cutscene,
+            Body::Movers(_) => Kind::Movers,
+            Body::Loot(_) => Kind::Loot,
+            Body::Suspend(_) => Kind::Suspend,
             Body::Log(_) => Kind::Log,
         }
     }
@@ -1164,6 +1303,7 @@ pub fn encode_body(body: &Body) -> Result<Vec<u8>> {
         Body::Travel(t) => {
             w.write_u32(t.seq)?;
             w.write_u8(t.role)?;
+            w.write_u8(t.phase)?;
             write_str(&mut w, &t.map)?;
             write_str(&mut w, &t.dest)?;
         }
@@ -1171,6 +1311,40 @@ pub fn encode_body(body: &Body) -> Result<Vec<u8>> {
             write_guid(&mut w, &d.attacker)?;
             w.write_i32(d.amount_centi)?;
             w.write_u8(d.flags)?;
+        }
+        Body::Cutscene(c) => {
+            w.write_u32(c.seq)?;
+            w.write_u8(c.slot)?;
+            w.write_u8(c.state)?;
+            write_str(&mut w, &c.name)?;
+        }
+        Body::Movers(m) => {
+            w.write_u32(m.rev)?;
+            write_count(&mut w, m.rows.len())?;
+            for r in &m.rows {
+                write_guid(&mut w, &r.id)?;
+                w.write_i32(r.x)?;
+                w.write_i32(r.y)?;
+                w.write_i32(r.z)?;
+                w.write_i16(r.yaw)?;
+                w.write_i16(r.pitch)?;
+                w.write_u8(r.flags)?;
+            }
+        }
+        Body::Loot(l) => {
+            w.write_u32(l.rev)?;
+            write_count(&mut w, l.entries.len())?;
+            for e in &l.entries {
+                w.write_u32(e.source_hash)?;
+                w.write_i32(e.drop_index)?;
+                w.write_u8(u8::from(e.taken))?;
+                write_str(&mut w, &e.item_path)?;
+            }
+        }
+        Body::Suspend(s) => {
+            w.write_u32(s.seq)?;
+            w.write_u8(s.state)?;
+            write_str(&mut w, &s.slot)?;
         }
     }
 
@@ -1436,6 +1610,7 @@ pub fn decode_body(kind: Kind, bytes: &[u8]) -> Result<Body> {
         Kind::Travel => Body::Travel(Travel {
             seq: r.read_u32()?,
             role: r.read_u8()?,
+            phase: r.read_u8()?,
             map: read_str(&mut r)?,
             dest: read_str(&mut r)?,
         }),
@@ -1444,6 +1619,57 @@ pub fn decode_body(kind: Kind, bytes: &[u8]) -> Result<Body> {
             amount_centi: r.read_i32()?,
             flags: r.read_u8()?,
         }),
+        Kind::Cutscene => {
+            let seq = r.read_u32()?;
+            let slot = r.read_u8()?;
+            if slot != DIALOGUE_SLOT_FREE && slot > slots::PEER {
+                return Err(Error::OutOfRange { what: "cutscene slot", value: i64::from(slot) });
+            }
+            let state = r.read_u8()?;
+            if state > cutscene_state::ENDED {
+                return Err(Error::OutOfRange { what: "cutscene state", value: i64::from(state) });
+            }
+            Body::Cutscene(Cutscene { seq, slot, state, name: read_str(&mut r)? })
+        }
+        Kind::Movers => {
+            let rev = r.read_u32()?;
+            let n = r.read_u16()? as usize;
+            let mut rows = Vec::with_capacity(n.min(MAX_ENEMY_ROWS));
+            for _ in 0..n {
+                rows.push(MoverRow {
+                    id: read_guid(&mut r)?,
+                    x: r.read_i32()?,
+                    y: r.read_i32()?,
+                    z: r.read_i32()?,
+                    yaw: r.read_i16()?,
+                    pitch: r.read_i16()?,
+                    flags: r.read_u8()?,
+                });
+            }
+            Body::Movers(Movers { rev, rows })
+        }
+        Kind::Loot => {
+            let rev = r.read_u32()?;
+            let n = r.read_u16()? as usize;
+            let mut entries = Vec::with_capacity(n.min(MAX_ENEMY_ROWS));
+            for _ in 0..n {
+                entries.push(LootEntry {
+                    source_hash: r.read_u32()?,
+                    drop_index: r.read_i32()?,
+                    taken: r.read_u8()? != 0,
+                    item_path: read_str(&mut r)?,
+                });
+            }
+            Body::Loot(Loot { rev, entries })
+        }
+        Kind::Suspend => {
+            let seq = r.read_u32()?;
+            let state = r.read_u8()?;
+            if state > suspend_state::REAPPLIED {
+                return Err(Error::OutOfRange { what: "suspend state", value: i64::from(state) });
+            }
+            Body::Suspend(Suspend { seq, state, slot: read_str(&mut r)? })
+        }
         Kind::Log => {
             // The whole body is the message; nothing to parse.
             Body::Log(Log { bytes: bytes.to_vec() })
@@ -1633,6 +1859,53 @@ mod tests {
             }),
             Body::Effect(Effect { kind: effect_kind::PROJECTILE_ENDED, id: 7, x: 59_584, y: -29_744, z: 5_784, ..Default::default() }),
             Body::Status(Status { rev: 4, mask: status_bit::MAGIC_FIRE | status_bit::POISON }),
+            Body::Travel(Travel {
+                seq: 0x123,
+                role: roles::HOST,
+                phase: travel_phase::NONE,
+                map: "100_GR".into(),
+                dest: "Teleporter_500_AUT_02/100_GR".into(),
+            }),
+            Body::Travel(Travel {
+                seq: 0x124,
+                role: roles::HOST,
+                phase: travel_phase::HARD_BEGIN,
+                map: "900_SipehaWorld".into(),
+                dest: "/Game/RuinsLevel/Maps/900_SipehaWorld.900_SipehaWorld".into(),
+            }),
+            Body::Damage(Damage { attacker: sample_guid(), amount_centi: 3500, flags: damage_flags::MELEE }),
+            Body::Cutscene(Cutscene {
+                seq: 2,
+                slot: slots::HOST,
+                state: cutscene_state::PLAYING,
+                name: "SipehaTransitionCutsceneManager".into(),
+            }),
+            Body::Movers(Movers {
+                rev: 5,
+                rows: vec![MoverRow {
+                    id: sample_guid(),
+                    x: 100,
+                    y: -200,
+                    z: 50,
+                    yaw: 16384,
+                    pitch: -4096,
+                    flags: mover_flags::MOVING | mover_flags::OWNER,
+                }],
+            }),
+            Body::Loot(Loot {
+                rev: 9,
+                entries: vec![LootEntry {
+                    source_hash: 0xDEAD_BEEF,
+                    drop_index: 2,
+                    taken: true,
+                    item_path: String::new(),
+                }],
+            }),
+            Body::Suspend(Suspend {
+                seq: 3,
+                state: suspend_state::HOLD,
+                slot: "World0_Suspend_1".into(),
+            }),
             Body::Log(Log { bytes: b"hello from host".to_vec() }),
         ]
     }

@@ -34,7 +34,11 @@ encoding — not the game.
 | `DAMAGE` | host | peer | **new**: a host-run enemy's hit, applied to the partner's own pawn |
 | `DIALOGUE` | both | both | per-slot talk state |
 | `LEVEL_UNION` | both | both | what each machine's own game wants |
-| `TRAVEL` | both | both | map + the destination actor, 2 s + on change |
+| `TRAVEL` | both | both | map + the destination actor, 2 s + on change; the hard handshake (`BEGIN`/`ARRIVED`/`RESUME`) rides the same kind |
+| `CUTSCENE` | both | both | **new**: which manager each machine is running, 1 Hz; play-or-hold |
+| `MOVERS` | owner → follower | follower | **new**: owner-authoritative elevator/platform transforms, 10 Hz |
+| `LOOT` | both | both | **new**: the shared drop set plus permanent tombstones, 1 Hz |
+| `SUSPEND` | both | both | **new**: the peer's `BlockSuspendSaves` hold and a suspend-load repair |
 
 Every kind in `WIRE.md` §2 now has a producer and a consumer.
 
@@ -127,6 +131,52 @@ resolves *its own* copy of the carrier and drives only its own pawn through
 `TeleportToLocation`. A busy player is skipped and not remembered; a wrong-world or
 unresolvable destination is refused once, logged, and never retried.
 
+**G6b — a HARD map switch is crossed, and both arrive before either resumes.** The
+in-world follow cannot cross a different `UWorld` (`900_SipehaWorld`, `990_B33sment`, the
+`997/998/999_*` cutscene maps): the destination actor does not exist on the follower. The
+game's own entry for that is the native `UFS_GameInstanceBase.LoadMapWithLoadingScreen`
+UFunction (registration table `0x03950090`, exec thunk `0x00E58F70`, body `0x00E34F30` —
+it sets `bLoadingMap`, records `CurrentlyLoadingMapPackage`, and starts an async world
+load). The mod calls it on the follower through `ProcessEvent`, with the map asset
+resolved by the same `LoadAsset_Blocking` path the body uses; `OpenLevel` is not called.
+The handshake is `HARD_BEGIN` → each machine `ARRIVED` → host `RESUME`; until both have
+arrived, the existing `MapBoard` divergence gate keeps absolute state unapplied. A load
+that fails or exceeds 60 s is refused once and never retried. `TravelSync` is independent
+of `StreamUnion`, so this works with the streaming union off.
+
+**Cutscenes are played or held, and both resume together.** A cutscene is per-machine
+Blueprint state, so the sender publishes which manager it is running. The receiver
+resolves the same manager in its own cooked world and calls
+`BeginCutsceneWithManager`, or — when the manager cannot be resolved — is held
+consistently with `EnterCutsceneMode` / `LockInputForLoadingOrCutscene` until the sender
+reports `ENDED`, then released with `ExitCutsceneMode` /
+`UnlockInputForLoadingOrCutscene`. A silent sender goes stale in 5 s, so a crash cannot
+leave the partner's input locked.
+
+**Moving world objects are owner-authoritative.** The nearer player's machine runs an
+elevator / platform / `Activatable` mover and publishes its absolute transform; the
+other machine applies the transform and never re-runs the mover's own logic. Ownership
+follows the enemy rule (nearer player, host breaks an exact tie).
+
+**Loot is one shared set.** The game's roll key `{sourceId, dropIndex}` has no player
+dimension; the host publishes the set under that key and a drop taken by either player
+becomes a permanent tombstone that hides the copy on the other machine. A tombstone can
+never be resurrected by a later body that still lists the item.
+
+**Dialogue: a concurrent start is prevented, and death ends the conversation.** A
+per-NPC reservation is taken before a local start is published; if the partner holds the
+NPC (or the reservations crossed), the peer ends its own talk through the game's
+`DialogueManager.End` / `PlayerChar.DialogueEnded`, and the host keeps it. A local death
+releases the lock and ends the talk immediately instead of waiting for the 2-minute
+expiry.
+
+**Suspend saves are held, and a load is repaired.** While a session is live the peer
+calls the game's own `BlockSuspendSaves`, so its timed suspend save cannot advance past
+the host. If a suspend load happens anyway, the peer reports `LOADED` and the host
+immediately re-sends `WORLD_FLAGS`, `ACTOR_STATES` and `INVENTORY` (forced dirty rather
+than waiting for the 1 Hz cycle), then reports `REAPPLIED`; a repair that never lands is
+reported at 15 s.
+
 **Earlier rounds, still standing:** enemies fight the player who can reach them (ownership
 by proximity, `ENEMY` bidirectional — inside the 800 cm margin the tie is now broken by
 role, so co-located players do not both simulate every enemy, measured live as R45 in
@@ -195,12 +245,12 @@ ownership keeps that case rare (an enemy with the host nearest is run by the hos
 described lane never covered it either, so it is not a regression — but it is the next
 arrow to add if a live run shows the host being attacked by an enemy the partner runs.
 
-**G6 cannot cross a hard map switch.** Following works inside one persistent world, where
-both machines run the same cooked world. After a transition to a different `UWorld`
-(`900_SipehaWorld`, `990_B33sment`, the cutscene maps) the destination actor does not exist
-on the follower, and that is the explicit once-only refusal. Actually moving the player
-across a hard boundary is still out of scope: `OpenLevel` is not the game's travel path,
-and no measured entry point takes a machine into another world on request.
+**G6 crosses a hard map switch now, but the load itself is unproven live.** The native
+`LoadMapWithLoadingScreen` UFunction is identified and called, the handshake is built and
+tested, and `LoadAsset_Blocking` resolves the map package. What a live run has to show is
+that the game accepts the call and actually lands in the new `UWorld`; the parameter list
+is discovered at runtime (and logged), so a signature surprise is a named refusal rather
+than a wrong call. Until that line is seen, `TravelSync` stays `0`.
 
 **Enemies placed without a spawner are still not synced**, because identity is the
 spawner's GUID. Summoned and boss-spawned enemies run independently on both machines.
@@ -226,10 +276,14 @@ spawner's GUID. Summoned and boss-spawned enemies run independently on both mach
   so damage-over-time arrives as a stream of small hits.
 
 **Dialogue**
-- **Concurrent start is logged, not prevented.** Both players can start the same NPC within
-  one round trip, and a turn-in can pay out twice.
-- **Death does not end a conversation.** The module only observes `RunningDialogue`; if the
-  game does not end the talk on death, the partner's NPC stays blocked until it goes stale.
+- **Concurrent start is prevented now.** A per-NPC reservation and the slot rule end the
+  loser's conversation through the game's own `DialogueManager.End` /
+  `PlayerChar.DialogueEnded`. The remaining risk is the game not accepting that end call;
+  the mod then logs the prevention once per 2 s and the next absolute state settles it.
+- **Death ends a conversation.** A local death releases the lock and ends the talk
+  explicitly, so the partner's NPC is unblocked immediately rather than at the 2-minute
+  expiry. The live question is whether `End` / `DialogueEnded` are enough to clear the
+  game's own `RunningDialogue`.
 - **Choices are not sent as choices.** Progress flows through flags, by design.
 - `entry` (the cursor within a sequence) is still read as 0.
 
@@ -237,21 +291,28 @@ spawner's GUID. Summoned and boss-spawned enemies run independently on both mach
 - **The two-levels-per-pump budget** can produce a visible hitch when the players separate.
 - **Forced levels stay loaded after release** (only visibility is released), trading memory
   for not re-loading and re-spawning the level's enemies.
-- **World divergence and travel following only exist when `StreamUnion` is on.** With the
-  switch off, nothing tracks which map the partner is in and nobody follows anybody.
+- **Travel following no longer depends on `StreamUnion`.** `TravelSync` carries the map
+  announcement and the hard handshake on its own; the union's divergence gate is still
+  consulted when both are on.
 
 ## 4. Not synced, lower stakes
 
-- **Moving world objects** (elevators, platforms, `Activatable` movers): each machine runs
-  its own, so a player riding one is shown floating on the other.
-- **Loot pickups.** Each machine rolls its own drops; a drop taken on one machine stays on
-  the floor on the other, and quest items can be doubled.
+- **Moving world objects** are synced owner-authoritatively (`MoverSync`). The engine seam
+  is `ReadActorXform` / `K2_SetActorLocationAndRotation`; the unproven part is the
+  class-name filter that decides which actors are movers, so a live run must show the
+  `movers: tracking …` lines for a real elevator.
+- **Loot pickups** share one host-authoritative drop set keyed by `{sourceId, dropIndex}`
+  (`LootSync`). A take is a permanent tombstone and the local copy is hidden, not
+  destroyed. The unproven part is recovering the key/path from a `SpawnItemDrop_C` actor;
+  a class that exposes none is reported once and skipped.
 - **Shop, journal/bestiary, XP, weapon levels, grimoire ink.** Per-player by nature.
 - **Peer vitals.** The partner's HP and death are not shown; a death shows as the body
   falling. This is also why the damage lane's dead check is receive-side only.
-- **Cutscenes / sequencer** play only on the machine that triggers them.
-- **Suspend saves.** Nothing holds `BlockSuspendSaves` or re-applies host state after a
-  suspend load.
+- **Cutscenes / sequencer** are synced as a play-or-hold (`CutsceneSync`); the receiver
+  either resolves the same manager or is held consistently. A cutscene whose manager is
+  spawned at runtime is held, not replicated.
+- **Suspend saves** are held on the peer with the game's own `BlockSuspendSaves`, and a
+  suspend load is repaired by re-applying the host's absolute state (`SuspendGuard`).
 
 ## 5. What the live two-instance run has to show
 
@@ -284,8 +345,40 @@ Ordered, because each one makes the next diagnosable.
    and the count does not rise again on the next host body.
 8. **Streaming and travel.** `level name: <name> from <source>` with no `REFUSED`; a
    teleport produces `travel: local destination …=` on the sender and `travel: followed …`
-   on the partner; a hard map switch produces one `WORLD DIVERGENCE` and one explicit
-   `cannot follow … recorded`, and the session survives.
+   on the partner.
+9. **G6 hard switch (`TravelSync=1`).** A hard map switch produces
+   `travel: HARD transition … announcing` on the sender, `travel: hard transition: loading
+   … through GameInstance.LoadMapWithLoadingScreen` on the partner (with the
+   `signature LoadMapWithLoadingScreen props=…` line once), then
+   `travel: the partner arrived in …`, both maps agree, and the host logs
+   `travel: both machines arrived … host releasing the pair to resume`. No
+   `WORLD DIVERGENCE` line survives the switch. **Pass:** both machines are in the same
+   map and the partner keeps playing. **Fail:** the load line is followed by a named
+   refusal (`unhandled parameter type`, `not found`, `faulted`) and the session stays in
+   the old world: that is the signature surprise, not a crash.
+10. **Cutscenes (`CutsceneSync=1`).** `cutscene: local started <manager>` on the
+    sender; `cutscene: playing the partner's sequence <manager>` or
+    `cutscene: holding the local player …` on the partner; then
+    `cutscene: partner's cutscene ended; resuming together (exit=1 unlock=1)`. **Pass:**
+    both players are held for the same interval and both regain input.
+11. **Movers (`MoverSync=1`).** `movers: tracking <path> id=…` for an elevator/platform;
+    the rider's machine logs owner rows, the other logs
+    `movers: applied N owner row(s)`. **Pass:** the platform is under the rider on both
+    screens.
+12. **Loot (`LootSync=1`).** `loot: drop <hash>#<n> = <path>` on the roller; the other
+    machine merges it; when one player picks it up, `loot: local pickup … -- tombstoned`
+    and `loot: hiding local drop … -- the partner took it`. **Pass:** the drop disappears
+    on both screens and only one copy enters an inventory.
+13. **Dialogue (`DialogueSync=1`).** A crossed start logs
+    `dialogue: PREVENTED a concurrent start on the same NPC … ending the local conversation`
+    (peer) or `dialogue: the partner also started this NPC … the host keeps it` (host);
+    a death while talking logs `dialogue: local death ended the conversation …; lock
+    released`. **Pass:** the turn-in pays out once and the partner's NPC unblocks at once.
+14. **Suspend (`SuspendGuard=1`).** `suspend: peer holds BlockSuspendSaves=1`; on a
+    suspend load, `suspend: peer loaded a suspend save (slot …); announcing it …`, then
+    `suspend: host re-applying WORLD_FLAGS, ACTOR_STATES and INVENTORY …`, then
+    `suspend: partner re-applied the host's state`. **Pass:** the peer's progression
+    does not rewind after the load.
 
 ### 5.1 B7 / G4 / G5 — the exact lines a run with `PlayerBody=1` must show
 
@@ -382,5 +475,7 @@ count, not the old one.
 3. **G2's live follow-up**, if §5.6 shows `INCOMPLETE`: inspect that subclass' own
    `Restore State From Save Data` override before changing the container path.
 4. **Boss bar and arena exit** — two reflective calls, both measured.
-5. **Hard map transitions**, which need a measured entry point into another `UWorld`; until
-   then the refusal is the correct behaviour.
+5. **Hard map transitions** are built against the game's own
+   `GameInstance.LoadMapWithLoadingScreen`; the live run has to confirm the call lands in
+   the new `UWorld` (§5 item 9). If it does not, the refusal is named and the session
+   survives, which is the correct fallback until the signature is proven.

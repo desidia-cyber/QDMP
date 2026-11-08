@@ -613,6 +613,39 @@ static void TestTalkBoard()
 }
 
 // ===========================================================================
+// dialogue: same-NPC arbitration (concurrent start is PREVENTED, not logged)
+// ===========================================================================
+static void TestTalkArbitration()
+{
+    dialogue::TalkBoard t;
+    uint8_t npcA[16], npcB[16];
+    dialogue::StableId("Chef_NPC_2/PersistentLevel/100_GR/", npcA);
+    dialogue::StableId("Merchant_NPC_BP_2/PersistentLevel/140_GR_ShopIsleOnly/", npcB);
+
+    // The host reserves; the peer may not start the same NPC.
+    CHECK(t.Reserve(0, npcA, 1000), "arb/the host reserves an NPC");
+    CHECK(!t.Reserve(1, npcA, 1001), "arb/the peer cannot reserve the same NPC");
+    CHECK(t.Reserve(1, npcB, 1001), "arb/the peer may reserve a different NPC");
+    t.ReleaseReservation(0);
+    CHECK(t.Reserve(1, npcA, 1002), "arb/after release the peer may reserve it");
+
+    // The crossed case: both slots end up in the same conversation.  The higher slot
+    // is the loser, and the host (slot 0) keeps it.
+    dialogue::TalkBoard c;
+    CHECK(c.Accept(0, 1, true, npcA, 0, 2000), "arb/host talk accepted");
+    CHECK(c.Accept(1, 1, true, npcA, 0, 2000), "arb/peer talk accepted");
+    CHECK(c.SameConversation(0, npcA, 2001), "arb/both are in the same conversation");
+    CHECK(c.LosesConflict(1, npcA, 2001), "arb/the peer yields");
+    CHECK(!c.LosesConflict(0, npcA, 2001), "arb/the host keeps it");
+
+    // A reservation outlives its stale window exactly as a talk state does.
+    dialogue::TalkBoard r;
+    CHECK(r.Reserve(0, npcA, 3000), "arb/a reservation is taken");
+    CHECK(!r.Reserve(1, npcA, 3000 + dialogue::TalkBoard::kStaleMs - 1),
+          "arb/it still blocks inside the stale window");
+}
+
+// ===========================================================================
 // enemy: ownership, convergence, kill log, row budget
 // ===========================================================================
 static void TestEnemy()
@@ -706,6 +739,7 @@ int main()
     TestFlags();
     TestStreamForce();
     TestTalkBoard();
+    TestTalkArbitration();
     TestEnemy();
     printf("=== %d passed, %d failed ===\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

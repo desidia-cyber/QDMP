@@ -400,6 +400,7 @@ static void TestWorldBodies()
         memset(&t, 0, sizeof(t));
         t.seq = 0x1234;
         t.role = 1;
+        t.phase = TP_HARD_BEGIN;
         strcpy(t.map, "100_GR");
         strcpy(t.dest, "Teleporter_500_AUT_02/100_GR");
         Writer w(buf, sizeof(buf));
@@ -407,6 +408,7 @@ static void TestWorldBodies()
         Reader r(buf, w.len);
         CHECK(ReadTravel(r, &got), "travel reads");
         CHECK(got.seq == 0x1234 && got.role == 1, "travel seq/role round-trip");
+        CHECK(got.phase == TP_HARD_BEGIN, "travel phase round-trips");
         CHECK(strcmp(got.map, "100_GR") == 0, "travel map round-trips");
         CHECK(strcmp(got.dest, t.dest) == 0, "travel destination round-trips");
         CHECK(r.pos == r.len, "travel body fully consumed");
@@ -427,6 +429,96 @@ static void TestWorldBodies()
         CHECK(got.amount_centi == 3500, "damage amount round-trips");
         CHECK(got.flags == (kDamageMelee | kDamageGuessed), "damage flags round-trip");
         CHECK(r.pos == r.len, "damage body fully consumed");
+    }
+
+    // CUTSCENE: the manager this machine is running.
+    {
+        CutsceneBody c, got;
+        memset(&c, 0, sizeof(c));
+        c.seq = 7; c.slot = 0; c.state = CS_PLAYING;
+        strcpy(c.name, "SipehaTransitionCutsceneManager");
+        Writer w(buf, sizeof(buf));
+        WriteCutscene(w, c);
+        Reader r(buf, w.len);
+        CHECK(ReadCutscene(r, &got), "cutscene reads");
+        CHECK(got.seq == 7 && got.slot == 0 && got.state == CS_PLAYING, "cutscene header round-trips");
+        CHECK(strcmp(got.name, c.name) == 0, "cutscene manager name round-trips");
+        CHECK(r.pos == r.len, "cutscene body fully consumed");
+        // An unknown state must be refused, not treated as "ended" (which would
+        // release a partner that is still in a cutscene).
+        uint8_t bad[8];
+        Writer bw(bad, sizeof(bad));
+        bw.U32(1); bw.U8(0); bw.U8(9); bw.Str("");
+        Reader br(bad, bw.len);
+        CHECK(!ReadCutscene(br, &got), "cutscene refuses an unknown state");
+    }
+
+    // MOVERS: an owner-authoritative transform.
+    {
+        MoverRow rows[2];
+        memset(rows, 0, sizeof(rows));
+        rows[0].id[0] = 0xAABBCCDDu; rows[0].px = 100; rows[0].py = -200;
+        rows[0].pz = 50; rows[0].yaw = 16384; rows[0].pitch = -4096;
+        rows[0].flags = kMoverMoving | kMoverOwner;
+        rows[1].id[3] = 3; rows[1].pz = -25;
+        Writer w(buf, sizeof(buf));
+        WriteMoversHeader(w, 5, 2);
+        WriteMoversChunk(w, rows, 2, 0);
+        CHECK(w.ok && w.len == 4 + 2 + 2 * 33, "movers body size");
+        MoversBody got;
+        Reader r(buf, w.len);
+        CHECK(ReadMovers(r, &got), "movers reads");
+        CHECK(got.rev == 5 && got.n == 2 && got.n_sent == 2, "movers header round-trips");
+        CHECK(got.row[0].id[0] == 0xAABBCCDDu && got.row[0].px == 100 &&
+              got.row[0].py == -200 && got.row[0].pz == 50, "movers row 0 position");
+        CHECK(got.row[0].yaw == 16384 && got.row[0].pitch == -4096 &&
+              got.row[0].flags == (kMoverMoving | kMoverOwner), "movers row 0 angles/flags");
+        CHECK(got.row[1].id[3] == 3 && got.row[1].pz == -25, "movers row 1 round-trips");
+        CHECK(r.pos == r.len, "movers body fully consumed");
+    }
+
+    // LOOT: a shared drop set with a tombstone.
+    {
+        LootEntry e[2];
+        memset(e, 0, sizeof(e));
+        e[0].source_hash = 0xDEADBEEFu; e[0].drop_index = 2; e[0].taken = 1;
+        e[1].source_hash = 0x12345678u; e[1].drop_index = 0;
+        strcpy(e[1].item_path, "/Game/Items/KeyItems/AquaDoorKey_2.AquaDoorKey_2");
+        Writer w(buf, sizeof(buf));
+        WriteLootHeader(w, 9, 2);
+        int next = WriteLootChunk(w, e, 2, 0);
+        CHECK(w.ok && next == 2, "loot chunk writes both entries");
+        LootBody got;
+        Reader r(buf, w.len);
+        CHECK(ReadLoot(r, &got), "loot reads");
+        CHECK(got.rev == 9 && got.n == 2, "loot header round-trips");
+        CHECK(got.entry[0].source_hash == 0xDEADBEEFu && got.entry[0].drop_index == 2 &&
+              got.entry[0].taken == 1, "loot tombstone round-trips");
+        CHECK(strcmp(got.entry[1].item_path, e[1].item_path) == 0, "loot item path round-trips");
+        CHECK(r.pos == r.len, "loot body fully consumed");
+        // A lying count must not read past the body.
+        uint8_t bad[8] = {0x01, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00};
+        Reader br(bad, sizeof(bad));
+        CHECK(!ReadLoot(br, &got), "loot refuses a count past the body");
+    }
+
+    // SUSPEND: the peer's hold on the game's timed suspend save.
+    {
+        SuspendBody s, got;
+        memset(&s, 0, sizeof(s));
+        s.seq = 3; s.state = SS_HOLD; strcpy(s.slot, "World0_Suspend_1");
+        Writer w(buf, sizeof(buf));
+        WriteSuspend(w, s);
+        Reader r(buf, w.len);
+        CHECK(ReadSuspend(r, &got), "suspend reads");
+        CHECK(got.seq == 3 && got.state == SS_HOLD, "suspend state round-trips");
+        CHECK(strcmp(got.slot, s.slot) == 0, "suspend slot round-trips");
+        CHECK(r.pos == r.len, "suspend body fully consumed");
+        uint8_t bad[8];
+        Writer bw(bad, sizeof(bad));
+        bw.U32(1); bw.U8(9); bw.Str("");
+        Reader br(bad, bw.len);
+        CHECK(!ReadSuspend(br, &got), "suspend refuses an unknown state");
     }
 }
 

@@ -263,6 +263,110 @@ static void TestBadDestination()
           "bad/a dest with two slashes is refused");
 }
 
+// ===========================================================================
+// Hard map switches: both arrive, then resume (HardBoard)
+// ===========================================================================
+static void TestHardLocalBegin()
+{
+    HardBoard h;
+    // The first observation is a baseline, not a transition.
+    CHECK(!h.OnLocalMap("100_GR", 1000), "hard/the first map is a baseline");
+    // A hard switch starts a transition and asks for HARD_BEGIN.
+    CHECK(h.OnLocalMap("900_SipehaWorld", 2000), "hard/a map change is a transition");
+    CHECK(h.Active(), "hard/it is active");
+    CHECK(h.LocalArrived(), "hard/we are already in the new world");
+    CHECK(!h.PeerArrived(), "hard/the peer has not arrived");
+    CHECK(h.TakeAnnounce() == 1, "hard/the announce is HARD_BEGIN");
+    CHECK(h.TakeAnnounce() == 0, "hard/and it is consumed once");
+    CHECK(!h.ReadyToResume(), "hard/not resumable until the peer arrives");
+    CHECK(h.OnPeerArrived(1, "900_SipehaWorld", "900_SipehaWorld") == HV_NONE,
+          "hard/the peer's arrival is accepted");
+    CHECK(h.ReadyToResume(), "hard/both arrived: the host may resume");
+    CHECK(h.OnPeerResume(2, "900_SipehaWorld") == HV_RESUME, "hard/resume releases the pair");
+    CHECK(!h.Active(), "hard/the transition is over");
+
+    // The host must stop queuing RESUME after it has sent one, or it would repeat for
+    // the rest of the session.
+    HardBoard host;
+    host.OnLocalMap("100_GR", 1000);
+    host.OnLocalMap("900_SipehaWorld", 2000);
+    host.TakeAnnounce();
+    host.OnPeerArrived(1, "900_SipehaWorld", "900_SipehaWorld");
+    CHECK(host.ReadyToResume(), "hard/the host is ready to release");
+    host.MarkResumed();
+    CHECK(!host.ReadyToResume(), "hard/after sending RESUME it does not queue another");
+    CHECK(!host.Active(), "hard/and the transition is over");
+}
+
+static void TestHardFollowSuppressesEcho()
+{
+    HardBoard h;
+    h.OnLocalMap("100_GR", 1000);
+    // The peer begins a hard switch to another map: this machine loads it.
+    CHECK(h.OnPeerBegin(1, "900_SipehaWorld", "100_GR", false) == HV_LOAD,
+          "hard/a peer's begin asks for a load");
+    h.Arm(2000);
+    CHECK(h.Active() && h.PeerArrived() && !h.LocalArrived(),
+          "hard/the peer is there, we are not yet");
+    // The load finishes: the local map changes to the target.  That is an arrival, not
+    // a new transition, so it must NOT announce a begin back.
+    CHECK(!h.OnLocalMap("900_SipehaWorld", 3000), "hard/the followed load is not a new transition");
+    CHECK(h.LocalArrived(), "hard/and it is an arrival");
+    CHECK(h.ReadyToResume(), "hard/both arrived");
+    // The arrival must be announced or the sender never learns the follower is there.
+    CHECK(h.TakeAnnounce() == 2, "hard/the followed load announces ARRIVED");
+}
+
+static void TestHardAlreadyThere()
+{
+    HardBoard h;
+    h.OnLocalMap("900_SipehaWorld", 1000);
+    CHECK(h.OnPeerBegin(1, "900_SipehaWorld", "900_SipehaWorld", false) == HV_ANNOUNCE_ARRIVE,
+          "hard/a begin for the map we are in reports arrival");
+    CHECK(!h.Active(), "hard/and does not start a load");
+    CHECK(h.TakeAnnounce() == 2, "hard/the announce is ARRIVED");
+}
+
+static void TestHardRefusalsAndDeadline()
+{
+    HardBoard h;
+    h.OnLocalMap("100_GR", 1000);
+    CHECK(h.OnPeerBegin(1, "", "100_GR", false) == HV_REFUSED, "hard/an empty map is refused");
+    CHECK(h.OnPeerBegin(2, "/Game/Maps/X", "100_GR", false) == HV_REFUSED,
+          "hard/a path is not a map name");
+    CHECK(h.OnPeerBegin(3, "900_SipehaWorld", "100_GR", true) == HV_NONE,
+          "hard/a busy player is skipped, not refused");
+    CHECK(!h.GaveUp("900_SipehaWorld"), "hard/a busy skip is not remembered");
+
+    CHECK(h.OnPeerBegin(4, "900_SipehaWorld", "100_GR", false) == HV_LOAD,
+          "hard/when free the same map loads");
+    h.Arm(2000);
+    h.OnLoadResult(false, 3000);
+    CHECK(h.GaveUp("900_SipehaWorld"), "hard/a failed load is remembered");
+    CHECK(h.OnPeerBegin(5, "900_SipehaWorld", "100_GR", false) == HV_REFUSED,
+          "hard/and is not retried");
+
+    // A different map is still allowed.
+    CHECK(h.OnPeerBegin(6, "990_B33sment", "100_GR", false) == HV_LOAD,
+          "hard/a different map is unaffected");
+    h.Arm(4000);
+    CHECK(!h.Tick(4000 + kHardDeadlineMs - 1), "deadline/not yet");
+    CHECK(h.Tick(4000 + kHardDeadlineMs), "deadline/an abandoned load is reported");
+    CHECK(h.GaveUp("990_B33sment"), "deadline/and remembered");
+}
+
+static void TestHardResumeGuard()
+{
+    HardBoard h;
+    h.OnLocalMap("100_GR", 1000);
+    CHECK(h.OnPeerResume(1, "900_SipehaWorld") == HV_IGNORED,
+          "resume/a resume for a map we are not loading is ignored");
+    h.OnPeerBegin(2, "900_SipehaWorld", "100_GR", false);
+    h.Arm(2000);
+    CHECK(h.OnPeerResume(3, "900_SipehaWorld") == HV_REFUSED,
+          "resume/a resume before we arrived is refused");
+}
+
 int main()
 {
     printf("=== qd travel tests ===\n");
@@ -276,6 +380,11 @@ int main()
     TestAnnounceChangeDetection();
     TestGaveUpRing();
     TestBadDestination();
+    TestHardLocalBegin();
+    TestHardFollowSuppressesEcho();
+    TestHardAlreadyThere();
+    TestHardRefusalsAndDeadline();
+    TestHardResumeGuard();
     printf("=== %d passed, %d failed ===\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

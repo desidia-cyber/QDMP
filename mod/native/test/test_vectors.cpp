@@ -113,7 +113,7 @@ static void Compare(const char* name, const uint8_t* got, int gotLen)
     uint8_t kind = want[0];
     bool kindKnown = (kind >= 0x01 && kind <= 0x04) ||
                      (kind >= 0x10 && kind <= 0x19) ||
-                     (kind >= 0x20 && kind <= 0x24) ||
+                     (kind >= 0x20 && kind <= 0x28) ||
                      (kind == 0x30);
     if (!kindKnown) {
         ++g_fail;
@@ -375,17 +375,32 @@ static void TestAll()
         Compare("level_union_steady", buf, w.len);
     }
 
-    // travel: seq, role, map, destination
+    // travel: seq, role, phase, map, destination
     {
         TravelBody t;
         memset(&t, 0, sizeof(t));
         t.seq = 0x123;
         t.role = 1;
+        t.phase = TP_NONE;
         strcpy(t.map, "100_GR");
         strcpy(t.dest, "Teleporter_500_AUT_02/100_GR");
         Writer w(buf, sizeof(buf));
         WriteTravel(w, t);
         Compare("travel", buf, w.len);
+    }
+
+    // travel_hard: a hard map switch, destination is the map package path
+    {
+        TravelBody t;
+        memset(&t, 0, sizeof(t));
+        t.seq = 0x124;
+        t.role = 1;
+        t.phase = TP_HARD_BEGIN;
+        strcpy(t.map, "900_SipehaWorld");
+        strcpy(t.dest, "/Game/RuinsLevel/Maps/900_SipehaWorld.900_SipehaWorld");
+        Writer w(buf, sizeof(buf));
+        WriteTravel(w, t);
+        Compare("travel_hard", buf, w.len);
     }
 
     // damage: attacker guid, amount in 1/100, flags
@@ -399,6 +414,59 @@ static void TestAll()
         Writer w(buf, sizeof(buf));
         WriteDamage(w, d);
         Compare("damage", buf, w.len);
+    }
+
+    // cutscene: seq, slot, state, manager name
+    {
+        CutsceneBody c;
+        memset(&c, 0, sizeof(c));
+        c.seq = 2;
+        c.slot = 0;
+        c.state = CS_PLAYING;
+        strcpy(c.name, "SipehaTransitionCutsceneManager");
+        Writer w(buf, sizeof(buf));
+        WriteCutscene(w, c);
+        Compare("cutscene", buf, w.len);
+    }
+
+    // movers: rev, n, one 33-byte row
+    {
+        MoverRow r;
+        memset(&r, 0, sizeof(r));
+        r.id[0] = 0x03020100u; r.id[1] = 0x07060504u;
+        r.id[2] = 0x0b0a0908u; r.id[3] = 0x0f0e0d0cu;
+        r.px = 100; r.py = -200; r.pz = 50;
+        r.yaw = 16384; r.pitch = -4096;
+        r.flags = kMoverMoving | kMoverOwner;
+        Writer w(buf, sizeof(buf));
+        WriteMoversHeader(w, 5, 1);
+        WriteMoversChunk(w, &r, 1, 0);
+        Compare("movers", buf, w.len);
+    }
+
+    // loot: rev, n, one tombstone (source hash, index, taken, empty path)
+    {
+        LootEntry e;
+        memset(&e, 0, sizeof(e));
+        e.source_hash = 0xDEADBEEFu;
+        e.drop_index = 2;
+        e.taken = 1;
+        Writer w(buf, sizeof(buf));
+        WriteLootHeader(w, 9, 1);
+        WriteLootChunk(w, &e, 1, 0);
+        Compare("loot", buf, w.len);
+    }
+
+    // suspend: seq, state, slot
+    {
+        SuspendBody s;
+        memset(&s, 0, sizeof(s));
+        s.seq = 3;
+        s.state = SS_HOLD;
+        strcpy(s.slot, "World0_Suspend_1");
+        Writer w(buf, sizeof(buf));
+        WriteSuspend(w, s);
+        Compare("suspend", buf, w.len);
     }
 
     // log

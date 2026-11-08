@@ -468,6 +468,18 @@ load**: a loaded-but-hidden level's actors are absent — measured with the shop
 `SipehaWorld`, `B33sment`) is a host-driven, **acknowledged** event: host announces, both
 arrive, both confirm, then play resumes.
 
+**Which entry point (measured).** `OpenLevel` is imported only by menus, death and
+cheats, so it is not the game's travel path. The native
+`UFS_GameInstanceBase.LoadMapWithLoadingScreen` UFunction is (registration table
+`0x03950090`, exec thunk `0x00E58F70`, body `0x00E34F30`; it sets `bLoadingMap`,
+records `CurrentlyLoadingMapPackage`, and starts an async world load). The mod calls it
+through `ProcessEvent` on the live GameInstance with the map asset resolved by
+`LoadAsset_Blocking`, and the parameter list is discovered from the UFunction and logged
+once, so a signature surprise is a named refusal. Handshake: `HARD_BEGIN` →
+`ARRIVED` (each machine) → host `RESUME`; absolute state is not applied until the maps
+agree. A failed or 60 s load is refused once and never retried. `TravelSync` carries
+this independently of `StreamUnion`.
+
 **Failure it prevents.** The "enemies lose their brain" family: a sublevel that is removed
 while one player still needs it destroys its `EnemySpawner_C` and its enemy; on return the
 spawner respawns from the save record with a fresh, off AI. Also: a player falling through
