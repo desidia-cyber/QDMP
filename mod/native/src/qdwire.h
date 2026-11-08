@@ -48,6 +48,7 @@ enum Kind {
     K_LOOT        = 0x27,
     K_SUSPEND     = 0x28,
     K_BOSS        = 0x29,
+    K_OBJECTS     = 0x2A,
     K_LOG         = 0x30,
 };
 
@@ -60,6 +61,7 @@ enum IntentKind {
     I_ACTOR_STATE   = 6,
     I_ENEMY_HIT     = 7,   // peer hit a host-driven enemy copy (WIRE.md 3.10)
     I_ENEMY_RECORD  = 8,   // peer wrote a persistence record for an enemy it ran itself
+    I_OBJECT_STATE  = 9,   // peer opened/activated a placed world object (WIRE.md 3.20)
 };
 
 // Which kinds the receiver acks and the sender retransmits (WIRE.md 2).  This is the
@@ -75,7 +77,8 @@ inline bool IsReliableKind(uint8_t kind)
 {
     return kind == K_HELLO || kind == K_WELCOME || kind == K_INTENT ||
            kind == K_EFFECT || kind == K_ENEMY_DETAIL || kind == K_TRAVEL ||
-           kind == K_DAMAGE || kind == K_SUSPEND || kind == K_BOSS;
+           kind == K_DAMAGE || kind == K_SUSPEND || kind == K_BOSS ||
+           kind == K_OBJECTS;
 }
 
 // --------------------------------------------------------------------------
@@ -607,6 +610,63 @@ inline bool ReadBoss(Reader& r, BossBody* b)
     return r.ok;
 }
 
+// ---- placed world objects (WIRE.md 3.20) ----------------------------------
+// The lane for interactables that are NOT SavableActors: the chest measured in
+// LIVE-TEST-LOG Session 8 R67 has no GUID and no `SavableActorStates` entry, so the
+// GUID-keyed ACTOR_STATES lane cannot carry it at all.
+//
+// Body: rev(u32), n(u16, the whole set), then n x {key(16), shape(u8), state(u8)}.
+// Row size 18 bytes.  `key` is FNV-1a 128 of the placed actor's
+// "<world>/<level>/<name>" path with the object seed (qdenemyid.h's PLACED rule with its
+// own seed), so both machines compute it from the cooked package rather than negotiating.
+// `shape` is a byte on the wire so the two logs are comparable and the receiver does not
+// have to re-classify to decide a property name.
+static const int kObjectsMax = 256;
+
+struct ObjectRow {
+    uint32_t key[4];
+    uint8_t  shape;    // 0 none, 1 chest, 2 door, 3 pickup, 4 barricade, 5 activatable
+    uint8_t  state;    // 0 closed / not activated, 1 open / activated
+};
+
+inline void WriteObjectsHeader(Writer& w, uint32_t rev, uint16_t n)
+{
+    w.U32(rev);
+    w.U16(n);
+}
+
+// Same no-produced-count rule as the flag bank and the actor-state set: the header's `n`
+// is the container size, and a datagram carries whole rows or it does not go out.
+inline int WriteObjectsChunk(Writer& w, const ObjectRow* e, int n, int first)
+{
+    int i = first;
+    while (i < n && w.len + 18 <= w.cap) {
+        w.Guid(e[i].key);
+        w.U8(e[i].shape);
+        w.U8(e[i].state);
+        ++i;
+        if (!w.ok) break;
+    }
+    return i;
+}
+
+inline bool ReadObjectsHeader(Reader& r, uint32_t* rev, uint16_t* n)
+{
+    *rev = r.U32();
+    *n   = r.U16();
+    return r.ok;
+}
+
+inline bool ReadObjectRow(Reader& r, ObjectRow* e)
+{
+    r.Guid(e->key);
+    e->shape = r.U8();
+    e->state = r.U8();
+    if (e->shape > 5) return false;     // a shape this build cannot interpret
+    if (e->state > 1) return false;
+    return r.ok;
+}
+
 // ---- dialogue -------------------------------------------------------------
 struct DialogueBody {
     uint32_t seq;
@@ -1056,6 +1116,17 @@ inline void WriteIntentEnemyRecord(Writer& w, uint32_t basedOnRev, const uint32_
     w.I32(hpCenti);
 }
 
+// kind 9: the placed-object key, the shape byte the ROW carries, and the state asked
+// for.  `shape` is carried so the host logs the same classification the peer acted on.
+inline void WriteIntentObjectState(Writer& w, uint32_t basedOnRev, const uint32_t key[4],
+                                   uint8_t shape, uint8_t state)
+{
+    WriteIntentHeader(w, I_OBJECT_STATE, basedOnRev);
+    w.Guid(key);
+    w.U8(shape);
+    w.U8(state);
+}
+
 inline bool ReadIntent(Reader& r, IntentBody* b)
 {
     b->kind = r.U8();
@@ -1086,6 +1157,15 @@ inline bool ReadIntent(Reader& r, IntentBody* b)
         r.Guid(b->guid);
         b->value = r.I32();
         b->value2 = r.I32();
+        break;
+    case I_OBJECT_STATE:
+        // guid is the placed-object key here, `value` the state and `mode` the shape --
+        // the same three fields the row form uses, so there is no second shape to keep in
+        // step and the cross-check in doc/vectors.txt names one encoding.
+        r.Guid(b->guid);
+        b->mode = r.U8();
+        b->value = (int32_t)r.U8();
+        if (b->mode > 5 || b->value > 1) return false;
         break;
     default:
         return false;

@@ -82,6 +82,7 @@
 #include "qdinventory.h"
 #include "qdinvintent.h"
 #include "qdactorstate.h"
+#include "qdobjectstate.h"
 
 // ---------------------------------------------------------------------------
 // Globals
@@ -89,6 +90,11 @@
 namespace {
 
 using namespace qd;
+
+// Declared here because the save/world reset paths below run long before the lane's own
+// block, and a lane whose ledger names actors from the previous world must be reset with
+// the others rather than keeping keys that no longer mean anything.
+void ObjectsReset();
 
 struct Hook {
     const char* name;
@@ -204,6 +210,36 @@ uint32_t                  g_peerActorRev = 0;     // last host revision this pee
 uint32_t                  g_actorHostRev = 0;     // the revision an intent is based on
 void*                     g_actorSnapshotSave = nullptr;
 bool                      g_actorHaveSnapshot = false;
+
+// The placed world-object lane (K_OBJECTS 0x2A).  Beside the actor-state state for the
+// same reason: a key names a place in a world, so a save or world replacement invalidates
+// the ledger, the pending intent and the mirror together (`ObjectsReset`).
+struct ObjectActorRec {
+    uint32_t key[4];
+    void*    actor;
+    uint8_t  shape;
+};
+ObjectActorRec            g_objActors[objects::kMaxEntries];
+int                       g_objActorN = 0;
+int                       g_objScanCursor = 0;
+void*                     g_objTableWorld = nullptr;
+int                       g_objSkippedSavable = 0;   // a savable: the GUID lane owns it
+int                       g_objNoProp = 0;           // a class with no readable state prop
+uint32_t                  g_lastObjObserveMs = 0;
+uint32_t                  g_lastObjLocalObserveMs = 0;
+uint32_t                  g_peerObjRev = 0;          // last host revision this peer applied
+uint32_t                  g_objHostRev = 0;          // the revision an intent is based on
+objects::Snapshot         g_objNow;
+objects::Publisher        g_objPub;
+objects::IntentQueue      g_pendingObjs;
+objects::LocalDetector    g_objMirror;
+
+// Forward declarations for the lane body, which lives with the other layer-4 pumps so the
+// intent handler above can use it.
+int  ObjectFindByKey(const uint32_t key[4]);
+bool ObjectStateOf(void* actor, objects::Shape sh, uint8_t* out, const char** used);
+bool ObjectApplyToActor(void* actor, objects::Shape sh, uint8_t want,
+                        char* how, int howCap, char* err, int errCap);
 
 // Progression mirror bookkeeping.
 uint32_t          g_lastMirrorMs = 0;
@@ -403,6 +439,9 @@ bool TryInitSaveLayer(uint32_t now)
         g_actorSnapshotSave = nullptr;
         g_peerActorRev = 0;
         g_actorHostRev = 0;
+        // And the placed-object lane names actors by their place in the world, so a save
+        // or world replacement invalidates every key it holds as well.
+        ObjectsReset();
         return false;
     }
     if (save == s.save) {           // same save, new world: a level change
@@ -456,6 +495,7 @@ bool TryInitSaveLayer(uint32_t now)
     g_actorSnapshotSave = nullptr;
     g_peerActorRev = 0;
     g_actorHostRev = 0;
+    ObjectsReset();
     return s.readOk;
 }
 
@@ -865,6 +905,54 @@ void HostApplyIntent(wire::Reader& r)
             // race the enumerator for no benefit.
         } else {
             QDLOG(LOG_WARN, "actor-state intent failed: ", err);
+        }
+    } else if (b.kind == wire::I_OBJECT_STATE) {
+        if (!Cfg().object_sync) return;
+        // The peer opened a placed object the GUID lane cannot carry (R67).  The host is
+        // the authority for the set, so the intent is applied to the host's own copy and
+        // then echoed by the next publish -- the peer's `confirmed=1` is that echo.
+        //
+        // The gate is the actor-state lane's, including Session 8's R73 fix: `based_on_rev
+        // == 0` means "this peer has not seen any host object body yet", which is not a
+        // stale view, and refusing it was what left G2's chest open on one machine only.
+        uint32_t lastSent = g_objPub.Revision() - 1;
+        if (b.based_on_rev != 0 && b.based_on_rev < lastSent) {
+            QDLOG(LOG_INFO, "object intent refused (stale): based_on=", dec(b.based_on_rev),
+                  " last_sent=", dec(lastSent));
+            return;
+        }
+        uint8_t want = (uint8_t)(b.value != 0 ? 1 : 0);
+        int idx = ObjectFindByKey(b.guid);
+        if (idx < 0) {
+            // The object is not in this world (or its level is not streamed in here).  The
+            // peer's bounded retry gives it a few more seconds; after that the give-up line
+            // names the key rather than pretending the change landed.
+            QDLOG(LOG_DEBUG, "object intent: key=", hex32(b.guid[0]),
+                  " is not in this machine's table yet");
+            return;
+        }
+        uint8_t local = 0;
+        const char* used = nullptr;
+        bool haveLocal = ObjectStateOf(g_objActors[idx].actor,
+                                       (objects::Shape)g_objActors[idx].shape, &local, &used);
+        if (!objects::ApplyAllowed(want, local, haveLocal)) {
+            QDLOG(LOG_INFO, "object intent: key=", hex32(b.guid[0]), " state=", dec((int)want),
+                  (want == 0 ? " needs a close path this lane does not have; ignored"
+                             : " is already the local state"));
+            return;
+        }
+        char how[192];
+        char err[192];
+        if (ObjectApplyToActor(g_objActors[idx].actor, (objects::Shape)g_objActors[idx].shape,
+                               want, how, sizeof(how), err, sizeof(err))) {
+            char nm[64] = "";
+            FNameToString(ObjNameRaw(g_objActors[idx].actor), nm, sizeof(nm));
+            QDLOG(LOG_INFO, "object intent applied: ", nm, " key=", hex32(b.guid[0]),
+                  " state=", dec((int)want), " ", how);
+            // The 250 ms observation sees this write, marks the publisher dirty and sends
+            // the echo.  Doing it here too would race the scan for no benefit.
+        } else {
+            QDLOG(LOG_WARN, "object intent failed key=", hex32(b.guid[0]), ": ", err);
         }
     } else if (b.kind == wire::I_GRANT_ITEM) {
         if (!Cfg().inventory_sync) return;
@@ -7876,9 +7964,12 @@ void SuspendPump(uint32_t now)
         g_flagsDirty = true;
         g_invPub.ForceDirty();
         g_actorPub.ForceDirty();
+        // The placed-object ledger is the third absolute set, and a suspend load replaces
+        // the peer's world: the chests it had opened may be closed again in the snapshot.
+        g_objPub.ForceDirty();
         g_invForceObserve = true;
         ++g_suspendSeq;
-        QDLOG(LOG_INFO, "suspend: host re-applying WORLD_FLAGS, ACTOR_STATES and "
+        QDLOG(LOG_INFO, "suspend: host re-applying WORLD_FLAGS, ACTOR_STATES, OBJECTS and "
                         "INVENTORY after the peer's suspend load");
     }
 
@@ -8638,6 +8729,527 @@ void ActorStatePump(uint32_t now)
 }
 
 // ---------------------------------------------------------------------------
+// LAYER 4c -- placed world objects that are NOT savables (K_OBJECTS 0x2A)
+// ---------------------------------------------------------------------------
+// LIVE-TEST-LOG Session 8 R67 measured the gap this closes: `SG_Chest_BP2
+// [SG_Chest_BP_C] savable=no guid=- index=-1`.  The chest has no GUID and no
+// `SavableActorStates` entry, so LAYER 4b above cannot represent it -- its identity is a
+// GUID, and there is none.  What it does have is an `Opened` bool of its own, which is
+// what `qdobjectstate.h` documents (with the survey of the other interactable classes the
+// same cooked-package decode produced).
+//
+// Identity is the placed actor's "<world>/<level>/<name>" path hash -- qdenemyid's PLACED
+// rule with its own seed -- because that string is a property of the cooked package both
+// machines run, not of this machine's object counter.
+//
+// The apply is the part that must be careful: the partner is put into the opened state
+// through the class' own visual/restore entry plus the state bool, NEVER through the
+// interaction verb.  `objects::ForbiddenFn` refuses `Interact`, `Grant`,
+// `GrantItemsAndActivate`, `InsertKey`, `OpenDoor`, `CloseDoor` and `Open` by name before
+// a call can be built, so "the partner's chest also paid out" is structurally impossible
+// rather than a matter of picking the right member of a ladder.  The global counters
+// (`TotalChestsOpened`) are not touched here at all: they already ride `WORLD_FLAGS`.
+
+// (`g_objActors`, `g_objPub`, `g_pendingObjs`, `g_objMirror` and the revisions are declared
+// with the other lane globals near the top, so the intent handler can reach them.)
+
+// Read one bool property with a fault guard.  `ReadActorBool` dereferences an offset the
+// class layouts produced; a class that unloaded under a world switch would fault here.
+bool ObjectBoolRead(void* actor, const char* prop, bool* out)
+{
+    if (!actor || !prop || !out) return false;
+    int sz = 0;
+    int off = FindPropertyOffsetIn(ObjClass(actor), prop, &sz);
+    if (off < 0 || sz < 1) return false;
+    __try {
+        *out = *(const uint8_t*)((const uint8_t*)actor + off) != 0;
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+// Does this actor already have a `GUIDs` entry?  If it does, it is a SavableActor instance
+// and LAYER 4b carries it by GUID; publishing it here as well would put two rows for one
+// object in two ledgers.  Measured on the chest: `guids=0`, which is exactly the case this
+// test is there to keep in THIS lane.
+bool ObjectIsSavableOwned(void* actor)
+{
+    if (!actor) return false;
+    int sz = 0;
+    int off = FindPropertyOffsetIn(ObjClass(actor), "GUIDs", &sz);
+    (void)sz;
+    if (off < 0) return false;
+    __try {
+        const uint8_t* arr = *(const uint8_t* const*)((const uint8_t*)actor + off);
+        int32_t num = *(const int32_t*)((const uint8_t*)actor + off + 8);
+        (void)arr;
+        return num > 0 && num <= 64;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return true;                 // unreadable: assume the GUID lane owns it
+    }
+}
+
+// The object's state, read through the property the survey names, with the alternate probe
+// and the one inversion (`DoorClosed`).  False means "this class carries no state this
+// lane can read", and the caller reports it once instead of guessing a name.
+bool ObjectStateOf(void* actor, objects::Shape sh, uint8_t* out, const char** used)
+{
+    if (out) *out = 0;
+    if (used) *used = nullptr;
+    bool b = false;
+    const char* p = objects::StatePropFor(sh);
+    if (p && ObjectBoolRead(actor, p, &b)) {
+        if (out) *out = b ? 1 : 0;
+        if (used) *used = p;
+        return true;
+    }
+    const char* a = objects::StatePropAltFor(sh);
+    if (a && ObjectBoolRead(actor, a, &b)) {
+        bool inverted = (strcmp(a, "DoorClosed") == 0);
+        if (out) *out = (inverted ? !b : b) ? 1 : 0;
+        if (used) *used = a;
+        return true;
+    }
+    return false;
+}
+
+// Call one reflected UFunction by name, with no argument or with a single bool input taken
+// from the function's OWN signature (Blueprint pin names vary: `bNewHidden`,
+// `bNewHiddenGame`, `bNewHidden`).  1 = called, 0 = not present, -1 = present but refused
+// or failed.  A name on `objects::ForbiddenFn` never reaches `ProcessEvent`.
+int ObjectCallFn(void* actor, const char* fnName, bool haveValue, bool value,
+                 char* why, int cap)
+{
+    if (why && cap > 0) why[0] = 0;
+    if (!actor || !fnName || !fnName[0]) return 0;
+    if (objects::ForbiddenFn(fnName)) {
+        ErrSet(why, cap, "refused: interaction/payout verb ", fnName);
+        return -1;
+    }
+    void* fn = nullptr;
+    LayoutResult sig;
+    __try {
+        fn = FindFunction(actor, fnName);
+        if (fn) sig = Signature(fn);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        ErrSet(why, cap, "fault resolving ", fnName);
+        return -1;
+    }
+    if (!fn) return 0;
+    if (!sig.valid) { ErrSet(why, cap, "signature: ", sig.note); return -1; }
+
+    ArgList args;
+    if (haveValue) {
+        const PropDesc* b = FindPropOfType(sig, "BoolProperty", CPF_OutParm | CPF_ReturnParm);
+        if (b) args.AddBool(b->name, value);
+        else if (sig.props != 0) { ErrSet(why, cap, "no bool input on ", fnName); return -1; }
+    } else if (sig.props != 0) {
+        ErrSet(why, cap, "parameters on ", fnName);
+        return -1;
+    }
+    ReadBack rb;
+    if (!Invoke(actor, fn, sig, args, &rb, why, cap)) return -1;
+    return 1;
+}
+
+// Append to the `how` string the apply line quotes.  Hand-rolled for the same reason the
+// rest of this file is CRT-light: no allocation on the game thread.
+void ObjectHow(char* out, int cap, const char* a, const char* b)
+{
+    if (!out || cap <= 0) return;
+    int w = 0;
+    for (int i = 0; out[i] && w < cap - 1; ++i) ++w;
+    if (a) for (int i = 0; a[i] && w < cap - 1; ++i) out[w++] = a[i];
+    if (b) for (int i = 0; b[i] && w < cap - 1; ++i) out[w++] = b[i];
+    out[w] = 0;
+}
+
+// Put one object into the wanted state on THIS machine, visually and in its own state
+// bool, without running the interaction verb.  `how` names what actually ran, so the live
+// line says whether the class took the visual path, the restore path, or only the bool.
+bool ObjectApplyToActor(void* actor, objects::Shape sh, uint8_t want,
+                        char* how, int howCap, char* err, int errCap)
+{
+    if (err && errCap > 0) err[0] = 0;
+    if (how && howCap > 0) how[0] = 0;
+    if (!actor) { ErrSet(err, errCap, "no live actor", ""); return false; }
+    if (objects::ForbiddenFn(objects::VisualFnFor(sh))) {
+        ErrSet(err, errCap, "ladder names a forbidden verb", "");
+        return false;
+    }
+
+    char vwhy[160];
+    bool visualRan = false;
+
+    if (sh == objects::SH_PICKUP) {
+        // A pickup's own disappear is hide + stop colliding; `Grant` is the payout and is
+        // never called.  Either call succeeding is enough to say the visual ran.
+        char w1[160];
+        int r1 = ObjectCallFn(actor, "SetActorHiddenInGame", true, true, w1, sizeof(w1));
+        int r2 = ObjectCallFn(actor, "SetActorEnableCollision", true, false, w1, sizeof(w1));
+        visualRan = (r1 == 1) || (r2 == 1);
+        ObjectHow(how, howCap, "visual=", visualRan ? "hide" : "none");
+    } else if (sh == objects::SH_BARRICADE) {
+        // The barricade is a savable: its visual is the game's own load path.  Calling it
+        // here only matters for an instance the GUID lane could not reach.
+        int r = ObjectCallFn(actor, "RestoreFromSave", false, false, vwhy, sizeof(vwhy));
+        visualRan = (r == 1);
+        ObjectHow(how, howCap, "visual=", visualRan ? "RestoreFromSave" : "none");
+    } else {
+        const char* first = objects::VisualFnFor(sh);
+        const char* second = objects::SecondVisualFnFor(sh);
+        const char* which = nullptr;
+        int r = first ? ObjectCallFn(actor, first, false, false, vwhy, sizeof(vwhy)) : 0;
+        if (r == 1) { visualRan = true; which = first; }
+        else if (second) {
+            r = ObjectCallFn(actor, second, false, false, vwhy, sizeof(vwhy));
+            if (r == 1) { visualRan = true; which = second; }
+        }
+        ObjectHow(how, howCap, "visual=", which ? which : "none");
+    }
+
+    // Then the state bool itself.  This is the property the survey named -- the same one
+    // the live `dev state:` line prints -- so a partner's chest stops being interactable
+    // even when the subclass' visual path did nothing.
+    const char* used = nullptr;
+    uint8_t before = 0;
+    bool haveBefore = ObjectStateOf(actor, sh, &before, &used);
+    bool propOk = (haveBefore && before == want);
+    if (!propOk && used) {
+        bool inverted = (strcmp(used, "DoorClosed") == 0);
+        bool target = inverted ? !(want != 0) : (want != 0);
+        if (SetActorBoolGuarded(actor, used, target)) {
+            uint8_t after = 0;
+            const char* u2 = nullptr;
+            propOk = ObjectStateOf(actor, sh, &after, &u2) && after == want;
+        }
+    } else if (!used) {
+        // No readable state property: the visual is all there is, and the caller's log
+        // says so rather than claiming a state it could not observe.
+        ErrSet(err, errCap, "no state property on the class", "");
+    }
+
+    ObjectHow(how, howCap, " prop=", used ? used : "none");
+    ObjectHow(how, howCap, " ", (before ? "1" : "0"));
+    ObjectHow(how, howCap, "->", (want ? "1" : "0"));
+    return propOk || visualRan;
+}
+
+void ObjectsReset()
+{
+    g_objActorN = 0;
+    g_objScanCursor = 0;
+    g_objTableWorld = nullptr;
+    g_objSkippedSavable = 0;
+    g_objNoProp = 0;
+    g_objNow.Clear();
+    g_objPub.Reset();
+    g_pendingObjs.Reset();
+    g_objMirror.Reset();
+    g_lastObjObserveMs = 0;
+    g_lastObjLocalObserveMs = 0;
+    g_peerObjRev = 0;
+    g_objHostRev = 0;
+}
+
+int ObjectFindByKey(const uint32_t key[4])
+{
+    for (int i = 0; i < g_objActorN; ++i) {
+        if (objects::KeyEq(g_objActors[i].key, key)) return i;
+    }
+    return -1;
+}
+
+// Incremental discovery, the same budgeted GObjects walk MoverScanStep uses: a full pass is
+// ~500k slots, so a per-frame budget keeps the cost invisible and still completes in a few
+// seconds.  Only a PLACED actor qualifies (a runtime spawn's name carries this machine's
+// object counter, so its path is not shared), and only a class the survey names.
+void ObjectsScanStep()
+{
+    static void* actorBase = nullptr;
+    if (!actorBase || !ObjectIsLive(actorBase)) actorBase = FindClassByName("Actor");
+    if (!actorBase) return;
+    void* world = GWorldPtr();
+    if (!world) return;
+    if (world != g_objTableWorld) {
+        // The table holds actors of the world that just went away.
+        g_objTableWorld = world;
+        g_objActorN = 0;
+        g_objScanCursor = 0;
+    }
+    int total = ObjectCount();
+    int budget = 4096;
+    while (budget-- > 0 && g_objScanCursor < total) {
+        void* o = ObjectAt(g_objScanCursor++);
+        if (!o || !LooksLikeUObject(o)) continue;
+        void* c = ObjClass(o);
+        if (!c) continue;
+        char cn[96];
+        if (FNameToString(ObjNameRaw(c), cn, sizeof(cn)) <= 0) continue;
+        objects::Shape sh = objects::ShapeOfClass(cn);
+        if (sh == objects::SH_NONE) continue;
+        __try {
+            if (!IsSubclassOf(c, actorBase) || !ActorOuterReachesWorld(o, world)) continue;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            continue;
+        }
+        if (!ActorIsPlaced(o)) continue;
+        if (ObjectIsSavableOwned(o)) { ++g_objSkippedSavable; continue; }
+
+        bool have = false;
+        for (int i = 0; i < g_objActorN; ++i) {
+            if (g_objActors[i].actor == o) { have = true; break; }
+        }
+        if (have) continue;
+        if (g_objActorN >= objects::kMaxEntries) continue;
+
+        char path[192];
+        if (ActorLevelPath(o, world, path, sizeof(path)) <= 0) continue;
+        uint32_t key[4];
+        if (!objects::KeyFromPath(path, key)) continue;
+
+        uint8_t state = 0;
+        const char* used = nullptr;
+        if (!ObjectStateOf(o, sh, &state, &used)) {
+            ++g_objNoProp;
+            static int loggedNoProp = 0;
+            if (loggedNoProp < 8) {
+                ++loggedNoProp;
+                QDLOG(LOG_INFO, "object sync: ", cn, " carries no readable state property; "
+                                "not published (", path, ")");
+            }
+            continue;
+        }
+
+        ObjectActorRec& r = g_objActors[g_objActorN++];
+        objects::KeyCopy(r.key, key);
+        r.actor = o;
+        r.shape = (uint8_t)sh;
+
+        char nm[64] = "";
+        FNameToString(ObjNameRaw(o), nm, sizeof(nm));
+        const char* vis = objects::VisualFnFor(sh);
+        // Said once per object, at INFO: this is the line a live run matches to prove the
+        // identity is the placed path and the class was classified as the survey expected.
+        QDLOG(LOG_INFO, "object sync: tracking ", objects::ShapeName(sh), " ", nm, " [", cn,
+              "] key=", hex32(key[0]), " state=", dec((int)state), " prop=", used,
+              " visual=", (vis ? vis : "none"));
+    }
+    if (g_objScanCursor >= total) g_objScanCursor = 0;
+}
+
+// The current local set, from the scanned table.  Index order, deliberately: the table is
+// per machine, and `Snapshot::SameAs` is order-independent so change detection does not
+// care.
+void ObserveLocalObjects(objects::Snapshot* out, int* dropped)
+{
+    out->Clear();
+    if (dropped) *dropped = 0;
+    for (int i = 0; i < g_objActorN; ++i) {
+        void* a = g_objActors[i].actor;
+        if (!a || !ObjectIsLive(a)) continue;
+        uint8_t st = 0;
+        const char* used = nullptr;
+        if (!ObjectStateOf(a, (objects::Shape)g_objActors[i].shape, &st, &used)) continue;
+        if (!out->Set(g_objActors[i].key, g_objActors[i].shape, st)) {
+            if (dropped) ++*dropped;
+        }
+    }
+}
+
+// Host: the absolute set, chunked across ticks.  `n` is the set size, never a produced
+// count, and a reliable datagram carries whole rows.
+void HostPushObjects(uint32_t now)
+{
+    if (!Cfg().object_sync) return;
+    if (!g_net.IsHost() || !g_net.Connected()) return;
+
+    ObjectsScanStep();
+
+    if (now - g_lastObjObserveMs >= objects::kObserveMs) {
+        g_lastObjObserveMs = now;
+        int dropped = 0;
+        ObserveLocalObjects(&g_objNow, &dropped);
+        if (g_objPub.Observe(g_objNow)) {
+            // The skipped-savable count is the proof the two object lanes do not overlap:
+            // an actor with a `GUIDs` entry is `ACTOR_STATES`' business, and this count is
+            // how a live run sees that the new lane did not publish it as well.
+            QDLOG(LOG_INFO, "object sync: host set ", dec(g_objNow.Count()), " object",
+                  (g_objNow.Count() == 1 ? "" : "s"), " rev=", dec(g_objPub.Revision()),
+                  " (skipped savables=", dec(g_objSkippedSavable), ", no-state=",
+                  dec(g_objNoProp), ")");
+        }
+        if (dropped || g_objNow.Overflowed()) {
+            static uint32_t lastWarn = 0;
+            if (now - lastWarn > 5000) {
+                lastWarn = now;
+                QDLOG(LOG_WARN, "object sync: ", dec(dropped), " object(s) could not be "
+                                "represented (table full); they are NOT on the wire");
+            }
+        }
+    }
+
+    if (!g_objPub.Due(now)) return;
+
+    uint8_t body[wire::kMaxBody];
+    objects::Publisher::Chunk c = g_objPub.Peek(body, sizeof(body));
+    if (c.blocked) {
+        QDLOG(LOG_WARN, "object sync: no row fits one datagram; the lane is stalled");
+        return;
+    }
+    uint32_t rev = g_objPub.Revision();
+    bool changed = g_objPub.Dirty();
+    if (!g_net.SendReliable(wire::K_OBJECTS, body, c.bytes)) return;
+    if (g_objPub.Commit(c.entries, now)) {
+        QDLOG(changed ? LOG_INFO : LOG_DEBUG, "objects sent rev=", dec(rev),
+              " objects=", dec(g_objPub.Size()));
+    }
+}
+
+// Peer: apply the host's absolute set.  A row for a key this machine does not hold is
+// skipped, not guessed: the object is in a level that is not streamed in here, and the
+// next body carries it again.
+void PeerApplyObjects(wire::Reader& r, uint32_t now)
+{
+    (void)now;
+    if (!Cfg().object_sync) return;
+
+    uint32_t rev = 0;
+    uint16_t n = 0;
+    if (!wire::ReadObjectsHeader(r, &rev, &n)) return;
+    if (rev < g_peerObjRev) return;
+
+    int seen = 0, applied = 0, held = 0, confirmed = 0, failed = 0, unknown = 0;
+    int closedIgnored = 0;
+
+    while (r.ok && r.pos < r.len) {
+        wire::ObjectRow row;
+        if (!wire::ReadObjectRow(r, &row)) break;
+        ++seen;
+
+        bool apply = true;
+        objects::IntentQueue::Resolve res =
+            g_pendingObjs.OnHostEntry(row.key, row.state, &apply);
+        if (res == objects::IntentQueue::kHeld) { ++held; continue; }
+        if (res == objects::IntentQueue::kConfirmed) ++confirmed;
+        if (!apply) { ++held; continue; }
+
+        int idx = ObjectFindByKey(row.key);
+        if (idx < 0) { ++unknown; continue; }
+
+        uint8_t local = 0;
+        const char* used = nullptr;
+        bool haveLocal = ObjectStateOf(g_objActors[idx].actor,
+                                       (objects::Shape)g_objActors[idx].shape, &local, &used);
+        if (!objects::ApplyAllowed(row.state, local, haveLocal)) {
+            if (row.state == 0) ++closedIgnored;
+            continue;
+        }
+
+        char how[192];
+        char err[192];
+        if (ObjectApplyToActor(g_objActors[idx].actor,
+                               (objects::Shape)g_objActors[idx].shape, row.state,
+                               how, sizeof(how), err, sizeof(err))) {
+            ++applied;
+            g_pendingObjs.RememberEcho(row.key, row.state);
+            g_objMirror.Note(row.key, g_objActors[idx].shape, row.state);
+            char nm[64] = "";
+            FNameToString(ObjNameRaw(g_objActors[idx].actor), nm, sizeof(nm));
+            QDLOG(LOG_INFO, "object apply: ", objects::ShapeName((objects::Shape)g_objActors[idx].shape),
+                  " ", nm, " key=", hex32(row.key[0]), " state=", dec((int)row.state),
+                  " rev=", dec(rev), " ", how);
+        } else {
+            ++failed;
+            if (failed <= 4) {
+                QDLOG(LOG_WARN, "object apply failed key=", hex32(row.key[0]),
+                      " state=", dec((int)row.state), ": ", err);
+            }
+        }
+    }
+
+    if (rev > g_peerObjRev) g_peerObjRev = rev;
+    g_objHostRev = g_peerObjRev;
+    if (seen) {
+        int acted = applied + failed + closedIgnored;
+        QDLOG(failed ? LOG_WARN : (acted ? LOG_INFO : LOG_DEBUG),
+              "objects applied=", dec(applied), " held=", dec(held),
+              " confirmed=", dec(confirmed), " failed=", dec(failed),
+              " unknown=", dec(unknown), " close-ignored=", dec(closedIgnored),
+              " rev=", dec(rev), " n=", dec((int)n));
+    }
+}
+
+// Peer: turn local property changes into INTENT kind 9 and spend at most kMaxPerTick sends
+// per frame.  The revision stamped into each intent is read at send time, so a retry always
+// names the freshest host state this peer has seen.
+void PeerObjectIntentPump(uint32_t now)
+{
+    if (!Cfg().object_sync) return;
+    if (!g_net.IsPeer() || !g_net.Connected()) return;
+
+    ObjectsScanStep();
+
+    if (now - g_lastObjLocalObserveMs >= objects::kObserveMs) {
+        g_lastObjLocalObserveMs = now;
+        objects::Snapshot cur;
+        int dropped = 0;
+        ObserveLocalObjects(&cur, &dropped);
+        objects::LocalDetector::Stats st;
+        g_objMirror.Observe(cur, g_pendingObjs, &st);
+        if (st.queued || st.coalesced || st.overflow) {
+            QDLOG(LOG_INFO, "object local change: queued=", dec(st.queued),
+                  " coalesced=", dec(st.coalesced), " echoes=", dec(st.echoes),
+                  " overflow=", dec(st.overflow));
+        }
+    }
+
+    objects::IntentQueue::Out out[objects::IntentQueue::kMaxPerTick];
+    int n = g_pendingObjs.Due(now, out, objects::IntentQueue::kMaxPerTick);
+    for (int i = 0; i < n; ++i) {
+        uint8_t body[64];
+        wire::Writer w(body, sizeof(body));
+        wire::WriteIntentObjectState(w, g_objHostRev, out[i].key, out[i].shape, out[i].state);
+        bool sent = w.ok && g_net.SendReliable(wire::K_INTENT, body, w.len);
+        if (sent) {
+            QDLOG(LOG_INFO, "object intent sent key=", hex32(out[i].key[0]), " ",
+                  objects::ShapeName((objects::Shape)out[i].shape), " state=",
+                  dec((int)out[i].state), " rev=", dec(g_objHostRev), " try ",
+                  dec(out[i].attempt), "/", dec(objects::IntentQueue::kMaxAttempts));
+        } else {
+            QDLOG(LOG_WARN, "object intent send failed key=", hex32(out[i].key[0]));
+        }
+        if (out[i].attempt >= objects::IntentQueue::kMaxAttempts) {
+            g_pendingObjs.GiveUp(out[i].key);
+            QDLOG(LOG_WARN, "object intent given up key=", hex32(out[i].key[0]),
+                  " state=", dec((int)out[i].state), " after ", dec(out[i].attempt),
+                  " attempts, the host never echoed it");
+        }
+    }
+}
+
+// The single tick hook the pump block calls, for the same reason ActorStatePump is one:
+// host and peer work are different directions of one lane.
+void ObjectsPump(uint32_t now)
+{
+    if (!Cfg().object_sync) return;
+    // A peer that appears mid-session is handed the whole set at once rather than at the
+    // next repair pass: this lane is reliable precisely so an interaction cannot be lost,
+    // and a join is the one moment where nothing has been sent at all.
+    static bool wasConnected = false;
+    bool connected = g_net.Connected();
+    if (connected && !wasConnected) g_objPub.ForceDirty();
+    wasConnected = connected;
+
+    if (g_net.IsHost()) HostPushObjects(now);
+    else if (g_net.IsPeer()) PeerObjectIntentPump(now);
+}
+
+// ---------------------------------------------------------------------------
 // Inbound dispatch -- game thread only
 // ---------------------------------------------------------------------------
 void DispatchInbound(const InboundPacket& p, uint32_t now)
@@ -8773,6 +9385,12 @@ void DispatchInbound(const InboundPacket& p, uint32_t now)
         // The owner's boss lane: which enemy is a boss, the phase it can expose, and the
         // two local calls each machine makes for itself (its own bar, its own arena exit).
         if (Cfg().enemy_sync) OnBoss(r, now);
+        break;
+    case wire::K_OBJECTS:
+        // Host -> peer only.  The body is the absolute placed-object set; the peer applies
+        // it through the class' visual/restore entry and the object's own state bool, and
+        // never through the interaction verb (SYNC-GAPS section 5.5).
+        if (g_net.IsPeer()) PeerApplyObjects(r, now);
         break;
     default:
         break;
@@ -11602,6 +12220,7 @@ bool HK_Tick(void* engineLoop)
     StreamPump(now);
     EnemyPump(now);
     ActorStatePump(now);
+    ObjectsPump(now);
     DialoguePump(now);
     CutscenePump(now);
     MoverPump(now);

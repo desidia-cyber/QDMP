@@ -172,6 +172,18 @@ fn vectors() -> Vec<Vector> {
             expected: "29 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 01 02 40 9c",
         },
         Vector {
+            name: "objects",
+            body: Body::Objects(Objects {
+                rev: 7,
+                entries: vec![ObjectRow {
+                    key: sample_guid(),
+                    shape: object_shape::CHEST,
+                    state: 1,
+                }],
+            }),
+            expected: "2a 07 00 00 00 01 00 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 01 01",
+        },
+        Vector {
             name: "intent_set_flag",
             body: Body::Intent(Intent {
                 based_on_rev: 5,
@@ -254,6 +266,18 @@ fn vectors() -> Vec<Vector> {
                 },
             }),
             expected: "20 08 0c 00 00 00 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 30 75 00 00 00 00 00 00",
+        },
+        Vector {
+            name: "intent_object_state",
+            body: Body::Intent(Intent {
+                based_on_rev: 13,
+                payload: IntentPayload::ObjectState {
+                    key: sample_guid(),
+                    shape: object_shape::CHEST,
+                    state: 1,
+                },
+            }),
+            expected: "20 09 0d 00 00 00 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 01 01",
         },
         Vector {
             name: "dialogue_state",

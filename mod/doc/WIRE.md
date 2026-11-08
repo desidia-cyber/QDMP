@@ -72,6 +72,7 @@ arrives late is still correct.
 | `0x27` | `LOOT` | both | unreliable, latest wins | on change + 1 Hz |
 | `0x28` | `SUSPEND` | both | reliable | event |
 | `0x29` | `BOSS` | both | reliable | on change |
+| `0x2A` | `OBJECTS` | host → peer | reliable | on change + 5 s repair |
 | `0x30` | `LOG` | both | unreliable | event |
 
 The design rule being followed (DollsMP 12 §4.6 E8): **the event channel is a
@@ -347,7 +348,8 @@ the failure a player reports as "the boss fight is broken".
 ```
 u8   kind             1 = set flag, 2 = grant item, 3 = consume item,
                       4 = dialogue answer, 5 = checkpoint touched,
-                      6 = actor state set, 7 = enemy hit, 8 = enemy record
+                      6 = actor state set, 7 = enemy hit, 8 = enemy record,
+                      9 = placed object state
 u32  based_on_rev     the `rev` of the container the sender last saw
 ...  payload, by kind
 ```
@@ -363,6 +365,7 @@ kind 5 (checkpoint):      str save_point_path
 kind 6 (actor state set): guid actor, i32 value
 kind 7 (enemy hit):       guid spawner, i32 damage_frac
 kind 8 (enemy record):    guid spawner, i32 respawn_centi, i32 hp_centi
+kind 9 (object state):    guid key, u8 shape, u8 state
 ```
 
 **Kind 2** — an item the peer obtained that the host does not have. `count` is the peer's
@@ -382,8 +385,7 @@ The peer measures its own contribution as `local − (what the host granted this
 never as `local − (the host's total)`: subtracting the host's total would make an item
 both players picked up independently cancel to zero and lose one of the two gains.
 
-**Kind 3** — an item the peer used. `count` is the peer's **cumulative use** for that
-path, not a delta. The host's ledger removes only the increase over the highest value it
+**Kind 3** — an item the peer used. `count` is the peer's **cumulative use** for thatpath, not a delta. The host's ledger removes only the increase over the highest value it
 has already removed (through `SaveFunctions_C.TryConsumingItemFromInventory`, read back
 with the native counter), so a retransmit and a reorder are exactly-once. While a use is
 outstanding, the peer's grant target is `host count − outstanding use`, which is what stops
@@ -408,6 +410,13 @@ for its own machine's player). The three scalars of
 `StoreEnemySaveState(WorldContext, Key, RespawnTime, RemainingHP)` in 1/100; the host
 applies the record to its save, so the enemy stays dead on the host too. A record for a
 copy the host was driving is never sent — the host wrote it itself.
+
+**Kind 9** — the peer opened/activated a placed world object the GUID-keyed lane cannot
+carry (3.20). `key` is the placed-object key, `shape` the class family and `state` 0/1 —
+the same three fields an `OBJECTS` row carries, so there is one encoding to keep in step.
+`based_on_rev` is the `OBJECTS` revision the peer last applied, and `0` means "no baseline
+yet" (Session 8 R73's rule), not stale. The host applies the state to its own copy and
+publishes the echo; the peer's `object intent confirmed` line is that echo.
 
 `based_on_rev` is the acceptance gate (DollsMP 12 §4.6 E4): the host applies an
 intent only if `based_on_rev >= ` the revision of the last state it sent. That
@@ -724,6 +733,60 @@ gate is not a lock). On `LOADED` the host re-applies `WORLD_FLAGS`, `ACTOR_STATE
 `INVENTORY` immediately rather than waiting for the 1 Hz cycle, then sends `REAPPLIED`.
 `CLEAR` releases the hold when the session ends.
 
+### 3.20 `OBJECTS` (0x2A)
+
+The lane for interactables that are **not** `SavableActorStates` entries. Measured live
+(Session 8 R67): `SG_Chest_BP2 [SG_Chest_BP_C] savable=no guid=- index=-1 ... opened=0`.
+That chest has no GUID and no container entry, so 3.7 cannot carry it; its state is its
+own `Opened` bool. The same is true of a lever/switch (`Activatable`), a placed item
+pickup and a gate.
+
+```
+u32   rev            bumps once per fully sent body
+u16   n              the WHOLE set size, not this datagram's share
+n ×:
+  u32   key[4]       FNV-1a 128 of the placed actor's "<world>/<level>/<name>" path
+  u8    shape        0 none, 1 chest, 2 door, 3 pickup, 4 barricade, 5 activatable
+  u8    state        0 closed / not activated, 1 open / activated
+```
+
+18 bytes per row; `rev + n` is 6 bytes. A datagram carries whole rows or it does not go
+out, so a set larger than one body is a **cursor across ticks**, never a fragment.
+
+`key` is the same construction 3.9's placed-enemy identity uses (`qdenemyid.h`'s PLACED
+rule) with its own seed, so the same path hashed by the enemy lane, the dialogue lane and
+this one yields three unrelated keys. Both machines compute it from the cooked package,
+which is what makes it a key rather than a negotiation. A **runtime-spawned** actor is
+excluded: its object name carries that machine's object counter.
+
+`shape` is on the wire so the two logs are comparable and so the receiver can log what the
+sender thought the object was; the receiver still classifies locally to choose a property
+and a function, because only its own class knows what exists.
+
+**Reliable** (`§2`, and `IsReliableKind` on both sides). An interaction is a one-shot
+event: a lost body leaves a chest closed on the wrong machine with nothing to notice it.
+The absolute set is re-sent on change, on join, after a suspend load, and by a 5 s repair
+pass — a peer that missed a body converges without a special case per cause. There is no
+1 Hz heartbeat, because that would re-send the whole set reliably every second.
+
+**A peer's own change is `INTENT` kind 9** (3.10): `key[4]`, `shape`, `state`. The host
+applies it to its own copy and publishes the echo, which is the `confirmed=1` the peer
+logs. The acceptance gate is the actor-state lane's, including R73's rule that
+`based_on_rev == 0` means "no baseline yet", not "stale".
+
+**The apply on the partner is one-directional.** It calls the class' visual/restore entry
+(`SetToFinalState` for a chest, `SetToOpenState` for a door, hide + no-collision for a
+pickup, `RestoreFromSave` otherwise) and then writes the object's own state property. It
+**never** calls the interaction verb: `Interact`, `Grant`, `GrantItemsAndActivate`,
+`InsertKey`, `CheckRequiredItems`, `OpenDoor`, `CloseDoor` and `Open` are on a refusal
+list in `qdobjectstate.h` and are rejected before a call can be built. A `state` of 0 is
+therefore recorded in the ledger but not applied — the game's close/deactivate verbs *are*
+the interaction path, so mirroring a `0` would run the verb the partner did not run; the
+receiver logs `close-ignored`.
+
+The global counters a chest touches (`TotalChestsOpened`) are **not** part of this lane.
+They ride `WORLD_FLAGS` (3.6) exactly as they did before, so nothing is counted twice.
+
 ### Reliable kinds: ack and duplicate suppression
 
 A receiver acks every copy of a reliable kind (`ACK` with the envelope `seq`) and
@@ -750,6 +813,10 @@ copy was applied (measured: one Fireball spawned six times).
   suspend-load repair are events whose loss would leave the pair in different states
   until the 0.5 Hz / 1 Hz heartbeat, and the handshake is short enough that a lost phase
   is a stuck transition.
+- `OBJECTS` is **reliable and absolute**. It is re-sent on change, on join, after a
+  suspend load, and by a 5 s repair pass — not at 1 Hz, because a reliable re-send every
+  second is a retransmission budget spent on nothing. The counterpart intent (kind 9) is
+  on `INTENT`, so it inherits the reliable, deduplicated lane.
 - Nothing anywhere carries `x += d`. Every effect is a set insertion, an
   absolute assignment, or a transition guarded by a monotonic counter
   (E2). This is the rule that makes a lost or duplicated datagram change

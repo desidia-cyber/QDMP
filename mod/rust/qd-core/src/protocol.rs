@@ -104,6 +104,8 @@ pub enum Kind {
     Loot = 0x27,
     Suspend = 0x28,
     Boss = 0x29,
+    /// Placed world objects that are not `SavableActorStates` entries (WIRE.md §3.20).
+    Objects = 0x2A,
     Log = 0x30,
 }
 
@@ -135,6 +137,7 @@ impl Kind {
             0x27 => Loot,
             0x28 => Suspend,
             0x29 => Boss,
+            0x2A => Objects,
             0x30 => Log,
             other => return Err(Error::UnknownKind(other)),
         })
@@ -171,6 +174,7 @@ impl Kind {
             Loot => "loot",
             Suspend => "suspend",
             Boss => "boss",
+            Objects => "objects",
             Log => "log",
         }
     }
@@ -188,6 +192,7 @@ impl Kind {
                 | Kind::Damage
                 | Kind::Suspend
                 | Kind::Boss
+                | Kind::Objects
         )
     }
 
@@ -649,6 +654,10 @@ pub enum IntentPayload {
     /// kind 8: the peer wrote a persistence record for an enemy it ran itself (the
     /// host had no live copy). The three scalars of `StoreEnemySaveState`, in 1/100.
     EnemyRecord { spawner: Guid, respawn_centi: i32, hp_centi: i32 },
+    /// kind 9: the peer opened/activated a placed world object the GUID-keyed lane cannot
+    /// carry (WIRE.md §3.20). `key` is the placed-object key, `shape` the class family,
+    /// `state` 0/1 — the same three fields the `OBJECTS` row carries.
+    ObjectState { key: Guid, shape: u8, state: u8 },
 }
 
 impl IntentPayload {
@@ -662,6 +671,7 @@ impl IntentPayload {
             IntentPayload::ActorStateSet { .. } => 6,
             IntentPayload::EnemyHit { .. } => 7,
             IntentPayload::EnemyRecord { .. } => 8,
+            IntentPayload::ObjectState { .. } => 9,
         }
     }
 }
@@ -922,6 +932,40 @@ pub mod boss_flags {
     pub const ARENA_EXIT: u8 = 1 << 2;
 }
 
+/// One `OBJECTS` row (WIRE.md §3.20). 18 bytes on the wire.
+///
+/// The lane for interactables that are NOT `SavableActorStates` entries — the chest
+/// measured live has no GUID at all, so the GUID-keyed `ACTOR_STATES` lane cannot carry
+/// it. `key` is the placed actor's cooked `<world>/<level>/<name>` path hashed with the
+/// object seed, `shape` is the class family (see [`object_shape`]), `state` is 0/1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ObjectRow {
+    pub key: Guid,
+    pub shape: u8,
+    pub state: u8,
+}
+
+/// `OBJECTS` body (WIRE.md §3.20). The host's absolute set of world-object states.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Objects {
+    pub rev: u32,
+    pub entries: Vec<ObjectRow>,
+}
+
+/// `OBJECTS.shape` values (WIRE.md §3.20).
+pub mod object_shape {
+    pub const NONE: u8 = 0;
+    pub const CHEST: u8 = 1;
+    pub const DOOR: u8 = 2;
+    pub const PICKUP: u8 = 3;
+    pub const BARRICADE: u8 = 4;
+    pub const ACTIVATABLE: u8 = 5;
+}
+
+/// Most rows one `OBJECTS` datagram may carry (WIRE.md §3.20): 1200-byte body, 6-byte
+/// header, 18-byte rows.
+pub const MAX_OBJECT_ROWS: usize = 66;
+
 /// A decoded body, tagged by its kind.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Body {
@@ -949,6 +993,7 @@ pub enum Body {
     Loot(Loot),
     Suspend(Suspend),
     Boss(Boss),
+    Objects(Objects),
     Log(Log),
 }
 
@@ -979,6 +1024,7 @@ impl Body {
             Body::Loot(_) => Kind::Loot,
             Body::Suspend(_) => Kind::Suspend,
             Body::Boss(_) => Kind::Boss,
+            Body::Objects(_) => Kind::Objects,
             Body::Log(_) => Kind::Log,
         }
     }
@@ -1357,6 +1403,11 @@ pub fn encode_body(body: &Body) -> Result<Vec<u8>> {
                     w.write_i32(*respawn_centi)?;
                     w.write_i32(*hp_centi)?;
                 }
+                IntentPayload::ObjectState { key, shape, state } => {
+                    write_guid(&mut w, key)?;
+                    w.write_u8(*shape)?;
+                    w.write_u8(*state)?;
+                }
             }
         }
         Body::DialogueState(d) => {
@@ -1431,6 +1482,22 @@ pub fn encode_body(body: &Body) -> Result<Vec<u8>> {
             w.write_u8(b.flags)?;
             w.write_u8(b.phase)?;
             w.write_u16(b.hp)?;
+        }
+        Body::Objects(o) => {
+            if o.entries.len() > MAX_OBJECT_ROWS {
+                return Err(Error::LimitExceeded {
+                    what: "object rows per datagram",
+                    limit: MAX_OBJECT_ROWS,
+                    got: o.entries.len(),
+                });
+            }
+            w.write_u32(o.rev)?;
+            write_count(&mut w, o.entries.len())?;
+            for e in &o.entries {
+                write_guid(&mut w, &e.key)?;
+                w.write_u8(e.shape)?;
+                w.write_u8(e.state)?;
+            }
         }
     }
 
@@ -1680,6 +1747,24 @@ pub fn decode_body(kind: Kind, bytes: &[u8]) -> Result<Body> {
                     respawn_centi: r.read_i32()?,
                     hp_centi: r.read_i32()?,
                 },
+                9 => {
+                    let key = read_guid(&mut r)?;
+                    let shape = r.read_u8()?;
+                    let state = r.read_u8()?;
+                    if shape > object_shape::ACTIVATABLE {
+                        return Err(Error::OutOfRange {
+                            what: "object shape",
+                            value: i64::from(shape),
+                        });
+                    }
+                    if state > 1 {
+                        return Err(Error::OutOfRange {
+                            what: "object state",
+                            value: i64::from(state),
+                        });
+                    }
+                    IntentPayload::ObjectState { key, shape, state }
+                }
                 other => return Err(Error::UnknownIntentKind(other)),
             };
             Body::Intent(Intent { based_on_rev, payload })
@@ -1792,6 +1877,24 @@ pub fn decode_body(kind: Kind, bytes: &[u8]) -> Result<Body> {
             phase: r.read_u8()?,
             hp: r.read_u16()?,
         }),
+        Kind::Objects => {
+            let rev = r.read_u32()?;
+            let n = r.read_u16()? as usize;
+            let mut entries = Vec::new();
+            for _ in 0..n {
+                let key = read_guid(&mut r)?;
+                let shape = r.read_u8()?;
+                let state = r.read_u8()?;
+                if shape > object_shape::ACTIVATABLE {
+                    return Err(Error::OutOfRange { what: "object shape", value: i64::from(shape) });
+                }
+                if state > 1 {
+                    return Err(Error::OutOfRange { what: "object state", value: i64::from(state) });
+                }
+                entries.push(ObjectRow { key, shape, state });
+            }
+            Body::Objects(Objects { rev, entries })
+        }
         Kind::Log => {
             // The whole body is the message; nothing to parse.
             Body::Log(Log { bytes: bytes.to_vec() })
@@ -2056,6 +2159,14 @@ mod tests {
                 phase: 0,
                 hp: 0,
             }),
+            Body::Objects(Objects {
+                rev: 7,
+                entries: vec![ObjectRow {
+                    key: sample_guid(),
+                    shape: object_shape::CHEST,
+                    state: 1,
+                }],
+            }),
             Body::Log(Log { bytes: b"hello from host".to_vec() }),
         ]
     }
@@ -2317,11 +2428,15 @@ mod tests {
     }
 
     #[test]
-    fn unknown_intent_kind_is_rejected() {        let mut w = BitWriter::new();
-        w.write_u8(9).unwrap();
+    fn unknown_intent_kind_is_rejected() {
+        // 9 is the placed-object intent now, so the unknown value has moved to 10: this
+        // test's point is that a kind the receiver has no layout for is refused rather
+        // than decoded as whatever the bytes happen to line up with.
+        let mut w = BitWriter::new();
+        w.write_u8(10).unwrap();
         w.write_u32(1).unwrap();
         let bytes = w.finish();
-        assert!(matches!(decode_body(Kind::Intent, &bytes), Err(Error::UnknownIntentKind(9))));
+        assert!(matches!(decode_body(Kind::Intent, &bytes), Err(Error::UnknownIntentKind(10))));
     }
 
     #[test]
@@ -2505,6 +2620,64 @@ mod tests {
         // reliable -- and therefore must not also be in the superseded lane.
         assert!(Kind::Boss.is_reliable());
         assert!(!Kind::Boss.is_latest_wins());
+    }
+
+    #[test]
+    fn object_row_is_eighteen_bytes() {
+        let o = Objects {
+            rev: 7,
+            entries: vec![ObjectRow {
+                key: sample_guid(),
+                shape: object_shape::CHEST,
+                state: 1,
+            }],
+        };
+        let bytes = encode_body(&Body::Objects(o)).unwrap();
+        // 4 rev + 2 n + 16 key + 1 shape + 1 state
+        assert_eq!(bytes.len(), 24);
+        assert_eq!(bytes[6..22], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+        assert_eq!(bytes[22], object_shape::CHEST);
+        assert_eq!(bytes[23], 1);
+    }
+
+    #[test]
+    fn objects_is_reliable_and_not_latest_wins() {
+        // An interaction is a one-shot event: a lost OBJECTS body leaves a chest closed on
+        // the wrong machine with nothing to notice it, so the lane is reliable and must not
+        // also sit in the superseded lane (WIRE.md §2/§4).
+        assert!(Kind::Objects.is_reliable());
+        assert!(!Kind::Objects.is_latest_wins());
+    }
+
+    #[test]
+    fn an_unknown_object_shape_is_refused_rather_than_applied() {
+        // A row the receiver cannot interpret must not be applied with a guessed property
+        // name, so the decoder refuses it and the caller logs the refusal.
+        let mut bytes = encode_body(&Body::Objects(Objects {
+            rev: 1,
+            entries: vec![ObjectRow { key: sample_guid(), shape: object_shape::CHEST, state: 0 }],
+        }))
+        .unwrap();
+        bytes[22] = 9;
+        assert!(decode_body(Kind::Objects, &bytes).is_err());
+        bytes[22] = object_shape::CHEST;
+        bytes[23] = 2;
+        assert!(decode_body(Kind::Objects, &bytes).is_err());
+    }
+
+    #[test]
+    fn an_object_intent_carries_key_shape_and_state() {
+        let payload = IntentPayload::ObjectState {
+            key: sample_guid(),
+            shape: object_shape::CHEST,
+            state: 1,
+        };
+        assert_eq!(payload.kind(), 9);
+        let intent = Intent { based_on_rev: 13, payload };
+        let bytes = encode_body(&Body::Intent(intent.clone())).unwrap();
+        // 1 kind + 4 rev + 16 key + 1 shape + 1 state
+        assert_eq!(bytes.len(), 23);
+        assert_eq!(decode_body(Kind::Intent, &bytes).unwrap(), Body::Intent(intent));
     }
 
     #[test]
