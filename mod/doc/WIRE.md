@@ -67,6 +67,7 @@ arrives late is still correct.
 | `0x22` | `LEVEL_UNION` | both | unreliable, latest wins | 2 Hz + on change |
 | `0x23` | `TRAVEL` | both | reliable | on change + 0.5 Hz |
 | `0x24` | `DAMAGE` | host → peer | reliable | event |
+| `0x25` | `BOSS` | both | reliable | on change |
 | `0x30` | `LOG` | both | unreliable | event |
 
 The design rule being followed (DollsMP 12 §4.6 E8): **the event channel is a
@@ -198,7 +199,7 @@ n × { guid guid, i32 x, i32 y, i32 z, i16 yaw, u16 hp, u8 flags }
 ```
 `flags` bit0 alive, bit1 driven (the receiver must freeze its copy because the sender
 runs this enemy), bit2 has-body, bit3 peer-owns (the sender has handed this enemy to
-the receiver and freezes its own copy).
+the receiver and freezes its own copy), **bits 4–5 the identity source** (below).
 
 **Direction.** `ENEMY` is bidirectional even though the name suggests otherwise: the
 machine that *owns* an enemy publishes its rows. Ownership follows the nearer player,
@@ -207,8 +208,39 @@ an enemy can only attack the partner if the partner's own machine runs it. A mac
 that does not own an enemy freezes its copy (no AI, no tick, movement mode none) and
 follows the owner's rows, exactly as the peer used to follow the host's.
 
-`guid` is the authored `FGuid` of the enemy's **spawner** (`EnemySpawner_C.GetSaveGUID()`),
-the same key `StoreEnemySaveState` uses — one spawner owns one enemy.
+**Identity.** `guid` is the enemy's key, and the pair *(source, guid)* is its identity:
+two 128-bit hashes of different things can collide, so the source bits are part of the
+key rather than a hint. There are three sources, tried in this order:
+
+| bits 4–5 | source | key |
+|---|---|---|
+| 0 | `SPAWNER` | the authored `FGuid` of the enemy's spawner (`EnemySpawner_C.GetSaveGUID()`), the same key `StoreEnemySaveState` persists by — one spawner owns one enemy |
+| 1 | `PLACED` | FNV-1a 128 of the actor's cooked path `"<world>/<level>/<object name>"` |
+| 2 | `SUMMON` | FNV-1a 128 of `"<summoner key hex>:<x>,<y>,<z>#<n>"` |
+
+A spawner GUID wins wherever it exists **and no other live enemy already holds it**: one
+spawner owns one managed enemy (`CurrentManagedEnemy`), so a second enemy naming the same
+spawner is a spawned one, not the managed one, and must not overwrite its key.
+
+`PLACED` covers an enemy authored into the cooked level with no spawner. Both machines run
+the same cooked package, so that path is identical on both. Only a genuinely authored actor
+qualifies: a runtime spawn's outer chain also reaches the world, but the engine gives it a
+per-machine name number, and such an actor is never given the placed key.
+
+`SUMMON` covers a runtime spawn. Its key uses the **spawn point**, not a counter, because
+the incremental object scan discovers enemies in whatever order each machine's `GObjects`
+happens to hold them: an ordinal assigned in scan order would differ between the two
+machines for the same enemy, while a position is shared. `n` (starting at 0) separates
+summons of one summoner that appear at the same point to 1/100 cm; those are identical in
+class and position and therefore interchangeable, which is the only place an arbitrary
+numbering is safe.
+
+A row for a hash-derived key (`PLACED` or `SUMMON`) that this machine does not know is
+matched against the local records that were themselves derived from a position. If exactly
+one sits within 300 cm of it, it is the same enemy and the local record adopts the sender's
+key and source — the sender ran the spawn, so its key is the truth. An ambiguous match (two
+candidates in range) is refused and logged, never guessed. A `SPAWNER` key is exact, so a
+mismatch there is a genuinely different enemy and is never absorbed.
 
 `hp` is a **fraction of the sender's max HP**, 0..65535 (65535 = full, 0 = dead; a
 living enemy is never sent as 0). Not an absolute value: both machines run the same
@@ -234,10 +266,11 @@ has no container, it is a snapshot of the live set.
 ### 3.9a `ENEMY_DETAIL` (0x19)
 
 ```
-guid guid            the enemy's key (its spawner's authored FGuid), same as a row
+guid guid            the enemy's key, same as a row (the pair (source, guid) is its identity)
 u8   anim            see the table below; 0 = nothing playing
 u8   seq             bumps on every new montage, so a repeat restarts on the receiver
 u16  status          the same bits as `STATUS.mask`
+u8   boss            the boss phase the owner observed, 0 = not a boss / no phase
 str  path            montage asset path, "" when `anim` is 0
 ```
 
@@ -253,9 +286,57 @@ cooked assets, but the order in which each discovers them is its own; an index w
 select a different animation on each side, and the failure looks like "the enemy
 attacks with the wrong move" rather than like a sync bug.
 
+`seq` is per-enemy and wraps 255 → 1, so a receiver keys "already applied" on the pair
+(`seq`, `path`), never on `seq` alone.
+
 Status bits are mirrored onto the copy only where the property actually exists on the
 enemy class; a bit whose property is missing is logged and dropped rather than
 invented.
+
+`boss` is the one per-boss value the shipped build exposes to a sync layer, and 0 means
+"no phase observed". It is **observed, never fabricated**: `Phase`, `bBoss` and
+`OnSubStateChanged` exist only in the executable's name block and in zero cooked
+packages (only `Queen_BP` declares a `NewPhase` of its own), so there is no shared field
+to drive. A receiver that sees 0 never touches a phase.
+
+**Rate limiting.** This lane is cosmetic but bursts exactly when a fight is busiest, and
+it shares the reliable table with `INTENT`, `TRAVEL` and `DAMAGE`. It is therefore ranked
+before it is sent: each change is scored by its distance from the **receiver's** player
+(the machine that draws the copy), and the lane is bounded to 10 bodies per rolling
+second with a per-enemy minimum interval (100 ms for a critical event near the player,
+up to 2 s for a cosmetic one far away, never for a cosmetic one beyond 150 m). Attack,
+hurt, death, cast and roar are critical — they are what a player judges the fight by —
+while locomotion is ambience. A refused change is kept pending and retried on the next
+pump, so the lane degrades to "later", never to "never".
+
+### 3.9b `BOSS` (0x25)
+
+```
+guid guid            the boss enemy's key; all zero when the body names no boss
+u8   flags           bit0 bar on, bit1 bar off, bit2 arena exit
+u8   phase           the owner's observed phase, 0 = none
+u16  hp              the boss's HP as the same 0..65535 fraction an `ENEMY` row carries
+```
+
+The two per-boss facts that are a **local call on each machine**, and therefore have to be
+driven rather than inferred:
+
+- **Health bar.** `PlayerStatsAndUtils_C.ActivateBossHPBar(Enemy, Group, __WorldContext)`
+  is a Blueprint function library call whose `__WorldContext` is the *caller's* world, so
+  each machine raises it on its own player for its own copy. The sender says whether the
+  bar should be up; the receiver calls its own `ActivateBossHPBar` / `DeactivateBossHPbar`.
+- **Arena exit.** `EnemySpawner_C.PlayerTeleportedOutOfBossArena()` is a zero-argument
+  spawner event overridden by 20 boss-spawner Blueprints. The *cause* is computed per
+  machine, but the *fact* — "a player left the arena" — is one bool, so the sender says the
+  fact and the receiver raises the event on its own spawner.
+
+**Phases are not expressible** and are not faked: there is no shared phase field in any
+cooked package, and writing a guessed value would run the wrong Blueprint branch on one
+machine only. `phase` carries what the sender could observe, and 0 is the honest answer
+when it could observe nothing.
+
+Reliable, on change only: a boss bar that fails to appear because a datagram was lost is
+the failure a player reports as "the boss fight is broken".
 
 ### 3.10 `INTENT` (0x20)
 
@@ -418,6 +499,20 @@ the receiver's world. Because it cannot collide, it would fall through the floor
 where the real one bounces and rolls (measured: Fireball rolls ~5 s), so moves snap it
 to the sender's position and velocity, and the end puts it where the real one stopped.
 
+**Enemy projectiles.** A projectile whose Owner/Instigator derives from
+`FS_EnemyCharacterBase` and carries a `ProjectileMovement` is an enemy's shot, and it is
+published **only by the machine that OWNS that enemy** (`ENEMY.flags` bit3 clear and a
+live row from this sender). The partner's copy of the shooter is frozen, so it should
+never fire; but a copy that fired anyway would send a second projectile and the partner
+would show two. Gating on ownership makes "one shot, one visual" a property of the
+ownership model rather than of the freeze, and a shot from an enemy that has no identity
+yet is not sent at all, because the partner could not attribute it.
+
+Damage lands exactly once, on the machine that owns the shooter: that machine's own
+projectile collides and traces normally, while the copy the partner spawns has collision
+and actor tick disabled, so it is a visual and nothing else. Nothing is applied twice and
+nothing is applied by the wrong machine.
+
 **kind 4, melee arc** (reliable). Every swing spawns the weapon's arc FX
 (`/Game/VFX/Melee/MeleeArc_Default` or the weapon's override) as a Niagara component
 attached to the first-person `Arms`, about 0.2 s in, coloured by Blueprint-set user
@@ -543,6 +638,12 @@ copy was applied (measured: one Fireball spawned six times).
 - Datagram cap: 1216 B total.
 - `PLAYER` 30 Hz default, 60 Hz allowed (measured < 10 KB/s for two players).
 - `ENEMY` 20 Hz, 24 rows maximum in flight.
+- `ENEMY_DETAIL` ≤ 10 bodies per rolling second across all enemies, and a per-enemy
+  minimum interval by relevance (100 ms critical / 400 ms cosmetic near the receiver,
+  rising to 500 ms / 2 s at the far band). A cosmetic change beyond 150 m is not sent.
+  This is the lane's bound: it is the one that bursts when a fight is busiest, and it
+  yields to `INTENT`, `TRAVEL` and `DAMAGE` because those must not.
+- `BOSS` is on change only and cheap (20 B), so it is not rate-limited beyond that.
 - Render delay 100 ms, extrapolation cap 250 ms — see `qdmotion.h`.
 
 ## 6. Open items this document does not settle

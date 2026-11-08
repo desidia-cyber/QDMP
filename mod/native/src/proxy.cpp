@@ -70,6 +70,8 @@
 #include "qdenemy.h"
 #include "qdenemyown.h"
 #include "qdenemydmg.h"
+#include "qdenemyid.h"
+#include "qdenemybw.h"
 #include "qdflags.h"
 #include "qdpending.h"
 #include "qdinventory.h"
@@ -1581,6 +1583,12 @@ void PuppetPump(uint32_t now)
 // A lifespan removes it, since without collision it never hits a wall.
 int32_t g_beginPlayIdx = -1;
 extern void* g_enemyBaseCls;         // defined with the enemy section; 0 until it is found
+// The effect lane is compiled before the enemy section, but it must ask ownership before
+// it publishes an enemy's projectile (see the guard in FxPump).  A predicate is
+// forward-declared rather than the record type: the record is incomplete here by design
+// (it is built on the enemy section's globals), and this is the whole question the effect
+// lane needs answered.
+bool EnemyShotIsOwned(void* shooter);
 void* volatile g_fxRing[64];
 volatile long g_fxHead = 0;
 long g_fxTail = 0;
@@ -1835,11 +1843,26 @@ void FxPump(uint32_t now)
         // this is a pointer comparison; while EnemySync is off the pointer is null and
         // nothing changes.  Requiring a ProjectileMovement component is what keeps a
         // flood of enemy-owned VFX actors out of the effect lane.
-        bool enemyShot = Cfg().enemy_sync && g_enemyBaseCls &&
-                         ((owner && DerivesFrom(ObjClass(owner), g_enemyBaseCls)) ||
-                          (inst && DerivesFrom(ObjClass(inst), g_enemyBaseCls))) &&
+        void* shooter = nullptr;
+        if (owner && g_enemyBaseCls && DerivesFrom(ObjClass(owner), g_enemyBaseCls)) shooter = owner;
+        else if (inst && g_enemyBaseCls && DerivesFrom(ObjClass(inst), g_enemyBaseCls)) shooter = inst;
+        bool enemyShot = Cfg().enemy_sync && shooter &&
                          ActorObjProp(a, "ProjectileMovement") != nullptr;
         if (!enemyShot && !IsProjectileClass(ObjClass(a))) continue;
+
+        // ENEMY PROJECTILES: only the machine SIMULATING the shooter publishes its shot.
+        // The other machine's copy of that enemy is frozen (AI off, tick off), so it
+        // should never fire; but a copy that fired anyway would send a second projectile
+        // and the partner would show two.  Requiring ownership makes "one shot, one
+        // visual" a property of the ownership model rather than of the freeze.
+        //
+        // Damage stays where the game puts it: the sender's own projectile collides and
+        // traces normally, and the COPY the receiver spawns has collision and actor tick
+        // turned off (SpawnVisualCopy), so it can never damage anything on the receiver.
+        // That is what makes the hit land exactly once, on the machine that owns it.
+        if (enemyShot) {
+            if (!EnemyShotIsOwned(shooter)) continue;
+        }
         ActorXform x;
         if (!ReadActorXform(a, &x)) continue;
         ActorXform px;
@@ -3205,6 +3228,16 @@ struct EnemyRec {
     void*    spawner;
     uint32_t guid[4];
     bool     haveGuid;
+    // What produced `guid` (qdenemyid.h).  An enemy used to have identity ONLY when a
+    // spawner reported one, so a placed enemy and a summon ran independently on each
+    // machine.  The source decides which deterministic fallback minted the key, and it
+    // rides the row's spare flag bits so a hash collision cannot merge two enemies.
+    uint8_t  src;
+    void*    ownerKeyBy;     // the summoner whose key minted a SRC_SUMMON identity
+    uint16_t summonOrd;      // the coincidence index claimed (valid when summonMinted)
+    bool     summonMinted;   // the index has been claimed, so re-deriving must not re-claim
+    bool     adopted;        // this key came from the owner (see AdoptSummonKey)
+    int32_t  guidSpawn[3];   // the spawn point the summon key was minted from
     bool     driven;         // this copy is frozen and following the owner's rows
     bool     killedByUs;     // a KILL from the owner was applied (one shot)
     uint8_t  savedMoveMode;
@@ -3219,10 +3252,26 @@ struct EnemyRec {
     void*    pubMon;
     uint8_t  pubSeq;
     uint16_t pubStatus;
+    uint8_t  pubBoss;        // the boss phase last published (0 = not a boss)
     bool     pubInit;        // the first observation is the baseline, not a change
     uint8_t  gotSeq;
     uint16_t gotStatus;
+    // Montage proof.  "called=yes is not evidence the call ran", and Montage_Play is a
+    // reflective call the design never proved: the resolved function, whether the
+    // read-back has ever matched, and a bounded failure log.
+    bool     playedOnce;     // a playback was verified by read-back at least once
+    uint8_t  playFails;      // consecutive unverified playbacks (capped, for the log)
     char     gotPath[wire::kEnemyPathCap];
+    // Boss state.  Phase is the owner's observed ordinal (SYNC-RESEARCH 6: no cooked
+    // package carries a phase field); the bar and the arena exit are local calls each
+    // machine makes for itself, which is why they are driven rather than computed.
+    bool     isBoss;
+    uint8_t  bossPhase;
+    uint8_t  pubBossFlags;      // the bar state last published (0xFF = never published)
+    uint8_t  pubBossPhaseSent;  // the phase last published
+    bool     bossArenaExitSent; // the arena exit is a one-shot, not a state
+    bool     bossBarShown;
+    uint32_t bossBarAt;
 };
 EnemyRec        g_en[256];
 int             g_enN = 0;
@@ -3234,6 +3283,8 @@ enemy::KillLog  g_killLog;         // deaths this machine ran, re-broadcast as d
 enemy::RowCursor g_rowCursor;
 enemyown::OwnerSet g_own;          // who runs each enemy (qdenemyown.h)
 enemydmg::SwingGate g_dmgGate;     // one K_DAMAGE per swing, bounded per second
+enemyid::CoincidentSpawns g_summonOrd;  // coincident spawns per summoner (qdenemyid.h)
+enemybw::Scheduler g_detailBw;     // ENEMY_DETAIL relevance + rate limits
 int             g_deadCursor = 0;
 bool            g_inOwnRecord = false;
 bool            g_inRemoteDeath = false;   // a death being applied FROM the other machine
@@ -3247,6 +3298,15 @@ EnemyRec* EnemyByGuid(const uint32_t g[4])
     return nullptr;
 }
 
+// May this machine publish `shooter`'s projectile to the partner?  See the guard in
+// FxPump for why the answer is "only the machine that runs the shooter".
+bool EnemyShotIsOwned(void* shooter)
+{
+    EnemyRec* er = EnemyByActor(shooter);
+    if (!er || !er->haveGuid) return false;     // no identity yet: not attributable
+    return g_own.Running(er->guid);
+}
+
 bool SpawnerGuid(void* spawner, uint32_t out[4])
 {
     static Fn f = {};
@@ -3257,6 +3317,254 @@ bool SpawnerGuid(void* spawner, uint32_t out[4])
     if (!p) return false;
     memcpy(out, p, 16);
     return !enemy::ZeroGuid(out);
+}
+
+// ---------------------------------------------------------------------------
+// Identity for an enemy that has no spawner GUID (qdenemyid.h)
+// ---------------------------------------------------------------------------
+// A placed actor's identity is its position in the cooked world: object name plus outer
+// chain ("<world>/<level>/<name>").  Both machines run the same cooked package, so this
+// string is the same on both -- which is exactly what the spawned-actor name is NOT (a
+// runtime spawn is named "<Class>_<index>" from that machine's own object counter).
+//
+// `ActorOuterReachesWorld` (the travel code's own test) is reused: an actor whose outer
+// chain does not reach this machine's UWorld is a CDO, an asset, or a live actor in a
+// level that has not streamed in -- none of which is a summon and none of which is a
+// placed enemy of this world.
+int ActorLevelPath(void* actor, void* world, char* out, int cap)
+{
+    if (!actor || !world || !out || cap < 2) return 0;
+    // Build "/<a>/<b>/<c>" from the actor outward, then the segments we collected are in
+    // reverse order: write them back the right way round.
+    char seg[6][48];
+    int nseg = 0;
+    void* p = actor;
+    for (int depth = 0; p && depth < 6; ++depth, p = ObjOuter(p)) {
+        if (nseg < 6) {
+            if (FNameToString(ObjNameRaw(p), seg[nseg], sizeof(seg[nseg])) <= 0) break;
+            ++nseg;
+        }
+        if (p == world) break;
+    }
+    if (nseg < 2) return 0;                    // no level: not a placed actor
+    int w = 0;
+    for (int i = nseg - 1; i >= 0 && w < cap - 1; --i) {
+        out[w++] = '/';
+        for (int k = 0; seg[i][k] && w < cap - 1; ++k) out[w++] = seg[i][k];
+    }
+    out[w] = 0;
+    return w;
+}
+
+// The GUID of the summoner that made this actor, when the game records it.  A summon
+// usually names its owner (`Instigator`/`Owner`/`Summoner`) as an enemy or a spawner;
+// when it names an enemy we key by THAT enemy's identity, so a chain of summons is
+// deterministic without either machine having to agree on a spawn order.
+void* SummonerOf(void* actor)
+{
+    static const char* kFields[] = {"Instigator", "Owner", "Summoner", "SummonerActor"};
+    for (unsigned i = 0; i < sizeof(kFields) / sizeof(kFields[0]); ++i) {
+        void* v = ObjPropC(actor, kFields[i]);
+        if (v && ObjectIsLive(v)) return v;
+    }
+    return nullptr;
+}
+
+// Is this actor PART OF A COOKED LEVEL, as opposed to spawned at runtime?
+//
+// This distinction is the whole reason the placed path is safe, and it is easy to get
+// wrong: a runtime-spawned actor's outer chain ALSO reaches the world (it is spawned into
+// the level), so "the path resolves" is not the test.  Hashing a runtime name would
+// produce a different key on each machine -- exactly the bug this work removes -- so a
+// runtime spawn must never take the placed path.
+//
+// The discriminator used here is the FName's instance number.  An object authored into a
+// cooked package is named by the package's own name map and its name is unique there, so
+// its number is 0; the engine's `MakeUniqueObjectName` gives every runtime spawn a number
+// from the process's object counter.  See SYNC-GAPS 3 for the probe that settles whether
+// a cooked level's placed actors really are all number 0 on this build.  The rule is
+// deliberately conservative: if a placed actor does carry a number it is simply treated as
+// a summon, which still yields a stable key, and the receiver's placed-key resolution
+// (AdoptPlacedKey) repairs the pair.
+bool ActorIsPlaced(void* actor)
+{
+    if (!actor) return false;
+    QdName n = ObjNameRaw(actor);
+    if (n.number != 0) return false;              // engine-generated unique name
+    // A CDO or an asset is not a placed actor either; the caller's world test covers the
+    // remaining case (a live actor in a level this machine has not streamed in).
+    return true;
+}
+
+// Is this the enemy its spawner is actually MANAGING?  `CurrentManagedEnemy` is the one
+// enemy a spawner owns (SYNC-RESEARCH 5), so this is the game's own answer to "who gets
+// the GUID" -- and asking it is what makes the decision deterministic.
+//
+// The obvious alternative, "the first live enemy whose spawner names this GUID wins",
+// depends on the ORDER the object scan happens to see enemies, which is per machine: the
+// two would then give the GUID to different enemies and the pair would swap identities.
+// When the property is absent or unreadable the answer is "yes", because a spawner with
+// one enemy is the ordinary case and refusing the GUID there would push every spawner
+// enemy onto a hash for nothing.
+bool SpawnerManagesActor(void* spawner, void* actor)
+{
+    if (!spawner || !actor) return false;
+    void* managed = ObjPropC(spawner, "CurrentManagedEnemy");
+    if (!managed) return true;                      // not readable: assume the ordinary case
+    return managed == actor;
+}
+
+// Resolve one enemy's identity, in the order qdenemyid.h documents.
+// The caller only invokes this when the record has no identity yet, or when its spawner
+// changed (which can legitimately change a spawner-owned enemy into a summon).  A key
+// this machine ADOPTED from the other machine is kept: the sender ran that spawn, so its
+// key is the truth, and re-deriving would mint a second identity for one enemy.
+bool EnemyIdentity(EnemyRec& r)
+{
+    if (r.adopted) return r.haveGuid;
+    void* world = GWorldPtr();
+    void* sp = ObjPropC(r.actor, "OwningSpawner");
+    // Only a CHANGE of spawner invalidates the minted summon state.  A failed resolution
+    // is retried on a later scan pass, and by then the coincidence index it already
+    // claimed must still be the same one -- re-claiming would walk the dup counter and
+    // make the key change under a row that is already in flight.
+    if (sp != r.spawner) {
+        r.spawner = sp;
+        r.haveGuid = false;
+        r.summonOrd = 0;
+        r.summonMinted = false;
+    }
+    r.haveGuid = false;
+    r.src = enemyid::SRC_SUMMON;
+    r.ownerKeyBy = nullptr;
+
+    // 1. The authored spawner GUID, the persisted-key path.  It must win where it
+    //    exists, and it must not be shared: one spawner owns one managed enemy, so a
+    //    second enemy naming the same spawner is a summon.
+    uint32_t g[4] = {0, 0, 0, 0};
+    bool haveSpawnerGuid = sp && SpawnerGuid(sp, g);
+    // The GUID goes to the enemy the spawner actually manages.  A second enemy naming the
+    // same spawner is a spawned one, and it takes a fallback key -- decided by the game's
+    // own `CurrentManagedEnemy`, not by which of the two the scan saw first.
+    bool taken = haveSpawnerGuid && !SpawnerManagesActor(sp, r.actor);
+
+    // 2. A placed actor, identified by its place in the cooked world.  Only a genuinely
+    //    authored actor qualifies: a runtime spawn's outer chain also reaches the world,
+    //    but its name carries a per-machine number, so it must NOT take this path.
+    char path[192];
+    int pathLen = ActorIsPlaced(r.actor) ? ActorLevelPath(r.actor, world, path, sizeof(path)) : 0;
+    bool havePlaced = pathLen > 0;
+
+    enemyid::Source src = enemyid::Decide(haveSpawnerGuid, taken, havePlaced);
+    if (src == enemyid::SRC_SPAWNER) {
+        memcpy(r.guid, g, sizeof(r.guid));
+        r.haveGuid = true;
+        r.src = enemyid::SRC_SPAWNER;
+        return true;
+    }
+    if (src == enemyid::SRC_PLACED) {
+        r.haveGuid = enemyid::PlacedKey(path, r.guid);
+        r.src = enemyid::SRC_PLACED;
+        if (r.haveGuid) {
+            QDLOG(LOG_DEBUG, "enemy id: placed ", path,
+                  (taken ? " (its spawner GUID is held by another live enemy)" : ""));
+        }
+        return r.haveGuid;
+    }
+
+    // 3. A runtime spawn.  Its key is its summoner's identity plus where it appeared.
+    //    The summoner itself may be a spawner GUID, a placed path or another summon, which
+    //    is what keeps a chain of summons deterministic.
+    uint32_t summonerKey[4] = {0, 0, 0, 0};
+    void* sum = SummonerOf(r.actor);
+    bool haveSummoner = false;
+    if (sum) {
+        // The summoner may already be a record (it is usually itself an enemy).
+        EnemyRec* sr = EnemyByActor(sum);
+        if (sr && sr->haveGuid) {
+            memcpy(summonerKey, sr->guid, sizeof(summonerKey));
+            haveSummoner = true;
+        } else {
+            uint32_t sg[4];
+            if (SpawnerGuid(sum, sg)) { memcpy(summonerKey, sg, sizeof(summonerKey)); haveSummoner = true; }
+            else {
+                char spath[192];
+                // The summoner must have a stable identity too: a placed summoner's path,
+                // never a runtime name (that would be per machine).
+                if (ActorIsPlaced(sum) && ActorLevelPath(sum, world, spath, sizeof(spath)) > 0)
+                    haveSummoner = enemyid::PlacedKey(spath, summonerKey);
+            }
+        }
+    }
+    if (!haveSummoner) {
+        // No recorded summoner.  Fall back to the actor's own class and position: that
+        // is still shared between machines (same class, same spawn point) and is better
+        // than leaving the enemy with no identity at all.
+        char cls[160] = "";
+        avatar::AssetPath(ObjClass(r.actor), cls, sizeof(cls));
+        ActorXform x;
+        if (ReadActorXform(r.actor, &x)) {
+            // Hand-rolled, because this file is CRT-free on purpose (qdlog.h's header
+            // says why): a formatter that allocates must not run on this path.
+            char buf[256];
+            int w = 0;
+            for (int i = 0; cls[i] && w < (int)sizeof(buf) - 64; ++i) buf[w++] = cls[i];
+            buf[w++] = '@';
+            const int v[3] = {(int)(x.px * 100.0f), (int)(x.py * 100.0f), (int)(x.pz * 100.0f)};
+            for (int i = 0; i < 3; ++i) {
+                if (i && w < (int)sizeof(buf) - 2) buf[w++] = ',';
+                int32_t q = v[i];
+                if (q < 0) { if (w < (int)sizeof(buf) - 2) buf[w++] = '-'; q = -q; }
+                char d[12];
+                int n = 0;
+                if (q == 0) d[n++] = '0';
+                while (q) { d[n++] = (char)('0' + (q % 10)); q /= 10; }
+                while (n && w < (int)sizeof(buf) - 1) buf[w++] = d[--n];
+            }
+            buf[w] = 0;
+            enemyid::Hash128(buf, enemyid::kSummonSeed, summonerKey);
+            haveSummoner = true;
+            QDLOG(LOG_INFO, "enemy id: no summoner for ", (cls[0] ? cls : "?"),
+                  "; keyed by class and spawn point");
+        }
+    }
+    if (!haveSummoner) return false;
+
+    uint16_t dup = 0;
+    if (r.summonMinted) {
+        dup = r.summonOrd;                      // already claimed: never re-claim
+    } else {
+        // The coincidence index is claimed once, from where the summon first appeared.
+        // Claiming is not idempotent (it counts), so it must happen exactly once per
+        // record -- `summonMinted` is what makes that true rather than hoped for.
+        int32_t spawn[3] = {0, 0, 0};
+        ActorXform sx;
+        if (ReadActorXform(r.actor, &sx)) {
+            spawn[0] = (int32_t)(sx.px * 100.0f);
+            spawn[1] = (int32_t)(sx.py * 100.0f);
+            spawn[2] = (int32_t)(sx.pz * 100.0f);
+        } else {
+            // No transform to key on: the coincidence table's zero point.  A summon with
+            // no readable transform is barely an actor, but it still must not collide
+            // with every other summon of this summoner.
+            QDLOG(LOG_DEBUG, "enemy id: summon has no readable transform; keyed at origin");
+        }
+        dup = g_summonOrd.Claim(summonerKey, spawn, Net::Now());
+        r.summonOrd = dup;
+        r.summonMinted = true;
+        r.guidSpawn[0] = spawn[0];
+        r.guidSpawn[1] = spawn[1];
+        r.guidSpawn[2] = spawn[2];
+    }
+    r.ownerKeyBy = sum;
+    enemyid::SummonKey(summonerKey, r.guidSpawn, dup, r.guid);
+    r.haveGuid = !enemyid::ZeroKey(r.guid);
+    r.src = enemyid::SRC_SUMMON;
+    if (r.haveGuid) {
+        QDLOG(LOG_DEBUG, "enemy id: summon at ", dec(r.guidSpawn[0]), ",", dec(r.guidSpawn[1]),
+              ",", dec(r.guidSpawn[2]), " dup=", dec((int)dup), " key=", hex32(r.guid[0]));
+    }
+    return r.haveGuid;
 }
 
 bool EnemyHp(void* actor, float* hp, float* maxHp)
@@ -3315,16 +3623,11 @@ void EnemyScanStep()
             r->lastHp = -1.0f;
         }
         r->seenPass = g_enPass;
-        void* sp = ObjPropC(o, "OwningSpawner");
-        if (sp != r->spawner) { r->spawner = sp; r->haveGuid = false; }
-        if (sp && !r->haveGuid) {
-            r->haveGuid = SpawnerGuid(sp, r->guid);
-            if (r->haveGuid) {
-                char d[96];
-                ObjDescribe(o, d, sizeof(d));
-                QDLOG(LOG_DEBUG, "enemy ", d, " guid=", hex32(r->guid[0]), "-", hex32(r->guid[1]));
-            }
-        }
+        // Identity is resolved once per actor and only re-resolved when the spawner
+        // changes.  It is NOT re-resolved every pass: a placed-path hash and a summon
+        // ordinal are stable by construction, and re-minting a summon ordinal every
+        // frame would make the key change under the row that is already in flight.
+        if (!r->haveGuid) EnemyIdentity(*r);
     }
     g_enCursor = end;
     if (g_enCursor >= total) {
@@ -3816,24 +4119,80 @@ void* MeshActiveMontage(void* mesh)
 }
 
 // Play one montage on a copy.  "called=yes is not evidence the call ran", so the active
-// montage is read back afterwards and logged: a live run can then tell a working
-// reflective Montage_Play from one that silently did nothing.
-bool PlayEnemyMontage(void* mesh, void* montage)
+// montage is read back afterwards.  This is the one reflective call the design always
+// described as UNPROVEN, so it is additionally guarded and it logs the failure the first
+// few times rather than on every frame:
+//
+//   * the resolution is proven once per process and said so in the log, because a
+//     signature that does not validate is the difference between "the animation is not
+//     synced" and "the call was never made";
+//   * ProcessEvent itself is fault-contained (Call::Run -> ProcessEventGuarded), so a
+//     wrong argument offset costs a playback, not the session;
+//   * the read-back is the proof.  `Anims` that play a sequence rather than a montage
+//     make MeshActiveMontage stay empty, which is reported once by name.
+bool PlayEnemyMontage(EnemyRec& rec, void* mesh, void* montage)
 {
+    if (!mesh || !montage) return false;
     void* ai = MeshAnimInstance(mesh);
+    // One cache per anim-instance CLASS: different enemies run different AnimBPs, and a
+    // shared cache that latched a miss on the first one would silently disable playback
+    // for every other kind of enemy.  `Tried` is reset on a class change so the next class
+    // is looked up.
     static Fn f = {};
-    if (!ai || !montage || !f.Resolve(ai, "Montage_Play")) return false;
+    static void* fCls = nullptr;
+    static bool saidResolve = false;
+    if (!ai) {
+        if (!saidResolve) { saidResolve = true; QDLOG(LOG_WARN, "enemy anim: the copy has no anim instance"); }
+        return false;
+    }
+    void* aiCls = ObjClass(ai);
+    if (fCls != aiCls) { f = Fn{}; fCls = aiCls; }
+    if (!f.Resolve(ai, "Montage_Play")) {
+        if (!saidResolve) {
+            saidResolve = true;
+            QDLOG(LOG_WARN, "enemy anim: Montage_Play did not resolve on the anim instance; "
+                            "montage sync cannot work on this build (the copy still follows "
+                            "the owner's position and health)");
+        }
+        return false;
+    }
+
     Call c(f);
     c.Obj("MontageToPlay", montage);
+    // Both args are set by name and only when the signature has them: a build that
+    // renamed InPlayRate would otherwise put 1.0f into bStopAllMontages's byte.
     if (f.Off("InPlayRate") >= 0) c.F32("InPlayRate", 1.0f);
     // bStopAllMontages defaults to true; the argument block is zeroed, so it has to be
     // set explicitly or an attack montage would layer over whatever is playing.
     if (f.Off("bStopAllMontages") >= 0) c.U8("bStopAllMontages", 1);
     bool ran = c.Run(ai);
+    if (!ran) {
+        if (rec.playFails < 3) {
+            ++rec.playFails;
+            QDLOG(LOG_WARN, "enemy anim: Montage_Play faulted on guid=", hex32(rec.guid[0]),
+                  " (failure ", dec((int)rec.playFails), "/3 after which this is silent)");
+        }
+        return false;
+    }
+
     void* back = MeshActiveMontage(mesh);
-    QDLOG(LOG_INFO, "enemy detail: Montage_Play ", (ran ? "called" : "FAILED"),
-          " read-back ", (back == montage ? "ok" : (back ? "a different montage" : "none")));
-    return ran && back == montage;
+    bool ok = (back == montage);
+    if (ok) {
+        rec.playedOnce = true;
+        rec.playFails = 0;
+        QDLOG(LOG_INFO, "enemy anim: Montage_Play verified by read-back guid=",
+              hex32(rec.guid[0]));
+    } else if (rec.playFails < 3) {
+        ++rec.playFails;
+        // The first failure is the interesting one and says which of the two causes it
+        // is: nothing playing at all (an AnimBP that plays sequences, not montages), or
+        // a different montage (the copy re-selected something of its own).
+        QDLOG(LOG_WARN, "enemy anim: Montage_Play ran but read-back says ",
+              (back ? "a DIFFERENT montage" : "NONE -- this AnimBP probably plays sequences, "
+                                              "not montages, so there is nothing to mirror"),
+              " guid=", hex32(rec.guid[0]), " (failure ", dec((int)rec.playFails), "/3)");
+    }
+    return ok;
 }
 
 // The status byte properties this build actually carries.  `bEnemyPoisoned` is the
@@ -3980,26 +4339,38 @@ void TrySendEnemyDamage(EnemyRec& r, uint32_t seq, uint8_t anim, uint32_t now)
     }
 }
 
-// At most this many enemy details per second across all enemies.  The reliable table has
-// 16 slots and a loaded level holds ~78 enemies: measured on the rig, publishing the
-// first observation of every enemy filled the table in one frame and the socket then
-// dropped everything else with "no free reliable slot" -- travel and intents included.
-// Detail is cosmetic (a dropped animation is re-sent on the next change), so it is the
-// lane that yields.
-static const uint32_t kEnemyDetailPerSec = 10;
-uint32_t g_detailTokens = kEnemyDetailPerSec;
-uint32_t g_detailRefillMs = 0;
-uint32_t g_detailDropped = 0;
+// ---------------------------------------------------------------------------
+// The ENEMY_DETAIL lane, rate-limited by relevance (qdenemybw.h)
+// ---------------------------------------------------------------------------
+// A flat "10 per second" bucket was the previous fix for the reliable table filling up.
+// It stops the flood but ignores WHO the detail is for: with 120 enemies in range the
+// enemy that changed first wins the token whether or not the partner can see it, while a
+// boss five metres from the partner waits behind a silhouette 150 m away.
+//
+// So the pump now gathers every enemy that has a change, scores each by its distance from
+// the PARTNER's player (that is the machine which draws the copy), and lets the scheduler
+// pick.  A refused change needs no separate state: `pubMon`/`pubStatus`/`pubBoss` are only
+// advanced when a body actually went out, so the next pump re-derives the same change and
+// retries it.  That is what makes the lane degrade to "later" rather than "never".
+struct DetailCand {
+    EnemyRec*        rec;
+    enemybw::Cand    bw;
+    wire::EnemyDetailBody body;
+    bool             monChanged;
+    bool             statusChanged;
+    void*            mon;
+    uint16_t         mask;
+};
 
-// The owner publishes what the enemy is doing.  Sent on change only: a montage is an
-// event, not a sample, and a status mask only changes when a debuff lands or expires.
-void SendEnemyDetail(EnemyRec& r, uint32_t now)
+// Everything the owner would publish right now for one enemy, or false when nothing
+// changed.  Split out so the pump can build the candidate list before any packet is
+// spent -- the scheduler must see all candidates to rank them.
+bool BuildDetail(EnemyRec& r, uint32_t now, DetailCand* out)
 {
     void* mesh = EnemyMesh(r.actor);
     void* mon = mesh ? MeshActiveMontage(mesh) : nullptr;
     uint16_t mask = EnemyStatusMask(r.actor);
-
-    if (now - g_detailRefillMs >= 1000) { g_detailRefillMs = now; g_detailTokens = kEnemyDetailPerSec; }
+    uint8_t phase = r.bossPhase;
 
     // The first sight of an enemy is its BASELINE, not news.  At level load every enemy
     // in range is already playing something, so treating the first observation as a
@@ -4008,66 +4379,153 @@ void SendEnemyDetail(EnemyRec& r, uint32_t now)
         r.pubInit = true;
         r.pubMon = mon;
         r.pubStatus = mask;
+        r.pubBoss = phase;
         r.pubSeq = mon ? 1 : 0;
-        return;
+        return false;
     }
 
     bool monChanged = (mon != r.pubMon);
     bool statusChanged = (mask != r.pubStatus);
-    if (!monChanged && !statusChanged) return;
+    bool bossChanged = (phase != r.pubBoss);
+    if (!monChanged && !statusChanged && !bossChanged) return false;
 
-    wire::EnemyDetailBody d;
-    memset(&d, 0, sizeof(d));
-    memcpy(d.guid, r.guid, 16);
-    d.status = mask;
+    memset(&out->body, 0, sizeof(out->body));
+    memcpy(out->body.guid, r.guid, 16);
+    out->body.status = mask;
+    out->body.boss = phase;
+    uint8_t anim = wire::E_NONE;
     if (mon) {
         char nm[128] = "";
         FNameToString(ObjNameRaw(mon), nm, sizeof(nm));
-        d.anim = enemyown::ClassifyAnim(nm);
-        if (avatar::AssetPath(mon, d.path, sizeof(d.path)) <= 0)
+        anim = enemyown::ClassifyAnim(nm);
+        out->body.anim = anim;
+        if (avatar::AssetPath(mon, out->body.path, sizeof(out->body.path)) <= 0)
             QDLOG(LOG_WARN, "enemy detail: montage ", nm, " has no asset path");
     }
     // A montage that classifies to nothing (an idle, trap or locomotion animation) has
     // no meaning for the copy: it is recorded without spending a packet, unless the
-    // status mask changed in the same frame.
-    if (!(mon && d.anim != wire::E_NONE) && !statusChanged) { r.pubMon = mon; return; }
-
-    if (g_detailTokens == 0) {
-        // Left unrecorded on purpose: the change is retried on the next pump, when a
-        // token is free, instead of being lost.
-        ++g_detailDropped;
-        return;
+    // status or the boss phase changed in the same frame.
+    if (!(mon && anim != wire::E_NONE) && !statusChanged && !bossChanged) {
+        r.pubMon = mon;
+        return false;
     }
-    --g_detailTokens;
 
-    // The counter bumps per NEW montage.  A status-only change keeps it, so the copy
-    // does not restart a one-shot animation because poison ticked.
-    if (monChanged && mon) { if (++r.pubSeq == 0) r.pubSeq = 1; }
-    d.seq = r.pubSeq;
+    out->rec = &r;
+    out->monChanged = monChanged;
+    out->statusChanged = statusChanged;
+    out->mon = mon;
+    out->mask = mask;
+    // Critical = a montage the player judges the game by.  A status tick or a phase
+    // change is not an animation event and takes the cosmetic path.
+    out->bw.critical = monChanged && mon && wire::EnemyAnimCritical(anim);
+    (void)now;
+    return true;
+}
 
-    uint8_t body[wire::kMaxBody];
-    wire::Writer w(body, sizeof(body));
-    wire::WriteEnemyDetail(w, d);
-    bool sent = w.ok && g_net.SendReliable(wire::K_ENEMY_DETAIL, body, w.len);
+void EnemyDetailPump(uint32_t now)
+{
+    static DetailCand cands[128];
+    static enemybw::Cand bwCand[128];
+    // Keys live here, not in `EnemyRec::guid`: the scheduler holds the pointer across the
+    // whole selection pass, and a `g_en` compaction during that pass would leave it
+    // pointing at a different enemy's key.
+    static uint32_t keys[128][4];
+    int n = 0;
 
-    // A new attack montage is also the moment to describe the hit to the partner: the
-    // owner is the only machine that saw the swing, and the peer is the only machine
-    // that can apply it to its own pawn.  Keyed by the same seq, so it is one per
-    // occurrence rather than one per pump -- including when the detail itself had to be
-    // retried.
-    if (monChanged && mon && (d.anim == wire::E_ATTACK || d.anim == wire::E_CAST))
-        TrySendEnemyDamage(r, d.seq, d.anim, now);
+    // The receiver's player is the audience.  Its drawn position is slightly in the past,
+    // which the scheduler's bands absorb; an unknown position makes every candidate
+    // "far", which is the safe direction (a skipped cosmetic detail, never a flood).
+    float peer[3] = {0, 0, 0};
+    bool havePeer = false;
+    { motion::MoveOut m = g_peerInterp.Sample(now);
+      if (m.valid && !m.frozen) { peer[0] = m.px; peer[1] = m.py; peer[2] = m.pz; havePeer = true; } }
 
-    if (!sent) {
-        QDLOG(LOG_WARN, "enemy detail dropped (no reliable slot) guid=", hex32(r.guid[0]),
-              " anim=", dec((int)d.anim), "; retried next pump, drops=", dec((int)g_detailDropped));
-        return;
+    const int cap = (int)(sizeof(cands) / sizeof(cands[0]));
+    for (int i = 0; i < g_enN && n < cap; ++i) {
+        EnemyRec& r = g_en[i];
+        if (!r.haveGuid || !ObjectIsLive(r.actor)) continue;
+        if (g_own.State(r.guid) != enemyown::O_LOCAL) continue;
+        DetailCand* c = &cands[n];
+        if (!BuildDetail(r, now, c)) continue;
+
+        float d = enemybw::kFarCm + 1.0f;          // unknown distance: out of the bands
+        if (havePeer) {
+            ActorXform x;
+            if (ReadActorXform(r.actor, &x)) {
+                float dx = x.px - peer[0], dy = x.py - peer[1], dz = x.pz - peer[2];
+                d = sqrtf(dx * dx + dy * dy + dz * dz);
+            }
+        }
+        memcpy(keys[n], r.guid, sizeof(keys[n]));
+        c->bw.key = keys[n];
+        c->bw.dist_cm = d;
+        // The scheduler keeps its own last-send times; telling it nothing here is what
+        // makes its per-enemy interval authoritative (one place to look, one rule).
+        c->bw.haveLast = false;
+        c->bw.lastMs = 0;
+        bwCand[n] = c->bw;
+        ++n;
     }
-    r.pubMon = mon;
-    r.pubStatus = mask;
-    QDLOG(LOG_INFO, "enemy detail sent guid=", hex32(r.guid[0]), " anim=", dec((int)d.anim),
-          " seq=", dec((int)d.seq), " status=", hex32(mask),
-          (mon ? " " : " (no montage)"), (mon ? d.path : ""));
+    if (n == 0) return;
+
+    int pick[128];
+    enemybw::Skip why[128];
+    int got = g_detailBw.Select(bwCand, n, now, pick, why);
+
+    for (int k = 0; k < got; ++k) {
+        DetailCand& c = cands[pick[k]];
+        EnemyRec& r = *c.rec;
+
+        // The counter bumps per NEW montage.  A status-only change keeps it, so the copy
+        // does not restart a one-shot animation because poison ticked.
+        if (c.monChanged && c.mon) { if (++r.pubSeq == 0) r.pubSeq = 1; }
+        c.body.seq = r.pubSeq;
+
+        uint8_t body[wire::kMaxBody];
+        wire::Writer w(body, sizeof(body));
+        wire::WriteEnemyDetail(w, c.body);
+        bool sent = w.ok && g_net.SendReliable(wire::K_ENEMY_DETAIL, body, w.len);
+
+        // A new attack montage is also the moment to describe the hit to the partner: the
+        // owner is the only machine that saw the swing, and the peer is the only machine
+        // that can apply it to its own pawn.  Keyed by the same seq, so it is one per
+        // occurrence rather than one per pump -- including when the detail itself had to
+        // be retried.
+        if (c.monChanged && c.mon &&
+            (c.body.anim == wire::E_ATTACK || c.body.anim == wire::E_CAST))
+            TrySendEnemyDamage(r, c.body.seq, c.body.anim, now);
+
+        if (!sent) {
+            // Not recorded, so the next pump re-derives the same change and retries it.
+            static uint32_t lastWarn = 0;
+            if (now - lastWarn > 2000) {
+                lastWarn = now;
+                QDLOG(LOG_WARN, "enemy detail: no reliable slot for guid=",
+                      hex32(r.guid[0]), "; retried next pump");
+            }
+            continue;
+        }
+        r.pubMon = c.mon;
+        r.pubStatus = c.mask;
+        r.pubBoss = c.body.boss;
+        QDLOG(LOG_INFO, "enemy detail sent guid=", hex32(r.guid[0]), " anim=",
+              dec((int)c.body.anim), " seq=", dec((int)c.body.seq),
+              " status=", hex32(c.mask), " boss=", dec((int)c.body.boss),
+              " d=", flt(c.bw.dist_cm, 0),
+              (c.mon ? " " : " (no montage)"), (c.mon ? c.body.path : ""));
+    }
+
+    // One line per second at DEBUG when the lane is under pressure, so a live run can see
+    // the fight's cost without a packet-per-enemy log.
+    static uint32_t lastReport = 0;
+    if (now - lastReport > 1000) {
+        lastReport = now;
+        if (g_detailBw.BudgetDrops() || g_detailBw.FarSkips() || g_detailBw.Overflows())
+            QDLOG(LOG_DEBUG, "enemy detail: candidates=", dec(n), " sent=", dec(got),
+                  " budgetDrops=", dec((int)g_detailBw.BudgetDrops()),
+                  " farSkips=", dec((int)g_detailBw.FarSkips()),
+                  " overflows=", dec((int)g_detailBw.Overflows()));
+    }
 }
 
 // The follower applies the owner's animation and status to its frozen copy.
@@ -4097,17 +4555,33 @@ void OnEnemyDetail(wire::Reader& r, uint32_t now)
         MirrorEnemyStatus(er->actor, d.status);
         er->gotStatus = d.status;
     }
+    // The phase is observed, not driven: SYNC-RESEARCH 6 measured that no cooked package
+    // carries a phase field to write.  It is kept so the boss bar can follow the fight,
+    // and 0 (no boss) is simply recorded.
+    if (d.boss != er->bossPhase) {
+        er->bossPhase = d.boss;
+        QDLOG(LOG_INFO, "enemy detail: boss phase ", dec((int)d.boss), " guid=",
+              hex32(d.guid[0]));
+    }
     if (d.anim == wire::E_NONE || !d.path[0]) return;
     if (d.seq == er->gotSeq && strcmp(d.path, er->gotPath) == 0) return;
 
     void* montage = avatar::LoadAsset(d.path);
     void* mesh = EnemyMesh(er->actor);
-    bool played = (montage && mesh) ? PlayEnemyMontage(mesh, montage) : false;
-    if (!montage) QDLOG(LOG_WARN, "enemy detail: could not load ", d.path);
+    bool played = (montage && mesh) ? PlayEnemyMontage(*er, mesh, montage) : false;
+    if (!montage) {
+        static int loadFails = 0;
+        if (loadFails++ < 5)
+            QDLOG(LOG_WARN, "enemy detail: could not load ", d.path);
+    }
+    // Recorded even when playback failed: retrying a montage the AnimBP cannot play would
+    // resend the same packet every frame forever.  The failure is logged instead, by
+    // PlayEnemyMontage, which is where the difference between "cannot" and "not yet" is.
     er->gotSeq = d.seq;
     memcpy(er->gotPath, d.path, sizeof(er->gotPath));
     QDLOG(LOG_INFO, "enemy detail applied guid=", hex32(d.guid[0]), " anim=", dec((int)d.anim),
-          " seq=", dec((int)d.seq), (played ? " played" : " NOT played"));
+          " seq=", dec((int)d.seq), (played ? " played" : " NOT played"),
+          (er->playedOnce ? " (montage proven at least once this session)" : ""));
 }
 
 void SendEnemyIntentHit(const uint32_t guid[4], int32_t frac)
@@ -4118,6 +4592,317 @@ void SendEnemyIntentHit(const uint32_t guid[4], int32_t frac)
     if (w.ok) g_net.SendReliable(wire::K_INTENT, body, w.len);
 }
 
+// ---------------------------------------------------------------------------
+// Bosses: the health bar, the arena exit, and the phase the row cannot carry
+// ---------------------------------------------------------------------------
+// SYNC-RESEARCH 6 measured every per-boss fact and what can be done with it:
+//
+//   * boss membership is QUERYABLE on the enemy itself (`Enemy_IsPartOfBossEncounter`,
+//     `Enemy_GetBossInfo`), so each machine can tell which of its enemies is a boss
+//     without a list from the other;
+//   * the health bar is `PlayerStatsAndUtils_C.ActivateBossHPBar(Enemy, Group, ctx)`, a
+//     Blueprint function library call whose `__WorldContext` is the CALLER's world, so
+//     each machine raises it on its OWN player for its OWN copy -- no cross-machine write;
+//   * the arena exit is `EnemySpawner_C.PlayerTeleportedOutOfBossArena()`, a zero-argument
+//     spawner event overridden by 20 boss-spawner Blueprints.  The cause is computed per
+//     machine, but "a player left the arena" is one bool, so the sender says the fact and
+//     the receiver raises its own spawner's event;
+//   * PHASES have no shared field to drive: `Phase`, `bBoss` and `OnSubStateChanged` exist
+//     only in the exe's name block and in zero cooked packages (only `Queen_BP` has a
+//     `NewPhase` of its own).  So the phase is OBSERVED where the build exposes one and
+//     otherwise stays 0 -- never fabricated, because a faked phase would run the wrong
+//     Blueprint branch on one machine only.
+// A `Fn` caches ONE resolution and latches `tried`, so a shared static cache must not
+// treat "not found on this class" as "absent on every class": the next enemy may be a
+// different Blueprint.  This wraps that: resolve lazily, and let a miss be retried the
+// first time a DIFFERENT class asks.  `missCls` is the class the miss happened on.
+bool ResolvePerClass(Fn& f, void** missCls, void* owner, const char* name)
+{
+    void* cls = ObjClass(owner);
+    if (f.fn && f.sig.valid) return true;
+    if (*missCls == cls) return false;
+    if (f.Resolve(owner, name)) { *missCls = nullptr; return true; }
+    *missCls = cls;
+    f.tried = false;                 // let a different class ask again
+    f.fn = nullptr;
+    return false;
+}
+
+// The per-enemy boss predicates.
+bool EnemyIsBoss(void* actor)
+{
+    static Fn fPart = {}, fInfo = {};
+    static void* partMiss = nullptr, *infoMiss = nullptr;
+    // `Enemy_IsPartOfBossEncounter` is the measured predicate.  Both are bool-returning
+    // Blueprint functions, and a miss is silent by design: an enemy that cannot be
+    // classified is simply not treated as a boss.
+    if (ResolvePerClass(fPart, &partMiss, actor, "Enemy_IsPartOfBossEncounter")) {
+        Call c(fPart);
+        if (c.Run(actor) && c.Ret()) return *(uint8_t*)c.Ret() != 0;
+    }
+    if (ResolvePerClass(fInfo, &infoMiss, actor, "Enemy_GetBossInfo")) {
+        Call c(fInfo);
+        if (c.Run(actor) && c.Ret()) return *(uint8_t*)c.Ret() != 0;
+    }
+    return false;
+}
+
+// The one per-boss ordinal the shipped build can expose to a sync layer.  There is no
+// shared `Phase` property (measured: zero cooked packages carry one), so this reads the
+// Blueprint variable if a boss declares one and otherwise reports 0.
+//
+// The property's SIZE decides the read: `BytePropC`/`IntPropC` are both tried, and the
+// byte read comes first because a build that exposes a small ordinal almost certainly
+// declares it as a byte.  Reading 4 bytes out of a 1-byte property would take three
+// neighbouring fields with it, so the int path is only used when the byte path missed.
+uint8_t EnemyBossPhase(void* actor)
+{
+    uint8_t v = 0;
+    if (BytePropC(actor, "Phase", &v)) return v;
+    int32_t i = 0;
+    if (IntPropC(actor, "Phase", &i) && i >= 0 && i < 256) return (uint8_t)i;
+    return 0;
+}
+
+// Raise or lower THIS machine's own boss health bar for its own copy.  The library
+// function takes the enemy and its data group; the group is the enemy's own `Data` when
+// the build records one, and null otherwise (the function tolerates it -- the bar then
+// shows the name and HP only, which is still the fight's bar).
+void BossBarLocal(void* enemy, bool on)
+{
+    if (!enemy || !ObjectIsLive(enemy)) return;
+    static void* lib = nullptr;
+    static Fn fOn = {}, fOff = {};
+    if (!lib || !ObjectIsLive(lib))
+        lib = FindObjectByNameAndClass("Default__PlayerStatsAndUtils_C", "PlayerStatsAndUtils_C");
+    if (!lib) {
+        static bool said = false;
+        if (!said) { said = true; QDLOG(LOG_WARN, "boss: PlayerStatsAndUtils_C is not loaded; the "
+                                                  "bar cannot be driven on this machine"); }
+        return;
+    }
+    void* world = GWorldPtr();
+    if (on) {
+        if (!fOn.Resolve(lib, "ActivateBossHPBar")) {
+            QDLOG(LOG_WARN, "boss: ActivateBossHPBar did not resolve on PlayerStatsAndUtils_C");
+            return;
+        }
+        void* group = ObjPropC(enemy, "Data");
+        Call c(fOn);
+        // Named arguments: the first is the enemy, the second its data group, the third
+        // is the caller's world context (this machine's own world, which is the point).
+        if (fOn.Off("Enemy") >= 0) c.Obj("Enemy", enemy);
+        else if (fOn.sig.props > 0) c.Obj(fOn.sig.p[0].name, enemy);
+        if (fOn.Off("Group") >= 0) c.Obj("Group", group);
+        else if (fOn.sig.props > 1) c.Obj(fOn.sig.p[1].name, group);
+        if (fOn.Off("__WorldContext") >= 0) c.Obj("__WorldContext", world);
+        else if (fOn.sig.props > 2) c.Obj(fOn.sig.p[2].name, world);
+        bool ran = c.Run(lib);
+        QDLOG(ran ? LOG_INFO : LOG_WARN, "boss: ActivateBossHPBar ", (ran ? "called" : "FAILED"),
+              " for this machine's own copy");
+        return;
+    }
+    if (fOff.Resolve(lib, "DeactivateBossHPBar")) {
+        Call c(fOff);
+        if (fOff.Off("__WorldContext") >= 0) c.Obj("__WorldContext", world);
+        else if (fOff.sig.props > 0) c.Obj(fOff.sig.p[0].name, world);
+        bool ran = c.Run(lib);
+        QDLOG(ran ? LOG_INFO : LOG_WARN, "boss: DeactivateBossHPBar ", (ran ? "called" : "FAILED"));
+    }
+}
+
+// Raise this machine's own spawner's arena-exit event.  `spawner` is the local spawner
+// actor that owns the copy, or null when the enemy is a placed boss with no spawner -- in
+// which case there is no event to raise and the caller says so rather than guessing.
+void BossArenaExitLocal(void* spawner)
+{
+    if (!spawner || !ObjectIsLive(spawner)) return;
+    static Fn f = {};
+    static void* miss = nullptr;
+    if (!ResolvePerClass(f, &miss, spawner, "PlayerTeleportedOutOfBossArena")) {
+        static bool said = false;
+        if (!said) {
+            said = true;
+            QDLOG(LOG_WARN, "boss: PlayerTeleportedOutOfBossArena did not resolve on the "
+                            "local spawner; this build's spawner does not carry the event");
+        }
+        return;
+    }
+    Call c(f);      // zero arguments, measured
+    bool ran = c.Run(spawner);
+    QDLOG(ran ? LOG_INFO : LOG_WARN, "boss: arena exit ",
+          (ran ? "raised on this machine's spawner" : "event FAILED"));
+}
+
+// Does this machine's boss spawner say a player has left the arena?  The game computes
+// this itself per machine (`Shoulddo Boss Teleport Out` / `Local_CheckBossTPOut` from
+// `PairedBossSpawners`, SYNC-RESEARCH 6), so asking its own function is the honest read:
+// this mod never invents the condition, it only forwards the fact.
+//
+// A build that names it differently, or does not expose it, is reported once and then
+// treated as "no exit" -- never as "exit", because a spurious arena exit teleports the
+// partner out of a fight that is still happening.
+bool BossArenaExitPending(void* spawner)
+{
+    if (!spawner || !ObjectIsLive(spawner)) return false;
+    // One `Fn` per candidate name.  `Fn::Resolve` latches `tried` on the first attempt, so
+    // reusing one object for a second name would never look the second name up: the
+    // fallback would silently do nothing, which is the failure this whole header exists to
+    // make impossible.
+    static Fn fSpaced = {}, fCamel = {};
+    static void* spacedMiss = nullptr, *camelMiss = nullptr;
+    static bool said = false;
+    if (ResolvePerClass(fSpaced, &spacedMiss, spawner, "Shoulddo Boss Teleport Out")) {
+        Call c(fSpaced);
+        if (c.Run(spawner) && c.Ret()) return *(uint8_t*)c.Ret() != 0;
+        return false;
+    }
+    if (ResolvePerClass(fCamel, &camelMiss, spawner, "ShouldDoBossTeleportOut")) {
+        Call c(fCamel);
+        if (c.Run(spawner) && c.Ret()) return *(uint8_t*)c.Ret() != 0;
+        return false;
+    }
+    if (!said) {
+        said = true;
+        QDLOG(LOG_WARN, "boss: this build exposes no arena-exit predicate on the spawner; "
+                        "the arena exit is not synced (the bar still is)");
+    }
+    return false;
+}
+
+// The owner announces the boss lane for the enemies it runs.  Sent on change only, like
+// the detail lane: a boss bar is not a 20 Hz sample.
+void BossPump(uint32_t now)
+{
+    static uint32_t lastCheck = 0;
+    if (now - lastCheck < 250) return;
+    lastCheck = now;
+
+    for (int i = 0; i < g_enN; ++i) {
+        EnemyRec& r = g_en[i];
+        if (!r.haveGuid || !ObjectIsLive(r.actor)) continue;
+        if (g_own.State(r.guid) != enemyown::O_LOCAL) continue;
+
+        bool boss = EnemyIsBoss(r.actor);
+        if (boss != r.isBoss) {
+            r.isBoss = boss;
+            // A newly identified boss has published nothing: force the first body even if
+            // its bar state happens to equal the "never sent" sentinel.
+            r.pubBossFlags = 0xFF;
+            if (!boss) { r.bossBarShown = false; r.bossPhase = 0; }
+            QDLOG(LOG_INFO, "boss: guid=", hex32(r.guid[0]), (boss ? " is a boss" : " is not a boss"));
+        }
+        if (!boss) continue;
+
+        float hp = 0, mx = 0;
+        bool haveHp = EnemyHp(r.actor, &hp, &mx) && mx > 0.0f;
+        bool dead = EnemyDead(r.actor) || (haveHp && hp <= 0.0f);
+        uint8_t phase = EnemyBossPhase(r.actor);
+
+        if (phase != r.bossPhase) {
+            r.bossPhase = phase;
+            QDLOG(LOG_INFO, "boss: guid=", hex32(r.guid[0]), " phase -> ", dec((int)phase));
+        }
+
+        // The bar is driven by the OWNER, on the owner, when the fight starts and hidden
+        // when it ends.  The receiver gets the same fact and raises its own.
+        bool wantBar = !dead;
+        if (wantBar != r.bossBarShown) {
+            r.bossBarShown = wantBar;
+            BossBarLocal(r.actor, wantBar);
+            r.bossBarAt = now;
+        }
+
+        wire::BossBody b;
+        memset(&b, 0, sizeof(b));
+        memcpy(b.guid, r.guid, 16);
+        b.phase = phase;
+        b.hp = haveHp ? enemy::HpFrac(hp, mx) : 0;
+        b.flags = wantBar ? wire::kBossBarOn : wire::kBossBarOff;
+
+        // On change only, like the detail lane: a bar is not a 20 Hz sample.  The key is
+        // (bar state, phase).  HP is not a change trigger -- the bar reads the copy's own
+        // HP on each machine, and the ENEMY row is already converging it; sending a boss
+        // body per HP tick would be a 10 Hz reliable packet per boss for no new fact.
+        if (b.flags == r.pubBossFlags && b.phase == r.pubBossPhaseSent) {
+            // The one event that is not a state: a player left the arena.  It is observed
+            // on the owner, which is the machine that runs the spawner the game computes
+            // the condition on, and it is sent as a one-shot.
+            if (BossArenaExitPending(r.spawner) && !r.bossArenaExitSent) {
+                r.bossArenaExitSent = true;
+                wire::BossBody x;
+                memset(&x, 0, sizeof(x));
+                memcpy(x.guid, r.guid, 16);
+                x.flags = wire::kBossArenaExit;
+                x.phase = phase;
+                uint8_t xb[64];
+                wire::Writer xw(xb, sizeof(xb));
+                wire::WriteBoss(xw, x);
+                if (xw.ok && g_net.SendReliable(wire::K_BOSS, xb, xw.len))
+                    QDLOG(LOG_INFO, "boss: arena exit sent guid=", hex32(r.guid[0]));
+                else
+                    r.bossArenaExitSent = false;      // not sent: retry next pump
+            }
+            continue;
+        }
+        r.pubBossFlags = b.flags;
+        r.pubBossPhaseSent = b.phase;
+
+        uint8_t body[64];
+        wire::Writer w(body, sizeof(body));
+        wire::WriteBoss(w, b);
+        if (w.ok && g_net.SendReliable(wire::K_BOSS, body, w.len)) {
+            QDLOG(LOG_INFO, "boss: sent guid=", hex32(r.guid[0]), " phase=",
+                  dec((int)phase), (wantBar ? " bar on" : " bar off"), " hp=", dec((int)b.hp));
+        } else {
+            // Not recorded, so the next pump retries it.
+            r.pubBossFlags = 0xFF;
+        }
+    }
+}
+
+// The follower's half: raise ITS OWN boss bar for ITS OWN copy, and raise its own
+// spawner's arena exit when the owner says a player left the arena.
+void OnBoss(wire::Reader& r, uint32_t now)
+{
+    if (!Cfg().enemy_sync) return;
+    wire::BossBody b;
+    if (!wire::ReadBoss(r, &b)) return;
+
+    if (b.flags & wire::kBossArenaExit) {
+        // The event belongs to the LOCAL spawner of the local copy.  Resolving it from the
+        // enemy record is what keeps this a local call: the sender computed the cause on
+        // its machine, and this machine only reproduces the event on the actor it has.
+        EnemyRec* er = EnemyByGuid(b.guid);
+        void* sp = (er && ObjectIsLive(er->spawner)) ? er->spawner : nullptr;
+        if (sp) BossArenaExitLocal(sp);
+        else QDLOG(LOG_WARN, "boss: arena exit from the partner, but this machine has no "
+                             "spawner for guid=", hex32(b.guid[0]), " (placed boss?)");
+        return;
+    }
+
+    EnemyRec* er = EnemyByGuid(b.guid);
+    if (!er || !ObjectIsLive(er->actor)) {
+        static int missing = 0;
+        if (missing++ < 5)
+            QDLOG(LOG_WARN, "boss: no local copy for guid=", hex32(b.guid[0]),
+                  "; the bar cannot be raised here");
+        return;
+    }
+    if (!er->driven || g_own.State(b.guid) != enemyown::O_FROZEN) return;   // owner's own bar
+
+    er->isBoss = true;
+    er->bossPhase = b.phase;
+    bool wantBar = (b.flags & wire::kBossBarOn) != 0;
+    if (wantBar != er->bossBarShown) {
+        er->bossBarShown = wantBar;
+        BossBarLocal(er->actor, wantBar);
+        er->bossBarAt = now;
+        QDLOG(LOG_INFO, "boss: follower ", (wantBar ? "raised" : "lowered"),
+              " its own bar for guid=", hex32(b.guid[0]), " hp=", dec((int)b.hp),
+              " phase=", dec((int)b.phase));
+    }
+} 
 // ---------------------------------------------------------------------------
 // Ownership by proximity (qdenemyown.h), applied to the local records
 // ---------------------------------------------------------------------------
@@ -4240,14 +5025,15 @@ void EnemySendPump(uint32_t now)
         w.hp = enemy::HpFrac(hp, mx);
         w.flags = enemy::kAlive | enemy::kBody;
         if (pub == enemyown::PUB_HANDOFF) w.flags |= wire::kEnemyPeerOwns;
+        // The identity source rides the row (WIRE.md 3.9): the receiver needs it to know
+        // whether this key is a spawner GUID it can persist against or a deterministic
+        // hash of a placed path / summon.  Without it a placed hash colliding with a
+        // spawner GUID would merge two enemies into one record.
+        w.flags = enemyid::TagFlags(w.flags, (enemyid::Source)r.src);
     }
-    // Detail for the enemies this machine runs.  Reliable and on change only.
-    for (int i = 0; i < g_enN; ++i) {
-        EnemyRec& r = g_en[i];
-        if (!r.haveGuid || !ObjectIsLive(r.actor)) continue;
-        if (g_own.State(r.guid) != enemyown::O_LOCAL) continue;
-        SendEnemyDetail(r, now);
-    }
+    // Detail for the enemies this machine runs.  Reliable, on change only, and ranked by
+    // relevance to the partner so a big fight stays inside the budget (qdenemybw.h).
+    EnemyDetailPump(now);
 
     int count = 0;
     int first = g_rowCursor.Take(n, 16, &count);     // 16 live + up to 4 dead = 20 rows
@@ -4269,6 +5055,72 @@ void EnemySendPump(uint32_t now)
     if (w.ok) g_net.SendUnreliable(wire::K_ENEMY, body, w.len);
 }
 
+// ---------------------------------------------------------------------------
+// Adopting a key the other machine minted first
+// ---------------------------------------------------------------------------
+// Position-based keys make the two machines agree without negotiating, but they can still
+// disagree: one machine's first sight of a summon is LATE (a stream-in from a distance)
+// and it had already moved, or the two machines classified the same actor differently
+// because the placed-vs-spawned test (ActorIsPlaced) is deliberately conservative.  Rather
+// than let that become two enemies -- one frozen forever, one never driven -- an incoming
+// row for a key this machine does not know is matched against the local records that were
+// themselves derived from a position: if exactly ONE of them sits within qdenemyid.h's
+// kAdoptCm of that row, it is the same enemy and the local record takes the sender's key.
+//
+// Why only hash-derived records, and why exactly one: a spawner GUID is exact, so a
+// mismatch there is a genuinely different enemy and must not be absorbed.  A hash-derived
+// key is the only identity with a positional component, and an ambiguous match (two
+// candidates in range) is refused rather than guessed, because guessing would drive one
+// enemy's body from another enemy's rows.
+bool HashDerivedSource(uint8_t flags)
+{
+    return enemyid::HashDerived(enemyid::SourceOf(flags));
+}
+
+bool AdoptUnknownKey(const wire::EnemyRow& e, uint32_t now)
+{
+    if (!HashDerivedSource(e.flags)) return false;
+    if (EnemyByGuid(e.guid)) return false;              // already known
+
+    const float rx = wire::DequantizePos(e.px), ry = wire::DequantizePos(e.py),
+                rz = wire::DequantizePos(e.pz);
+    EnemyRec* found = nullptr;
+    int matches = 0;
+    for (int i = 0; i < g_enN; ++i) {
+        EnemyRec& c = g_en[i];
+        if (!c.haveGuid || c.adopted) continue;
+        if (!enemyid::HashDerived((enemyid::Source)c.src)) continue;
+        if (!ObjectIsLive(c.actor)) continue;
+        ActorXform x;
+        if (!ReadActorXform(c.actor, &x)) continue;
+        float dx = x.px - rx, dy = x.py - ry, dz = x.pz - rz;
+        float d = sqrtf(dx * dx + dy * dy + dz * dz);
+        if (!enemyid::CouldAdopt(d)) continue;
+        ++matches;
+        found = &c;
+        if (matches > 1) break;
+    }
+    if (matches != 1 || !found) {
+        static int ambiguous = 0;
+        if (matches > 1 && ambiguous++ < 5)
+            QDLOG(LOG_WARN, "enemy id: ", dec(matches),
+                  " local position-keyed enemies near an unknown key; not adopting (ambiguous)");
+        return false;
+    }
+
+    uint32_t old[4];
+    memcpy(old, found->guid, sizeof(old));
+    uint8_t oldSrc = found->src;
+    memcpy(found->guid, e.guid, sizeof(found->guid));
+    found->haveGuid = true;
+    found->src = enemyid::SourceOf(e.flags);   // the sender's classification is the truth
+    found->adopted = true;
+    QDLOG(LOG_INFO, "enemy id: adopted the owner's key ", hex32(e.guid[0]),
+          " (local ", hex32(old[0]), " src=", dec((int)oldSrc), "->", dec((int)found->src),
+          ")");
+    return true;
+}
+
 void OnEnemyRows(wire::Reader& r, uint32_t now)
 {
     uint16_t n = 0;
@@ -4276,6 +5128,11 @@ void OnEnemyRows(wire::Reader& r, uint32_t now)
     for (int i = 0; i < n && i < 32; ++i) {
         wire::EnemyRow e;
         if (!wire::ReadEnemyRow(r, &e)) break;
+        // A key this machine does not have may be one it minted differently (a summon
+        // seen late, or an actor the conservative placed test classified another way).
+        // Adopt before feeding the row anywhere, so ownership, the kill log and the row
+        // view all speak about the same enemy from this instant on.
+        if (!EnemyByGuid(e.guid)) AdoptUnknownKey(e, now);
         g_hostView.OnRow(e.guid, e.px, e.py, e.pz, e.yaw, e.hp, e.flags, now);
         // The owner says it is alive: a death this machine still held from when IT ran
         // the enemy is stale and must stop being broadcast.
@@ -4439,6 +5296,10 @@ void EnemyPump(uint32_t now)
         // A swing sequence is per-world too; carrying it across a map change would
         // treat the first attack in the new world as already described.
         g_dmgGate.Reset();
+        // So are the detail scheduler's per-enemy intervals and the summon coincidence
+        // table: a new world reuses neither a key nor a timestamp.
+        g_detailBw.Reset();
+        g_summonOrd.Reset();
     }
     EnemyScanStep();
     if (!g_net.Connected()) {
@@ -4447,12 +5308,21 @@ void EnemyPump(uint32_t now)
         g_own.Reset();
         g_hostView.Reset();
         g_dmgGate.Reset();
+        g_detailBw.Reset();
+        // A boss bar this machine raised must not outlive the session.
+        for (int i = 0; i < g_enN; ++i) {
+            if (g_en[i].bossBarShown && ObjectIsLive(g_en[i].actor)) {
+                BossBarLocal(g_en[i].actor, false);
+                g_en[i].bossBarShown = false;
+            }
+        }
         for (int i = 0; i < g_enN; ++i) if (g_en[i].driven && ObjectIsLive(g_en[i].actor)) EnemyDrive(g_en[i], false);
         return;
     }
     g_own.SetHost(g_net.IsHost());
     EnemyOwnPump(now);
     EnemySendPump(now);
+    BossPump(now);
 }
 
 // ===========================================================================
@@ -5421,6 +6291,11 @@ void DispatchInbound(const InboundPacket& p, uint32_t now)
         // distance, and only the machine that owns the pawn can apply it.  This case
         // is last on purpose -- it is the newest kind and touches no other lane.
         if (Cfg().enemy_sync) OnPlayerDamage(r, now);
+        break;
+    case wire::K_BOSS:
+        // The owner's boss lane: which enemy is a boss, the phase it can expose, and the
+        // two local calls each machine makes for itself (its own bar, its own arena exit).
+        if (Cfg().enemy_sync) OnBoss(r, now);
         break;
     default:
         break;

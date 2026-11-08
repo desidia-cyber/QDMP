@@ -43,6 +43,7 @@ enum Kind {
     K_LEVEL_UNION = 0x22,
     K_TRAVEL      = 0x23,
     K_DAMAGE      = 0x24,
+    K_BOSS        = 0x25,
     K_LOG         = 0x30,
 };
 
@@ -70,7 +71,7 @@ inline bool IsReliableKind(uint8_t kind)
 {
     return kind == K_HELLO || kind == K_WELCOME || kind == K_INTENT ||
            kind == K_EFFECT || kind == K_ENEMY_DETAIL || kind == K_TRAVEL ||
-           kind == K_DAMAGE;
+           kind == K_DAMAGE || kind == K_BOSS;
 }
 
 // --------------------------------------------------------------------------
@@ -466,6 +467,19 @@ static const uint8_t kEnemyBody   = 0x04;
 // 1 = the sender has handed it to the receiver (the sender freezes its own copy)
 static const uint8_t kEnemyPeerOwns = 0x08;
 
+// Bits 4-5 carry the identity SOURCE of the row's `guid` (WIRE.md 3.9, qdenemyid.h):
+//   0 = an authored spawner GUID (unchanged: the persisted-key path)
+//   1 = a placed actor, keyed by a hash of its cooked "<world>/<level>/<name>" path
+//   2 = a summon, keyed by a hash of its summoner's key and the summoner's ordinal
+// Two 128-bit hashes of different things can collide, so the pair (source, guid) is the
+// identity: a placed-path hash that happens to equal a spawner GUID is still a different
+// enemy, and a live log can say which kind of key it is looking at.
+static const uint8_t kEnemySrcShift = 4;
+static const uint8_t kEnemySrcMask  = 0x30;
+static const uint8_t kEnemySrcSpawner = 0;
+static const uint8_t kEnemySrcPlaced  = 1;
+static const uint8_t kEnemySrcSummon  = 2;
+
 // ---- enemy detail (WIRE.md 3.9a) -------------------------------------------
 // An ENEMY row is a SAMPLE: position, health, ownership, 20 Hz, latest wins.  What an
 // enemy is DOING is an EVENT -- a montage starts once, a status mask changes when a
@@ -476,7 +490,20 @@ static const uint8_t kEnemyPeerOwns = 0x08;
 //
 // Body: guid(16), anim(u8 kind, see EnemyAnim), seq(u8, bumps on every new montage),
 //       status(u16 mask, the same StatusBit values STATUS uses for players),
+//       boss(u8, the boss phase the owner observed; 0 = not a boss / no shared phase),
 //       path(str, the montage asset, "" when none is playing).
+//
+// `boss` is the one per-boss value the shipped build exposes to a sync layer at all.
+// MEASURED (SYNC-RESEARCH 6): `Phase`, `bBoss`, `OnSubStateChanged` exist only in the
+// exe's name block and in zero cooked packages, so there is no Blueprint phase field to
+// drive; what DOES exist is the boss spawner's own state, which the owner can read and
+// the follower can act on (the health bar and the arena exit, BOSS below).  The field is
+// therefore a small observed ordinal, not a fabricated phase machine: 0 means "no boss
+// phase observed", and a receiver that sees 0 simply never touch a phase.
+//
+// `seq` is per-enemy and wraps 255 -> 1.  A receiver keys "already applied" on the pair
+// (seq, path), never on seq alone: two different attacks can both be seq 3 after enough
+// swings.
 enum EnemyAnim {
     E_NONE   = 0,
     E_ATTACK = 1,
@@ -487,6 +514,15 @@ enum EnemyAnim {
     E_MOVE   = 6,
 };
 
+// True for the anim kinds a player judges the game by, where a dropped event matters:
+// the swing that hit them, the telegraph they had to dodge, the death they earned.
+// `enemybw` uses this to let those bypass the cosmetic rate limits.
+inline bool EnemyAnimCritical(uint8_t anim)
+{
+    return anim == E_ATTACK || anim == E_HURT || anim == E_DIE ||
+           anim == E_CAST || anim == E_ROAR;
+}
+
 static const int kEnemyPathCap = 200;
 
 struct EnemyDetailBody {
@@ -494,6 +530,7 @@ struct EnemyDetailBody {
     uint8_t  anim;
     uint8_t  seq;
     uint16_t status;
+    uint8_t  boss;
     char     path[kEnemyPathCap];
 };
 
@@ -503,6 +540,7 @@ inline void WriteEnemyDetail(Writer& w, const EnemyDetailBody& d)
     w.U8(d.anim);
     w.U8(d.seq);
     w.U16(d.status);
+    w.U8(d.boss);
     w.Str(d.path);
 }
 
@@ -512,7 +550,56 @@ inline bool ReadEnemyDetail(Reader& r, EnemyDetailBody* d)
     d->anim = r.U8();
     d->seq = r.U8();
     d->status = r.U16();
+    d->boss = r.U8();
     if (r.Str(d->path, sizeof(d->path)) >= (int)sizeof(d->path)) return false;
+    return r.ok;
+}
+
+// ---- boss (WIRE.md 3.9b) ---------------------------------------------------
+// Two things about a boss are per-machine calls that only that machine can make, and
+// both were measured on the shipped build (SYNC-RESEARCH 6):
+//
+//   * the health bar: `PlayerStatsAndUtils_C.ActivateBossHPBar(Enemy, Group, ctx)` is a
+//     Blueprint function library call whose `__WorldContext` is the CALLER's world, so
+//     each machine raises it on its own player for its own copy of the boss;
+//   * the arena exit: `EnemySpawner_C.PlayerTeleportedOutOfBossArena()` is a zero-argument
+//     spawner event, overridden by 20 boss-spawner Blueprints.  The CAUSE is computed per
+//     machine, but the FACT ("a player left the arena") is one bool.
+//
+// Body: guid(16, the boss enemy's key; zero for "no particular boss"),
+//       flags(u8, see kBoss*), phase(u8, the owner's observed phase, 0 = none),
+//       hp(u16, the boss's HP as the same 0..65535 fraction an ENEMY row carries).
+//
+// Reliable: a boss bar that fails to appear because a datagram was lost is the kind of
+// failure a player reports as "the boss fight is broken".
+struct BossBody {
+    uint32_t guid[4];
+    uint8_t  flags;
+    uint8_t  phase;
+    uint16_t hp;
+};
+
+// The boss's health bar should be shown on the receiver (raised on its own player).
+static const uint8_t kBossBarOn    = 0x01;
+// The boss's health bar should be hidden again (the fight ended, or the copy died).
+static const uint8_t kBossBarOff   = 0x02;
+// A player left the boss arena: the receiver raises its own spawner's exit event.
+static const uint8_t kBossArenaExit = 0x04;
+
+inline void WriteBoss(Writer& w, const BossBody& b)
+{
+    w.Guid(b.guid);
+    w.U8(b.flags);
+    w.U8(b.phase);
+    w.U16(b.hp);
+}
+
+inline bool ReadBoss(Reader& r, BossBody* b)
+{
+    r.Guid(b->guid);
+    b->flags = r.U8();
+    b->phase = r.U8();
+    b->hp = r.U16();
     return r.ok;
 }
 

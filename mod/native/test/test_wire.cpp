@@ -19,6 +19,7 @@
 #include <string.h>
 
 #include "qdwire.h"
+#include "qdenemyid.h"
 
 static int g_pass = 0;
 static int g_fail = 0;
@@ -381,6 +382,7 @@ static void TestWorldBodies()
         memset(&d, 0, sizeof(d));
         d.guid[0] = 0x5ae3b37bu; d.guid[3] = 9;
         d.anim = E_ATTACK; d.seq = 3; d.status = ST_POISON | ST_HEAVY;
+        d.boss = 2;
         strcpy(d.path, "/Game/Anim/Enemy/Slash_Montage");
         d.path[sizeof(d.path) - 1] = 0;
         Writer w(buf, sizeof(buf));
@@ -390,8 +392,43 @@ static void TestWorldBodies()
         CHECK(got.guid[0] == 0x5ae3b37bu && got.guid[3] == 9, "enemy_detail guid round-trips");
         CHECK(got.anim == E_ATTACK && got.seq == 3, "enemy_detail anim/seq round-trip");
         CHECK(got.status == (uint16_t)(ST_POISON | ST_HEAVY), "enemy_detail status round-trips");
+        CHECK(got.boss == 2, "enemy_detail boss phase round-trips");
         CHECK(strcmp(got.path, d.path) == 0, "enemy_detail montage path round-trips");
         CHECK(r.pos == r.len, "enemy_detail body fully consumed");
+    }
+
+    // BOSS: the two per-machine boss facts (health bar, arena exit).
+    {
+        BossBody b, got;
+        memset(&b, 0, sizeof(b));
+        b.guid[0] = 0x11223344u; b.guid[2] = 0x55667788u;
+        b.flags = kBossBarOn | kBossArenaExit;
+        b.phase = 3;
+        b.hp = 12345;
+        Writer w(buf, sizeof(buf));
+        WriteBoss(w, b);
+        Reader r(buf, w.len);
+        CHECK(ReadBoss(r, &got), "boss reads");
+        CHECK(got.guid[0] == 0x11223344u && got.guid[2] == 0x55667788u, "boss guid round-trips");
+        CHECK(got.flags == (uint8_t)(kBossBarOn | kBossArenaExit), "boss flags round-trip");
+        CHECK(got.phase == 3 && got.hp == 12345, "boss phase/hp round-trip");
+        CHECK(r.pos == r.len, "boss body fully consumed");
+    }
+
+    // The identity source lives in the ENEMY row's spare flag bits.  It must survive
+    // alongside every state bit, and a value outside the enum must not read back as a
+    // source that means something else.
+    {
+        uint8_t f = enemyid::TagFlags(kEnemyAlive | kEnemyDriven | kEnemyBody,
+                                      enemyid::SRC_PLACED);
+        CHECK(enemyid::SourceOf(f) == enemyid::SRC_PLACED, "identity source round-trips");
+        CHECK((f & 0x0F) == (kEnemyAlive | kEnemyDriven | kEnemyBody),
+              "identity source leaves the state bits alone");
+        CHECK(enemyid::StateBits(f) == (kEnemyAlive | kEnemyDriven | kEnemyBody),
+              "StateBits strips exactly the source");
+        uint8_t bad = 0x30;   // 3 is not a source
+        CHECK(enemyid::SourceOf(bad) == enemyid::SRC_SUMMON,
+              "an unknown source bit pattern degrades to summon, never to spawner");
     }
 
     // TRAVEL: the map the session is in, and where the sender went.
