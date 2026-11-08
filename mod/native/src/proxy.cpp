@@ -118,6 +118,8 @@ void*             g_puppetClass = nullptr;
 motion::Interp    g_peerInterp;
 puppet::PuppetFsm g_puppet;
 stream::UnionGuard g_stream;
+stream::MapBoard   g_map;
+uint32_t           g_travelSeq = 0;
 dialogue::DialogueLock g_dialogue;
 flags::FlagBank   g_flags;
 
@@ -2044,17 +2046,35 @@ int LocalSlot()  { return g_net.IsHost() ? 0 : 1; }
 // also flips the manager's pending entry to "show": next frame the manager re-issues
 // it as a show, finds the level visible, and moves on.  One frame, no deadlock.
 //
+// THE UNLOAD PATH IS GUARDED TOO (measured this pass, disassembly of the shipped image):
+//
+//   * `ULevelStreaming::SetShouldBeLoaded` is virtual.  Its UFunction thunk
+//     (0x02DC8CF0, pair table 0x03FFE340) parses the bool and calls [vtable+0x270].
+//   * The level-streaming vtable is 0x03E72448: ProcessEvent sits at its +0x220
+//     (0x011A7AA0), the family's +0x0A0/+0x160 slots are 0x029AC610/0x029A2D90, and
+//     +0x270 is 0x029ACAC0 -- a byte +0xBA bit 4 setter with exactly the shape of
+//     SetShouldBeVisible (bit 3, 0x029ACB20), including the same tail call to
+//     UWorld::UpdateStreamingLevelShouldBeConsidered 0x02D4A0E0.
+//   * The neighbouring slot +0x278 (0x029ACF70) is ShouldBeLoaded and reads that
+//     same +0xBA bit 4, which is what pins the bit.
+//   * The three sibling family vtables (0x03E71328, 0x03E718C8, 0x03E71B58) override
+//     +0x270 with a bare `ret` (0x007746E0): those classes deliberately ignore
+//     SetShouldBeLoaded, so the one honouring body is the one hooked here.
+//
 // What is PUBLISHED is what the local game wants (recorded from the same setter), never
 // what this mod forced -- otherwise the two machines would hold each other's levels up
 // forever.  Levels the partner needs that are not shown here are shown by this mod
 // (SetShouldBeLoaded + SetShouldBeVisible) and released 5 s after the partner leaves
 // them (stream::ForceBook).
 typedef void (*FnSetShouldBeVisible)(void* levelStreaming, bool visible);
+typedef void (*FnSetShouldBeLoaded)(void* levelStreaming, bool loaded);
 FnSetShouldBeVisible g_oSetVis = nullptr;
+FnSetShouldBeLoaded  g_oSetLoaded = nullptr;
 stream::ForceBook    g_force;
 
 static const int kLevelVisByte = 0xBA;     // ULevelStreaming flags byte (setter bytes verify it)
 static const int kLevelVisBit  = 0x08;     // bShouldBeVisible
+static const int kLevelLoadBit = 0x10;     // bShouldBeLoaded (ShouldBeLoaded +0x278 reads it)
 static const int kMgrSlot      = 0x3B0;    // GameInstance -> AFS_LevelManager (0x00E2EEAC)
 static const int kMgrCurEntry  = 0x330;    // {X*, u8 hide}; X + 0x30 = ULevelStreaming*
 static const int kMgrCurHide   = 0x338;
@@ -2083,34 +2103,144 @@ bool LevelVisible(void* ls)
     return ls && LevelVisBitGuarded(ls, &v) && v;
 }
 
+bool LevelLoadBitGuarded(void* ls, bool* out)
+{
+    __try { *out = (*((uint8_t*)ls + kLevelVisByte) & kLevelLoadBit) != 0; return true; }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+bool LevelLoaded(void* ls)
+{
+    bool v = false;
+    return ls && LevelLoadBitGuarded(ls, &v) && v;
+}
+
 LevelRec* LevelFind(void* ls)
 {
     for (int i = 0; i < g_levelN; ++i) if (g_levels[i].ls == ls) return &g_levels[i];
     return nullptr;
 }
 
+// Once per key, not once per frame.  LevelsRefresh creates each entry once, but a
+// world change rebuilds the table and would otherwise repeat every line on every
+// transition.  The cache is deliberately small: past it the log is allowed to repeat
+// rather than allocate.
+bool SameNameText(const char* a, const char* b)
+{
+    int i = 0;
+    for (; a[i] || b[i]; ++i) if (a[i] != b[i]) return false;
+    return true;
+}
+
+bool RouteOnce(char keys[][160], int& n, const char* key)
+{
+    for (int i = 0; i < n; ++i) {
+        int k = 0;
+        for (; keys[i][k] && keys[i][k] == key[k]; ++k) {}
+        if (!keys[i][k] && !key[k]) return false;
+    }
+    if (n < 64) {
+        int k = 0;
+        for (; key[k] && k < 159; ++k) keys[n][k] = key[k];
+        keys[n][k] = 0;
+        ++n;
+    }
+    return true;
+}
+
+void LogLevelNameOnce(const char* name, const char* source)
+{
+    static char seen[64][160];
+    static int  n = 0;
+    if (!RouteOnce(seen, n, name)) return;
+    QDLOG(LOG_INFO, "level name: ", name, " from ", source);
+}
+
+void LogLevelNameRefusedOnce(const char* objectName)
+{
+    static char seen[64][160];
+    static int  n = 0;
+    char key[160];
+    int k = 0;
+    for (; objectName[k] && k < 159; ++k) key[k] = objectName[k];
+    key[k] = 0;
+    if (!RouteOnce(seen, n, key)) return;
+    QDLOG(LOG_WARN, "level name REFUSED for streaming object ",
+          (key[0] ? key : "?"), ": no plausible package or object name; it is not "
+          "published to the union (the partner would protect a level that does not exist)");
+}
+
+void LogLevelNameDisagreeOnce(const char* wa, const char* pk)
+{
+    static char seen[64][160];
+    static int  n = 0;
+    char key[160];
+    int k = 0;
+    for (; wa[k] && k < 158; ++k) key[k] = wa[k];
+    key[k++] = '|';
+    for (int j = 0; pk[j] && k < 159; ++j) key[k++] = pk[j];
+    key[k] = 0;
+    if (!RouteOnce(seen, n, key)) return;
+    QDLOG(LOG_WARN, "level name: WorldAsset says '", wa, "' but PackageNameToLoad says '",
+          pk, "'; using PackageNameToLoad (the soft path at +0x10 is unverified)");
+}
+
 // "/Game/.../100_GR.100_GR" from WorldAsset (TSoftObjectPtr<UWorld>: the
 // FSoftObjectPath's AssetPathName is at +0x10, after the weak pointer and the tag),
-// else PackageNameToLoad, else the object's own name.  Every candidate must look like a
-// package path before it is used.
+// else PackageNameToLoad, else the object's own name.  The first candidate that
+// yields a PLAUSIBLE short name wins; a wrong name is worse than an empty one because
+// it makes the partner protect a level that does not exist.  Which source won is
+// logged once per name -- the soft path is unverified, so a live run must be able to
+// see whether `WorldAsset` or the fallback is doing the work.
 void LevelNameOf(void* ls, char* out, int cap)
 {
+    if (!out || cap <= 0) return;
     out[0] = 0;
     char path[256];
+    char wa[stream::kMaxNameLen] = {0};
+    char pk[stream::kMaxNameLen] = {0};
+    char obj[stream::kMaxNameLen] = {0};
     void* cls = ObjClass(ls);
-    int wa = PropOff(cls, "WorldAsset");
-    if (wa >= 0 && FNameToString(*(QdName*)((uint8_t*)ls + wa + 0x10), path, sizeof(path)) > 0 &&
+
+    int wo = PropOff(cls, "WorldAsset");
+    if (wo >= 0 && FNameToString(*(QdName*)((uint8_t*)ls + wo + 0x10), path, sizeof(path)) > 0 &&
         path[0] == '/') {
-        stream::ShortLevelName(path, out, cap);
-        if (out[0]) return;
+        stream::ShortLevelName(path, wa, sizeof(wa));
+        if (!stream::PlausibleLevelName(wa)) wa[0] = 0;
     }
-    int pk = PropOff(cls, "PackageNameToLoad");
-    if (pk >= 0 && FNameToString(*(QdName*)((uint8_t*)ls + pk), path, sizeof(path)) > 0 &&
-        path[0] == '/') {
-        stream::ShortLevelName(path, out, cap);
-        if (out[0]) return;
+    int po = PropOff(cls, "PackageNameToLoad");
+    if (po >= 0 && FNameToString(*(QdName*)((uint8_t*)ls + po), path, sizeof(path)) > 0) {
+        stream::ShortLevelName(path, pk, sizeof(pk));
+        if (!stream::PlausibleLevelName(pk)) pk[0] = 0;
     }
-    FNameToString(ObjNameRaw(ls), out, cap);
+
+    const char* chosen = nullptr;
+    const char* source = nullptr;
+    if (wa[0] && pk[0] && !SameNameText(wa, pk)) {
+        LogLevelNameDisagreeOnce(wa, pk);
+        chosen = pk;
+        source = "PackageNameToLoad (WorldAsset disagreed)";
+    } else if (wa[0]) {
+        chosen = wa;
+        source = "WorldAsset";
+    } else if (pk[0]) {
+        chosen = pk;
+        source = "PackageNameToLoad";
+    } else if (FNameToString(ObjNameRaw(ls), obj, sizeof(obj)) > 0 &&
+               stream::PlausibleLevelName(obj)) {
+        chosen = obj;
+        source = "object name";
+    }
+
+    if (!chosen) {
+        if (!obj[0]) FNameToString(ObjNameRaw(ls), obj, sizeof(obj));
+        LogLevelNameRefusedOnce(obj);
+        return;
+    }
+    int i = 0;
+    for (; chosen[i] && i < cap - 1; ++i) out[i] = chosen[i];
+    out[i] = 0;
+    LogLevelNameOnce(out, source);
 }
 
 void* LevelManager()
@@ -2138,8 +2268,12 @@ bool FlipPendingHideGuarded(void* mgr, void* ls)
 
 bool StreamVetoes(const LevelRec* r)
 {
-    return r && r->name[0] && Cfg().stream_union && g_net.Connected() &&
-           g_stream.PeerWants(r->name, Net::Now());
+    if (!r || !r->name[0] || !Cfg().stream_union || !g_net.Connected()) return false;
+    uint32_t now = Net::Now();
+    // While the machines are in different worlds the partner's `PeerWants` answer is
+    // about another world's name.  Refusing to veto there is the same rule as
+    // refusing to apply its union: the local game owns the decision again.
+    return g_map.PeerStateApplies(now) && g_stream.PeerWants(r->name, now);
 }
 
 void HK_SetShouldBeVisible(void* ls, bool visible)
@@ -2165,6 +2299,35 @@ void HK_SetShouldBeVisible(void* ls, bool visible)
         }
     }
     if (g_oSetVis) g_oSetVis(ls, visible);
+}
+
+// The unload half of the same guard.  This is the failure the detector would have
+// converted into a log: if the manager (or a Blueprint UnloadStreamLevel) calls
+// SetShouldBeLoaded(false) on a level the partner is standing in, the union is
+// defeated and the partner falls through the world.  The veto keeps the level loaded
+// and, when the manager's pending entry is this level, flips that entry to "show" so
+// the queue does not wait for an unload that will never happen.
+void HK_SetShouldBeLoaded(void* ls, bool loaded)
+{
+    if (ls && g_engineReady && !loaded) {
+        LevelRec* r = LevelFind(ls);
+        if (r && StreamVetoes(r) && LevelLoaded(ls)) {
+            void* mgr = LevelManager();
+            bool flipped = mgr && FlipPendingHideGuarded(mgr, ls);
+            if (flipped) r->skipNextShow = true;
+            ++g_vetoCount;
+            static uint32_t lastLog = 0;
+            uint32_t now = Net::Now();
+            if (now - lastLog > 1000) {
+                lastLog = now;
+                QDLOG(LOG_INFO, "BLOCK unload of ", r->name,
+                      " (the partner is in it); vetoes=", dec((int)g_vetoCount),
+                      (flipped ? " queue entry flipped" : ""));
+            }
+            return;
+        }
+    }
+    if (g_oSetLoaded) g_oSetLoaded(ls, loaded);
 }
 
 void LevelsReset()
@@ -2217,6 +2380,15 @@ void ForceLevel(LevelRec& r, bool show)
 {
     static Fn fLoad = {};
     if (show) CallBool1(r.ls, fLoad, "SetShouldBeLoaded", true);
+    // Release is VISIBILITY ONLY: this path never calls SetShouldBeLoaded(false), so a
+    // forced level stays loaded after the partner leaves it.  That is the deliberate
+    // trade-off -- the level's package and actors stay resident (memory) in exchange
+    // for no re-load and no re-spawn when the partner walks back across the boundary,
+    // which is the churn the union exists to prevent.  It is not changed here because
+    // the measured manager path only ever calls SetShouldBeVisible (0x00E21E40 and
+    // 0x00E3CF9E), so there is no engine unload to piggy-back on; forcing one would be
+    // a new write path racing the manager.  If a live run shows the game re-hiding
+    // these on its own schedule, the release can then be dropped entirely.
     g_ownVisCall = true;
     if (g_oSetVis) g_oSetVis(r.ls, show);
     g_ownVisCall = false;
@@ -2251,18 +2423,30 @@ void StreamPump(uint32_t now)
     if (now - lastApply < 500) return;
     lastApply = now;
 
-    // The local game's own wish, published.
+    // A hard transition on either machine makes the partner's list refer to another
+    // world.  Drop the slot rather than merely ignoring new packets: an old list would
+    // otherwise keep holding levels visible here for its 30 s staleness window, and a
+    // same-named sublevel in this world is exactly the thing that must not be held up.
+    const bool worldsAgree = g_map.PeerStateApplies(now);
+    if (!worldsAgree) g_stream.OnPeerGone((uint8_t)RemoteSlot());
+
+    // The local game's own wish, published.  A name we could not resolve is skipped:
+    // publishing "" (or a guessed name) makes the partner protect a level that does not
+    // exist, and that failure looks exactly like "the level did not stream".
     const char* names[wire::kLevelUnionMaxNames];
     int n = 0;
     uint32_t h = 2166136261u;
     for (int i = 0; i < g_levelN && n < wire::kLevelUnionMaxNames; ++i) {
-        if (g_levels[i].gameWants != 1) continue;
+        if (g_levels[i].gameWants != 1 || !g_levels[i].name[0]) continue;
         names[n++] = g_levels[i].name;
         for (const char* c = g_levels[i].name; *c; ++c) h = (h ^ (uint8_t)*c) * 16777619u;
         h = (h ^ 0x2Fu) * 16777619u;
     }
     g_stream.OnLocalList(names, n, now);
-    if (g_net.Connected() && (h != lastHash || now - lastSend >= 2000)) {
+    // Do not put cross-world names on the wire while the worlds differ.  When they
+    // agree again the 3 s gap has already passed the 2 s heartbeat, so a fresh union
+    // goes out on the first pump.
+    if (worldsAgree && g_net.Connected() && (h != lastHash || now - lastSend >= 2000)) {
         if (h != lastHash) QDLOG(LOG_INFO, "level union: local set ", dec(n), " level(s)");
         lastHash = h;
         lastSend = now;
@@ -2275,7 +2459,7 @@ void StreamPump(uint32_t now)
     for (int i = 0; i < g_levelN; ++i) {
         LevelRec& r = g_levels[i];
         if (!r.name[0] || !ObjectIsLive(r.ls)) continue;
-        bool peer = g_net.Connected() && g_stream.PeerWants(r.name, now);
+        bool peer = worldsAgree && g_net.Connected() && g_stream.PeerWants(r.name, now);
         if (peer) {
             g_force.Need(r.name, now);
             if (r.gameWants != 1 && !LevelVisible(r.ls) && budget > 0) { --budget; ForceLevel(r, true); }
@@ -2302,12 +2486,105 @@ void OnLevelUnion(wire::Reader& r, uint32_t now)
     static wire::LevelUnionBody b;     // 4 KB: not on the game thread's stack
     if (!wire::ReadLevelUnion(r, &b)) return;
     if (!b.has_names) return;          // this sender always lists names (WIRE.md 3.12)
+    if (!g_map.PeerStateApplies(now)) {
+        // These names describe the other world.  Dropping them is the refusal, and
+        // clearing the slot also releases anything the previous list still holds up.
+        g_stream.OnPeerGone((uint8_t)RemoteSlot());
+        return;
+    }
     const char* names[wire::kLevelUnionMaxNames];
     int n = 0;
     for (int i = 0; i < b.n; ++i) if (wire::LevelUnionBit(b, i)) names[n++] = b.name[i];
     static int lastN = -1;
     if (n != lastN) { lastN = n; QDLOG(LOG_INFO, "level union: partner set ", dec(n), " level(s)"); }
     g_stream.OnPeerList((uint8_t)RemoteSlot(), names, n, now);
+}
+
+// ---- travel announcement (SYNC-GAPS G6) -----------------------------------
+// The session is not torn down on a transition.  API-GAPS 4 refuses hard travel in
+// co-op v1, so the honest behaviour is to DETECT the split, say it once, and stop
+// applying the partner's absolute bodies until the two names agree again.  Nothing
+// here tries to make the partner follow, and nothing calls OpenLevel.
+void LocalMapName(char* out, int cap)
+{
+    out[0] = 0;
+    void* world = GWorldPtr();
+    if (!world) return;
+    char raw[128];
+    // `ShortLevelName` is the same normaliser the union uses, so both machines spell
+    // the map the same way without negotiating.  The outer package is the canonical
+    // map name; the UWorld object name is the fallback for a build that names them
+    // differently.
+    void* outer = ObjOuter(world);
+    if (outer && FNameToString(ObjNameRaw(outer), raw, sizeof(raw)) > 0)
+        stream::ShortLevelName(raw, out, cap);
+    if (!out[0] && FNameToString(ObjNameRaw(world), raw, sizeof(raw)) > 0)
+        stream::ShortLevelName(raw, out, cap);
+}
+
+void MapPump(uint32_t now)
+{
+    if (!Cfg().stream_union) return;
+    static uint32_t lastSend = 0;
+    static bool     sent = false;
+    static bool     wasDiverged = false;
+
+    if (!g_net.Connected()) {
+        if (g_map.Local()[0] || g_map.Peer()[0]) g_map.Reset();
+        sent = false;
+        wasDiverged = false;
+        return;
+    }
+
+    char local[stream::kMaxNameLen];
+    LocalMapName(local, sizeof(local));
+    bool changed = g_map.OnLocal(local, now);
+    if (changed) ++g_travelSeq;
+
+    // On change at once, then every 2 s.  A change announcement can be lost with the
+    // session; the heartbeat is what makes a rejoin converge without a new event.
+    if ((changed || !sent || now - lastSend >= 2000) && local[0]) {
+        wire::TravelBody t;
+        memset(&t, 0, sizeof(t));
+        t.seq = g_travelSeq;
+        t.role = g_net.IsHost() ? 1 : 2;   // 1 = host, 2 = peer (WIRE.md travel)
+        int i = 0;
+        for (; local[i] && i < (int)sizeof(t.map) - 1; ++i) t.map[i] = local[i];
+        t.map[i] = 0;
+        uint8_t body[wire::kMaxBody];
+        wire::Writer w(body, sizeof(body));
+        wire::WriteTravel(w, t);
+        if (w.ok && g_net.SendReliable(wire::K_TRAVEL, body, w.len)) {
+            lastSend = now;
+            sent = true;
+        }
+    }
+
+    bool div = g_map.Diverged(now);
+    if (div != wasDiverged) {
+        wasDiverged = div;
+        if (div) {
+            // One line per transition, not per pump: this is the operator's only
+            // evidence that a working session is looking at two different worlds.
+            QDLOG(LOG_WARN, "WORLD DIVERGENCE: local map ", g_map.Local(), ", partner map ",
+                  (g_map.Peer()[0] ? g_map.Peer() : "?"),
+                  " -- cross-world state refused until they agree again (G6)");
+        } else {
+            // An empty local name is "no world" (a menu or a teardown), not a match;
+            // logging agreement there would suggest the session converged when it
+            // merely left the world.
+            if (g_map.BothKnown()) QDLOG(LOG_INFO, "worlds agree again: ", g_map.Local());
+        }
+    }
+}
+
+void OnTravel(wire::Reader& r, uint32_t now)
+{
+    wire::TravelBody t;
+    if (!wire::ReadTravel(r, &t)) return;
+    if (g_map.OnPeer(t.map, now))
+        QDLOG(LOG_INFO, "travel: partner role ", dec((int)t.role), " is in ",
+              (t.map[0] ? t.map : "(no map)"), " seq=", dec((int)t.seq));
 }
 
 // ===========================================================================
@@ -2826,6 +3103,16 @@ void OnDialogue(wire::Reader& r, uint32_t now)
 void DispatchInbound(const InboundPacket& p, uint32_t now)
 {
     wire::Reader r(p.body, p.body_len);
+    // Hard transitions put the machines in different worlds, where an absolute body is
+    // not stale but refers to something else.  The union refuses itself inside
+    // OnLevelUnion; enemy rows and the dialogue cursor are refused here, before they
+    // reach the enemy/dialogue regions.  K_TRAVEL is never filtered: it is how the
+    // split is detected and how it clears again.  Announcement plus refusal, never
+    // travel (API-GAPS 4).
+    if (Cfg().stream_union && !g_map.PeerStateApplies(now) &&
+        (p.kind == wire::K_ENEMY || p.kind == wire::K_DIALOGUE)) {
+        return;
+    }
     switch (p.kind) {
     case wire::K_PLAYER: {
         wire::PlayerRow row;
@@ -2874,6 +3161,11 @@ void DispatchInbound(const InboundPacket& p, uint32_t now)
         break;
     case wire::K_LEVEL_UNION:
         if (Cfg().stream_union) OnLevelUnion(r, now);
+        break;
+    case wire::K_TRAVEL:
+        // Both machines announce; the comparison is what detects a split.  Reliable,
+        // so a transition that crosses a dropped packet is still seen.
+        if (Cfg().stream_union) OnTravel(r, now);
         break;
     case wire::K_STATUS: {
         uint32_t rev = 0, mask = 0;
@@ -3928,6 +4220,7 @@ bool HK_Tick(void* engineLoop)
     StatusPump(now);
     DevTestFire(now);
     DevTeleport(now);
+    MapPump(now);
     StreamPump(now);
     EnemyPump(now);
     DialoguePump(now);
@@ -4132,8 +4425,10 @@ DWORD WINAPI BootstrapThread(LPVOID)
         const QdTarget* tStore = nullptr;
         const QdTarget* tPE = nullptr;
         const QdTarget* tVis = nullptr;
+        const QdTarget* tLoad = nullptr;
         for (unsigned k = 0; k < kQdTargetCount; ++k) {
             if (NameEquals(kQdTargets[k].name, "ULevelStreaming::SetShouldBeVisible")) tVis = &kQdTargets[k];
+            if (NameEquals(kQdTargets[k].name, "ULevelStreaming::SetShouldBeLoaded")) tLoad = &kQdTargets[k];
             if (NameEquals(kQdTargets[k].name, "FEngineLoop::Tick")) tTick = &kQdTargets[k];
             if (NameEquals(kQdTargets[k].name, "UGameplayStatics::SetGamePaused")) tPause = &kQdTargets[k];
             if (NameEquals(kQdTargets[k].name, "StoreEnemySaveState")) tStore = &kQdTargets[k];
@@ -4155,6 +4450,8 @@ DWORD WINAPI BootstrapThread(LPVOID)
         if (Cfg().stream_union) {
             if (tVis) InstallHook(*tVis, (void*)&HK_SetShouldBeVisible, (void**)&g_oSetVis);
             else QDLOG(LOG_ERROR, "target not found in the table: ULevelStreaming::SetShouldBeVisible");
+            if (tLoad) InstallHook(*tLoad, (void*)&HK_SetShouldBeLoaded, (void**)&g_oSetLoaded);
+            else QDLOG(LOG_ERROR, "target not found in the table: ULevelStreaming::SetShouldBeLoaded");
         }
         // ProcessEvent is the widest hook in the process and costs the most; it stays
         // off unless someone is tracing a specific Blueprint surface.

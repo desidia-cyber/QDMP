@@ -88,6 +88,7 @@ TARGETS = [
     ("GetLevelManager",                           0x00E2EE50, "call"),
     ("Level visibility apply",                    0x00E21E40, "call"),
     ("ULevelStreaming::SetShouldBeVisible",       0x029ACB20, "call"),
+    ("ULevelStreaming::SetShouldBeLoaded",        0x029ACAC0, "call"),
 
     # --- pause surface (D1) --------------------------------------------------
     ("UGameplayStatics::SetGamePaused",           0x028F3180, "hook"),
@@ -258,7 +259,8 @@ def main():
         if os.path.exists(args.out):
             with open(args.out, "r", encoding="utf-8") as fh:
                 cur = fh.read()
-        if cur == text:
+        # write() below appends the final newline; verify must compare the same bytes.
+        if cur == text + "\n":
             print("OK  targets.h is current (%d targets, %d byte-verified)"
                   % (len(rows), n_check))
             return 0

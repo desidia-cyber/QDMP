@@ -16,6 +16,11 @@ REM ---------------------------------------------------------------------------
 setlocal enabledelayedexpansion
 
 set HERE=%~dp0
+REM The caller's cwd is not this directory when the batch is invoked by absolute
+REM path, and test_vectors opens doc/vectors.txt through relative paths
+REM ("../../doc/vectors.txt").  Run from here so the documented command works from
+REM the repo root as well as from native\test.
+cd /d "%HERE%"
 set OUT=%HERE%build
 set "PF86=%ProgramFiles(x86)%"
 set "VSWHERE=%PF86%\Microsoft Visual Studio\Installer\vswhere.exe"
