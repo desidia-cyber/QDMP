@@ -103,6 +103,7 @@ pub enum Kind {
     Movers = 0x26,
     Loot = 0x27,
     Suspend = 0x28,
+    Boss = 0x29,
     Log = 0x30,
 }
 
@@ -133,6 +134,7 @@ impl Kind {
             0x26 => Movers,
             0x27 => Loot,
             0x28 => Suspend,
+            0x29 => Boss,
             0x30 => Log,
             other => return Err(Error::UnknownKind(other)),
         })
@@ -168,6 +170,7 @@ impl Kind {
             Movers => "movers",
             Loot => "loot",
             Suspend => "suspend",
+            Boss => "boss",
             Log => "log",
         }
     }
@@ -184,6 +187,7 @@ impl Kind {
                 | Kind::Travel
                 | Kind::Damage
                 | Kind::Suspend
+                | Kind::Boss
         )
     }
 
@@ -335,6 +339,37 @@ pub mod enemy_flags {
     /// The sender has handed this enemy to the receiver: the SENDER freezes its copy
     /// and the receiver's own AI runs it.
     pub const PEER_OWNS: u8 = 1 << 3;
+    /// Bits 4-5 carry the identity source of the row's `id`; see [`enemy_id_source`].
+    pub const SRC_SHIFT: u8 = 4;
+    pub const SRC_MASK: u8 = 0x30;
+}
+
+/// `ENEMY.flags` identity source (WIRE.md §3.9, native `qdenemyid.h`).
+///
+/// The row's `id` used to be the authored `FGuid` of the enemy's spawner, which only
+/// exists for enemies a spawner created: a placed enemy and a summoned one had no key
+/// and therefore ran independently on each machine. Two deterministic fallbacks fix
+/// that, and these bits say which one produced a given `id` — so a hash collision
+/// between, say, a placed-path hash and a spawner GUID cannot merge two enemies, and a
+/// live log can name the kind of key it is looking at.
+pub mod enemy_id_source {
+    /// An authored spawner GUID — unchanged, and the key `StoreEnemySaveState` persists.
+    pub const SPAWNER: u8 = 0;
+    /// A placed actor: FNV-1a 128 of its cooked `<world>/<level>/<object name>` path.
+    pub const PLACED: u8 = 1;
+    /// A runtime spawn: FNV-1a 128 of `<summoner key hex>#<ordinal>`.
+    pub const SUMMON: u8 = 2;
+
+    /// The source carried by a row's flags.
+    pub fn of(flags: u8) -> u8 {
+        (flags & super::enemy_flags::SRC_MASK) >> super::enemy_flags::SRC_SHIFT
+    }
+
+    /// `flags` with `src` written into the source bits, preserving the state bits.
+    pub fn with(flags: u8, src: u8) -> u8 {
+        (flags & !super::enemy_flags::SRC_MASK)
+            | ((src << super::enemy_flags::SRC_SHIFT) & super::enemy_flags::SRC_MASK)
+    }
 }
 
 /// `HELLO.role_wanted` / `WELCOME.role_assigned` values.
@@ -561,9 +596,13 @@ pub struct EnemyDetail {
     /// See [`enemy_anim`].
     pub anim: u8,
     /// Bumps on every new montage, so the receiver can tell a repeat from a new one.
+    /// Wraps 255 → 1; a receiver keys "already applied" on `(seq, montage_path)`.
     pub seq: u8,
     /// The same bits as [`Status`] `mask`.
     pub status: u16,
+    /// The boss phase the owner observed, 0 when the enemy is not a boss or when the
+    /// build exposes no shared phase (SYNC-RESEARCH §6: no cooked package carries one).
+    pub boss: u8,
     /// Montage asset path, empty when nothing is playing.
     pub montage_path: String,
 }
@@ -845,6 +884,36 @@ pub mod damage_flags {
     pub const GUESSED: u8 = 1 << 2;
 }
 
+/// `BOSS` body (WIRE.md §3.9b).
+///
+/// The two per-boss facts that are a local call on each machine, and therefore have to be
+/// driven rather than inferred: the health bar (`PlayerStatsAndUtils_C.ActivateBossHPBar`,
+/// whose `__WorldContext` is the caller's own world) and the arena exit
+/// (`EnemySpawner_C.PlayerTeleportedOutOfBossArena`, a zero-argument spawner event).
+/// Boss *phases* are not expressible — no cooked package carries a phase field — so
+/// `phase` is only ever the owner's observed ordinal, and 0 means "none".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Boss {
+    /// The boss enemy's key; zero when the body names no particular boss.
+    pub id: Guid,
+    /// See [`boss_flags`].
+    pub flags: u8,
+    /// The owner's observed phase, 0 when none.
+    pub phase: u8,
+    /// The boss's HP as the same 0..65535 fraction an `ENEMY` row carries.
+    pub hp: u16,
+}
+
+/// `BOSS.flags` bits (WIRE.md §3.9b).
+pub mod boss_flags {
+    /// Raise the boss health bar on the receiver's own player for its own copy.
+    pub const BAR_ON: u8 = 1 << 0;
+    /// Hide the bar again (the fight ended, or the copy died).
+    pub const BAR_OFF: u8 = 1 << 1;
+    /// A player left the boss arena: raise the receiver's own spawner exit event.
+    pub const ARENA_EXIT: u8 = 1 << 2;
+}
+
 /// A decoded body, tagged by its kind.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Body {
@@ -871,6 +940,7 @@ pub enum Body {
     Movers(Movers),
     Loot(Loot),
     Suspend(Suspend),
+    Boss(Boss),
     Log(Log),
 }
 
@@ -900,6 +970,7 @@ impl Body {
             Body::Movers(_) => Kind::Movers,
             Body::Loot(_) => Kind::Loot,
             Body::Suspend(_) => Kind::Suspend,
+            Body::Boss(_) => Kind::Boss,
             Body::Log(_) => Kind::Log,
         }
     }
@@ -1218,6 +1289,7 @@ pub fn encode_body(body: &Body) -> Result<Vec<u8>> {
             w.write_u8(d.anim)?;
             w.write_u8(d.seq)?;
             w.write_u16(d.status)?;
+            w.write_u8(d.boss)?;
             write_str(&mut w, &d.montage_path)?;
         }
         Body::Effect(e) | Body::EffectMove(e) => {
@@ -1345,6 +1417,12 @@ pub fn encode_body(body: &Body) -> Result<Vec<u8>> {
             w.write_u32(s.seq)?;
             w.write_u8(s.state)?;
             write_str(&mut w, &s.slot)?;
+        }
+        Body::Boss(b) => {
+            write_guid(&mut w, &b.id)?;
+            w.write_u8(b.flags)?;
+            w.write_u8(b.phase)?;
+            w.write_u16(b.hp)?;
         }
     }
 
@@ -1512,6 +1590,7 @@ pub fn decode_body(kind: Kind, bytes: &[u8]) -> Result<Body> {
             anim: r.read_u8()?,
             seq: r.read_u8()?,
             status: r.read_u16()?,
+            boss: r.read_u8()?,
             montage_path: read_str(&mut r)?,
         }),
         Kind::Effect | Kind::EffectMove => {
@@ -1670,6 +1749,12 @@ pub fn decode_body(kind: Kind, bytes: &[u8]) -> Result<Body> {
             }
             Body::Suspend(Suspend { seq, state, slot: read_str(&mut r)? })
         }
+        Kind::Boss => Body::Boss(Boss {
+            id: read_guid(&mut r)?,
+            flags: r.read_u8()?,
+            phase: r.read_u8()?,
+            hp: r.read_u16()?,
+        }),
         Kind::Log => {
             // The whole body is the message; nothing to parse.
             Body::Log(Log { bytes: bytes.to_vec() })
@@ -1873,6 +1958,22 @@ mod tests {
                 map: "900_SipehaWorld".into(),
                 dest: "/Game/RuinsLevel/Maps/900_SipehaWorld.900_SipehaWorld".into(),
             }),
+            Body::EnemyDetail(EnemyDetail {
+                id: sample_guid(),
+                anim: enemy_anim::ATTACK,
+                seq: 7,
+                status: status_bit::POISON as u16,
+                boss: 0,
+                montage_path: "/Game/Anim/Enemy/Slash_Montage".into(),
+            }),
+            Body::EnemyDetail(EnemyDetail {
+                id: sample_guid(),
+                anim: enemy_anim::NONE,
+                seq: 8,
+                status: 0,
+                boss: 2,
+                montage_path: String::new(),
+            }),
             Body::Damage(Damage { attacker: sample_guid(), amount_centi: 3500, flags: damage_flags::MELEE }),
             Body::Cutscene(Cutscene {
                 seq: 2,
@@ -1905,6 +2006,18 @@ mod tests {
                 seq: 3,
                 state: suspend_state::HOLD,
                 slot: "World0_Suspend_1".into(),
+            }),
+            Body::Boss(Boss {
+                id: sample_guid(),
+                flags: boss_flags::BAR_ON,
+                phase: 2,
+                hp: 40_000,
+            }),
+            Body::Boss(Boss {
+                id: Guid::default(),
+                flags: boss_flags::BAR_OFF | boss_flags::ARENA_EXIT,
+                phase: 0,
+                hp: 0,
             }),
             Body::Log(Log { bytes: b"hello from host".to_vec() }),
         ]
@@ -2112,8 +2225,7 @@ mod tests {
     }
 
     #[test]
-    fn unknown_intent_kind_is_rejected() {
-        let mut w = BitWriter::new();
+    fn unknown_intent_kind_is_rejected() {        let mut w = BitWriter::new();
         w.write_u8(9).unwrap();
         w.write_u32(1).unwrap();
         let bytes = w.finish();
@@ -2243,5 +2355,86 @@ mod tests {
             let decoded = decode_body(body.kind(), &bytes).unwrap();
             assert_eq!(decoded.kind(), body.kind());
         }
+    }
+
+    #[test]
+    fn enemy_identity_source_rides_the_spare_flag_bits() {
+        // The pair (source, id) is the identity, which is what lets a placed-path hash
+        // and a spawner GUID that happen to collide stay two different enemies.  The
+        // four existing state bits must be untouched by the source, or ownership and
+        // liveness would corrupt each other.
+        let states = enemy_flags::ALIVE | enemy_flags::DRIVEN | enemy_flags::HAS_BODY
+            | enemy_flags::PEER_OWNS;
+        for src in [
+            enemy_id_source::SPAWNER,
+            enemy_id_source::PLACED,
+            enemy_id_source::SUMMON,
+        ] {
+            let f = enemy_id_source::with(states, src);
+            assert_eq!(enemy_id_source::of(f), src);
+            assert_eq!(f & !enemy_flags::SRC_MASK, states, "state bits changed");
+        }
+
+        // The three sources must be distinct byte values, or a placed key and a spawner
+        // key would be indistinguishable on the wire.
+        assert_ne!(
+            enemy_id_source::with(0, enemy_id_source::SPAWNER),
+            enemy_id_source::with(0, enemy_id_source::PLACED)
+        );
+        assert_ne!(
+            enemy_id_source::with(0, enemy_id_source::PLACED),
+            enemy_id_source::with(0, enemy_id_source::SUMMON)
+        );
+
+        // Re-tagging an already-tagged row replaces the source and keeps the state.
+        let f = enemy_id_source::with(enemy_id_source::with(states, enemy_id_source::PLACED), enemy_id_source::SPAWNER);
+        assert_eq!(enemy_id_source::of(f), enemy_id_source::SPAWNER);
+        assert_eq!(f & !enemy_flags::SRC_MASK, states);
+    }
+
+    #[test]
+    fn boss_body_is_twenty_bytes_and_roundtrips() {
+        let b = Boss {
+            id: sample_guid(),
+            flags: boss_flags::BAR_ON | boss_flags::ARENA_EXIT,
+            phase: 3,
+            hp: 12_345,
+        };
+        let bytes = encode_body(&Body::Boss(b)).unwrap();
+        // 16 guid + 1 flags + 1 phase + 2 hp
+        assert_eq!(bytes.len(), 20);
+        assert_eq!(decode_body(Kind::Boss, &bytes).unwrap(), Body::Boss(b));
+    }
+
+    #[test]
+    fn boss_is_reliable_and_not_latest_wins() {
+        // A boss bar that fails to appear because a datagram was lost is exactly the
+        // failure a player reports as "the boss fight is broken", so this lane is
+        // reliable -- and therefore must not also be in the superseded lane.
+        assert!(Kind::Boss.is_reliable());
+        assert!(!Kind::Boss.is_latest_wins());
+    }
+
+    #[test]
+    fn enemy_detail_field_order_is_id_anim_seq_status_boss_path() {
+        // Pinned byte by byte because the native decoder walks the same order and a
+        // transposition (status before seq, or boss before status) would decode as
+        // plausible garbage rather than fail.
+        let d = EnemyDetail {
+            id: Guid::from_bytes([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]),
+            anim: 1,
+            seq: 7,
+            status: 0x0005,
+            boss: 2,
+            montage_path: "A".into(),
+        };
+        let bytes = encode_body(&Body::EnemyDetail(d)).unwrap();
+        assert_eq!(&bytes[0..16], &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+        assert_eq!(bytes[16], 1, "anim");
+        assert_eq!(bytes[17], 7, "seq");
+        assert_eq!(&bytes[18..20], &[0x05, 0x00], "status is little-endian");
+        assert_eq!(bytes[20], 2, "boss phase");
+        assert_eq!(&bytes[21..23], &[0x01, 0x00], "path length");
+        assert_eq!(bytes[23], b'A');
     }
 }

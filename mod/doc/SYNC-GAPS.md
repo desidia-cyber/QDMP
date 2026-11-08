@@ -27,8 +27,9 @@ encoding — not the game.
 | `WORLD_FLAGS` | host | peer | absolute set, chunked, 1 Hz + on change |
 | `INVENTORY` | **both** | **both** | host: absolute set. Peer: `INTENT kind 2` for its own pickups and `kind 3` for its consumptions — G3 |
 | `ACTOR_STATES` | **both** | **both** | host: absolute set. Peer: `INTENT kind 6` — G2 |
-| `ENEMY` | both | both | bidirectional; whoever owns an enemy publishes its rows |
-| `ENEMY_DETAIL` | both | both | montage asset + status mask, reliable, on change |
+| `ENEMY` | both | both | bidirectional; whoever owns an enemy publishes its rows. `flags` bits 4-5 carry the identity source (spawner / placed / summon) |
+| `ENEMY_DETAIL` | both | both | montage asset + status mask + boss phase, reliable, on change, relevance-rate-limited |
+| `BOSS` | both | both | **new**: boss bar on/off, observed phase, arena exit — each machine makes its own local call |
 | `EQUIPMENT` / `EFFECT` / `EFFECT_MOVE` / `STATUS` | both | both | proven live |
 | `INTENT` | peer | host | kinds 1 (flag), 2 (item pickup), 3 (item use), 6 (actor state), 7 (enemy hit), 8 (enemy record) |
 | `DAMAGE` | host | peer | **new**: a host-run enemy's hit, applied to the partner's own pawn |
@@ -252,28 +253,73 @@ that the game accepts the call and actually lands in the new `UWorld`; the param
 is discovered at runtime (and logged), so a signature surprise is a named refusal rather
 than a wrong call. Until that line is seen, `TravelSync` stays `0`.
 
-**Enemies placed without a spawner are still not synced**, because identity is the
-spawner's GUID. Summoned and boss-spawned enemies run independently on both machines.
+**Enemies placed without a spawner, and summons, are now synced — by identity, not by
+spawner.** Identity used to be the spawner's GUID, which only exists for enemies a
+spawner created, so a placed enemy and a summoned one ran independently on each machine.
+A row's key is now *(source, 128-bit key)*, with the source in the row's spare flag bits
+and three deterministic sources: the spawner GUID where one exists and the spawner says
+this actor is its `CurrentManagedEnemy` (the persisted-key path, unchanged), a hash of the
+actor's cooked `"<world>/<level>/<name>"` path for a placed enemy, and a hash of *(summoner
+key, spawn point, coincidence index)* for a runtime spawn. The summon key uses the **spawn
+position, not a counter**, because the object scan discovers enemies in a per-machine order
+and an ordinal assigned in scan order would differ between the two. A row for an unknown
+hash-derived key is matched against the local position-derived records within 3 m and the
+local record adopts the sender's key; an ambiguous match is refused, never guessed. See
+`qdenemyid.h`, `WIRE.md` §3.9.
+
+Two assumptions in that paragraph are unproven and each is one probe:
+
+- **`CurrentManagedEnemy` decides who owns a spawner GUID.** This is the game's own answer
+  to "which enemy does this spawner own" (SYNC-RESEARCH 5), and it is what makes the
+  decision independent of scan order. If the property turns out unreadable, the code falls
+  back to "this spawner owns this enemy", which is correct for the ordinary one-enemy case
+  and only conflates a genuine multi-spawn.
+- **A cooked level's placed actors have FName number 0.** That is what `ActorIsPlaced`
+  uses to keep a runtime spawn off the placed path (its outer chain also reaches the world,
+  so "the path resolves" is not the test). If a placed actor does carry a number, it is
+  simply treated as a summon — still a stable key — and the receiver's adoption repairs the
+  pair. The probe: on one machine, log `ObjNameRaw(...).number` for the placed enemies of a
+  level and check they are all 0.
 
 ## 3. Inside the systems built so far
 
 **Enemies**
-- **Bosses are still a row and nothing more.** The boss health bar (`ActivateBossHPBar` on
-  `PlayerStatsAndUtils_C`) and the arena exit (`PlayerTeleportedOutOfBossArena`, a
-  zero-argument spawner event) are both drivable on the peer and are not driven. Boss
-  **phases** are not expressible at all: no cooked package contains `Phase`, `bBoss` or
-  `OnSubStateChanged`.
+- **Bosses have a lane of their own now (`BOSS`, 0x29), and one part of it is still
+  unprovable.** The health bar (`PlayerStatsAndUtils_C.ActivateBossHPBar`, whose
+  `__WorldContext` is the caller's world) and the arena exit
+  (`PlayerTeleportedOutOfBossArena`, a zero-argument spawner event) are both driven, each
+  machine making its own local call on its own copy. Boss membership is queried on the
+  enemy itself (`Enemy_IsPartOfBossEncounter` / `Enemy_GetBossInfo`). **Phases remain
+  unexpressible**: `Phase`, `bBoss` and `OnSubStateChanged` exist only in the exe name
+  block and in zero cooked packages, so `ENEMY_DETAIL.boss` carries only an observed
+  ordinal and is 0 when nothing could be observed — it is never fabricated, because a
+  guessed phase would run the wrong Blueprint branch on one machine only.
 - **`TryApplyDamage` is unproven.** Every field of the payload is walked and logged, and
   the amount is selected by name; if the payload needs a damage-type tag or a nested `Data`
   struct, HP will not move and the log says so. "enemy damage had NO effect" (and now
   "player damage had NO effect") must stop appearing.
-- **Montage playback is unproven.** The follower resolves `Montage_Play` reflectively and
-  reads `GetCurrentActiveMontage` back, so a failure is visible; an AnimBP that plays
-  sequences rather than montages sends nothing.
-- **Bandwidth with many enemies is unmeasured.** `ENEMY_DETAIL` is on change only, but a
-  large fight is exactly when montages change most.
+- **Montage playback is hardened but still unproven.** The follower resolves
+  `Montage_Play` reflectively, sets its arguments by name only when the signature has
+  them, guards the call, reads `GetCurrentActiveMontage` back, and logs the failure at
+  most three times per enemy with the distinction that matters: "none playing" means the
+  AnimBP plays **sequences rather than montages**, so there is nothing to mirror, while "a
+  different montage" means the copy re-selected something of its own. A verified playback
+  sets `playedOnce`, which the apply line reports. Until a live run shows
+  `enemy anim: Montage_Play verified by read-back`, an AnimBP that uses sequences sends
+  nothing.
+- **Bandwidth with many enemies is now bounded, and unit-tested.** `ENEMY_DETAIL` was on
+  change only with a flat 10-per-second bucket, which ignored *who* the detail was for: the
+  enemy that changed first won the token whether or not the partner could see it.
+  `qdenemybw.h` now ranks each change by its distance from the receiver's player and
+  applies a per-enemy interval by band plus the global rolling-second budget; a refused
+  change stays pending and is retried, so the lane degrades to "later". The bound is
+  asserted in `test_enemybw.cpp` (48 assertions) rather than measured.
 - **Hit attribution is noisy.** A peer hit is detected as an HP drop the mod did not cause,
   so damage-over-time arrives as a stream of small hits.
+- **Enemy projectiles are gated on ownership.** Only the machine running the shooter
+  publishes its shot, so "one shot, one visual" is a property of the ownership model
+  rather than of the freeze. Damage lands once, on the owner: its own projectile collides
+  and traces normally, and the partner's copy has collision and actor tick disabled.
 
 **Dialogue**
 - **Concurrent start is prevented now.** A per-NPC reservation and the slot rule end the
@@ -465,17 +511,60 @@ on the frame the value crosses; `INCOMPLETE` (getter disagrees) or `failed` (no
 is the proof the drift is gone; the next `inventory sent rev=…` line must carry the lower
 count, not the old one.
 
+### 5.3 The enemy-parity round — what to grep for
+
+Added with the identity / montage / projectile / boss / bandwidth work. Each line names
+the log text the code emits, so a run either shows it or does not.
+
+1. **Identity.** On the owner, one line per enemy the first time it is identified:
+   `enemy id: placed <path>` for a placed enemy, or `enemy id: summon at x,y,z dup=N
+   key=…` for a summon — and **no** such line for a spawner-owned enemy (that path keeps
+   the spawner GUID and logs only at DEBUG). A runtime spawn with no recorded summoner
+   logs `enemy id: no summoner for <class>; keyed by class and spawn point`. On the
+   follower, the row's `flags` bits 4-5 (`0x10` placed, `0x20` summon) appear in
+   `enemy detail sent …` and the copy must follow. If the follower minted a different key,
+   one line says so: `enemy id: adopted the owner's key … (local … src=A->B)`. An
+   ambiguous match prints `enemy id: N local position-keyed enemies near an unknown key;
+   not adopting (ambiguous)` instead of guessing.
+2. **Montage.** The follower must print `enemy anim: Montage_Play verified by read-back`
+    at least once. `enemy anim: Montage_Play ran but read-back says NONE -- this AnimBP
+    probably plays sequences, not montages` is the measured answer that there is nothing
+    to mirror — a finding, not a bug in the call. A resolve failure is
+    `enemy anim: Montage_Play did not resolve`, once; a fault is
+    `enemy anim: Montage_Play faulted`, at most three times per enemy.
+3. **Projectiles.** With the two players apart, only the machine running the shooter
+    prints `effect: local #<id> <class> v=…` for an enemy's shot; the other prints only
+    `effect: <class> shown`. Two `local` lines for one shot is the failure this gated.
+4. **Boss.** On the owner: `boss: guid=… is a boss`, then `boss: ActivateBossHPBar
+    called` and `boss: sent guid=… phase=… bar on`; on the follower, when it takes over:
+    `boss: follower raised its own bar for guid=… hp=… phase=…`. A
+    `boss: no local copy for guid=…` means the follower has no body for that boss and the
+    bar cannot be raised there — the pre-existing "no spawn on the follower" limit, now
+    named. `boss: PlayerTeleportedOutOfBossArena did not resolve` means this build's
+    spawner does not carry the event.
+5. **Bandwidth.** Under a big fight, one DEBUG line per second:
+    `enemy detail: candidates=N sent=M budgetDrops=… farSkips=… overflows=…`. `sent` must
+    never exceed 10 in any rolling second, and `budgetDrops` should be 0 with two players
+    together in an ordinary fight.
+
 ## 6. Suggested order from here
 
-1. **Run §5.** Every correction so far came from measurement rather than from play, and the
-   four systems added this round have never touched the game.
-2. **B7's live answer** (`PlayerBody=1`, §5.1). It is now the single blocker for enemy
-   targeting, for spawner activation, and for the puppet's appearance — and the code path
-   exists, so the run is a decision rather than a piece of work.
-3. **G2's live follow-up**, if §5.6 shows `INCOMPLETE`: inspect that subclass' own
-   `Restore State From Save Data` override before changing the container path.
-4. **Boss bar and arena exit** — two reflective calls, both measured.
+1. **Run §5 and §5.3.** Every correction so far came from measurement rather than from
+   play, and the systems added in both rounds have never all touched the game together.
+2. **B7's live answer** (`PlayerBody=1`, §5.1), the player-class spawn. It is now the
+   single blocker for enemy targeting, for spawner activation, and for the puppet's
+   appearance — and the code path exists, so the run is a decision rather than a piece of
+   work.
+3. **G2's live follow-up.** If §5.6 shows `INCOMPLETE`, inspect that subclass' own
+   `Restore State From Save Data` override before changing the container path; if the
+   live pass shows the in-level actor does not follow the container at all, start from
+   the visual refresh the second round added.
+4. **Boss bar, arena exit, and phases.** The bar and the arena exit are two reflective
+   calls, both measured and both driven. Boss phases remain unexpressible unless a boss
+   turns out to expose a phase to a sync layer after all — the `BOSS` and `ENEMY_DETAIL`
+   fields are already there to carry one.
 5. **Hard map transitions** are built against the game's own
-   `GameInstance.LoadMapWithLoadingScreen`; the live run has to confirm the call lands in
-   the new `UWorld` (§5 item 9). If it does not, the refusal is named and the session
-   survives, which is the correct fallback until the signature is proven.
+   `GameInstance.LoadMapWithLoadingScreen` and need a measured entry point into another
+   `UWorld`; the live run has to confirm the call lands in the new `UWorld` (§5 item 9).
+   If it does not, the refusal is named and the session survives, which is the correct
+   fallback until the signature is proven.

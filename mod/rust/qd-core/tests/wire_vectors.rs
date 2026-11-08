@@ -156,9 +156,20 @@ fn vectors() -> Vec<Vector> {
                 anim: enemy_anim::ATTACK,
                 seq: 7,
                 status: 0x0005,
+                boss: 0,
                 montage_path: "/Game/Anim/Enemy/Slash_Montage".to_owned(),
             }),
-            expected: "19 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 01 07 05 00 1e 00 2f 47 61 6d 65 2f 41 6e 69 6d 2f 45 6e 65 6d 79 2f 53 6c 61 73 68 5f 4d 6f 6e 74 61 67 65",
+            expected: "19 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 01 07 05 00 00 1e 00 2f 47 61 6d 65 2f 41 6e 69 6d 2f 45 6e 65 6d 79 2f 53 6c 61 73 68 5f 4d 6f 6e 74 61 67 65",
+        },
+        Vector {
+            name: "boss",
+            body: Body::Boss(Boss {
+                id: sample_guid(),
+                flags: boss_flags::BAR_ON,
+                phase: 2,
+                hp: 40_000,
+            }),
+            expected: "29 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 01 02 40 9c",
         },
         Vector {
             name: "intent_set_flag",

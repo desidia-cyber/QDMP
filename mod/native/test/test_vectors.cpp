@@ -113,7 +113,7 @@ static void Compare(const char* name, const uint8_t* got, int gotLen)
     uint8_t kind = want[0];
     bool kindKnown = (kind >= 0x01 && kind <= 0x04) ||
                      (kind >= 0x10 && kind <= 0x19) ||
-                     (kind >= 0x20 && kind <= 0x28) ||
+                     (kind >= 0x20 && kind <= 0x29) ||
                      (kind == 0x30);
     if (!kindKnown) {
         ++g_fail;
@@ -314,7 +314,7 @@ static void TestAll()
         Compare("intent_enemy_record", buf, w.len);
     }
 
-    // enemy_detail: guid, anim, seq, status, montage path
+    // enemy_detail: guid, anim, seq, status, boss, montage path
     {
         EnemyDetailBody d;
         memset(&d, 0, sizeof(d));
@@ -323,10 +323,25 @@ static void TestAll()
         d.anim = E_ATTACK;
         d.seq = 7;
         d.status = 0x0005;
+        d.boss = 0;
         strcpy(d.path, "/Game/Anim/Enemy/Slash_Montage");
         Writer w(buf, sizeof(buf));
         WriteEnemyDetail(w, d);
         Compare("enemy_detail", buf, w.len);
+    }
+
+    // boss: guid, flags, phase, hp fraction
+    {
+        BossBody b;
+        memset(&b, 0, sizeof(b));
+        b.guid[0] = 0x03020100u; b.guid[1] = 0x07060504u;
+        b.guid[2] = 0x0b0a0908u; b.guid[3] = 0x0f0e0d0cu;
+        b.flags = kBossBarOn;
+        b.phase = 2;
+        b.hp = 40000;
+        Writer w(buf, sizeof(buf));
+        WriteBoss(w, b);
+        Compare("boss", buf, w.len);
     }
 
     // dialogue_state
