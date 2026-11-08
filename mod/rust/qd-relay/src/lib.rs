@@ -2,7 +2,7 @@
 //!
 //! One UDP socket, one session, at most two peers. The relay owns the *session
 //! facts* (who is host, what the session id is); it never simulates, never rewrites
-//! a body, and never authors a `WELCOME`.
+//! a body. Its one authored message is the role-assignment `WELCOME`.
 //!
 //! # What it does
 //!
@@ -22,11 +22,6 @@
 //!
 //! # What it deliberately does not do
 //!
-//! * It does not send `WELCOME`. WIRE.md §3.2 makes `WELCOME` host → peer, and a
-//!   relay-authored `Welcome` would be a second writer of the session fact. A peer
-//!   that needs to know its role asks the launcher (out of band) or observes that
-//!   the relay admitted it; the relay logs the assignment and exposes it through
-//!   [`Relay::peers`].
 //! * It does not fragment. One datagram carries one envelope, always (WIRE.md §1;
 //!   DollsMP 12 H-6 measured 92.4 % effective loss at 256 fragments).
 //! * It has no authentication. v1 is plaintext and LAN/direct-IP only
@@ -258,6 +253,7 @@ impl Relay {
             _ => None,
         };
 
+        let is_hello = hello.is_some();
         let index = match self.peers.iter().position(|p| p.addr == from) {
             Some(i) => {
                 // A `--two` pinned endpoint has no role until its first HELLO.
@@ -298,10 +294,45 @@ impl Relay {
         self.peers[index].last_seen = Instant::now();
         self.peers[index].datagrams += 1;
 
+        // Every HELLO is answered with the role this relay assigned. The relay is the
+        // role authority (first HELLO is host), and the client leaves ROLE_NONE only
+        // on a WELCOME -- without this answer neither client ever learned its role and
+        // no session ever started (measured live: both admitted, neither "established").
+        // A client retransmits HELLO until it has a role, so a lost WELCOME heals.
+        if is_hello {
+            self.welcome(index, &mut events);
+        }
+
         // A `HELLO` from an already-admitted peer is a retransmission: it still
         // needs to reach the other side, so it falls through to forwarding.
         self.forward(index, buf, envelope.session, &mut events);
         events
+    }
+
+    /// Tell a peer the role it was assigned. `host_tick`, `save_level` and
+    /// `flags_rev` are host facts the relay does not have; they are 0/empty here and
+    /// the host's own broadcasts carry the real values.
+    fn welcome(&mut self, index: usize, events: &mut Vec<Event>) {
+        let Some(role) = self.peers[index].role else { return };
+        let to = self.peers[index].addr;
+        let body = qd_core::protocol::Body::Welcome(qd_core::protocol::Welcome {
+            role_assigned: match role {
+                Role::Host => roles::HOST,
+                Role::Peer => roles::PEER,
+            },
+            session: self.session_id,
+            host_tick: 0,
+            save_level: String::new(),
+            flags_rev: 0,
+        });
+        let Ok(bytes) = Envelope::new(self.session_id, 0, body).encode() else { return };
+        match self.socket.send_to(&bytes, to) {
+            Ok(_) => self.stats.datagrams_out += 1,
+            Err(_) => {
+                self.stats.dropped += 1;
+                events.push(Event::Dropped { addr: to, why: "welcome send failed" });
+            }
+        }
     }
 
     fn ensure_session_open(&mut self, events: &mut Vec<Event>) {

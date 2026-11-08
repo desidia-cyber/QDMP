@@ -84,11 +84,52 @@ fn pump(relay: &mut Relay) -> usize {
     }
 }
 
-fn recv(socket: &UdpSocket) -> (Vec<u8>, SocketAddr) {
+fn recv_any(socket: &UdpSocket) -> (Vec<u8>, SocketAddr) {
+    socket.set_nonblocking(false).expect("blocking");
     socket.set_read_timeout(Some(Duration::from_secs(2))).expect("timeout");
     let mut buf = [0u8; 2048];
-    let (n, from) = socket.recv_from(&mut buf).expect("expected a forwarded datagram");
+    let (n, from) = socket.recv_from(&mut buf).expect("expected a datagram");
     (buf[..n].to_vec(), from)
+}
+
+/// The next FORWARDED datagram. The relay also answers every HELLO with a
+/// role-assignment WELCOME addressed to the sender; those are skipped here, the
+/// way a client that already has its role ignores repeats.
+fn recv(socket: &UdpSocket) -> (Vec<u8>, SocketAddr) {
+    loop {
+        let (bytes, from) = recv_any(socket);
+        match Envelope::decode(&bytes) {
+            Ok(e) if matches!(e.body, Body::Welcome(_)) => continue,
+            _ => return (bytes, from),
+        }
+    }
+}
+
+#[test]
+fn every_hello_is_answered_with_the_assigned_role() {
+    let mut relay = relay();
+    let relay_addr = relay.local_addr().unwrap();
+    let session = relay.session_id();
+    let a = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let b = UdpSocket::bind("127.0.0.1:0").unwrap();
+
+    a.send_to(&hello("Alice", roles::ANY), relay_addr).unwrap();
+    pump(&mut relay);
+    b.send_to(&hello("Bob", roles::ANY), relay_addr).unwrap();
+    pump(&mut relay);
+
+    for (sock, want) in [(&a, roles::HOST), (&b, roles::PEER)] {
+        let (bytes, from) = recv_any(sock);
+        assert_eq!(from, relay_addr);
+        let e = Envelope::decode(&bytes).expect("welcome decodes");
+        match e.body {
+            Body::Welcome(w) => {
+                assert_eq!(w.role_assigned, want);
+                assert_eq!(w.session, session);
+            }
+            other => panic!("expected a welcome, got {:?}", other.kind()),
+        }
+    }
 }
 
 #[test]

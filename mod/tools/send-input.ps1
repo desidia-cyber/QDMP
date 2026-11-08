@@ -24,7 +24,14 @@ param(
     # arguments, so absolute pixels are not a stable way to address a menu item.
     [double]$ClickFracX = 0.0,
     [double]$ClickFracY = 0.0,
-    [switch]$StickyKeys   # leave the key down (for held actions)
+    [switch]$StickyKeys,  # leave the key down (for held actions)
+    [int]$HoldMs = 60,    # how long the key stays down before the key-up
+    # In-game mouse input at the client centre: 'left' / 'right' button held for
+    # -ButtonHoldMs (a held attack charges), and wheel notches (+ up / - down).
+    [ValidateSet('', 'left', 'right')]
+    [string]$Button = '',
+    [int]$ButtonHoldMs = 80,
+    [int]$Wheel = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -88,8 +95,36 @@ if ($Vk -ne 0) {
     $down = [IntPtr]([int64](1 -bor ($scan -shl 16)))
     $up = [IntPtr]([int64](1 -bor ($scan -shl 16) -bor (1 -shl 30) -bor (1 -shl 31)))
     [QdIn]::PostMessage($h, $WM_KEYDOWN, [IntPtr]$Vk, $down) | Out-Null
-    if (-not $StickyKeys) { Start-Sleep -Milliseconds 60; [QdIn]::PostMessage($h, $WM_KEYUP, [IntPtr]$Vk, $up) | Out-Null }
+    if (-not $StickyKeys) { Start-Sleep -Milliseconds $HoldMs; [QdIn]::PostMessage($h, $WM_KEYUP, [IntPtr]$Vk, $up) | Out-Null }
     Write-Host ("posted VK=0x{0:X} scan={1}" -f $Vk, $scan)
+}
+
+if ($Button -ne '') {
+    $cx = [int](($cr.R - $cr.L) / 2); $cy = [int](($cr.B - $cr.T) / 2)
+    $lp = [IntPtr]([int64](($cy -shl 16) -bor ($cx -band 0xFFFF)))
+    $dn = if ($Button -eq 'left') { 0x0201 } else { 0x0204 }
+    $mk = if ($Button -eq 'left') { 1 } else { 2 }
+    # The game only takes a mouse PRESS as gameplay input while it believes its window
+    # is active (measured: after OnWindowUnfocused the press went to a UI overlay and
+    # only the release reached the pawn).  WM_ACTIVATE tells it so without taking the
+    # real focus away from anything.
+    [QdIn]::PostMessage($h, 0x0006, [IntPtr]1, [IntPtr]0) | Out-Null
+    Start-Sleep -Milliseconds 50
+    [QdIn]::PostMessage($h, $WM_MOUSEMOVE, [IntPtr]0, $lp) | Out-Null
+    [QdIn]::PostMessage($h, $dn, [IntPtr]$mk, $lp) | Out-Null
+    Start-Sleep -Milliseconds $ButtonHoldMs
+    [QdIn]::PostMessage($h, $dn + 1, [IntPtr]0, $lp) | Out-Null
+    Write-Host "posted $Button button held $ButtonHoldMs ms"
+}
+
+if ($Wheel -ne 0) {
+    $n = [math]::Abs($Wheel); $d = if ($Wheel -gt 0) { 120 } else { -120 }
+    for ($i = 0; $i -lt $n; $i++) {
+        $wp = [IntPtr]([int64](($d -band 0xFFFF) -shl 16))
+        [QdIn]::PostMessage($h, 0x020A, $wp, [IntPtr]0) | Out-Null
+        Start-Sleep -Milliseconds 150
+    }
+    Write-Host "posted wheel $Wheel"
 }
 
 if ($ClickFracX -gt 0.0 -and $ClickFracY -gt 0.0) {

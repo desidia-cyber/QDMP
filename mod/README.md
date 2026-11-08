@@ -48,9 +48,11 @@ which cannot corrupt progression and does prove the path.  See
 **NOT yet proven live** (each has its own switch in `qdcoop.ini`, default OFF):
 
 - the puppet body spawn (the engine deferred-spawn pair — proof pending, `PuppetSync=0`)
-- the level-streaming union (`StreamUnion=0`)
-- enemy transform/persistence sync (`EnemySync=0`)
-- the two-player dialogue lock (`DialogueSync=0`)
+- the level-streaming union (`StreamUnion=0`) — built: veto at `SetShouldBeVisible`
+- enemy sync (`EnemySync=0`) — built: host rows, driven/local copies, hit and record intents
+- two-player dialogue (`DialogueSync=0`) — built: per-slot talk state, partner's NPC blocked
+
+What is still not synced at all is listed in [`doc/SYNC-GAPS.md`](doc/SYNC-GAPS.md).
 - pausing suppression (`SuppressMenuPause=0`)
 
 Enabling one of those before its proof has passed will most likely work, and will

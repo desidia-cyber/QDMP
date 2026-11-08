@@ -289,3 +289,147 @@ downstream of a live session (player rows, puppet, enemy sync).
 
 `ObjectScan` is off by default and the write paths refuse rather than guess, so the mod
 currently does nothing to the game's state. The game directory is left clean.
+
+---
+
+## Session 3 — 2026-11-08
+
+### R20. FIXED — both clients stayed roleless
+The relay never sent `WELCOME`. It now answers every `HELLO` with the assigned role
+and session id (`qd-relay/src/lib.rs`, test `every_hello_is_answered_with_the_assigned_role`).
+
+### R21. FIXED — the save layer read garbage / created saves
+GObjects is a chunked array (65536 per chunk); flat indexing read past chunk 0.
+`GetActiveBaseSave` CREATES a save when none is active; the active save is now read
+side-effect-free via GWorld+0x180 → GameInstance+0x210. Measured: map enumeration
+11/11 keys agree with the native getter; writer no-op round-trip PASS.
+
+### R22. Gameplay reached without the keyboard (dev only)
+Keyboard navigation of File Select was unreliable and once started a NEW GAME on an
+empty slot. `QDCOOP_AUTOLOAD=<slot>` (environment, test rig only) calls the title
+widget's own `Load Slot(Slot, Backup, BackupSlot)` after 10 s, then `ConfirmLoadSuspend`
+if the resume modal opens. It refuses unless `-UserDir` is given AND
+`<UserDir>\Saved_<suffix>\SaveGames\World<slot>.sav` exists — it cannot touch a real
+save or load an empty slot. Measured: title → in game in ~10 s, both instances.
+
+### R23. FIXED — the remote body was "two blue fragments"
+`FS_Full_PlayerChar_C` is the first-person character: it renders arms only. The body
+is now `qdavatar.h`: an engine `SkeletalMeshActor` carrying the game's own full-body
+model `Player_FullChar_2026` (cutscene asset, loaded with `LoadAsset_Blocking`) on a
+`PoseableMeshComponent`. Measured rest pose: Y forward, X = model's left, feet z=0,
+170 cm, A-pose; Auto-Rig Pro skeleton (110 bones, `Weapon_R` parented to Root,
+`Weapon_L` to `Hand_L`).
+
+### R24. Walk animation is procedural
+The skeleton has no locomotion animations (only cutscene shots), so hips/knees/feet,
+arms, spine and a footfall bob are posed by component-space FK from the measured
+ground speed (`avatar::Animate`). Read-back: `Hand_L` target == actual on every sample.
+Verified on screenshots: idle, stride, run.
+
+### R25. Held weapon sync (new wire kind `EQUIPMENT` 0x15, WIRE.md §3.13)
+Held items are visible StaticMeshComponents of `WeaponVisuals_C` actors attached to the
+pawn (measured: `RustySword_WeaponVisuals_C`, mesh `/Game/Items/Weapons/RustedSword/
+RustySword.RustySword`). Sent on change + 1 Hz; receiver attaches the mesh to the body's
+`Weapon_R` bone, which the FK carries with `Hand_R`. Measured: peer's sword shown in hand.
+**Not yet measured: a weapon CHANGE** (test save owns one weapon; slot 2 is empty).
+
+### R26. FIXED — the body was destroyed and respawned every 1–5 s
+`now - LastRxMs()` was unsigned; the net thread stamps receives after the tick reads
+`now`, so the difference wrapped to ~4e9 and read as "peer silent". Signed now.
+Measured: one spawn per side, stable, `err=0.0cm`.
+
+### R27. Heading is the camera's
+The pawn root does not turn with the view. Heading sent = `PlayerCameraManager::
+GetCameraRotation` yaw.
+
+### R28. The runner leaned BACKWARD (review: "awkward and unnatural")
+A +X rotation carries the spine's up axis toward -Y, i.e. backward; the legs use +X for
+"forward" only because they hang down. The torso lean is now negative (2-9 deg forward
+with speed). Verified on the mirror body: upright at idle.
+
+### R29. FIXED -- every reflected lookup on the player pawn silently missed
+`FindPropertyOffsetIn` collected all properties first and FAILED when a class had more
+than 160; `FS_Full_PlayerChar_C` has more. It now streams the field chain. This also hid
+the pawn's property dump.
+
+### R30. Weapon change -- measured live, two instances
+Test weapons are granted through the game's own cheat object (`QDCOOP_GIVE`,
+`FS_Cheats_C.GiveItem` + `FS_PlayerChar_C.AutoEquipItem`). Instance 2 swapped sword ->
+axe with key 1; instance 1 logged `peer equipment rev 2 ... Axe_00_SM` in the same
+millisecond and the body holds the axe (`_test/s-inst1-e2.png`).
+
+### R31. Attacks -- PLAYER.action now carries kind + counter (WIRE.md §3.5)
+Discovered with a ProcessEvent trace (`QDCOOP_PE_TRACE`) and the arms' active montage.
+The body plays a procedural swing (wind-up, strike, recover; 0.9 s, strike at
+0.2-0.52 s to match the measured hit window), alternating right-to-left and
+high-right-to-low-left as the game does. Two instances: `peer action kind 1 #5`,
+`#6`...; frames from instance 1 show wind-up, strike across the chest, recovery
+(`_test/remote-attack.png`).
+
+### R32. Jump -- PLAYER.flags bit0 from MovementMode
+Airborne pose (asymmetric knee tuck, arms up) driven by the sender's falling state.
+Two instances: body leaves the ground with legs tucked (`_test/remote-jump.png`).
+
+### R33. Magic / thrown weapons -- new kinds EFFECT 0x16 / EFFECT_MOVE 0x17 (§3.14)
+This save cannot throw yet (no throw slot), so `QDCOOP_TEST_FIRE` throws a Fireball
+through the player's own `FireDagger(Class)` every 7 s. Measured: local projectile seen,
+copy shown on the other instance with its fire VFX; with moves, the copy is within 5 cm
+horizontally of the real one at +1.2 s (mirror read-back).
+
+### R34. FIXED -- reliable messages were never acked
+Nothing sent `ACK`, so reliable bodies were resent and applied repeatedly (one Fireball
+-> six copies). The receiver now acks and deduplicates (WIRE.md §3.14 end). After: one
+spawn per throw.
+
+### R35. Rig: two instances for anything shown ON a player
+Mirror-mode tests applied the cheats to the viewing player, so its own first-person
+overlays (screen tint, flames) mixed into the picture (review). Status, arc and strafe
+were then re-tested with instance 2 acting and instance 1 only watching. Also: Git Bash
+rewrites `/Game/...` environment values into Windows paths; launch with
+`MSYS2_ENV_CONV_EXCL=QDCOOP_`.
+
+### R36. Status effects -- new kind STATUS 0x18 (WIRE.md §3.15)
+`FS_Cheats_C.MagicFireMe(Amount)` / `MagicPoisonMe(Amount)` and
+`StatusEffectComponent_C.Apply()` drive them (`QDCOOP_TEST_STATUS`, `QDCOOP_TEST_APPLY`).
+Two instances: instance 2 burning -> instance 1 `peer status mask 00000001` and the
+body burns in blue on arms, torso and legs, out when the fire ends (`_test/n-fire.png`);
+poison -> purple wisps (`_test/n-poison.png`); disease + weaken arrive (mask 0x18) but
+show only the faint enemy effect at the feet (`_test/n-disease.png`). The enemy CharFX
+cannot sample the poseable body (flames at the feet only, also with a master-pose
+skeletal copy), so looks were picked from mesh-free systems on screenshots
+(`_test/v-gallery*.png`). Magic poison is lethal within ~7 s even at 25, and fire 150
+killed the test player in 1.5 s: the test save went through game over twice.
+
+### R37. Melee swing arc -- EFFECT kind 4 (§3.14)
+The arc is `MeleeArc_Default`, a Niagara child of the first-person `Arms`, spawned
+~0.2 s into a swing, with user parameters Color1, Color2, Lifetime, Power, Charge.
+Two instances: instance 2 `arc: local ... User.Power=350 ...`, instance 1 `arc: shown
+... params set 5` 8 ms later; a white arc cuts across the body's chest at the strike
+(`_test/n-arc.png`). The watch window follows the montage: on a throttled instance one
+swing took 2.6 s of wall time and a fixed 0.9 s window missed it.
+
+### R38. Strafe and backpedal
+The legs turn toward the travel direction (up to 60 deg) while the chest keeps facing
+the view; moving backward steps backward. Two instances, instance 2 holding D:
+sidestep with turned hips (`_test/n-strafe.png`).
+
+### R39. Skeletal-mesh weapons
+Sender scans `SkeletalMeshComponent`s of weapon visuals (mesh_kind 2); receiver has a
+skeletal slot per hand. This save cannot equip one (`EquipItem(...,2001)`,
+`WeaponSystem.SetSelectedWeaponByItem` and `EquipSpecifiedWeapon` all leave the held
+weapon unchanged; `AllWeapons` is empty), so only the receiving side is verified:
+`QDCOOP_TEST_HOLD=<mesh>#2` puts `B33Sword_SK` in the mirror body's hand
+(`_test/v-arc2.png`).
+
+### R40. FIXED -- death read as "use item"
+`Player_FPArms_Death_Montage` matched "eat" -> A_USE. Death is now A_DYING and the body
+falls onto its back and stays down until the sender respawns (not yet seen on screen:
+in this rig a death means game over on the test save).
+
+### Open
+- Throwing from real input (no throw slot on this save) and the sending side of a
+  skeletal weapon (cannot be equipped here) remain unverified live.
+- Disease / weaken / heavy / binding show only the enemy effect at the feet; buffs have
+  no world visual in the game.
+- Charged attack, thrust, use-item and cast montages have not been triggered live; the
+  death pose has not been seen on screen.

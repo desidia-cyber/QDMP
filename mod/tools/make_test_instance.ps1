@@ -67,6 +67,12 @@ param(
 
     [string]$Root = '',
 
+    # The -saveddirsuffix the rig launches with (run-hidden.ps1 -Suffix).  The engine
+    # then reads Saved_<suffix>\SaveGames, NOT Saved\SaveGames -- seeding only the
+    # latter left the instance with no world save, so "Play" started a fresh game
+    # (LIVE-TEST-LOG R19).  Empty = no suffix.
+    [string]$Suffix = 'qd1',
+
     [switch]$Force
 )
 
@@ -166,7 +172,8 @@ Write-Ok ("source files  : {0} ({1})" -f $sourceFiles.Count, (($sourceFiles | Fo
 Write-Head 'Instance identity'
 
 $InstanceDir = Join-Path $Root $Name
-$SaveDir = Join-Path $InstanceDir 'Saved\SaveGames'
+$SavedName = if ($Suffix) { "Saved_$Suffix" } else { 'Saved' }
+$SaveDir = Join-Path $InstanceDir "$SavedName\SaveGames"
 $MetaPath = Join-Path $InstanceDir 'instance.json'
 
 Write-Ok "instance dir  : $InstanceDir"

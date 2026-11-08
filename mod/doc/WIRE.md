@@ -57,8 +57,12 @@ arrives late is still correct.
 | `0x12` | `ACTOR_STATES` | host → peer | unreliable, latest wins | on change + 1 Hz |
 | `0x13` | `INVENTORY` | host → peer | unreliable, latest wins | on change + 1 Hz |
 | `0x14` | `ENEMY` | host → peer | unreliable, latest wins | 20 Hz |
+| `0x15` | `EQUIPMENT` | each → other | unreliable, latest wins | on change + 1 Hz |
+| `0x16` | `EFFECT` | each → other | reliable | event (projectile spawned / ended) |
+| `0x17` | `EFFECT_MOVE` | each → other | unreliable, latest wins | ~15 Hz per live projectile |
+| `0x18` | `STATUS` | each → other | unreliable, latest wins | on change + 1 Hz |
 | `0x20` | `INTENT` | peer → host | reliable | event |
-| `0x21` | `DIALOGUE` | host → peer | unreliable, latest wins | on change |
+| `0x21` | `DIALOGUE` | each → other | unreliable, latest wins | on change + 1 Hz |
 | `0x22` | `LEVEL_UNION` | both | unreliable, latest wins | 2 Hz + on change |
 | `0x30` | `LOG` | both | unreliable | event |
 
@@ -112,13 +116,26 @@ u32  sample_ms        sender's monotonic ms at sample time
 i32  x, y, z          position, units of 1/8 cm (so 268 m of range at i32)
 i16  yaw, pitch       units of 1/65536 turn
 i16  vx, vy, vz       velocity, units of 1/8 cm/s, saturated to i16
-u8   move_mode        mirror of the game's movement mode enum, unmapped except 0 = none
-u8   action           opaque action byte: 0 idle, 1 attack, 2 hurt, 3 dying, 4 dead
+u8   move_mode        the game's EMovementMode (1 walking, 3 falling, ...), 0 = none
+u8   action           bits 0-4 kind, bits 5-7 a counter bumped on every new move (so the
+                      same kind twice still restarts on the receiver). Kinds: 0 idle,
+                      1 attack, 2 hurt, 3 dying, 4 dead, 5 slash right, 6 slash left,
+                      7 slash down, 8 thrust, 9 charge (held), 10 throw, 11 use item,
+                      12 weapon swap, 13 cast
 u8   flags            bit0 grounded, bit1 aiming, bit2 sprinting, bit3 crouched,
                       bit4 dialogue, bit5 menu
 ```
 
 Size: 1+4+12+4+6+1+1+1 = 30 B.
+
+`action` is sampled from the first-person arms' active montage
+(`avatar::ClassifyMontage`; measured: every melee click plays
+`Player_FPArms_Std_Charge_Attack_Montage` -> kind 1, the strike lands 0.33-0.58 s in;
+the `Player_Slash_*` follow-throughs and the left hand's `MeleeResponse` are not new
+moves). `flags` bit0 (grounded) is `MovementMode != MOVE_Falling`; the receiver uses it
+for the airborne pose instead of guessing from vertical speed. Unreliable rows can
+arrive out of order: the receiver takes `action`/`flags` only from a row whose
+`sample_ms` is not older than the last one it took.
 
 Position range: an `i32` at 1/8 cm spans ±2.68e8 cm, i.e. **~2 680 km**.  (An earlier
 draft of this document said "268 m"; it was wrong by four orders of magnitude.  The
@@ -177,6 +194,23 @@ u16  n                total rows this sender will send for this tick's batch
 n × { guid guid, i32 x, i32 y, i32 z, i16 yaw, u16 hp, u8 flags }
 ```
 `flags` bit0 alive, bit1 driven (peer copy with AI disabled), bit2 has-body.
+
+`guid` is the authored `FGuid` of the enemy's **spawner** (`EnemySpawner_C.GetSaveGUID()`),
+the same key `StoreEnemySaveState` uses — one spawner owns one enemy.
+
+`hp` is a **fraction of the sender's max HP**, 0..65535 (65535 = full, 0 = dead; a
+living enemy is never sent as 0). Not an absolute value: both machines run the same
+enemy data, but the max can differ per machine (equipment that multiplies enemy HP is
+worn by one player), and an absolute value would draw a different health bar on each.
+
+**Dead rows.** Besides the live set, the host re-sends its recent deaths (the
+`StoreEnemySaveState(hp = 0)` it captured, at most 64) as rows with `flags = 0`, `hp = 0`
+and a zero position, up to 4 per datagram. A peer that was not looking when the enemy
+died (area not loaded, datagram lost) learns of the death this way. Because they are
+re-sent continuously, a dead row goes stale like a live one (5 s): when the host rests
+(`ClearAllEnemySaveStates`) it drops its kill log, the dead rows stop, and the peer
+stops treating those enemies as dead.
+
 Size per row: 16+12+2+2+1 = 33 B. 24 rows = 792 B + 2 header = 794 B, inside
 the 1200 B body cap, so one datagram per tick at 20 Hz = 15.9 KB/s worst case.
 
@@ -190,7 +224,7 @@ has no container, it is a snapshot of the live set.
 ```
 u8   kind             1 = set flag, 2 = grant item, 3 = consume item,
                       4 = dialogue answer, 5 = checkpoint touched,
-                      6 = actor state set
+                      6 = actor state set, 7 = enemy hit, 8 = enemy record
 u32  based_on_rev     the `rev` of the container the sender last saw
 ...  payload, by kind
 ```
@@ -204,7 +238,25 @@ kind 3 (consume item):    str item_path, i32 count
 kind 4 (dialogue answer): guid npc, u16 line_index, u16 option_index
 kind 5 (checkpoint):      str save_point_path
 kind 6 (actor state set): guid actor, i32 value
+kind 7 (enemy hit):       guid spawner, i32 damage_frac
+kind 8 (enemy record):    guid spawner, i32 respawn_centi, i32 hp_centi
 ```
+
+**Kind 7** — the peer's player hit a copy the host is driving. `damage_frac` is the HP
+the copy lost, as a fraction of its max in 1/65535 units (it may exceed 65535 for an
+overkill), so the host scales it by its own max and applies it through the game's own
+damage path (`UGameplayStatics::ApplyDamage`). This is the one intent that carries a
+delta, and deliberately: damage is an event, not a state. It stays within rule E2
+because `INTENT` is reliable and de-duplicated by `seq` (a resent hit is applied once),
+and because the host's next `ENEMY` row is the absolute truth the peer converges to.
+`based_on_rev` is 0 (there is no enemy container revision).
+
+**Kind 8** — the peer killed (or saved the partial HP of) an enemy that it was running
+**itself** because the host had no live copy (players apart: a spawner only activates
+for its own machine's player). The three scalars of
+`StoreEnemySaveState(WorldContext, Key, RespawnTime, RemainingHP)` in 1/100; the host
+applies the record to its save, so the enemy stays dead on the host too. A record for a
+copy the host was driving is never sent — the host wrote it itself.
 
 `based_on_rev` is the acceptance gate (DollsMP 12 §4.6 E4): the host applies an
 intent only if `based_on_rev >= ` the revision of the last state it sent. That
@@ -222,6 +274,16 @@ u16  entry            dialogue cursor: entry index
 
 `seq` is what makes a lost blob cost a beat rather than the session: the lock
 is published as *state* and the newer state always wins.
+
+**Use (SYNC-DESIGN §2.7, no global lock).** Each player publishes **its own**
+conversation: `slot` is the sender's slot while it is talking and `0xFF` when it is not,
+on change and again at 1 Hz (a sender silent for 5 s is treated as free, so a crash
+cannot leave an NPC blocked). `npc` is a stable 128-bit id of the placed NPC actor
+(FNV-1a over its object / level / world names — the same cooked package on both
+machines); `line` is `CurrentDialogueSequenceIndex`; `entry` is 0 (not read yet). The
+receiver makes that NPC non-interactable for its own player with the game's
+`BlockInteract` / `ReenableInteract`, so the two players cannot run the same talk
+Blueprint, while both remain free to talk to *different* NPCs at once.
 
 ### 3.12 `LEVEL_UNION` (0x22)
 
@@ -243,6 +305,112 @@ A receiver keeps the last name list per slot and maps bits through it. This
 keeps the steady-state body small while never requiring a shared index to be
 negotiated.
 
+**What the module sends.** Names are short level names (`100_GR`, from the streaming
+level's `WorldAsset` package path), and the list is the levels **the local game itself
+wants visible** — never the levels shown only because the partner needs them, or the two
+lists would hold each other up and the union could never shrink. It always sends
+`has_names = 1` with exactly those names and every bit set, on change and every 2 s
+(~20 short names fit one datagram; a list that does not is truncated and logged).
+
+### 3.13 `EQUIPMENT` (0x15)
+
+What the sender is holding, so the receiver's copy of its body holds the same.
+Absolute and complete: `n = 0` means empty hands.
+
+```
+u32  rev              increments when the held set changes
+u8   n                ≤ 4
+n × {
+  u8   hand           0 = right, 1 = left
+  u8   mesh_kind      1 = static mesh, 2 = skeletal mesh (shown in its reference pose)
+  str  mesh_path      "<package>.<object>", e.g. /Game/Items/Weapons/RustedSword/RustySword.RustySword
+  10 × i32 xform      the mesh relative to its weapon root:
+                      location ×100 (1/100 cm), quaternion x,y,z,w ×1e6, scale ×1000
+}
+```
+
+The sender finds held items as visible `StaticMeshComponent`s and `SkeletalMeshComponent`s of
+`WeaponVisuals_C`-derived actors attached to its pawn (`ScanLocalEquip`). The
+receiver loads the mesh by path (`LoadAsset_Blocking`) and attaches it to the
+body's `Weapon_R` / `Weapon_L` bone. Asset identity is a path, never a pointer.
+
+### 3.14 `EFFECT` (0x16) / `EFFECT_MOVE` (0x17)
+
+A thrown weapon or spell of the sender's -- the game's "magic" (Fireball,
+MagicFireDagger, ...) is a projectile actor deriving from `Dagger_Projectile_Base_C`.
+Spawn and end travel as `EFFECT` (reliable); position updates as `EFFECT_MOVE`
+(unreliable, superseded by the next). Same body for both:
+
+```
+u8   kind             1 = projectile spawned, 2 = ended, 3 = moved, 4 = melee arc
+u16  id               the sender's handle; spawn, moves and end share it
+str  class            "<package>.<object>" of the actor class (spawn only, else "")
+i32  x, y, z          1/8 cm
+i16  pitch, yaw       1/65536 turn
+i32  vx, vy, vz       1/8 cm/s (i32: projectiles outrun PLAYER's i16)
+u16  life_ms          lifespan of the copy
+```
+
+The sender sees a projectile begin play (`ReceiveBeginPlay` through the ProcessEvent
+hook), keeps it if its Owner/Instigator is the local pawn, and reads it one frame later
+(a thrower may set the velocity after spawning). The receiver spawns the SAME class as
+a visual only: collision off before the actor finishes spawning, actor tick off
+after (the hit trace lives there), lifespan set. It cannot hit or damage anything in
+the receiver's world. Because it cannot collide, it would fall through the floor
+where the real one bounces and rolls (measured: Fireball rolls ~5 s), so moves snap it
+to the sender's position and velocity, and the end puts it where the real one stopped.
+
+**kind 4, melee arc** (reliable). Every swing spawns the weapon's arc FX
+(`/Game/VFX/Melee/MeleeArc_Default` or the weapon's override) as a Niagara component
+attached to the first-person `Arms`, about 0.2 s in, coloured by Blueprint-set user
+parameters. The sender watches `Arms.AttachChildren` while a move plays and reports each
+new Niagara child once:
+
+```
+class      "<system>|<param>=<v>[,<v>,<v>,<v>]|..."   values x1000 as integers;
+           four values = LinearColor, one = float. Measured on MeleeArc_Default:
+           User.Color1, User.Color2, User.Lifetime, User.Power, User.Charge
+id         the arc's relative pitch (quantized like pitch)
+pitch      its relative roll (the swing direction)
+yaw        its relative yaw
+```
+
+Positions and velocities are unused. The receiver spawns the same system on the body's
+mesh (whose frame is the arms' frame: Y forward, X left) at eye height with that
+relative rotation and sets each parameter (`SetVariableLinearColor` / `SetVariableFloat`).
+UE 4.27 stores a type HANDLE in the parameter store, not the type, so the sender infers
+the type from the name (`*Color*` = LinearColor, else float).
+
+### 3.15 `STATUS` (0x18)
+
+The sender's visible status effects, absolute, latest-wins.
+
+```
+u32  rev
+u32  mask    bit 0 magic fire, 1 magic poison, 2 poison, 3 disease, 4 weaken,
+             5 heavy, 6 binding, 7 berserk, 8 ironskin, 9 radiant fruit
+```
+
+Read from the player's own components: `StatusEffectComponent_C.Applied` (by component
+name: `PoisonStatusEffect`, `DiseaseStatusEffect`, ...),
+`MagicFireEffectLogic_C.CurrentMagicFireDamagePool > 0`, `MagicPoisonDebuffLogic_C.Active`.
+On the player these effects are screen overlays only; the receiver shows world FX on
+the body. The game's enemy effects (`EnemyBase_C`: `Fire_CharFX`, `Poison_CharFX`,
+`DiseaseCharFX`, ...) sample a skeletal mesh and the body is a poseable mesh, so they
+draw only at the feet (measured; a master-pose skeletal copy did not help). They are
+kept for the ground glow, and a mesh-free system is attached at four bones: the blue
+brazier flame for magic fire, the poison fishman projectile FX for poison (wisps) and
+magic poison (magenta). Disease, weaken, heavy and binding have no stationary
+mesh-free look in the game's content; the buffs (7-9) have no world visual in the game.
+
+### Reliable kinds: ack and duplicate suppression
+
+A receiver acks every copy of a reliable kind (`ACK` with the envelope `seq`) and
+delivers only the first; it remembers the last 64 reliable seqs and forgets them if a
+seq arrives more than 4096 below the highest seen (the sender restarted). Before this
+existed, nothing acked: a reliable body was resent until the sender gave up and every
+copy was applied (measured: one Fireball spawned six times).
+
 ## 4. Lane discipline
 
 - `PLAYER` and `ENEMY` are **unreliable and absolute**. Losing one costs a
@@ -251,6 +419,9 @@ negotiated.
   They are re-sent on change and at 1 Hz regardless. A peer with no memory at
   all converges within a second.
 - `INTENT` is **reliable** and deduplicated by `(slot, seq)`.
+- `DIALOGUE` and `LEVEL_UNION` are **unreliable, absolute, per sender** and
+  re-sent periodically; a sender that goes quiet goes stale (5 s / 30 s) rather than
+  leaving its last state in force.
 - Nothing anywhere carries `x += d`. Every effect is a set insertion, an
   absolute assignment, or a transition guarded by a monotonic counter
   (E2). This is the rule that makes a lost or duplicated datagram change

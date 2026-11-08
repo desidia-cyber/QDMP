@@ -89,6 +89,10 @@ pub enum Kind {
     ActorStates = 0x12,
     Inventory = 0x13,
     EnemyRows = 0x14,
+    Equipment = 0x15,
+    Effect = 0x16,
+    EffectMove = 0x17,
+    Status = 0x18,
     Intent = 0x20,
     DialogueState = 0x21,
     LevelUnion = 0x22,
@@ -108,6 +112,10 @@ impl Kind {
             0x12 => ActorStates,
             0x13 => Inventory,
             0x14 => EnemyRows,
+            0x15 => Equipment,
+            0x16 => Effect,
+            0x17 => EffectMove,
+            0x18 => Status,
             0x20 => Intent,
             0x21 => DialogueState,
             0x22 => LevelUnion,
@@ -132,6 +140,10 @@ impl Kind {
             ActorStates => "actor_states",
             Inventory => "inventory",
             EnemyRows => "enemy_rows",
+            Equipment => "equipment",
+            Effect => "effect",
+            EffectMove => "effect_move",
+            Status => "status",
             Intent => "intent",
             DialogueState => "dialogue_state",
             LevelUnion => "level_union",
@@ -141,7 +153,7 @@ impl Kind {
 
     /// Reliable kinds (WIRE.md §2): retried until acked by the sender.
     pub fn is_reliable(self) -> bool {
-        matches!(self, Kind::Hello | Kind::Welcome | Kind::Intent)
+        matches!(self, Kind::Hello | Kind::Welcome | Kind::Intent | Kind::Effect)
     }
 
     /// State kinds: unreliable, absolute, and superseded by the next one.
@@ -156,6 +168,9 @@ impl Kind {
                 | Kind::ActorStates
                 | Kind::Inventory
                 | Kind::EnemyRows
+                | Kind::Equipment
+                | Kind::EffectMove
+                | Kind::Status
                 | Kind::DialogueState
                 | Kind::LevelUnion
         )
@@ -228,13 +243,53 @@ pub mod player_flags {
     pub const MENU: u8 = 1 << 5;
 }
 
-/// `PLAYER.action` values (WIRE.md §3.5).
+/// `PLAYER.action` (WIRE.md §3.5): bits 0-4 the kind below, bits 5-7 a counter that
+/// bumps on every new move, so a repeat of the same kind still restarts on the peer.
 pub mod player_action {
     pub const IDLE: u8 = 0;
     pub const ATTACK: u8 = 1;
     pub const HURT: u8 = 2;
     pub const DYING: u8 = 3;
     pub const DEAD: u8 = 4;
+    pub const SLASH_RIGHT: u8 = 5;
+    pub const SLASH_LEFT: u8 = 6;
+    pub const SLASH_DOWN: u8 = 7;
+    pub const THRUST: u8 = 8;
+    pub const CHARGE: u8 = 9;
+    pub const THROW: u8 = 10;
+    pub const USE_ITEM: u8 = 11;
+    pub const SWAP: u8 = 12;
+    pub const CAST: u8 = 13;
+
+    pub const KIND_MASK: u8 = 0x1F;
+    pub const COUNTER_SHIFT: u8 = 5;
+
+    /// The byte for `kind` at counter `seq` (mod 8).
+    pub fn pack(kind: u8, seq: u8) -> u8 {
+        ((seq & 7) << COUNTER_SHIFT) | (kind & KIND_MASK)
+    }
+
+    pub fn kind(byte: u8) -> u8 {
+        byte & KIND_MASK
+    }
+
+    pub fn counter(byte: u8) -> u8 {
+        byte >> COUNTER_SHIFT
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn pack_matches_the_native_layout() {
+            // qdavatar.h ActionByte(kind, seq) = ((seq & 7) << 5) | (kind & 0x1F)
+            assert_eq!(pack(ATTACK, 1), 0x21);
+            assert_eq!(pack(SWAP, 9), 0x2C);
+            assert_eq!(kind(pack(CAST, 7)), CAST);
+            assert_eq!(counter(pack(CAST, 7)), 7);
+        }
+    }
 }
 
 /// `ENEMY.flags` bits (WIRE.md §3.9).
@@ -353,6 +408,91 @@ pub struct Inventory {
     pub entries: Vec<ItemEntry>,
 }
 
+/// Maximum held items in one `EQUIPMENT` body (right hand, left hand, spare).
+pub const MAX_EQUIP_ITEMS: usize = 4;
+
+/// One held item (WIRE.md §3.13): what mesh is in which hand, and how it sits there.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct EquipItem {
+    /// 0 = right hand, 1 = left hand.
+    pub hand: u8,
+    /// 1 = static mesh, 2 = skeletal mesh.
+    pub mesh_kind: u8,
+    /// "<package>.<object>" of the mesh asset.
+    pub mesh_path: String,
+    /// Mesh transform relative to its weapon root: location in 1/100 cm (3),
+    /// rotation quaternion x,y,z,w in 1/1_000_000 (4), scale in 1/1000 (3).
+    pub xform: [i32; 10],
+}
+
+/// `EQUIPMENT` body (WIRE.md §3.13): the sender's held items, absolute, latest-wins.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Equipment {
+    pub rev: u32,
+    pub items: Vec<EquipItem>,
+}
+
+/// `STATUS` body (WIRE.md §3.15): the sender's visible status effects, absolute,
+/// latest-wins.  `mask` bits are [`status_bit`] values; unknown bits are carried.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Status {
+    pub rev: u32,
+    pub mask: u32,
+}
+
+/// `STATUS.mask` bits (WIRE.md §3.15).
+pub mod status_bit {
+    pub const MAGIC_FIRE: u32 = 1 << 0;
+    pub const MAGIC_POISON: u32 = 1 << 1;
+    pub const POISON: u32 = 1 << 2;
+    pub const DISEASE: u32 = 1 << 3;
+    pub const WEAKEN: u32 = 1 << 4;
+    pub const HEAVY: u32 = 1 << 5;
+    pub const BINDING: u32 = 1 << 6;
+    pub const BERSERK: u32 = 1 << 7;
+    pub const IRONSKIN: u32 = 1 << 8;
+    pub const RADIANT: u32 = 1 << 9;
+}
+
+/// `EFFECT.kind` values (WIRE.md §3.14).
+pub mod effect_kind {
+    /// A projectile was spawned (reliable).
+    pub const PROJECTILE_SPAWNED: u8 = 1;
+    /// It stopped or was destroyed, at the given position (reliable).
+    pub const PROJECTILE_ENDED: u8 = 2;
+    /// Where it is now (unreliable, ~15 Hz, superseded by the next).
+    pub const PROJECTILE_MOVED: u8 = 3;
+    /// A melee swing's arc FX: `class_path` = the Niagara system, `pitch` = the arc's
+    /// roll, `yaw` = its yaw relative to the heading, `vx`/`vy` = two RGBA8 colours,
+    /// `life_ms` = its lifetime (reliable).
+    pub const MELEE_ARC: u8 = 4;
+}
+
+/// `EFFECT` / `EFFECT_MOVE` body (WIRE.md §3.14): one visual event from the sender's
+/// world.  Spawn and end travel as `EFFECT` (reliable); position updates as
+/// `EFFECT_MOVE` (latest-wins), so each kind has one reliability class.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Effect {
+    /// See [`effect_kind`].
+    pub kind: u8,
+    /// The sender's handle for the projectile, shared by its spawn/move/end.
+    pub id: u16,
+    /// "<package>.<object>" of the actor class; empty except for a spawn.
+    pub class_path: String,
+    /// Position, 1/8 cm.
+    pub x: i32,
+    pub y: i32,
+    pub z: i32,
+    /// 1/65536 turn.
+    pub pitch: i16,
+    pub yaw: i16,
+    /// Velocity, 1/8 cm/s (i32: projectiles outrun the i16 of `PLAYER`).
+    pub vx: i32,
+    pub vy: i32,
+    pub vz: i32,
+    pub life_ms: u16,
+}
+
 /// One `ENEMY` row (WIRE.md §3.9). 33 bytes on the wire.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct EnemyRow {
@@ -387,6 +527,14 @@ pub enum IntentPayload {
     Checkpoint { save_point_path: String },
     /// kind 6
     ActorStateSet { actor: Guid, value: i32 },
+    /// kind 7: the peer hit a host-driven enemy copy. `spawner` is the enemy's key
+    /// (its spawner's authored GUID); `damage_frac` is the damage as a fraction of max
+    /// HP in 1/65535 units (may exceed 65535 for an overkill), so the host scales it
+    /// by its own max.
+    EnemyHit { spawner: Guid, damage_frac: i32 },
+    /// kind 8: the peer wrote a persistence record for an enemy it ran itself (the
+    /// host had no live copy). The three scalars of `StoreEnemySaveState`, in 1/100.
+    EnemyRecord { spawner: Guid, respawn_centi: i32, hp_centi: i32 },
 }
 
 impl IntentPayload {
@@ -398,6 +546,8 @@ impl IntentPayload {
             IntentPayload::DialogueAnswer { .. } => 4,
             IntentPayload::Checkpoint { .. } => 5,
             IntentPayload::ActorStateSet { .. } => 6,
+            IntentPayload::EnemyHit { .. } => 7,
+            IntentPayload::EnemyRecord { .. } => 8,
         }
     }
 }
@@ -483,6 +633,10 @@ pub enum Body {
     ActorStates(ActorStates),
     Inventory(Inventory),
     EnemyRows(EnemyRows),
+    Equipment(Equipment),
+    Effect(Effect),
+    EffectMove(Effect),
+    Status(Status),
     Intent(Intent),
     DialogueState(DialogueState),
     LevelUnion(LevelUnion),
@@ -501,6 +655,10 @@ impl Body {
             Body::ActorStates(_) => Kind::ActorStates,
             Body::Inventory(_) => Kind::Inventory,
             Body::EnemyRows(_) => Kind::EnemyRows,
+            Body::Equipment(_) => Kind::Equipment,
+            Body::Effect(_) => Kind::Effect,
+            Body::EffectMove(_) => Kind::EffectMove,
+            Body::Status(_) => Kind::Status,
             Body::Intent(_) => Kind::Intent,
             Body::DialogueState(_) => Kind::DialogueState,
             Body::LevelUnion(_) => Kind::LevelUnion,
@@ -794,6 +952,43 @@ pub fn encode_body(body: &Body) -> Result<Vec<u8>> {
                 w.write_u8(row.flags)?;
             }
         }
+        Body::Equipment(e) => {
+            if e.items.len() > MAX_EQUIP_ITEMS {
+                return Err(Error::LimitExceeded {
+                    what: "equipment items",
+                    limit: MAX_EQUIP_ITEMS,
+                    got: e.items.len(),
+                });
+            }
+            w.write_u32(e.rev)?;
+            w.write_u8(e.items.len() as u8)?;
+            for it in &e.items {
+                w.write_u8(it.hand)?;
+                w.write_u8(it.mesh_kind)?;
+                write_str(&mut w, &it.mesh_path)?;
+                for v in it.xform {
+                    w.write_i32(v)?;
+                }
+            }
+        }
+        Body::Status(st) => {
+            w.write_u32(st.rev)?;
+            w.write_u32(st.mask)?;
+        }
+        Body::Effect(e) | Body::EffectMove(e) => {
+            w.write_u8(e.kind)?;
+            w.write_u16(e.id)?;
+            write_str(&mut w, &e.class_path)?;
+            w.write_i32(e.x)?;
+            w.write_i32(e.y)?;
+            w.write_i32(e.z)?;
+            w.write_i16(e.pitch)?;
+            w.write_i16(e.yaw)?;
+            w.write_i32(e.vx)?;
+            w.write_i32(e.vy)?;
+            w.write_i32(e.vz)?;
+            w.write_u16(e.life_ms)?;
+        }
         Body::Intent(it) => {
             w.write_u8(it.payload.kind())?;
             w.write_u32(it.based_on_rev)?;
@@ -827,6 +1022,15 @@ pub fn encode_body(body: &Body) -> Result<Vec<u8>> {
                 IntentPayload::ActorStateSet { actor, value } => {
                     write_guid(&mut w, actor)?;
                     w.write_i32(*value)?;
+                }
+                IntentPayload::EnemyHit { spawner, damage_frac } => {
+                    write_guid(&mut w, spawner)?;
+                    w.write_i32(*damage_frac)?;
+                }
+                IntentPayload::EnemyRecord { spawner, respawn_centi, hp_centi } => {
+                    write_guid(&mut w, spawner)?;
+                    w.write_i32(*respawn_centi)?;
+                    w.write_i32(*hp_centi)?;
                 }
             }
         }
@@ -992,6 +1196,43 @@ pub fn decode_body(kind: Kind, bytes: &[u8]) -> Result<Body> {
             }
             Body::EnemyRows(EnemyRows { rows })
         }
+        Kind::Equipment => {
+            let rev = r.read_u32()?;
+            let n = usize::from(r.read_u8()?);
+            if n > MAX_EQUIP_ITEMS {
+                return Err(Error::LimitExceeded { what: "equipment items", limit: MAX_EQUIP_ITEMS, got: n });
+            }
+            let mut items = Vec::with_capacity(n);
+            for _ in 0..n {
+                let hand = r.read_u8()?;
+                let mesh_kind = r.read_u8()?;
+                let mesh_path = read_str(&mut r)?;
+                let mut xform = [0i32; 10];
+                for v in xform.iter_mut() {
+                    *v = r.read_i32()?;
+                }
+                items.push(EquipItem { hand, mesh_kind, mesh_path, xform });
+            }
+            Body::Equipment(Equipment { rev, items })
+        }
+        Kind::Status => Body::Status(Status { rev: r.read_u32()?, mask: r.read_u32()? }),
+        Kind::Effect | Kind::EffectMove => {
+            let e = Effect {
+                kind: r.read_u8()?,
+                id: r.read_u16()?,
+                class_path: read_str(&mut r)?,
+                x: r.read_i32()?,
+                y: r.read_i32()?,
+                z: r.read_i32()?,
+                pitch: r.read_i16()?,
+                yaw: r.read_i16()?,
+                vx: r.read_i32()?,
+                vy: r.read_i32()?,
+                vz: r.read_i32()?,
+                life_ms: r.read_u16()?,
+            };
+            if kind == Kind::Effect { Body::Effect(e) } else { Body::EffectMove(e) }
+        }
         Kind::Intent => {
             let kind_byte = r.read_u8()?;
             let based_on_rev = r.read_u32()?;
@@ -1025,6 +1266,15 @@ pub fn decode_body(kind: Kind, bytes: &[u8]) -> Result<Body> {
                 6 => IntentPayload::ActorStateSet {
                     actor: read_guid(&mut r)?,
                     value: r.read_i32()?,
+                },
+                7 => IntentPayload::EnemyHit {
+                    spawner: read_guid(&mut r)?,
+                    damage_frac: r.read_i32()?,
+                },
+                8 => IntentPayload::EnemyRecord {
+                    spawner: read_guid(&mut r)?,
+                    respawn_centi: r.read_i32()?,
+                    hp_centi: r.read_i32()?,
                 },
                 other => return Err(Error::UnknownIntentKind(other)),
             };
@@ -1212,6 +1462,42 @@ mod tests {
                 names: Some(vec!["L_Main".into(), "L_Dungeon".into(), "L_Boss".into()]),
             }),
             Body::LevelUnion(LevelUnion { bits: vec![0b0000_0101, 0b0000_0010], names: None }),
+            Body::Equipment(Equipment {
+                rev: 2,
+                items: vec![EquipItem {
+                    hand: 0,
+                    mesh_kind: 1,
+                    mesh_path: "/Game/Items/Weapons/RustedSword/RustySword.RustySword".into(),
+                    xform: [100, -250, 0, 0, 0, 707107, 707107, 1000, 1000, 1000],
+                }],
+            }),
+            Body::Equipment(Equipment { rev: 3, items: vec![] }),
+            Body::Effect(Effect {
+                kind: effect_kind::PROJECTILE_SPAWNED,
+                id: 7,
+                class_path: "/Game/Items/Weapons/Daggers/Fireball/Fireball_Projectile_BP.Fireball_Projectile_BP_C".into(),
+                x: 32_680,
+                y: -15_672,
+                z: 1_560,
+                pitch: -1_200,
+                yaw: -7_300,
+                vx: 6_528,
+                vy: -5_648,
+                vz: -3_496,
+                life_ms: 6_000,
+            }),
+            Body::EffectMove(Effect {
+                kind: effect_kind::PROJECTILE_MOVED,
+                id: 7,
+                x: 40_000,
+                y: -21_000,
+                z: 1_300,
+                vx: 6_528,
+                vy: -5_648,
+                ..Default::default()
+            }),
+            Body::Effect(Effect { kind: effect_kind::PROJECTILE_ENDED, id: 7, x: 59_584, y: -29_744, z: 5_784, ..Default::default() }),
+            Body::Status(Status { rev: 4, mask: status_bit::MAGIC_FIRE | status_bit::POISON }),
             Body::Log(Log { bytes: b"hello from host".to_vec() }),
         ]
     }
@@ -1462,7 +1748,7 @@ mod tests {
 
     #[test]
     fn kind_classification_matches_the_wire_table() {
-        for k in [Kind::Hello, Kind::Welcome, Kind::Intent] {
+        for k in [Kind::Hello, Kind::Welcome, Kind::Intent, Kind::Effect] {
             assert!(k.is_reliable(), "{k:?} must be reliable");
             assert!(!k.is_latest_wins());
         }
@@ -1472,6 +1758,9 @@ mod tests {
             Kind::ActorStates,
             Kind::Inventory,
             Kind::EnemyRows,
+            Kind::Equipment,
+            Kind::EffectMove,
+            Kind::Status,
             Kind::DialogueState,
             Kind::LevelUnion,
         ] {

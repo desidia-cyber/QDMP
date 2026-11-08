@@ -214,6 +214,26 @@ fn vectors() -> Vec<Vector> {
             expected: "20 06 0a 00 00 00 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 2a 00 00 00",
         },
         Vector {
+            name: "intent_enemy_hit",
+            body: Body::Intent(Intent {
+                based_on_rev: 11,
+                payload: IntentPayload::EnemyHit { spawner: sample_guid(), damage_frac: 16384 },
+            }),
+            expected: "20 07 0b 00 00 00 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 00 40 00 00",
+        },
+        Vector {
+            name: "intent_enemy_record",
+            body: Body::Intent(Intent {
+                based_on_rev: 12,
+                payload: IntentPayload::EnemyRecord {
+                    spawner: sample_guid(),
+                    respawn_centi: 30000,
+                    hp_centi: 0,
+                },
+            }),
+            expected: "20 08 0c 00 00 00 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 30 75 00 00 00 00 00 00",
+        },
+        Vector {
             name: "dialogue_state",
             body: Body::DialogueState(DialogueState {
                 seq: 4,

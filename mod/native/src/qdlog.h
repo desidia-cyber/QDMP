@@ -140,7 +140,9 @@ inline void Emit(int level, const char* msg, int len)
 
 // Verdict: -1 fail, 0 ok.  A failure here means the log is silent, which the
 // proxy reports once through OutputDebugString so a missing log is diagnosable.
-inline int LogOpen(const char* directory)
+// `tag` (optional) names the file qdcoop-<tag>.log, so two instances launched from one
+// game directory (the two-player rig) do not interleave into one file.
+inline int LogOpen(const char* directory, const char* tag = nullptr)
 {
     if (detail::LogHandle() != INVALID_HANDLE_VALUE) return 0;
 
@@ -148,7 +150,13 @@ inline int LogOpen(const char* directory)
     char* d = path;
     const char* e = path + sizeof(path) - 1;
     d = detail::Cat(d, e, directory);
-    d = detail::Cat(d, e, "\\qdcoop.log");
+    if (tag && tag[0]) {
+        d = detail::Cat(d, e, "\\qdcoop-");
+        d = detail::Cat(d, e, tag);
+        d = detail::Cat(d, e, ".log");
+    } else {
+        d = detail::Cat(d, e, "\\qdcoop.log");
+    }
     *d = 0;
 
     HANDLE h = CreateFileA(path, FILE_APPEND_DATA,

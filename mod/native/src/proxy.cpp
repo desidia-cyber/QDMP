@@ -19,7 +19,9 @@
 //   4  SYNC: host broadcasts absolute flag state; a peer sends intents, the host
 //      applies and echoes
 //   5  BODY: spawn and drive a full-body actor for the remote player
-//   6  WORLD: level-streaming union, dialogue lock, enemy persistence
+//   6  WORLD: level-streaming union (veto at SetShouldBeVisible), enemies (host
+//      simulates, peer copies driven or locally owned, HP converges through the
+//      game's damage path), dialogue (per-slot talk state, partner's NPC blocked)
 //
 // Layers 0-3 are read-only against the game.  Layers 4-6 write, and each has its own
 // switch in qdcoop.ini, defaulting OFF until proven live.  That ordering is
@@ -40,6 +42,8 @@
 #endif
 #include <windows.h>
 #include <stdint.h>
+#include <math.h>
+#include <stdlib.h>
 
 #include "MinHook.h"
 
@@ -49,6 +53,7 @@
 #include "qdsubstrate.h"
 #include "qdreflect.h"
 #include "qdsave.h"
+#include "qdavatar.h"
 #include "qdwire.h"
 #include "qdnet.h"
 
@@ -60,6 +65,7 @@
 #include "qdpuppet.h"
 #include "qdstream.h"
 #include "qddialogue.h"
+#include "qdenemy.h"
 #include "qdflags.h"
 
 // ---------------------------------------------------------------------------
@@ -122,8 +128,6 @@ uint32_t          g_flagsRevision = 1;
 bool              g_flagsDirty = true;
 uint32_t          g_lastFlagsPushMs = 0;
 uint32_t          g_lastPlayerPushMs = 0;
-uint32_t          g_lastEnemyPushMs = 0;
-int               g_enemyCursor = 0;
 
 // The probe runs once per process.  It is guarded separately from the save layer's own
 // readiness because the two become ready at different times: the engine exists long
@@ -146,15 +150,6 @@ struct MirrorState {
 MirrorState       g_mirror[64];
 int               g_mirrorCount = 0;
 
-// Captured enemy persistence writes (host authority source).
-struct EnemyKill {
-    QdGuid   guid;
-    float    respawn;
-    float    hp;
-    uint32_t seen_ms;
-    bool     used;
-};
-EnemyKill         g_kills[32];
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -196,24 +191,13 @@ void RunApiProbe()
         QDLOG(LOG_INFO, "PROBE save-object: PASS (", d, ")");
     }
 
-    // 2. property layout, validated against the measured GetNamedSaveData frame
-    if (!s.layout.valid) {
-        QDLOG(LOG_ERROR, "PROBE param-layout: FAIL (", s.layout.note, ")");
-    } else {
-        QDLOG(LOG_INFO, "PROBE param-layout: PASS  PropertyLink=", hex(s.layout.cand.prop_link),
-              " Next=", hex(s.layout.cand.prop_next),
-              " ElemSize=", hex(s.layout.cand.elem_size),
-              " OffsetInternal=", hex(s.layout.cand.offset_internal),
-              " Flags=", hex(s.layout.cand.flags),
-              " parmsSize=", dec(s.layout.parms_size));
-    }
+    // 2. property layout, validated against the engine's own UFunction bookkeeping
+    if (!Lay().valid) QDLOG(LOG_ERROR, "PROBE param-layout: FAIL (", Lay().note, ")");
+    else QDLOG(LOG_INFO, "PROBE param-layout: PASS (", Lay().note, ")");
 
     // 3. NamedSaveData container offset + map stride
-    if (s.nsdOffset < 0) {
-        QDLOG(LOG_ERROR, "PROBE NamedSaveData-offset: FAIL (property not found)");
-    } else {
-        QDLOG(LOG_INFO, "PROBE NamedSaveData-offset: PASS (", dec(s.nsdOffset), ")");
-    }
+    if (s.nsdOffset < 0) QDLOG(LOG_ERROR, "PROBE NamedSaveData-offset: FAIL (property not found)");
+    else QDLOG(LOG_INFO, "PROBE NamedSaveData-offset: PASS (", dec(s.nsdOffset), ")");
     if (s.enumerateOk) {
         QDLOG(LOG_INFO, "PROBE NamedSaveData-map: PASS  stride=", dec(s.mapStride),
               " valueOffset=", dec(s.mapValueOff), " (cross-checked against the getter)");
@@ -222,27 +206,40 @@ void RunApiProbe()
                         "enumeration off, single-key reads unaffected");
     }
 
-    // 4. the reader, end to end
+    // 4. the reader, end to end -- and, independently, the reflective getter.  Two
+    //    unrelated routes to the same value agreeing is the evidence that both the
+    //    native signature and the reflected one are right.
     {
+        const char* key = "CheckpointUnlockCount";
         bool set = false;
         int32_t v = 0;
-        // "CheckpointUnlockCount" exists in every save the analysis read, including a
-        // fresh 11-minute one, so its presence is a real check rather than a lucky hit.
-        if (NsdRead("CheckpointUnlockCount", &v, &set)) {
-            QDLOG(LOG_INFO, "PROBE reader: PASS  CheckpointUnlockCount=", dec(v));
-        } else {
-            QDLOG(LOG_WARN, "PROBE reader: INCONCLUSIVE  CheckpointUnlockCount absent "
-                            "(not an error on a different save)");
+        bool have = NsdRead(key, &v, &set);
+        if (have) QDLOG(LOG_INFO, "PROBE reader: PASS  ", key, "=", dec(v));
+        else QDLOG(LOG_WARN, "PROBE reader: INCONCLUSIVE  ", key, " absent on this save");
+
+        if (s.getSig.valid) {
+            QdName n;
+            const PropDesc* pKey = FindPropOfType(s.getSig, "NameProperty", CPF_OutParm | CPF_ReturnParm);
+            const PropDesc* pCtx = FindPropOfType(s.getSig, "ObjectProperty", CPF_OutParm | CPF_ReturnParm);
+            if (pKey && FNameFromAnsi(key, &n)) {
+                ArgList a;
+                a.AddFName(pKey->name, n);
+                if (pCtx) a.AddObject(pCtx->name, GWorldPtr());
+                ReadBack rb;
+                char err[160];
+                if (Invoke(s.saveFunctions, s.fnGetNamedSaveData, s.getSig, a, &rb, err, sizeof(err))) {
+                    bool agree = (rb.value == v) && (!have || rb.was_set);
+                    QDLOG(agree ? LOG_INFO : LOG_ERROR, "PROBE reflective-getter: ",
+                          (agree ? "PASS" : "FAIL"), "  value=", dec(rb.value),
+                          " wasSet=", dec(rb.was_set ? 1 : 0), " native=", dec(v));
+                } else {
+                    QDLOG(LOG_ERROR, "PROBE reflective-getter: FAIL  ", err);
+                }
+            }
         }
     }
 
     // 5. the writer, proved by a no-op write and a read-back.
-    //
-    // This is the item the analysis called unpinned: "SaveFunctions_C.SetNamedSaveData
-    // -- the write entry for NamedSaveData ... the setter's RVA/param buffer is not
-    // yet documented."  Writing back the value that is already there cannot corrupt
-    // progression, and the read-back proves the path works.  A write of a DIFFERENT
-    // value is what layers 4+ do, and only when [Rules] FlagSync=1.
     if (!s.writeOk) {
         QDLOG(LOG_ERROR, "PROBE writer: FAIL (write path unavailable)");
     } else {
@@ -261,75 +258,49 @@ void RunApiProbe()
         }
     }
 
-    // 6. the dialogue action entry points exist as expected (presence only; calling
-    //    them is a live-test action, not a load-time one)
-    {
-        void* cdo = FindCdo("SaveFunctions_C");
-        if (cdo) {
-            void* addItem = FindFunction(cdo, "AddItemToInventory");
-            QDLOG(LOG_INFO, "PROBE AddItemToInventory: ", (addItem ? "FOUND" : "ABSENT"));
-            if (addItem && s.layout.valid) {
-                LayoutResult al;
-                al.props = 0;
-                al.parms_size = 0;
-                if (WalkProperties(addItem, s.layout.cand, &al) && al.props > 0) {
-                    LogSignature("AddItemToInventory", al);
-                }
-            }
-        } else {
-            QDLOG(LOG_WARN, "PROBE AddItemToInventory: cannot find SaveFunctions_C CDO");
-        }
-    }
-
     QDLOG(LOG_INFO, "======== probe complete ========");
 }
 
 // ---------------------------------------------------------------------------
-// Save-layer readiness, retried from the frame pump
+// Save-layer readiness, checked every frame
 // ---------------------------------------------------------------------------
-// Called every frame.  Cheap when the layer is already up: one liveness check on a
-// cached pointer.  Re-initialises when the save object dies or is replaced, which is
-// what a level load does -- and the corpus rule is explicit that a cached handle must
-// not be trusted across a map change.
+// Two pointer reads per frame (GWorld -> GameInstance -> active save).  The full init
+// -- reflection, offsets, map probe -- runs only when the active save object changes,
+// which is exactly a load, a new game or a return to the menu.  Nothing here can create
+// a save (see ActiveSaveNoCreate in qdsave.h for why that matters).
 bool TryInitSaveLayer(uint32_t now)
 {
+    (void)now;
     SaveLayer& s = Save();
-    void* world = *(void**)Ptr<void*>(0x04BA86B0u);
-    if (world == nullptr) return false;
+    void* world = GWorldPtr();
+    void* save = ActiveSaveNoCreate(world);
 
-    // Re-resolve every two seconds even when the world pointer is unchanged.
-    //
-    // MEASURED: resolving once and caching is wrong. At the main menu the game already
-    // hands back a transient FS_SaveSlot_C, and the save that a level load actually uses
-    // is a DIFFERENT object -- so the cached one kept reporting the main-menu state
-    // (1 of 13 known flags present) for two minutes after the world had loaded. Two
-    // seconds is cheap: the resolve is a player lookup plus one call.
-    if (s.readOk && s.save && world == s.world &&
-        (now - g_lastSaveInitMs) < 2000) {
-        return true;
+    if (save == s.save && world == s.world) return s.readOk;
+
+    if (!save) {
+        if (s.readOk) QDLOG(LOG_INFO, "active save gone (menu or level transition)");
+        s.Reset();
+        s.world = world;
+        return false;
     }
-    g_lastSaveInitMs = now;
+    if (save == s.save) {           // same save, new world: a level change
+        s.world = world;
+        return s.readOk;
+    }
 
-    QDLOG(LOG_DEBUG, "  TryInitSaveLayer: calling SaveInit");
-    if (!SaveInit(world)) {
-        QDLOG(LOG_DEBUG, "  TryInitSaveLayer: SaveInit returned false");
-        // DEBUG, not WARN: at the main menu this is the expected state, and a warning
-        // every two seconds trains the operator to ignore warnings.
+    if (!SaveInit(world, save)) {
         QDLOG(LOG_DEBUG, "save layer not ready: ", s.note);
         return false;
     }
-
     if (!g_probeDone) {
         RunApiProbe();
         g_probeDone = true;
     } else {
-        QDLOG(LOG_INFO, "save layer re-initialised (level change or new save)");
-        // Re-learn what changed: the mirror must report every key again, and the flag
-        // push must not think it already sent this container.
-        g_mirrorCount = 0;
-        g_lastFlagCount = -1;
-        g_flagsDirty = true;
+        QDLOG(LOG_INFO, "save layer re-initialised (new active save)");
     }
+    g_mirrorCount = 0;
+    g_lastFlagCount = -1;
+    g_flagsDirty = true;
     return s.readOk;
 }
 
@@ -540,10 +511,12 @@ void PeerApplyFlags(wire::Reader& r)
         }
     }
     if (applied || refused) {
-        QDLOG(LOG_DEBUG, "flags applied=", dec(applied), " refused=", dec(refused),
+        QDLOG(applied ? LOG_INFO : LOG_DEBUG, "flags applied=", dec(applied), " refused=", dec(refused),
               " rev=", dec(h.rev));
     }
 }
+
+void HostApplyEnemyIntent(const wire::IntentBody& b);   // LAYER 6
 
 // Peer side: an intent is a request, the host decides.
 void HostApplyIntent(wire::Reader& r)
@@ -571,6 +544,8 @@ void HostApplyIntent(wire::Reader& r)
     } else if (b.kind == wire::I_ACTOR_STATE) {
         QDLOG(LOG_INFO, "actor-state intent from peer guid=", hex32(b.guid[0]),
               " value=", dec(b.value), " (apply path pending)");
+    } else if (b.kind == wire::I_ENEMY_HIT || b.kind == wire::I_ENEMY_RECORD) {
+        HostApplyEnemyIntent(b);
     } else if (b.kind == wire::I_DIALOGUE_ANS) {
         // The wire carries {npc, line, option}; `entry` is the cursor within the
         // sequence and is known locally on both machines, so it is not sent.  The
@@ -583,128 +558,2266 @@ void HostApplyIntent(wire::Reader& r)
 }
 
 // ---------------------------------------------------------------------------
-// LAYER 5 -- the remote body
+// Actor reflection -- transforms read and written through the engine's own surface
 // ---------------------------------------------------------------------------
-// Asset identity is transmitted as class names, never pointers.  The body class ships
-// with the game (Player_FullChar_2026, worn by FS_Full_PlayerChar_C), so no new art
-// is needed -- the single largest schedule win over the previous project, whose
-// unfinished milestone was exactly this.
-void* ResolvePuppetClass()
+// Offsets come from the reflected property list (RootComponent on Actor,
+// RelativeLocation/RelativeRotation/ComponentVelocity on SceneComponent), never from a
+// typed constant.  Movement goes through AActor::K2_SetActorLocationAndRotation, so the
+// engine updates the render transform, overlaps and the movement component itself.
+struct ActorApi {
+    bool  tried;
+    bool  ok;
+    int   rootComponent;     // AActor::RootComponent
+    int   relLocation;       // USceneComponent::RelativeLocation
+    int   relRotation;       // USceneComponent::RelativeRotation
+    int   velocity;          // USceneComponent::ComponentVelocity
+    void* fnSetLocRot;       // AActor::K2_SetActorLocationAndRotation
+    void* fnSetHidden;       // AActor::SetActorHiddenInGame
+    void* fnDestroy;         // AActor::K2_DestroyActor
+    LayoutResult sigSetLocRot;
+    LayoutResult sigSetHidden;
+    LayoutResult sigDestroy;
+};
+ActorApi g_actor = {};
+
+void* FindNativeFn(void* cls, const char* name)
 {
-    if (g_puppetClass && ObjectIsLive(g_puppetClass)) return g_puppetClass;
-    // The analysed live pawn class is FS_Full_PlayerChar_C (gap B3, measured).
-    g_puppetClass = FindClassByName("FS_Full_PlayerChar_C");
-    if (!g_puppetClass) g_puppetClass = FindClassByName("FS_PlayerChar_C");
-    if (!g_puppetClass) {
-        QDLOG(LOG_ERROR, "no player character class found in GObjects");
-    } else {
-        char d[128];
-        ObjDescribe(g_puppetClass, d, sizeof(d));
-        QDLOG(LOG_INFO, "puppet class resolved: ", d);
-    }
-    return g_puppetClass;
+    return cls ? FindFunctionInClass(cls, name) : nullptr;
 }
 
-// The engine spawn pair, byte-verified (B7: the game has no character-construction
-// path of its own, so the engine pair is the correct instrument).
+// Resolved once per process: Actor/SceneComponent are native classes that never unload.
+bool EnsureActorApi()
+{
+    if (g_actor.tried) return g_actor.ok;
+    g_actor.tried = true;
+
+    void* actorCls = FindObjectByNameAndClass("Actor", "Class");
+    void* sceneCls = FindObjectByNameAndClass("SceneComponent", "Class");
+    if (!actorCls || !sceneCls) {
+        QDLOG(LOG_ERROR, "actor api: Actor/SceneComponent class not found");
+        return false;
+    }
+    g_actor.fnSetLocRot = FindNativeFn(actorCls, "K2_SetActorLocationAndRotation");
+    g_actor.fnSetHidden = FindNativeFn(actorCls, "SetActorHiddenInGame");
+    g_actor.fnDestroy   = FindNativeFn(actorCls, "K2_DestroyActor");
+    void* fnGetLoc      = FindNativeFn(actorCls, "K2_GetActorLocation");
+
+    // The FProperty layout may not be validated yet if no save has loaded; these native
+    // functions are as good an oracle as SaveFunctions_C's.
+    if (!Lay().valid) {
+        void* fns[4] = {g_actor.fnSetLocRot, g_actor.fnSetHidden, fnGetLoc,
+                        FindNativeFn(actorCls, "K2_SetActorLocation")};
+        if (!DiscoverLayout(fns, 4)) {
+            QDLOG(LOG_ERROR, "actor api: property layout not validated (", Lay().note, ")");
+            return false;
+        }
+        QDLOG(LOG_INFO, "property layout: PASS on ", dec(Lay().validated_on), " Actor functions");
+    }
+
+    g_actor.rootComponent = FindPropertyOffsetIn(actorCls, "RootComponent");
+    g_actor.relLocation   = FindPropertyOffsetIn(sceneCls, "RelativeLocation");
+    g_actor.relRotation   = FindPropertyOffsetIn(sceneCls, "RelativeRotation");
+    g_actor.velocity      = FindPropertyOffsetIn(sceneCls, "ComponentVelocity");
+    g_actor.sigSetLocRot  = Signature(g_actor.fnSetLocRot);
+    g_actor.sigSetHidden  = Signature(g_actor.fnSetHidden);
+    g_actor.sigDestroy    = Signature(g_actor.fnDestroy);
+
+    QDLOG(LOG_INFO, "actor api: RootComponent=", dec(g_actor.rootComponent),
+          " RelativeLocation=", dec(g_actor.relLocation),
+          " RelativeRotation=", dec(g_actor.relRotation),
+          " ComponentVelocity=", dec(g_actor.velocity),
+          " SetLocRot=", dec(g_actor.sigSetLocRot.valid ? 1 : 0),
+          " SetHidden=", dec(g_actor.sigSetHidden.valid ? 1 : 0),
+          " Destroy=", dec(g_actor.sigDestroy.valid ? 1 : 0));
+    if (g_actor.sigSetLocRot.valid) LogSignature("K2_SetActorLocationAndRotation", g_actor.sigSetLocRot);
+
+    g_actor.ok = g_actor.rootComponent >= 0 && g_actor.relLocation >= 0 &&
+                 g_actor.relRotation >= 0;
+    return g_actor.ok;
+}
+
+struct ActorXform {
+    float px, py, pz;
+    float pitch, yaw, roll;
+    float vx, vy, vz;
+};
+
+bool ReadActorXformGuarded(void* actor, ActorXform* x)
+{
+    __try {
+        void* root = *(void**)((uint8_t*)actor + g_actor.rootComponent);
+        if (!LooksLikeUObject(root)) return false;
+        const float* l = (const float*)((uint8_t*)root + g_actor.relLocation);
+        const float* r = (const float*)((uint8_t*)root + g_actor.relRotation);
+        x->px = l[0]; x->py = l[1]; x->pz = l[2];
+        x->pitch = r[0]; x->yaw = r[1]; x->roll = r[2];
+        x->vx = x->vy = x->vz = 0.0f;
+        if (g_actor.velocity >= 0) {
+            const float* v = (const float*)((uint8_t*)root + g_actor.velocity);
+            x->vx = v[0]; x->vy = v[1]; x->vz = v[2];
+        }
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+bool ReadActorXform(void* actor, ActorXform* x)
+{
+    if (!actor || !EnsureActorApi() || !ObjectIsLive(actor)) return false;
+    return ReadActorXformGuarded(actor, x);
+}
+
+bool SetActorXform(void* actor, float px, float py, float pz, float yaw)
+{
+    if (!actor || !g_actor.sigSetLocRot.valid || !ObjectIsLive(actor)) return false;
+    ArgList a;
+    a.AddVector("NewLocation", px, py, pz);
+    a.AddRotator("NewRotation", 0.0f, yaw, 0.0f);
+    a.AddBool("bSweep", false);
+    a.AddBool("bTeleport", true);
+    char err[128];
+    if (!Invoke(actor, g_actor.fnSetLocRot, g_actor.sigSetLocRot, a, nullptr, err, sizeof(err))) {
+        static uint32_t lastLog = 0;
+        uint32_t now = Net::Now();
+        if (now - lastLog > 5000) { lastLog = now; QDLOG(LOG_WARN, "puppet move failed: ", err); }
+        return false;
+    }
+    return true;
+}
+
+void SetActorHidden(void* actor, bool hidden)
+{
+    if (!actor || !g_actor.sigSetHidden.valid || !ObjectIsLive(actor)) return;
+    const PropDesc* p = g_actor.sigSetHidden.props > 0 ? &g_actor.sigSetHidden.p[0] : nullptr;
+    if (!p) return;
+    ArgList a;
+    a.AddBool(p->name, hidden);
+    char err[128];
+    Invoke(actor, g_actor.fnSetHidden, g_actor.sigSetHidden, a, nullptr, err, sizeof(err));
+}
+
+void DestroyActor(void* actor)
+{
+    if (!actor || !g_actor.sigDestroy.valid || !ObjectIsLive(actor)) return;
+    ArgList a;
+    char err[128];
+    Invoke(actor, g_actor.fnDestroy, g_actor.sigDestroy, a, nullptr, err, sizeof(err));
+}
+
+bool EndsWith(const char* s, const char* tail)
+{
+    int a = 0, b = 0;
+    while (s[a]) ++a;
+    while (tail[b]) ++b;
+    if (b > a) return false;
+    for (int i = 0; i < b; ++i) if (s[a - b + i] != tail[i]) return false;
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// LAYER 5 -- the remote body
+// ---------------------------------------------------------------------------
+// The first puppet was a spawned copy of FS_Full_PlayerChar_C.  That is the
+// FIRST-PERSON character: it draws only arms, so the remote player showed as "two
+// small blue fragments".  The body is now qdavatar.h's: an engine SkeletalMeshActor
+// carrying the game's own full-body player model (Player_FullChar_2026, used by the
+// cutscenes), posed procedurally, holding the peer's weapon mesh.
+bool IsGameplayPawn(void* pawn)
+{
+    if (!pawn || !ObjectIsLive(pawn)) return false;
+    void* c = ObjClass(pawn);
+    return ObjNameIs(c, "FS_Full_PlayerChar_C") || ObjNameIs(c, "FS_PlayerChar_C");
+}
+
+bool g_peerInGameplay = false;   // from the peer's row flags (bit5 = menu)
+
+// The engine spawn pair (B7: the game has no character-construction path of its own).
 typedef void* (*FnBeginDeferred)(void* worldContext, void* actorClass, const void* transform,
                                  uint8_t collisionHandling, void* owner);
 typedef void* (*FnFinishSpawning)(void* actor, const void* transform);
+typedef void* (*FnGetPawn)(void*, int32_t);
 
-void SpawnPuppetOnce()
+void* LocalPawn()
 {
-    if (!Save().world) return;
-    void* cls = ResolvePuppetClass();
-    if (!cls) { g_puppet.SpawnFailed("no class", Net::Now()); return; }
-
-    FnBeginDeferred begin = (FnBeginDeferred)Ptr<void*>(0x028D3C90u);
-    FnFinishSpawning finish = (FnFinishSpawning)Ptr<void*>(0x028DCD50u);
-    if (!begin || !finish) { g_puppet.SpawnFailed("no spawn entry", Net::Now()); return; }
-
-    // FTransform for UE4.27 is { FQuat(16); FVector(12); float pad(4); FVector(12);
-    // float pad(4) } = 48 bytes, 16-byte aligned.  Zeroed is identity: rotation
-    // identity, translation 0, scale 1 must be written explicitly because a zero
-    // scale collapses the mesh.
-    alignas(16) uint8_t xform[48];
-    for (int i = 0; i < 48; ++i) xform[i] = 0;
-    float one = 1.0f;
-    memcpy(xform + 0, &one, 0);          // (identity quat w is at +12)
-    // FQuat { x, y, z, w } -> w = 1
-    memcpy(xform + 12, &one, 4);
-    memcpy(xform + 32, &one, 4);         // Scale3D.x
-    memcpy(xform + 36, &one, 4);         // Scale3D.y
-    memcpy(xform + 40, &one, 4);         // Scale3D.z
-
-    g_puppet.SpawnStarted(Net::Now());
-    void* actor = begin(Save().world, cls, xform, 0 /* AlwaysSpawn */, nullptr);
-    if (!actor) {
-        g_puppet.SpawnFailed("BeginDeferredActorSpawnFromClass returned null", Net::Now());
-        return;
-    }
-    void* done = finish(actor, xform);
-    if (!done) {
-        g_puppet.SpawnFailed("FinishSpawningActor returned null", Net::Now());
-        return;
-    }
-    g_puppetActor = done;
-    g_puppet.Spawned(Net::Now());
-    char d[160];
-    ObjDescribe(done, d, sizeof(d));
-    QDLOG(LOG_INFO, "puppet spawned: ", d);
+    FnGetPawn gp = (FnGetPawn)Ptr<void*>(0x028E0640u);
+    void* world = GWorldPtr();
+    return (gp && world) ? gp(world, 0) : nullptr;
 }
 
+void* SpawnGuarded(FnBeginDeferred begin, FnFinishSpawning finish, void* world, void* cls,
+                   const uint8_t* xform, int* faulted)
+{
+    *faulted = 0;
+    __try {
+        // 1 = ESpawnActorCollisionHandlingMethod::AlwaysSpawn.  The first version passed
+        // 0 (Undefined -> the class default), which refuses a spawn that overlaps
+        // geometry -- and the puppet spawns exactly where another player stands.
+        void* actor = begin(world, cls, xform, 1, nullptr);
+        if (!actor) return nullptr;
+        return finish(actor, xform);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        *faulted = 1;
+        return nullptr;
+    }
+}
+
+void* SpawnActorAt(void* cls, float x, float y, float z, float yawDeg)
+{
+    void* world = GWorldPtr();
+    if (!world || !cls) return nullptr;
+    FnBeginDeferred begin = (FnBeginDeferred)Ptr<void*>(0x028D3C90u);
+    FnFinishSpawning finish = (FnFinishSpawning)Ptr<void*>(0x028DCD50u);
+    avatar::Xf xf = avatar::XfIdentity();
+    float h = yawDeg * 3.14159265f / 360.0f;
+    xf.qz = sinf(h); xf.qw = cosf(h);
+    xf.tx = x; xf.ty = y; xf.tz = z;
+    alignas(16) uint8_t buf[48];
+    memcpy(buf, &xf, 48);
+    int faulted = 0;
+    void* a = SpawnGuarded(begin, finish, world, cls, buf, &faulted);
+    if (!a) QDLOG(LOG_WARN, "spawn failed (", (faulted ? "fault" : "null"), ")");
+    return a;
+}
+
+// Half the player capsule: the peer reports its capsule CENTRE, the body stands on
+// its feet.  Read from the local pawn (same class on both sides); 90 if unreadable.
+float CapsuleHalfHeight()
+{
+    static float hh = 0.0f;
+    if (hh > 0.0f) return hh;
+    void* pawn = g_localPawn;
+    if (!pawn || !Lay().valid) return 90.0f;
+    int co = FindPropertyOffsetIn(ObjClass(pawn), "CapsuleComponent");
+    void* cap = co >= 0 ? *(void**)((uint8_t*)pawn + co) : nullptr;
+    int ho = cap ? FindPropertyOffsetIn(ObjClass(cap), "CapsuleHalfHeight") : -1;
+    float v = ho >= 0 ? *(float*)((uint8_t*)cap + ho) : 0.0f;
+    hh = (v > 20.0f && v < 300.0f) ? v : 90.0f;
+    QDLOG(LOG_INFO, "capsule half height ", flt(hh, 1));
+    return hh;
+}
+
+void* LocalController()
+{
+    typedef void* (*FnGetPC)(void*, int32_t);
+    FnGetPC gpc = (FnGetPC)Ptr<void*>(0x028E0340u);
+    void* world = GWorldPtr();
+    return (gpc && world) ? gpc(world, 0) : nullptr;
+}
+
+// Where the player LOOKS: AController::ControlRotation.  In this game the pawn's root
+// does not turn with the view (measured: a body placed along the root's yaw appeared
+// off to the side of the camera), so the heading sent to the peer must be this.
+bool LocalViewRotation(float* pitch, float* yaw)
+{
+    static int off = -2, pcmOff = -2;
+    static Fn camRot = {};
+    void* pc = LocalController();
+    if (!pc || !Lay().valid) return false;
+    // The camera manager is the authority on what is on screen.
+    if (pcmOff == -2) pcmOff = FindPropertyOffsetIn(ObjClass(pc), "PlayerCameraManager");
+    void* pcm = pcmOff >= 0 ? *(void**)((uint8_t*)pc + pcmOff) : nullptr;
+    if (pcm && ObjectIsLive(pcm) && camRot.Resolve(pcm, "GetCameraRotation")) {
+        Call c(camRot);
+        if (c.Run(pcm) && c.Ret()) {
+            const float* r = (const float*)c.Ret();
+            *pitch = r[0];
+            *yaw = r[1];
+            return true;
+        }
+    }
+    if (off == -2) off = FindPropertyOffsetIn(ObjClass(pc), "ControlRotation");
+    if (off < 0) return false;
+    const float* r = (const float*)((uint8_t*)pc + off);
+    *pitch = r[0];
+    *yaw = r[1];
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// What the local player is DOING: the first-person arms' active montage (every attack,
+// wind-up, throw and swap plays one -- measured, see avatar::ClassifyMontage) and the
+// movement mode (falling = jumping).  Sent in PLAYER.action / PLAYER.flags bit0.
+// ---------------------------------------------------------------------------
+struct LocalAction {
+    void*   last;        // montage seen last frame
+    int     kind;        // avatar::ActKind
+    int     seq;         // bumps on every new move, so a repeat restarts on the peer
+    uint8_t byte;        // PLAYER.action
+    bool    airborne;
+    uint8_t moveMode;    // EMovementMode
+    int     pendMove;    // held charge: the move its release plays (0 = not charging)
+    uint32_t moveAt;     // when the last strike was sent (follow-through filter)
+};
+LocalAction g_localAct = {};
+volatile bool g_localUsed = false;   // set by UseObserve (ProcessEvent hook)
+
+void* LocalArmsMontage()
+{
+    static int armsOff = -2;
+    static Fn fAnim = {}, fMont = {};
+    if (!IsGameplayPawn(g_localPawn)) return nullptr;
+    if (armsOff == -2) {
+        armsOff = FindPropertyOffsetIn(ObjClass(g_localPawn), "Arms");
+        if (armsOff < 0) QDLOG(LOG_WARN, "action sync: the pawn has no Arms mesh property");
+    }
+    if (armsOff < 0) return nullptr;
+    void* arms = *(void**)((uint8_t*)g_localPawn + armsOff);
+    if (!arms || !fAnim.Resolve(arms, "GetAnimInstance")) return nullptr;
+    Call c(fAnim);
+    if (!c.Run(arms) || !c.Ret()) return nullptr;
+    void* ai = *(void**)c.Ret();
+    if (!ai || !fMont.Resolve(ai, "GetCurrentActiveMontage")) return nullptr;
+    Call m(fMont);
+    if (!m.Run(ai) || !m.Ret()) return nullptr;
+    return *(void**)m.Ret();
+}
+
+// ACharacter::CharacterMovement -> UCharacterMovementComponent::MovementMode.
+uint8_t LocalMovementMode()
+{
+    static int cmcOff = -2, modeOff = -2;
+    if (!IsGameplayPawn(g_localPawn)) return 0;
+    if (cmcOff == -2) cmcOff = FindPropertyOffsetIn(ObjClass(g_localPawn), "CharacterMovement");
+    if (cmcOff < 0) return 0;
+    void* cmc = *(void**)((uint8_t*)g_localPawn + cmcOff);
+    if (!cmc) return 0;
+    if (modeOff == -2) {
+        modeOff = FindPropertyOffsetIn(ObjClass(cmc), "MovementMode");
+        QDLOG(LOG_INFO, "action sync: CharacterMovement@", dec(cmcOff), " MovementMode@", dec(modeOff));
+    }
+    return modeOff >= 0 ? *((uint8_t*)cmc + modeOff) : 0;
+}
+
+void LocalActionPump(uint32_t now)
+{
+    (void)now;
+    LocalAction& a = g_localAct;
+    a.moveMode = LocalMovementMode();
+    a.airborne = (a.moveMode == 3);                        // MOVE_Falling
+    void* mon = LocalArmsMontage();
+    if (mon != a.last) {
+        a.last = mon;
+        char nm[128] = "";
+        if (mon) FNameToString(ObjNameRaw(mon), nm, sizeof(nm));
+        int k = mon ? avatar::ClassifyMontage(nm) : 0;
+        int raw = k;
+        if (a.pendMove && !avatar::IsChargeKind(k)) {
+            // Released: whatever comes next (the left hand's MeleeResponse, the alt
+            // attack's own move, or nothing) means the strike is happening now.
+            k = (k == avatar::A_THRUST || k == avatar::A_ATTACK) ? k : a.pendMove;
+            a.pendMove = 0;
+            a.moveAt = now;
+        } else if (avatar::IsChargeKind(k)) {
+            a.pendMove = avatar::ChargeOpenerMove(nm);
+            if (!a.pendMove) a.pendMove = avatar::A_ATTACK;
+        } else if (k > 0 && k != avatar::A_SWAP && k != avatar::A_HURT && k != avatar::A_DYING &&
+                   k <= avatar::A_THRUST && now - a.moveAt < 700) {
+            // Stab_N / Slash_* after a strike are its follow-through, not a new move.
+            k = -1;
+        } else if (k == avatar::A_THRUST || k == avatar::A_ATTACK) {
+            a.moveAt = now;
+        }
+        if (k > 0) ++a.seq;
+        if (k >= 0) a.kind = k;
+        QDLOG(LOG_INFO, "local montage ", (mon ? nm : "none"), " -> kind ", dec(raw), " sent ", dec(k));
+    }
+    if (g_localUsed) {
+        g_localUsed = false;
+        a.kind = avatar::A_USE;
+        ++a.seq;
+        QDLOG(LOG_INFO, "local action: used an item -> kind ", dec(avatar::A_USE));
+    }
+    a.byte = avatar::ActionByte(a.kind, a.seq);
+}
+
+avatar::Body g_body = {};
+uint8_t  g_peerAction = 0;
+int      g_peerAirborne = -1;
+uint32_t g_peerActionMs = 0;
+wire::EquipBody g_peerEquip = {};
+bool g_peerEquipDirty = false;
+
+// Spawn and build one body at (x,y,z = capsule centre).  nullptr on failure.
+void* SpawnBody(avatar::Body* b, float x, float y, float z, float yaw)
+{
+    if (!EnsureActorApi() || !avatar::EnsureApi()) return nullptr;
+    void* cls = FindClassByName("SkeletalMeshActor");
+    void* actor = SpawnActorAt(cls, x, y, z - CapsuleHalfHeight(), yaw);
+    if (!actor) return nullptr;
+    if (!avatar::BuildBody(b, actor)) {
+        DestroyActor(actor);
+        memset(b, 0, sizeof(*b));
+        return nullptr;
+    }
+    return actor;
+}
+
+void PlaceBody(avatar::Body* b, float x, float y, float z, float yaw, uint32_t now)
+{
+    float fz = z - CapsuleHalfHeight();
+    SetActorXform(b->actor, x, y, fz, yaw);
+    avatar::Animate(b, x, y, fz, yaw, now);
+}
+
+avatar::Xf XfFromWire(const int32_t* v)
+{
+    avatar::Xf x = avatar::XfIdentity();
+    x.tx = v[0] / 100.0f; x.ty = v[1] / 100.0f; x.tz = v[2] / 100.0f;
+    x.qx = v[3] / 1e6f; x.qy = v[4] / 1e6f; x.qz = v[5] / 1e6f; x.qw = v[6] / 1e6f;
+    x.sx = v[7] / 1000.0f; x.sy = v[8] / 1000.0f; x.sz = v[9] / 1000.0f;
+    return x;
+}
+
+void ApplyEquip(avatar::Body* b, const wire::EquipBody& e)
+{
+    bool done[2] = {false, false};
+    for (int i = 0; i < e.n; ++i) {
+        const wire::EquipItem& it = e.items[i];
+        int h = it.hand ? 1 : 0;
+        if (done[h] || (it.mesh_kind != 1 && it.mesh_kind != 2)) continue;
+        avatar::SetHeld(b, h, it.path, XfFromWire(it.xform), it.mesh_kind);
+        done[h] = true;
+    }
+    for (int h = 0; h < 2; ++h) if (!done[h]) avatar::SetHeld(b, h, "", avatar::XfIdentity());
+}
+
+// ---- the local player's held items ---------------------------------------
+// Weapons are WeaponVisuals_C actors attached to the first-person arms; the mesh is a
+// StaticMeshComponent ("Mesh") inside.  Found by walking component attachment back to
+// the pawn, filtered to visible components of WeaponVisuals-derived actors.
+struct EquipScan {
+    bool    init;
+    void*   wvClass;         // WeaponVisuals_C
+    int32_t smcName;         // FName comparison index of "StaticMeshComponent"
+    int32_t skcName;         // ... and of "SkeletalMeshComponent"
+    int     relLoc, relRot, relScale, staticMesh, skelMesh;
+    Fn      isVisible;
+};
+EquipScan g_eqs = {};
+
+bool DerivesFrom(void* cls, void* base)
+{
+    for (int i = 0; cls && i < 16; ++i, cls = SuperOf(cls)) if (cls == base) return true;
+    return false;
+}
+
+avatar::Xf RelXf(void* comp)
+{
+    avatar::Xf x = avatar::XfIdentity();
+    const float* l = (const float*)((uint8_t*)comp + g_eqs.relLoc);
+    const float* r = (const float*)((uint8_t*)comp + g_eqs.relRot);
+    const float* s = (const float*)((uint8_t*)comp + g_eqs.relScale);
+    avatar::Q4 q = avatar::QFromRotator(r[0], r[1], r[2]);
+    x.qx = q.x; x.qy = q.y; x.qz = q.z; x.qw = q.w;
+    x.tx = l[0]; x.ty = l[1]; x.tz = l[2];
+    x.sx = s[0]; x.sy = s[1]; x.sz = s[2];
+    return x;
+}
+
+bool IsLeftSocket(const char* sock)
+{
+    int n = 0;
+    while (sock[n]) ++n;
+    if (n >= 2 && (sock[n - 2] == '_' || sock[n - 2] == '.') && (sock[n - 1] | 0x20) == 'l') return true;
+    for (int k = 0; k + 3 < n; ++k) {
+        if ((sock[k] | 0x20) == 'l' && (sock[k + 1] | 0x20) == 'e' && (sock[k + 2] | 0x20) == 'f' &&
+            (sock[k + 3] | 0x20) == 't')
+            return true;
+    }
+    return false;
+}
+
+int ScanLocalEquip(void* pawn, wire::EquipBody* out, bool verbose)
+{
+    out->n = 0;
+    avatar::Api& a = avatar::A();
+    if (!pawn || !avatar::EnsureApi() || a.attachParent < 0) return 0;
+    if (!g_eqs.init) {
+        g_eqs.init = true;
+        QdName n;
+        g_eqs.smcName = FNameFromAnsi("StaticMeshComponent", &n) ? (int32_t)n.comparison_index : -1;
+        g_eqs.relLoc = FindPropertyOffsetIn(a.clsScene, "RelativeLocation");
+        g_eqs.relRot = FindPropertyOffsetIn(a.clsScene, "RelativeRotation");
+        g_eqs.relScale = FindPropertyOffsetIn(a.clsScene, "RelativeScale3D");
+        g_eqs.staticMesh = FindPropertyOffsetIn(a.clsStatic, "StaticMesh");
+        g_eqs.skcName = FNameFromAnsi("SkeletalMeshComponent", &n) ? (int32_t)n.comparison_index : -1;
+        g_eqs.skelMesh = FindPropertyOffsetIn(a.clsSkinned, "SkeletalMesh");
+        g_eqs.isVisible.Resolve(nullptr, "IsVisible", a.clsScene);
+        QDLOG(LOG_INFO, "equip scan: RelativeScale3D@", dec(g_eqs.relScale),
+              " StaticMesh@", dec(g_eqs.staticMesh), " IsVisible=", dec(g_eqs.isVisible.fn ? 1 : 0));
+    }
+    // WeaponVisuals_C loads with the first weapon; keep looking until it exists.
+    if (!g_eqs.wvClass || !ObjectIsLive(g_eqs.wvClass)) {
+        static uint32_t lastLook = 0;
+        uint32_t now = Net::Now();
+        if (now - lastLook < 5000) return 0;
+        lastLook = now;
+        g_eqs.wvClass = FindClassByName("WeaponVisuals_C");
+        if (!g_eqs.wvClass) return 0;
+    }
+    if (g_eqs.relLoc < 0 || g_eqs.relRot < 0 || g_eqs.relScale < 0 || g_eqs.staticMesh < 0 ||
+        g_eqs.smcName < 0 || !g_eqs.isVisible.fn)
+        return 0;
+    int n = ObjectCount();
+    for (int i = 0; i < n && out->n < wire::kMaxEquipItems; ++i) {
+        void* o = ObjectAt(i);
+        if (!o) continue;
+        void* cls = ObjClass(o);
+        int32_t ci = cls ? (int32_t)ObjNameRaw(cls).comparison_index : -1;
+        bool isSkel = ci == g_eqs.skcName && g_eqs.skcName >= 0 && g_eqs.skelMesh >= 0;
+        if (ci != g_eqs.smcName && !isSkel) continue;
+        void* owner = ObjOuter(o);
+        if (!owner || owner == pawn || !DerivesFrom(ObjClass(owner), g_eqs.wvClass)) continue;
+        // Walk up the attachment chain to the pawn, composing relative transforms.
+        avatar::Xf rel = RelXf(o);
+        void* c = o;
+        void* link = nullptr;
+        for (int d = 0; d < 8; ++d) {
+            void* p = *(void**)((uint8_t*)c + a.attachParent);
+            if (!p) break;
+            if (ObjOuter(p) == pawn) { link = c; break; }
+            rel = avatar::XfCompose(RelXf(p), rel);
+            c = p;
+        }
+        if (!link) continue;
+        Call vc(g_eqs.isVisible);
+        if (!vc.Run(o) || !vc.Ret() || !*vc.Ret()) continue;
+        void* mesh = *(void**)((uint8_t*)o + (isSkel ? g_eqs.skelMesh : g_eqs.staticMesh));
+        wire::EquipItem& it = out->items[out->n];
+        if (avatar::AssetPath(mesh, it.path, sizeof(it.path)) <= 0) continue;
+        char sock[64] = "";
+        if (a.attachSocket >= 0) FNameToString(*(QdName*)((uint8_t*)link + a.attachSocket), sock, sizeof(sock));
+        bool left = IsLeftSocket(sock);
+        it.hand = left ? 1 : 0;
+        it.mesh_kind = isSkel ? 2 : 1;
+        it.xform[0] = (int32_t)(rel.tx * 100.0f); it.xform[1] = (int32_t)(rel.ty * 100.0f); it.xform[2] = (int32_t)(rel.tz * 100.0f);
+        it.xform[3] = (int32_t)(rel.qx * 1e6f); it.xform[4] = (int32_t)(rel.qy * 1e6f);
+        it.xform[5] = (int32_t)(rel.qz * 1e6f); it.xform[6] = (int32_t)(rel.qw * 1e6f);
+        it.xform[7] = (int32_t)(rel.sx * 1000.0f); it.xform[8] = (int32_t)(rel.sy * 1000.0f); it.xform[9] = (int32_t)(rel.sz * 1000.0f);
+        if (verbose) {
+            char od[128];
+            ObjDescribe(owner, od, sizeof(od));
+            QDLOG(LOG_INFO, "held: ", od, " mesh=", it.path, " socket=", sock, " hand=", (left ? "L" : "R"),
+                  " rel t=", flt(rel.tx, 1), ",", flt(rel.ty, 1), ",", flt(rel.tz, 1),
+                  " q=", flt(rel.qx, 3), ",", flt(rel.qy, 3), ",", flt(rel.qz, 3), ",", flt(rel.qw, 3),
+                  " s=", flt(rel.sx, 2));
+        }
+        ++out->n;
+    }
+    return out->n;
+}
+
+bool EquipEqual(const wire::EquipBody& a, const wire::EquipBody& b)
+{
+    if (a.n != b.n) return false;
+    for (int i = 0; i < a.n; ++i) {
+        if (a.items[i].hand != b.items[i].hand) return false;
+        if (strcmp(a.items[i].path, b.items[i].path) != 0) return false;
+    }
+    return true;
+}
+
+wire::EquipBody g_localEquip = {};
+
+// Rescan twice a second; send on change and once a second regardless (the body is
+// latest-wins, so a lost datagram is repaired by the next).
+void LocalEquipPump(uint32_t now)
+{
+    static uint32_t lastScan = 0, lastSend = 0;
+    static bool first = true;
+    if (!IsGameplayPawn(g_localPawn)) return;
+    if (now - lastScan < 500) return;
+    lastScan = now;
+    wire::EquipBody e = {};
+    ScanLocalEquip(g_localPawn, &e, false);
+    bool changed = !EquipEqual(e, g_localEquip);
+    if (changed || first) {
+        first = false;
+        e.rev = g_localEquip.rev + 1;
+        g_localEquip = e;
+        wire::EquipBody v = {};
+        ScanLocalEquip(g_localPawn, &v, true);           // log what changed
+        QDLOG(LOG_INFO, "local equipment rev ", dec((int)e.rev), ": ", dec(e.n), " item(s)");
+    }
+    if (g_net.Connected() && (changed || now - lastSend > 1000)) {
+        lastSend = now;
+        static uint8_t body[wire::kMaxBody];
+        wire::Writer w(body, sizeof(body));
+        wire::WriteEquip(w, g_localEquip);
+        if (w.ok) g_net.SendUnreliable(wire::K_EQUIPMENT, body, w.len);
+    }
+}
+
+void SpawnPuppetOnce(uint32_t now)
+{
+    motion::MoveOut m = g_peerInterp.Sample(now);
+    if (!m.valid) { g_puppet.SpawnFailed("no peer sample yet", now); return; }
+    g_puppet.SpawnStarted(now);
+    void* actor = SpawnBody(&g_body, m.px, m.py, m.pz, m.yaw_deg);
+    if (!actor) {
+        g_puppet.SpawnFailed("body spawn failed", now);
+        QDLOG(LOG_WARN, "puppet body spawn failed");
+        return;
+    }
+    g_puppetActor = actor;
+    g_peerEquipDirty = true;
+    g_puppet.Spawned(now);
+    QDLOG(LOG_INFO, "puppet spawned (full body) at ", flt(m.px, 0), ",", flt(m.py, 0), ",", flt(m.pz, 0));
+}
+
+void ApplyStatus(avatar::Body* b, uint32_t mask);
+extern uint32_t g_peerStatus;
 void PuppetPump(uint32_t now)
 {
     if (!Cfg().puppet_sync) return;
 
-    // Presence is "we have heard from the peer recently", which the interpolation
-    // layer already tracks; the puppet FSM owns the lifecycle decisions.
-    bool present = (now - g_net.LastRxMs()) < 2000 && g_net.Connected();
+    // The body dies with its world on a level load.  Notice, and let the FSM respawn.
+    if (g_puppetActor && !ObjectIsLive(g_puppetActor)) {
+        QDLOG(LOG_INFO, "puppet actor gone (level change)");
+        g_puppetActor = nullptr;
+        memset(&g_body, 0, sizeof(g_body));
+        g_puppet.LocalWorldChanged(now);
+    }
+
+    // Presence is the SESSION, not the last packet: a level load stalls the peer for
+    // seconds, and treating 2 s of silence as "left" destroyed and respawned the body on
+    // every load.  Silence is handled by the FSM's freeze/hide timers instead.
+    // A body only makes sense when BOTH players are in the game world: the title
+    // screen and file select are worlds of their own.
+    // Signed: the network thread can stamp a receive AFTER this tick read `now`, and
+    // the unsigned difference then wraps to ~4e9 -- which read as "peer silent" and
+    // destroyed and respawned the body every few seconds.
+    bool c1 = g_net.Connected(), c2 = (int32_t)(now - g_net.LastRxMs()) < 60000;
+    bool c3 = g_peerInGameplay, c4 = IsGameplayPawn(g_localPawn);
+    bool present = c1 && c2 && c3 && c4;
+    static bool lastPresent = false;
+    if (present != lastPresent) {
+        lastPresent = present;
+        QDLOG(LOG_INFO, "peer presence ", dec(present ? 1 : 0), " (connected=", dec(c1), " rx=", dec(c2),
+              " peerInGame=", dec(c3), " localInGame=", dec(c4), ")");
+    }
     g_puppet.PeerPresent(present, now);
     g_puppet.Tick(now);
 
     puppet::PuppetFsm::Step st = g_puppet.Get();
-    // The FSM owns the backoff deadline; the pump asks rather than deciding, so a
-    // 60 Hz tick cannot turn a failed spawn into 60 attempts per second.
-    if (st.want_spawn && g_puppet.ReadyToSpawn(now)) SpawnPuppetOnce();
+    if (st.want_spawn && g_puppet.ReadyToSpawn(now)) SpawnPuppetOnce(now);
 
-    if (st.want_destroy && g_puppetActor) {
-        // Never reached on silence -- only on a peer that left the session.  The
-        // corpus rule: "Never destroy a puppet on silence. Freeze at 2 s, hide at
-        // 30 s, keep the actor valid."  The FSM only asks for this on a level change
-        // or a session end, both of which are explicit events.
-        QDLOG(LOG_INFO, "puppet destroy requested (explicit event)");
-        g_puppetActor = nullptr;
+    if (st.want_destroy) {
+        if (g_puppetActor) {
+            QDLOG(LOG_INFO, "puppet destroyed (peer left the session)");
+            DestroyActor(g_puppetActor);
+            g_puppetActor = nullptr;
+            memset(&g_body, 0, sizeof(g_body));
+        }
+        g_puppet.AckDestroy();
+    }
+
+    if (!g_puppetActor) return;
+    static bool hidden = false;
+    if (st.want_hide != hidden) {
+        SetActorHidden(g_puppetActor, st.want_hide);
+        hidden = st.want_hide;
+    }
+    if (g_peerEquipDirty) {
+        g_peerEquipDirty = false;
+        ApplyEquip(&g_body, g_peerEquip);
+    }
+    if (g_body.actByte != g_peerAction) {
+        QDLOG(LOG_INFO, "peer action kind ", dec(g_peerAction & 0x1F), " #", dec(g_peerAction >> 5));
+    }
+    avatar::SetAction(&g_body, g_peerAction);
+    g_body.airIn = g_peerAirborne;
+    ApplyStatus(&g_body, g_peerStatus);
+    motion::MoveOut m = g_peerInterp.Sample(now);
+    if (m.valid && !m.frozen) PlaceBody(&g_body, m.px, m.py, m.pz, m.yaw_deg, now);
+
+    // Read-back: where the body ACTUALLY is versus where the peer says it should be.
+    // "The call returned" is not evidence the actor moved.
+    static uint32_t lastReport = 0;
+    if (m.valid && now - lastReport > 10000) {
+        lastReport = now;
+        ActorXform x;
+        if (ReadActorXform(g_puppetActor, &x)) {
+            float fz = m.pz - CapsuleHalfHeight();
+            float dx = x.px - m.px, dy = x.py - m.py, dz = x.pz - fz;
+            QDLOG(LOG_INFO, "puppet at ", flt(x.px, 0), ",", flt(x.py, 0), ",", flt(x.pz, 0),
+                  " yaw=", flt(x.yaw, 0), "  peer ", flt(m.px, 0), ",", flt(m.py, 0), ",",
+                  flt(fz, 0), "  err=", flt(sqrtf(dx * dx + dy * dy + dz * dz), 1), "cm",
+                  " speed=", flt(g_body.speed, 0), " holding=",
+                  (g_body.held[0].path[0] ? g_body.held[0].path : "-"));
+        }
     }
 }
 
 // ---------------------------------------------------------------------------
-// LAYER 6 -- world
+// Effects: thrown weapons and spells (WIRE.md 3.14)
 // ---------------------------------------------------------------------------
-// Streaming: the loaded set must be the union of what is around BOTH players, and a
-// level must not unload while the other player stands in it.  The manager is a stack
-// of lists (analysis gap C10), and a naive add+flush replaced 21 levels with 11 in the
-// previous project's measurement -- so the union is computed here and applied only
-// when it is a strict superset of what is already wanted.
+// The game's "magic" -- Fireball, MagicFireDagger, ice/poison/energy daggers -- is a
+// thrown projectile: an actor deriving from Dagger_Projectile_Base_C that carries its
+// own Niagara trail, light and sound, flies by ProjectileMovement, and hits by its own
+// traces.  The local throw is seen where it begins (ReceiveBeginPlay reaches every
+// Blueprint actor through ProcessEvent; the hook compares one FName index per call)
+// and is sent as one reliable event: class, transform, velocity.
+//
+// The peer spawns the SAME class, so it looks and sounds the same, but as a visual
+// only: collision is turned off before the actor finishes spawning and its actor tick
+// (where the hit trace lives) is turned off after, so it can neither hit nor damage
+// anything in the peer's world.  Its components still tick: it flies, glows and trails.
+// A lifespan removes it, since without collision it never hits a wall.
+int32_t g_beginPlayIdx = -1;
+void* volatile g_fxRing[64];
+volatile long g_fxHead = 0;
+long g_fxTail = 0;
+void* g_fxOurs[32];                  // copies spawned here: never sent back
+int g_fxOursN = 0;
+void* g_fxLastLocal = nullptr;     // dev read-back: the last local projectile ...
+void* g_fxLastCopy = nullptr;      // ... and the last copy spawned
+
+void FxObserve(void* self, void* func)
+{
+    if (g_beginPlayIdx < 0 || !func) return;
+    if (ObjNameRaw(func).comparison_index != g_beginPlayIdx) return;
+    long h = InterlockedIncrement(&g_fxHead) - 1;
+    g_fxRing[h & 63] = self;
+}
+
+bool IsProjectileClass(void* cls)
+{
+    for (int d = 0; cls && d < 16; ++d, cls = SuperOf(cls)) {
+        char n[96];
+        if (FNameToString(ObjNameRaw(cls), n, sizeof(n)) <= 0) return false;
+        if (NameEquals(n, "Dagger_Projectile_Base_C")) return true;
+        if (NameEquals(n, "Actor")) return false;
+    }
+    return false;
+}
+
+void* ActorObjProp(void* actor, const char* name)
+{
+    int off = FindPropertyOffsetIn(ObjClass(actor), name);
+    return off >= 0 ? *(void**)((uint8_t*)actor + off) : nullptr;
+}
+
+bool ProjectileVelocity(void* actor, float v[3])
+{
+    void* pm = ActorObjProp(actor, "ProjectileMovement");
+    if (!pm) return false;
+    int vo = FindPropertyOffsetIn(ObjClass(pm), "Velocity");
+    if (vo < 0) return false;
+    memcpy(v, (uint8_t*)pm + vo, 12);
+    return true;
+}
+
+bool CallActorFloat(void* actor, const char* fn, const char* param, float v)
+{
+    Fn f = {};
+    if (!f.Resolve(actor, fn)) return false;
+    Call c(f);
+    c.F32(param, v);
+    return c.Run(actor);
+}
+
+bool CallActorBool(void* actor, const char* fn, const char* param, bool v)
+{
+    Fn f = {};
+    if (!f.Resolve(actor, fn)) return false;
+    Call c(f);
+    c.U8(param, v ? 1 : 0);
+    return c.Run(actor);
+}
+
+// Spawn with a full rotation; collision is off BEFORE components register.
+void* SpawnVisualCopy(void* cls, const wire::EffectBody& e, float offX, float offY)
+{
+    void* world = GWorldPtr();
+    if (!world || !cls) return nullptr;
+    FnBeginDeferred begin = (FnBeginDeferred)Ptr<void*>(0x028D3C90u);
+    FnFinishSpawning finish = (FnFinishSpawning)Ptr<void*>(0x028DCD50u);
+    avatar::Xf xf = avatar::XfIdentity();
+    avatar::Q4 q = avatar::QFromRotator(wire::DequantizeAngle(e.pitch), wire::DequantizeAngle(e.yaw), 0);
+    xf.qx = q.x; xf.qy = q.y; xf.qz = q.z; xf.qw = q.w;
+    xf.tx = wire::DequantizePos(e.px) + offX;
+    xf.ty = wire::DequantizePos(e.py) + offY;
+    xf.tz = wire::DequantizePos(e.pz);
+    alignas(16) uint8_t buf[48];
+    memcpy(buf, &xf, 48);
+    void* actor = nullptr;
+    __try {
+        actor = begin(world, cls, buf, 1, nullptr);
+        if (actor) {
+            avatar::SetActorCollision(actor, false);
+            actor = finish(actor, buf);
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        QDLOG(LOG_WARN, "effect: spawn faulted for ", e.cls);
+        return nullptr;
+    }
+    if (!actor) return nullptr;
+    if (g_fxOursN < 32) g_fxOurs[g_fxOursN++] = actor;
+    else { memmove(g_fxOurs, g_fxOurs + 1, sizeof(void*) * 31); g_fxOurs[31] = actor; }
+    avatar::SetActorCollision(actor, false);
+    CallActorBool(actor, "SetActorTickEnabled", "bEnabled", false);
+    CallActorFloat(actor, "SetLifeSpan", "InLifespan", (e.life_ms ? e.life_ms : 4000) / 1000.0f);
+    void* pm = ActorObjProp(actor, "ProjectileMovement");
+    int vo = pm ? FindPropertyOffsetIn(ObjClass(pm), "Velocity") : -1;
+    if (vo >= 0) {
+        float v[3] = {wire::DequantizePos(e.vx), wire::DequantizePos(e.vy), wire::DequantizePos(e.vz)};
+        memcpy((uint8_t*)pm + vo, v, 12);
+    }
+    return actor;
+}
+
+struct FxCopy { uint16_t id; void* actor; };
+FxCopy g_fxCopies[16];
+int g_fxCopyNext = 0;
+
+// The sender's projectile stopped (hit something) or vanished: the copy, which cannot
+// collide, is put where it stopped and removed -- otherwise it flies through the floor.
+void EndEffect(const wire::EffectBody& e, float offX, float offY)
+{
+    for (int i = 0; i < 16; ++i) {
+        FxCopy& c = g_fxCopies[i];
+        if (!c.actor || c.id != e.id) continue;
+        void* a = c.actor;
+        c.actor = nullptr;
+        if (!ObjectIsLive(a)) return;
+        void* pm = ActorObjProp(a, "ProjectileMovement");
+        if (pm) { Fn f = {}; if (f.Resolve(pm, "StopMovementImmediately")) { Call k(f); k.Run(pm); } }
+        ActorXform x;
+        float yaw = ReadActorXform(a, &x) ? x.yaw : 0.0f;
+        SetActorXform(a, wire::DequantizePos(e.px) + offX, wire::DequantizePos(e.py) + offY,
+                      wire::DequantizePos(e.pz), yaw);
+        CallActorFloat(a, "SetLifeSpan", "InLifespan", 0.35f);
+        return;
+    }
+}
+
+// Where the sender's projectile is now: it bounces and rolls on the sender's ground,
+// which a copy that cannot collide could never reproduce on its own.  Position is
+// snapped, velocity carries it until the next update.
+void MoveEffect(const wire::EffectBody& e, float offX, float offY)
+{
+    for (int i = 0; i < 16; ++i) {
+        FxCopy& c = g_fxCopies[i];
+        if (!c.actor || c.id != e.id) continue;
+        if (!ObjectIsLive(c.actor)) { c.actor = nullptr; return; }
+        ActorXform x;
+        float yaw = ReadActorXform(c.actor, &x) ? x.yaw : 0.0f;
+        SetActorXform(c.actor, wire::DequantizePos(e.px) + offX, wire::DequantizePos(e.py) + offY,
+                      wire::DequantizePos(e.pz), yaw);
+        void* pm = ActorObjProp(c.actor, "ProjectileMovement");
+        int vo = pm ? FindPropertyOffsetIn(ObjClass(pm), "Velocity") : -1;
+        if (vo >= 0) {
+            float v[3] = {wire::DequantizePos(e.vx), wire::DequantizePos(e.vy), wire::DequantizePos(e.vz)};
+            memcpy((uint8_t*)pm + vo, v, 12);
+        }
+        return;
+    }
+}
+
+void SpawnMeleeArc(const wire::EffectBody& e, avatar::Body* b);
+extern avatar::Body* g_devMirrorBody;
+void SpawnEffect(const wire::EffectBody& e, float offX, float offY)
+{
+    if (e.kind == 2) { EndEffect(e, offX, offY); return; }
+    if (e.kind == 3) { MoveEffect(e, offX, offY); return; }
+    if (e.kind == 4) { SpawnMeleeArc(e, (offX != 0.0f || offY != 0.0f) ? g_devMirrorBody : &g_body); return; }
+    if (e.kind != 1) return;
+    void* cls = avatar::LoadAsset(e.cls);
+    if (!cls) return;
+    void* a = SpawnVisualCopy(cls, e, offX, offY);
+    g_fxLastCopy = a;
+    if (a) {
+        g_fxCopies[g_fxCopyNext].id = e.id;
+        g_fxCopies[g_fxCopyNext].actor = a;
+        g_fxCopyNext = (g_fxCopyNext + 1) & 15;
+    }
+    QDLOG(LOG_INFO, "effect: ", e.cls, a ? " shown" : " NOT shown", " at ",
+          flt(wire::DequantizePos(e.px) + offX, 0), ",", flt(wire::DequantizePos(e.py) + offY, 0), ",",
+          flt(wire::DequantizePos(e.pz), 0));
+}
+
+void DevMirrorEffect(const wire::EffectBody& e);
+
+// Game thread: look at what began play since last frame; send the local player's
+// projectiles.  Read one frame late on purpose -- a thrower may set the velocity
+// after SpawnActor returns.
+struct FxTrack { void* actor; uint16_t id; float x, y, z; };
+FxTrack g_fxTrack[8];
+uint16_t g_fxNextId = 1;
+
+void FxSend(const wire::EffectBody& e)
+{
+    DevMirrorEffect(e);
+    if (!g_net.Connected()) return;
+    uint8_t body[320];
+    wire::Writer w(body, sizeof(body));
+    wire::WriteEffect(w, e);
+    if (!w.ok) return;
+    // Spawn and end are events (reliable); position updates are superseded by the
+    // next one (unreliable).
+    if (e.kind == 3) g_net.SendUnreliable(wire::K_EFFECT_MOVE, body, w.len);
+    else g_net.SendReliable(wire::K_EFFECT, body, w.len);
+}
+
+// Follow each sent projectile until it stops or is destroyed, then send where.
+void FxTrackPump(uint32_t now)
+{
+    static uint32_t lastMove = 0;
+    bool moveTick = now - lastMove >= 66;
+    if (moveTick) lastMove = now;
+    for (int i = 0; i < 8; ++i) {
+        FxTrack& t = g_fxTrack[i];
+        if (!t.actor) continue;
+        bool live = ObjectIsLive(t.actor);
+        float v[3] = {1, 1, 1};
+        ActorXform x;
+        if (live && ReadActorXform(t.actor, &x)) { t.x = x.px; t.y = x.py; t.z = x.pz; }
+        if (live) ProjectileVelocity(t.actor, v);
+        bool stopped = fabsf(v[0]) + fabsf(v[1]) + fabsf(v[2]) < 1.0f;
+        if (live && !stopped) {
+            if (moveTick) {
+                wire::EffectBody m;
+                memset(&m, 0, sizeof(m));
+                m.kind = 3;
+                m.id = t.id;
+                m.px = wire::QuantizePos(t.x); m.py = wire::QuantizePos(t.y); m.pz = wire::QuantizePos(t.z);
+                m.vx = wire::QuantizePos(v[0]); m.vy = wire::QuantizePos(v[1]); m.vz = wire::QuantizePos(v[2]);
+                FxSend(m);
+            }
+            continue;
+        }
+        wire::EffectBody e;
+        memset(&e, 0, sizeof(e));
+        e.kind = 2;
+        e.id = t.id;
+        e.px = wire::QuantizePos(t.x); e.py = wire::QuantizePos(t.y); e.pz = wire::QuantizePos(t.z);
+        QDLOG(LOG_INFO, "effect: local #", dec(t.id), (live ? " stopped" : " gone"), " at ",
+              flt(t.x, 0), ",", flt(t.y, 0), ",", flt(t.z, 0));
+        t.actor = nullptr;
+        FxSend(e);
+    }
+}
+
+void FxPump(uint32_t now)
+{
+    FxTrackPump(now);
+    long head = g_fxHead;
+    if (head - g_fxTail > 64) g_fxTail = head - 64;
+    for (; g_fxTail < head; ++g_fxTail) {
+        void* a = g_fxRing[g_fxTail & 63];
+        if (!a || !ObjectIsLive(a) || !IsGameplayPawn(g_localPawn)) continue;
+        bool ours = false;
+        for (int i = 0; i < g_fxOursN; ++i) if (g_fxOurs[i] == a) { ours = true; break; }
+        if (ours || !IsProjectileClass(ObjClass(a))) continue;
+        void* owner = ActorObjProp(a, "Owner");
+        void* inst = ActorObjProp(a, "Instigator");
+        ActorXform x;
+        if (!ReadActorXform(a, &x)) continue;
+        ActorXform px;
+        bool closeBy = ReadActorXform(g_localPawn, &px) &&
+                    fabsf(px.px - x.px) + fabsf(px.py - x.py) + fabsf(px.pz - x.pz) < 600.0f;
+        bool mine = owner == g_localPawn || inst == g_localPawn || (!owner && !inst && closeBy);
+        if (!mine) continue;
+        wire::EffectBody e;
+        memset(&e, 0, sizeof(e));
+        e.kind = 1;
+        if (avatar::AssetPath(ObjClass(a), e.cls, sizeof(e.cls)) <= 0) continue;
+        float v[3] = {0, 0, 0};
+        ProjectileVelocity(a, v);
+        e.px = wire::QuantizePos(x.px); e.py = wire::QuantizePos(x.py); e.pz = wire::QuantizePos(x.pz);
+        e.pitch = wire::QuantizeAngle(x.pitch); e.yaw = wire::QuantizeAngle(x.yaw);
+        e.vx = wire::QuantizePos(v[0]); e.vy = wire::QuantizePos(v[1]); e.vz = wire::QuantizePos(v[2]);
+        e.life_ms = 6000;
+        e.id = g_fxNextId++;
+        if (!g_fxNextId) g_fxNextId = 1;
+        QDLOG(LOG_INFO, "effect: local #", dec(e.id), " ", e.cls, " v=", flt(v[0], 0), ",", flt(v[1], 0), ",", flt(v[2], 0));
+        g_fxLastLocal = a;
+        int slot = 0;
+        for (int i = 0; i < 8; ++i) if (!g_fxTrack[i].actor) { slot = i; break; }
+        g_fxTrack[slot].actor = a; g_fxTrack[slot].id = e.id;
+        g_fxTrack[slot].x = x.px; g_fxTrack[slot].y = x.py; g_fxTrack[slot].z = x.pz;
+        FxSend(e);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Niagara on the body: melee swing arcs and status effects
+// ---------------------------------------------------------------------------
+// UNiagaraFunctionLibrary::SpawnSystemAttached, called through reflection on the
+// library's CDO.  Location/rotation are relative to `parent` (KeepRelativeOffset).
+void* NiagaraSpawnAttached(void* system, void* parent, const float loc[3], const float rot[3], bool autoDestroy)
+{
+    static void* lib = nullptr;
+    static Fn f = {};
+    if (!system || !parent) return nullptr;
+    if (!lib || !ObjectIsLive(lib)) lib = FindObjectByNameAndClass("Default__NiagaraFunctionLibrary", "NiagaraFunctionLibrary");
+    if (!lib || !f.Resolve(lib, "SpawnSystemAttached")) { QDLOG(LOG_WARN, "niagara: SpawnSystemAttached unavailable"); return nullptr; }
+    Call c(f);
+    c.Obj("SystemTemplate", system);
+    c.Obj("AttachToComponent", parent);
+    QdName none = {0, 0};
+    c.Name("AttachPointName", none);
+    c.Set("Location", loc, 12);
+    c.Set("Rotation", rot, 12);              // FRotator: pitch, yaw, roll
+    c.U8("LocationType", 0);                 // EAttachLocation::KeepRelativeOffset
+    c.U8("bAutoDestroy", autoDestroy ? 1 : 0);
+    c.U8("bAutoActivate", 1);
+    c.U8("PoolingMethod", 0);                // ENCPoolMethod::None
+    c.U8("bPreCullCheck", 0);
+    if (!c.Run(lib) || !c.Ret()) return nullptr;
+    return *(void**)c.Ret();
+}
+
+bool NiagaraSetColor(void* comp, const char* name, const float rgba[4])
+{
+    static Fn f = {};
+    if (!comp || !f.Resolve(comp, "SetVariableLinearColor")) return false;
+    QdName n;
+    if (!FNameFromAnsi(name, &n)) return false;
+    Call c(f);
+    c.Name("InVariableName", n);
+    c.Set("InValue", rgba, 16);
+    return c.Run(comp);
+}
+
+bool NiagaraSetFloat(void* comp, const char* name, float v)
+{
+    static Fn f = {};
+    if (!comp || !f.Resolve(comp, "SetVariableFloat")) return false;
+    QdName n;
+    if (!FNameFromAnsi(name, &n)) return false;
+    Call c(f);
+    c.Name("InVariableName", n);
+    c.F32("InValue", v);
+    return c.Run(comp);
+}
+
+// Stop emitting; with bAutoDestroy the component removes itself once its particles die.
+void NiagaraStop(void* comp)
+{
+    static Fn f = {};
+    if (comp && ObjectIsLive(comp) && f.Resolve(comp, "Deactivate")) { Call c(f); c.Run(comp); }
+}
+
+// The user parameters a Blueprint set on a component (UNiagaraComponent::
+// OverrideParameters, an FNiagaraParameterStore): name, type, value.  Reflection gives
+// every offset; only the element stride is derived (Offset is the last field).
+struct NiagaraParam { char name[64]; char type[48]; float v[4]; int n; };
+
+int NiagaraUserParams(void* comp, NiagaraParam* out, int cap)
+{
+    static int ovr = -2, sorted = -1, data = -1, nameOff = -1, typeOff = -1, offOff = -1, stride = 0;
+    if (ovr == -2) {
+        ovr = FindPropertyOffsetIn(ObjClass(comp), "OverrideParameters");
+        void* store = FindObjectByNameAndClass("NiagaraParameterStore", "ScriptStruct");
+        void* elem = FindObjectByNameAndClass("NiagaraVariableWithOffset", "ScriptStruct");
+        void* base = FindObjectByNameAndClass("NiagaraVariableBase", "ScriptStruct");
+        void* td = FindObjectByNameAndClass("NiagaraTypeDefinition", "ScriptStruct");
+        if (store) { sorted = FindPropertyOffsetIn(store, "SortedParameterOffsets"); data = FindPropertyOffsetIn(store, "ParameterData"); }
+        if (elem) offOff = FindPropertyOffsetIn(elem, "Offset");
+        if (base) { nameOff = FindPropertyOffsetIn(base, "Name"); typeOff = FindPropertyOffsetIn(base, "TypeDef"); }
+        int cso = td ? FindPropertyOffsetIn(td, "ClassStructOrEnum") : -1;
+        if (typeOff >= 0 && cso >= 0) typeOff += cso;
+        stride = offOff >= 0 ? ((offOff + 4 + 7) & ~7) : 0;
+        QDLOG(LOG_INFO, "niagara params: Override@", dec(ovr), " Sorted@", dec(sorted), " Data@", dec(data),
+              " name@", dec(nameOff), " type@", dec(typeOff), " offset@", dec(offOff), " stride ", dec(stride));
+    }
+    // 4.27 keeps a type HANDLE (an index into the type registry) instead of the type
+    // object; without it the type is inferred from the user's own parameter name.
+    if (ovr < 0 || sorted < 0 || data < 0 || nameOff < 0 || offOff < 0 || !stride) return 0;
+    uint8_t* st = (uint8_t*)comp + ovr;
+    uint8_t* arr = *(uint8_t**)(st + sorted);
+    int num = *(int*)(st + sorted + 8);
+    uint8_t* bytes = *(uint8_t**)(st + data);
+    int nbytes = *(int*)(st + data + 8);
+    int got = 0;
+    for (int i = 0; arr && bytes && i < num && i < 64 && got < cap; ++i) {
+        uint8_t* e = arr + i * stride;
+        NiagaraParam& p = out[got];
+        memset(&p, 0, sizeof(p));
+        if (FNameToString(*(QdName*)(e + nameOff), p.name, sizeof(p.name)) <= 0) continue;
+        if (typeOff >= 0) {
+            void* t = *(void**)(e + typeOff);
+            if (t) FNameToString(ObjNameRaw(t), p.type, sizeof(p.type));
+            p.n = avatar::HasCI(p.type, "linearcolor") ? 4 : (avatar::HasCI(p.type, "float") ? 1 : 0);
+        } else {
+            lstrcpynA(p.type, "?", sizeof(p.type));
+            p.n = (avatar::HasCI(p.name, "color") || avatar::HasCI(p.name, "colour")) ? 4 : 1;
+        }
+        int off = *(int*)(e + offOff);
+        if (p.n && off >= 0 && off + p.n * 4 <= nbytes) memcpy(p.v, bytes + off, p.n * 4);
+        else p.n = 0;
+        ++got;
+    }
+    return got;
+}
+
+// ---- melee swing arc (EFFECT kind 4, WIRE.md 3.14) --------------------------
+// The game spawns the weapon's arc (MeleeArc_Default, or the weapon's override) as a
+// Niagara component attached to the first-person ARMS ~0.2 s into a swing, colours it
+// with LinearColor user parameters and orients it by its relative rotation (the roll
+// is the swing direction).  The sender reports each new arc; the peer spawns the same
+// system on the body at eye height with the same relative rotation and colours.
+// Field use: cls = "<system>|<param>=<v>[,<v>,<v>,<v>]|..." (values x1000, integers;
+// four values = a LinearColor, one = a float); id = pitch, pitch = roll, yaw = yaw
+// (quantized degrees, relative to the arms); positions and velocities unused.
+
+void* g_arcSeen[16];
+int g_arcSeenN = 0;
+
+void ArcObservePump(uint32_t now)
+{
+    static uint32_t atkAt = 0;
+    static uint8_t lastAct = 0;
+    static int armsOff = -2, kids = -2;
+    static int32_t ncName = -1;
+    if (!IsGameplayPawn(g_localPawn)) return;
+    // Watch while a move plays and 600 ms after (a slow frame rate stretches a swing
+    // in wall time: measured 2.6 s for one swing on a throttled test instance).
+    if (g_localAct.byte != lastAct) {
+        lastAct = g_localAct.byte;
+        if ((lastAct & 0x1F) != 0) atkAt = now;
+    }
+    if (g_localAct.last && atkAt) atkAt = now;
+    if (!atkAt) return;
+    if (now - atkAt > 600) { atkAt = 0; return; }
+    avatar::Api& a = avatar::A();
+    if (armsOff == -2) {
+        armsOff = FindPropertyOffsetIn(ObjClass(g_localPawn), "Arms");
+        kids = a.clsScene ? FindPropertyOffsetIn(a.clsScene, "AttachChildren") : -1;
+        QdName n;
+        ncName = FNameFromAnsi("NiagaraComponent", &n) ? (int32_t)n.comparison_index : -1;
+    }
+    if (armsOff < 0 || kids < 0 || ncName < 0 || g_eqs.relRot < 0) return;
+    void* arms = *(void**)((uint8_t*)g_localPawn + armsOff);
+    if (!arms) return;
+    void** ch = *(void***)((uint8_t*)arms + kids);
+    int nch = *(int*)((uint8_t*)arms + kids + 8);
+    for (int i = 0; ch && i < nch && i < 64; ++i) {
+        void* c = ch[i];
+        if (!c || (int32_t)ObjNameRaw(ObjClass(c)).comparison_index != ncName) continue;
+        bool seen = false;
+        for (int k = 0; k < 16; ++k) if (g_arcSeen[k] == c) { seen = true; break; }
+        if (seen) continue;
+        g_arcSeen[g_arcSeenN] = c;
+        g_arcSeenN = (g_arcSeenN + 1) & 15;
+        static int assetOff = -2;
+        if (assetOff == -2) assetOff = FindPropertyOffsetIn(ObjClass(c), "Asset");
+        wire::EffectBody e;
+        memset(&e, 0, sizeof(e));
+        e.kind = 4;
+        if (assetOff < 0 || avatar::AssetPath(*(void**)((uint8_t*)c + assetOff), e.cls, 110) <= 0) continue;
+        NiagaraParam ps[16];
+        int np = NiagaraUserParams(c, ps, 16);
+        // Every user parameter the Blueprint set, as text: "|name=v[,v,v,v]".  Colours
+        // carry four values; anything else is read as a float (4.27 stores no type).
+        for (int k = 0; k < np; ++k) {
+            int nv = ps[k].n == 4 ? 4 : 1;
+            if (ps[k].n == 0) {
+                // Not a colour by name: a float (Lifetime, Power, Charge on the default arc).
+                ps[k].n = 1;
+            }
+            char item[96];
+            int w = wsprintfA(item, "|%s=", ps[k].name);
+            for (int j = 0; j < nv; ++j) {
+                int milli = (int)(ps[k].v[j] * 1000.0f);
+                w += wsprintfA(item + w, j ? ",%d" : "%d", milli);
+            }
+            if (lstrlenA(e.cls) + w >= (int)sizeof(e.cls) - 1) break;
+            lstrcatA(e.cls, item);
+        }
+        const float* r = (const float*)((uint8_t*)c + g_eqs.relRot);
+        e.id = (uint16_t)wire::QuantizeAngle(r[0]);
+        e.pitch = wire::QuantizeAngle(r[2]);
+        e.yaw = wire::QuantizeAngle(r[1]);
+        QDLOG(LOG_INFO, "arc: local ", e.cls, " rot=", flt(r[0], 1), ",", flt(r[1], 1), ",", flt(r[2], 1),
+              " params=", dec(np), " +", dec((int)(now - atkAt)), "ms");
+        FxSend(e);
+    }
+}
+
+avatar::Body* g_devMirrorBody = nullptr;
+
+void SpawnMeleeArc(const wire::EffectBody& e, avatar::Body* b)
+{
+    if (!b || !b->pose) return;
+    char parts[8][200];
+    memset(parts, 0, sizeof(parts));
+    int pi = 0, w = 0;
+    for (const char* p = e.cls; *p && pi < 8; ++p) {
+        if (*p == '|') { ++pi; w = 0; continue; }
+        if (w < 199) parts[pi][w++] = *p;
+    }
+    // A flurry sends one thrust arc per stab; the body stabs with each.
+    if (avatar::HasCI(parts[0], "thrust")) avatar::Jab(b);
+    void* sys = avatar::LoadAsset(parts[0]);
+    if (!sys) return;
+    // The arms' frame is the body mesh's frame (Y forward, X left, Z up), so the arc
+    // keeps its relative rotation; it sits at eye height instead of at the camera.
+    float loc[3] = {0.0f, 12.0f, 150.0f};
+    float rot[3] = {wire::DequantizeAngle((int16_t)e.id), wire::DequantizeAngle(e.yaw), wire::DequantizeAngle(e.pitch)};
+    void* c = NiagaraSpawnAttached(sys, b->pose, loc, rot, true);
+    if (!c) { QDLOG(LOG_WARN, "arc: spawn failed for ", parts[0]); return; }
+    int set = 0;
+    for (int k = 1; k < 8 && parts[k][0]; ++k) {
+        char* eq = strchr(parts[k], '=');
+        if (!eq) continue;
+        *eq = 0;
+        float v[4] = {0, 0, 0, 1};
+        int nv = 0;
+        for (char* t = eq + 1; *t && nv < 4;) {
+            v[nv++] = atoi(t) / 1000.0f;
+            while (*t && *t != ',') ++t;
+            if (*t == ',') ++t;
+        }
+        bool ok = nv == 4 ? NiagaraSetColor(c, parts[k], v) : NiagaraSetFloat(c, parts[k], v[0]);
+        set += ok ? 1 : 0;
+    }
+    QDLOG(LOG_INFO, "arc: shown ", parts[0], " roll=", flt(rot[2], 0), " params set ", dec(set));
+}
+
+// ---- status effects (STATUS, WIRE.md 3.15) ------------------------------------
+// Read from the player's own components: StatusEffectComponent_C.Applied for the
+// timed effects, MagicFireEffectLogic_C.CurrentMagicFireDamagePool > 0 for burning,
+// MagicPoisonDebuffLogic_C.Active for magic poison.  Shown on the body with the
+// systems the game puts on ENEMIES for the same effects (EnemyBase_C references them;
+// they sample the attach parent's skinned mesh, so they wrap the body).
+struct StatusSrc { const char* comp; uint32_t bit; };
+static const StatusSrc kStatusSrc[] = {
+    {"PoisonStatusEffect", wire::ST_POISON},       {"DiseaseStatusEffect", wire::ST_DISEASE},
+    {"WeakenStatusEffect", wire::ST_WEAKEN},       {"HeavyStatusEffect", wire::ST_HEAVY},
+    {"BindingStatusEffect", wire::ST_BINDING},     {"BerserkFruitStatusEffect", wire::ST_BERSERK},
+    {"BerserkPotionStatusEffect", wire::ST_BERSERK}, {"IronskinFruitStatusEffect", wire::ST_IRONSKIN},
+    {"IronskinPotionStatusEffect", wire::ST_IRONSKIN}, {"RadiantFruitStatusEffect", wire::ST_RADIANT},
+};
+static const int kStatusSrcN = (int)(sizeof(kStatusSrc) / sizeof(kStatusSrc[0]));
+
+// bit index -> what the body shows.  `ground`: the system the game puts on an ENEMY
+// with this effect; it samples a skeletal mesh, which the poseable body is not, so it
+// only draws at the feet (measured) -- kept for the ground glow.  `body`: a system that
+// needs no mesh, attached at four bones and scaled, so the effect covers the body.
+// Chosen on screenshots (_test/v-gallery*.png): magic fire is the blue brazier flame,
+// poison the poison fishman's projectile wisps, magic poison its magenta cloud.
+struct StatusLook { const char* ground; const char* body; float scale; };
+static const StatusLook kStatusFx[10] = {
+    {"/Game/Items/Weapons/Torch/Fire_CharFX.Fire_CharFX",
+     "/Game/Enemies/Gargler_00/Gargoyle_SmallBrazierFire.Gargoyle_SmallBrazierFire", 0.35f},      // magic fire
+    {"/Game/Enemies/Shared/Poison_CharFX.Poison_CharFX",
+     "/Game/Enemies/PoisonFishMan/MagicPoisonFishman_ProjectileFX.MagicPoisonFishman_ProjectileFX", 0.6f}, // magic poison
+    {"/Game/Enemies/Shared/Poison_CharFX.Poison_CharFX",
+     "/Game/Enemies/PoisonFishMan/PoisonFishman_ProjectilFX.PoisonFishman_ProjectilFX", 0.7f},    // poison
+    // No stationary disease / weaken aura exists in the game's content (the dagger
+    // trails emit only while moving; v-gallery2.png): the enemy effect alone.
+    {"/Game/Enemies/Shared/DiseaseCharFX.DiseaseCharFX", "", 1.0f},                                // disease
+    {"/Game/Enemies/Shared/WeakenCharFX.WeakenCharFX", "", 1.0f},                                  // weaken
+    {"/Game/Enemies/Shared/Heavy_CharFX.Heavy_CharFX", "", 1.0f},                                  // heavy
+    {"/Game/Items/Weapons/Daggers/Paralyze/Paralyze_CharFX.Paralyze_CharFX", "", 1.0f},            // binding
+    {"", "", 1.0f}, {"", "", 1.0f}, {"", "", 1.0f},       // berserk, ironskin, radiant: screen-only in the game
+};
+
+uint32_t LocalStatusMask()
+{
+    static void* pawn = nullptr;
+    static void* comps[16];
+    static void* fireLogic = nullptr;
+    static void* poisonLogic = nullptr;
+    static int applied = -1, pool = -1, active = -1;
+    if (!IsGameplayPawn(g_localPawn)) return 0;
+    if (pawn != g_localPawn) {
+        pawn = g_localPawn;
+        memset(comps, 0, sizeof(comps));
+        fireLogic = poisonLogic = nullptr;
+        int n = ObjectCount();
+        for (int i = 0; i < n; ++i) {
+            void* o = ObjectAt(i);
+            if (!o || ObjOuter(o) != pawn) continue;
+            for (int k = 0; k < kStatusSrcN; ++k) if (ObjNameIs(o, kStatusSrc[k].comp)) comps[k] = o;
+            if (ObjNameIs(ObjClass(o), "MagicFireEffectLogic_C")) fireLogic = o;
+            if (ObjNameIs(ObjClass(o), "MagicPoisonDebuffLogic_C")) poisonLogic = o;
+        }
+        for (int k = 0; k < kStatusSrcN && applied < 0; ++k)
+            if (comps[k]) applied = FindPropertyOffsetIn(ObjClass(comps[k]), "Applied");
+        if (fireLogic) pool = FindPropertyOffsetIn(ObjClass(fireLogic), "CurrentMagicFireDamagePool");
+        if (poisonLogic) active = FindPropertyOffsetIn(ObjClass(poisonLogic), "Active");
+        int found = 0;
+        for (int k = 0; k < kStatusSrcN; ++k) found += comps[k] ? 1 : 0;
+        QDLOG(LOG_INFO, "status: ", dec(found), "/", dec(kStatusSrcN), " effect components, Applied@", dec(applied),
+              " fire pool@", dec(pool), " poison active@", dec(active));
+    }
+    uint32_t m = 0;
+    for (int k = 0; k < kStatusSrcN; ++k)
+        if (comps[k] && applied >= 0 && ObjectIsLive(comps[k]) && *((uint8_t*)comps[k] + applied)) m |= kStatusSrc[k].bit;
+    if (fireLogic && pool >= 0 && ObjectIsLive(fireLogic) && *(float*)((uint8_t*)fireLogic + pool) > 0.0f) m |= wire::ST_MAGIC_FIRE;
+    if (poisonLogic && active >= 0 && ObjectIsLive(poisonLogic) && *((uint8_t*)poisonLogic + active)) m |= wire::ST_MAGIC_POISON;
+    return m;
+}
+
+void ApplyStatus(avatar::Body* b, uint32_t mask)
+{
+    if (!b || !b->pose || mask == b->statusMask) return;
+    uint32_t was = b->statusMask;
+    b->statusMask = mask;
+    static const char* const kAnchors[4] = {"root_x", "spine_02_x", "forearm_stretch_l", "forearm_stretch_r"};
+    for (int bit = 0; bit < 10; ++bit) {
+        bool on = (mask & (1u << bit)) != 0;
+        // Poison and magic poison share one look: show it once.
+        if (bit == 2 && (mask & wire::ST_MAGIC_POISON)) on = false;
+        bool had = false;
+        for (int k = 0; k < 5; ++k) had = had || b->statusFx[bit][k] != nullptr;
+        if (on == had) continue;
+        if (!on) {
+            for (int k = 0; k < 5; ++k) { NiagaraStop(b->statusFx[bit][k]); b->statusFx[bit][k] = nullptr; }
+            continue;
+        }
+        const StatusLook& lk = kStatusFx[bit];
+        float z[3] = {0, 0, 0};
+        if (lk.ground[0]) b->statusFx[bit][4] = NiagaraSpawnAttached(avatar::LoadAsset(lk.ground), b->pose, z, z, true);
+        void* sys = lk.body[0] ? avatar::LoadAsset(lk.body) : nullptr;
+        for (int k = 0; k < 4 && sys; ++k) {
+            void* c = NiagaraSpawnAttached(sys, b->pose, z, z, true);
+            if (!c) continue;
+            QdName bone;
+            if (FNameFromAnsi(kAnchors[k], &bone)) avatar::AttachTo(c, b->pose, bone);
+            avatar::Xf x = avatar::XfIdentity();
+            x.sx = x.sy = x.sz = lk.scale;
+            avatar::SetRelativeTransform(c, x);
+            b->statusFx[bit][k] = c;
+        }
+    }
+    QDLOG(LOG_INFO, "status: body now shows mask ", hex32(mask), " (was ", hex32(was), ")");
+}
+
+uint32_t g_localStatus = 0, g_localStatusRev = 0;
+uint32_t g_peerStatus = 0, g_peerStatusRev = 0;
+
+void StatusPump(uint32_t now)
+{
+    static uint32_t lastScan = 0, lastSend = 0;
+    if (now - lastScan < 200) return;
+    lastScan = now;
+    uint32_t m = LocalStatusMask();
+    bool changed = m != g_localStatus;
+    if (changed) {
+        g_localStatus = m;
+        ++g_localStatusRev;
+        QDLOG(LOG_INFO, "status: local mask ", hex32(m), " rev ", dec((int)g_localStatusRev));
+    }
+    if (g_devMirrorBody) ApplyStatus(g_devMirrorBody, g_localStatus);
+    if (g_net.Connected() && (changed || now - lastSend > 1000)) {
+        lastSend = now;
+        uint8_t body[16];
+        wire::Writer w(body, sizeof(body));
+        wire::WriteStatus(w, g_localStatusRev, g_localStatus);
+        if (w.ok) g_net.SendUnreliable(wire::K_STATUS, body, w.len);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// LAYER 6 -- world: level-streaming union, enemies, dialogue
+// ---------------------------------------------------------------------------
+// Each of the three is behind its own switch (StreamUnion / EnemySync / DialogueSync)
+// and each obeys the same two rules as the rest of this file: every pointer read from
+// the game is validated before it is followed, and every write is read back and the
+// result logged, because "called" is not evidence that anything happened.
+
+// ---- small reflection helpers shared by the three --------------------------
+// Property offsets per (class, name), cached: a reflected lookup walks the class's
+// whole field chain, and the enemy pump asks the same questions every frame.
+struct PropCacheEntry { void* cls; const char* name; int off; };
+PropCacheEntry g_propCache[192];
+int g_propCacheN = 0;
+
+int PropOff(void* cls, const char* name)
+{
+    if (!cls) return -1;
+    for (int i = 0; i < g_propCacheN; ++i)
+        if (g_propCache[i].cls == cls && g_propCache[i].name == name) return g_propCache[i].off;
+    int off = FindPropertyOffsetIn(cls, name);
+    if (g_propCacheN < (int)(sizeof(g_propCache) / sizeof(g_propCache[0])))
+        g_propCache[g_propCacheN++] = {cls, name, off};
+    return off;
+}
+
+void* ObjPropC(void* obj, const char* name)
+{
+    if (!obj) return nullptr;
+    int off = PropOff(ObjClass(obj), name);
+    if (off < 0) return nullptr;
+    void* v = *(void**)((uint8_t*)obj + off);
+    return LooksLikeUObject(v) ? v : nullptr;
+}
+
+// Blueprint bools occupy a whole byte (no bitfield), so nonzero = true.
+bool BytePropC(void* obj, const char* name, uint8_t* out)
+{
+    if (!obj) return false;
+    int off = PropOff(ObjClass(obj), name);
+    if (off < 0) return false;
+    *out = *((uint8_t*)obj + off);
+    return true;
+}
+
+bool WriteBytePropC(void* obj, const char* name, uint8_t v)
+{
+    if (!obj) return false;
+    int off = PropOff(ObjClass(obj), name);
+    if (off < 0) return false;
+    *((uint8_t*)obj + off) = v;
+    return *((uint8_t*)obj + off) == v;
+}
+
+bool IntPropC(void* obj, const char* name, int32_t* out)
+{
+    if (!obj) return false;
+    int off = PropOff(ObjClass(obj), name);
+    if (off < 0) return false;
+    *out = *(int32_t*)((uint8_t*)obj + off);
+    return true;
+}
+
+// The value a getter produced: its ReturnValue, or -- for a Blueprint function, which
+// returns through output parameters -- its first output parameter of the right size.
+uint8_t* OutParm(Call& c, int size)
+{
+    const LayoutResult& s = c.f.sig;
+    int ro = c.f.RetOff();
+    if (ro >= 0) {
+        for (int i = 0; i < s.props; ++i)
+            if (s.p[i].offset == ro && s.p[i].size == size) return c.buf + ro;
+    }
+    for (int i = 0; i < s.props; ++i) {
+        if ((s.p[i].flags & 0x100ull) && s.p[i].size == size) return c.buf + s.p[i].offset;  // CPF_OutParm
+    }
+    return nullptr;
+}
+
+bool CallGetFloat(void* obj, Fn& f, const char* fn, float* out)
+{
+    if (!f.Resolve(obj, fn)) return false;
+    Call c(f);
+    if (!c.Run(obj)) return false;
+    uint8_t* p = OutParm(c, 4);
+    if (!p) return false;
+    memcpy(out, p, 4);
+    return true;
+}
+
+bool CallNoArgs(void* obj, Fn& f, const char* fn)
+{
+    if (!obj || !f.Resolve(obj, fn)) return false;
+    Call c(f);          // zeroed parameters: any bool argument is false
+    return c.Run(obj);
+}
+
+bool CallBool1(void* obj, Fn& f, const char* fn, bool v)
+{
+    if (!obj || !f.Resolve(obj, fn)) return false;
+    Call c(f);
+    if (f.sig.props > 0) c.U8(f.sig.p[0].name, v ? 1 : 0);
+    return c.Run(obj);
+}
+
+int RemoteSlot() { return g_net.IsHost() ? 1 : 0; }
+int LocalSlot()  { return g_net.IsHost() ? 0 : 1; }
+
+// ===========================================================================
+// 6a. Level-streaming union
+// ===========================================================================
+// MEASURED (this pass, disassembly of the shipped image):
+//
+//   * The level manager applies ONE level per frame from its resolved queue
+//     (+0x320 -> current entry +0x330, wanted-hidden flag +0x338) and WAITS until the
+//     level's real visibility matches (0x029A4310: LoadedLevel +0x128 -> bIsVisible
+//     +0x1F4 bit 0x20) before taking the next entry (0x00E3CF9E..0x00E3D0F3).
+//   * Its only lever on the engine is ULevelStreaming::SetShouldBeVisible 0x029ACB20
+//     (bShouldBeVisible = +0xBA bit 3), called from the per-frame path (0x00E3CFE1 /
+//     0x00E3CFFA) and the immediate path 0x00E21E40.
+//
+// So the union is enforced at that one setter: a hide of a level the partner needs is
+// vetoed.  A bare veto would STALL the queue forever (the manager waits for a hide
+// that never happens, and the local player's next level never loads), so the veto
+// also flips the manager's pending entry to "show": next frame the manager re-issues
+// it as a show, finds the level visible, and moves on.  One frame, no deadlock.
+//
+// What is PUBLISHED is what the local game wants (recorded from the same setter), never
+// what this mod forced -- otherwise the two machines would hold each other's levels up
+// forever.  Levels the partner needs that are not shown here are shown by this mod
+// (SetShouldBeLoaded + SetShouldBeVisible) and released 5 s after the partner leaves
+// them (stream::ForceBook).
+typedef void (*FnSetShouldBeVisible)(void* levelStreaming, bool visible);
+FnSetShouldBeVisible g_oSetVis = nullptr;
+stream::ForceBook    g_force;
+
+static const int kLevelVisByte = 0xBA;     // ULevelStreaming flags byte (setter bytes verify it)
+static const int kLevelVisBit  = 0x08;     // bShouldBeVisible
+static const int kMgrSlot      = 0x3B0;    // GameInstance -> AFS_LevelManager (0x00E2EEAC)
+static const int kMgrCurEntry  = 0x330;    // {X*, u8 hide}; X + 0x30 = ULevelStreaming*
+static const int kMgrCurHide   = 0x338;
+
+struct LevelRec {
+    void*  ls;
+    char   name[stream::kMaxNameLen];
+    int8_t gameWants;      // -1 unknown, else the game's last request
+    bool   skipNextShow;   // the manager is about to re-issue our flipped entry
+};
+LevelRec g_levels[96];
+int      g_levelN = 0;
+void*    g_levelWorld = nullptr;
+bool     g_ownVisCall = false;
+uint32_t g_vetoCount = 0;
+
+bool LevelVisBitGuarded(void* ls, bool* out)
+{
+    __try { *out = (*((uint8_t*)ls + kLevelVisByte) & kLevelVisBit) != 0; return true; }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+bool LevelVisible(void* ls)
+{
+    bool v = false;
+    return ls && LevelVisBitGuarded(ls, &v) && v;
+}
+
+LevelRec* LevelFind(void* ls)
+{
+    for (int i = 0; i < g_levelN; ++i) if (g_levels[i].ls == ls) return &g_levels[i];
+    return nullptr;
+}
+
+// "/Game/.../100_GR.100_GR" from WorldAsset (TSoftObjectPtr<UWorld>: the
+// FSoftObjectPath's AssetPathName is at +0x10, after the weak pointer and the tag),
+// else PackageNameToLoad, else the object's own name.  Every candidate must look like a
+// package path before it is used.
+void LevelNameOf(void* ls, char* out, int cap)
+{
+    out[0] = 0;
+    char path[256];
+    void* cls = ObjClass(ls);
+    int wa = PropOff(cls, "WorldAsset");
+    if (wa >= 0 && FNameToString(*(QdName*)((uint8_t*)ls + wa + 0x10), path, sizeof(path)) > 0 &&
+        path[0] == '/') {
+        stream::ShortLevelName(path, out, cap);
+        if (out[0]) return;
+    }
+    int pk = PropOff(cls, "PackageNameToLoad");
+    if (pk >= 0 && FNameToString(*(QdName*)((uint8_t*)ls + pk), path, sizeof(path)) > 0 &&
+        path[0] == '/') {
+        stream::ShortLevelName(path, out, cap);
+        if (out[0]) return;
+    }
+    FNameToString(ObjNameRaw(ls), out, cap);
+}
+
+void* LevelManager()
+{
+    void* gi = GameInstanceOf(GWorldPtr());
+    if (!gi) return nullptr;
+    void* m = *(void**)((uint8_t*)gi + kMgrSlot);
+    return LooksLikeUObject(m) ? m : nullptr;
+}
+
+// The veto's other half (see above).  True if the manager's pending entry was this
+// level's hide and is now a show.
+bool FlipPendingHideGuarded(void* mgr, void* ls)
+{
+    __try {
+        uint8_t* cur = *(uint8_t**)((uint8_t*)mgr + kMgrCurEntry);
+        if (!cur || *(void**)(cur + 0x30) != ls) return false;
+        uint8_t* hide = (uint8_t*)mgr + kMgrCurHide;
+        if (*hide == 0) return false;
+        *hide = 0;
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+bool StreamVetoes(const LevelRec* r)
+{
+    return r && r->name[0] && Cfg().stream_union && g_net.Connected() &&
+           g_stream.PeerWants(r->name, Net::Now());
+}
+
+void HK_SetShouldBeVisible(void* ls, bool visible)
+{
+    if (!g_ownVisCall && ls && g_engineReady) {
+        LevelRec* r = LevelFind(ls);
+        if (r) {
+            if (visible && r->skipNextShow) r->skipNextShow = false;
+            else r->gameWants = visible ? 1 : 0;
+            if (!visible && StreamVetoes(r) && LevelVisible(ls)) {
+                void* mgr = LevelManager();
+                if (mgr && FlipPendingHideGuarded(mgr, ls)) r->skipNextShow = true;
+                ++g_vetoCount;
+                static uint32_t lastLog = 0;
+                uint32_t now = Net::Now();
+                if (now - lastLog > 1000) {
+                    lastLog = now;
+                    QDLOG(LOG_INFO, "BLOCK hide of ", r->name, " (the partner is in it); vetoes=",
+                          dec((int)g_vetoCount), (r->skipNextShow ? " queue entry flipped" : ""));
+                }
+                return;
+            }
+        }
+    }
+    if (g_oSetVis) g_oSetVis(ls, visible);
+}
+
+void LevelsReset()
+{
+    g_levelN = 0;
+    g_force.Reset();
+    g_stream.Reset();
+}
+
+// world->StreamingLevels (reflected UWorld property), merged into g_levels so the
+// recorded wishes survive a refresh.
+void LevelsRefresh()
+{
+    void* world = GWorldPtr();
+    if (world != g_levelWorld) {
+        if (g_levelWorld) QDLOG(LOG_INFO, "level union: world changed, level table reset");
+        g_levelWorld = world;
+        LevelsReset();
+    }
+    if (!world || !EnsureActorApi()) return;
+    int off = PropOff(ObjClass(world), "StreamingLevels");
+    if (off < 0) {
+        static bool said = false;
+        if (!said) { said = true; QDLOG(LOG_WARN, "level union: UWorld.StreamingLevels not found"); }
+        return;
+    }
+    void** data = *(void***)((uint8_t*)world + off);
+    int32_t num = *(int32_t*)((uint8_t*)world + off + 8);
+    if (!data || num < 0 || num > 512) return;
+    for (int i = 0; i < num; ++i) {
+        void* ls = data[i];
+        if (!LooksLikeUObject(ls) || LevelFind(ls)) continue;
+        if (g_levelN >= (int)(sizeof(g_levels) / sizeof(g_levels[0]))) break;
+        LevelRec& r = g_levels[g_levelN++];
+        r.ls = ls;
+        LevelNameOf(ls, r.name, sizeof(r.name));
+        r.gameWants = LevelVisible(ls) ? 1 : 0;    // until the game says otherwise
+        r.skipNextShow = false;
+    }
+    // Drop levels the world no longer lists.
+    for (int i = 0; i < g_levelN;) {
+        bool listed = false;
+        for (int k = 0; k < num; ++k) if (data[k] == g_levels[i].ls) { listed = true; break; }
+        if (listed) { ++i; continue; }
+        g_levels[i] = g_levels[--g_levelN];
+    }
+}
+
+void ForceLevel(LevelRec& r, bool show)
+{
+    static Fn fLoad = {};
+    if (show) CallBool1(r.ls, fLoad, "SetShouldBeLoaded", true);
+    g_ownVisCall = true;
+    if (g_oSetVis) g_oSetVis(r.ls, show);
+    g_ownVisCall = false;
+    QDLOG(LOG_INFO, "level union: ", (show ? "SHOW " : "release "), r.name,
+          " -> bShouldBeVisible=", dec(LevelVisible(r.ls) ? 1 : 0),
+          (show && !fLoad.fn ? " (SetShouldBeLoaded not found)" : ""));
+}
+
+void SendLevelUnion(const char* const* names, int n)
+{
+    uint8_t bits[wire::kLevelUnionMaxNames / 8] = {0};
+    for (int i = 0; i < n; ++i) bits[i / 8] |= (uint8_t)(1u << (i % 8));
+    uint8_t body[wire::kMaxBody];
+    for (;;) {
+        wire::Writer w(body, sizeof(body));
+        wire::WriteLevelUnion(w, bits, (uint16_t)((n + 7) / 8), names, (uint16_t)n);
+        if (w.ok) { g_net.SendUnreliable(wire::K_LEVEL_UNION, body, w.len); return; }
+        if (n == 0) return;
+        // Over the body cap: drop the tail and say so -- a partner then lacks a level,
+        // which the log must make visible rather than silent.
+        --n;
+        static bool said = false;
+        if (!said) { said = true; QDLOG(LOG_WARN, "level union: list truncated to fit one datagram"); }
+    }
+}
+
 void StreamPump(uint32_t now)
 {
     if (!Cfg().stream_union) return;
-    // The local list is populated from the game's level manager elsewhere; until
-    // that binding lands, this reports the union's shape so a two-instance run can
-    // confirm the add-only property from the log.
+    static uint32_t lastRefresh = 0, lastApply = 0, lastSend = 0, lastHash = 0;
+    if (now - lastRefresh >= 1000) { lastRefresh = now; LevelsRefresh(); }
+    if (now - lastApply < 500) return;
+    lastApply = now;
+
+    // The local game's own wish, published.
+    const char* names[wire::kLevelUnionMaxNames];
+    int n = 0;
+    uint32_t h = 2166136261u;
+    for (int i = 0; i < g_levelN && n < wire::kLevelUnionMaxNames; ++i) {
+        if (g_levels[i].gameWants != 1) continue;
+        names[n++] = g_levels[i].name;
+        for (const char* c = g_levels[i].name; *c; ++c) h = (h ^ (uint8_t)*c) * 16777619u;
+        h = (h ^ 0x2Fu) * 16777619u;
+    }
+    g_stream.OnLocalList(names, n, now);
+    if (g_net.Connected() && (h != lastHash || now - lastSend >= 2000)) {
+        if (h != lastHash) QDLOG(LOG_INFO, "level union: local set ", dec(n), " level(s)");
+        lastHash = h;
+        lastSend = now;
+        SendLevelUnion(names, n);
+    }
+
+    // The partner's need, applied.  Two levels per pump at most: a show is a load, and
+    // ten at once is a hitch the player feels.
+    int budget = 2;
+    for (int i = 0; i < g_levelN; ++i) {
+        LevelRec& r = g_levels[i];
+        if (!r.name[0] || !ObjectIsLive(r.ls)) continue;
+        bool peer = g_net.Connected() && g_stream.PeerWants(r.name, now);
+        if (peer) {
+            g_force.Need(r.name, now);
+            if (r.gameWants != 1 && !LevelVisible(r.ls) && budget > 0) { --budget; ForceLevel(r, true); }
+        } else if (g_force.IsForced(r.name)) {
+            if (g_force.ShouldRelease(r.name, false, r.gameWants == 1, now) && r.gameWants != 1)
+                ForceLevel(r, false);
+        }
+    }
+
     stream::LevelSet want = g_stream.Wanted(now);
     static int lastN = -1;
     if ((int)want.n != lastN) {
-        QDLOG(LOG_INFO, "level union size ", dec((int)want.n),
-              (g_stream.PeerListStale(now) ? " (peer list stale)" : ""));
+        QDLOG(LOG_INFO, "level union size ", dec((int)want.n), " (local ", dec(n), ", forced for partner ",
+              dec(g_force.Count()), ")", (g_stream.PeerListStale(now) ? " (peer list stale)" : ""));
         lastN = (int)want.n;
     }
+    int lost = g_stream.Regressions(now);
+    if (lost > 0 && g_stream.AnyPeerLive(now))
+        QDLOG(LOG_DEBUG, "level union: ", dec(lost), " level(s) left the union since the last pump");
+}
+
+void OnLevelUnion(wire::Reader& r, uint32_t now)
+{
+    static wire::LevelUnionBody b;     // 4 KB: not on the game thread's stack
+    if (!wire::ReadLevelUnion(r, &b)) return;
+    if (!b.has_names) return;          // this sender always lists names (WIRE.md 3.12)
+    const char* names[wire::kLevelUnionMaxNames];
+    int n = 0;
+    for (int i = 0; i < b.n; ++i) if (wire::LevelUnionBit(b, i)) names[n++] = b.name[i];
+    static int lastN = -1;
+    if (n != lastN) { lastN = n; QDLOG(LOG_INFO, "level union: partner set ", dec(n), " level(s)"); }
+    g_stream.OnPeerList((uint8_t)RemoteSlot(), names, n, now);
+}
+
+// ===========================================================================
+// 6b. Enemies (qdenemy.h holds the model and the reasons)
+// ===========================================================================
+typedef float (*FnApplyDamage)(void* damagedActor, float baseDamage, void* instigator,
+                               void* causer, void* damageTypeClass);
+
+struct EnemyRec {
+    void*    actor;
+    void*    spawner;
+    uint32_t guid[4];
+    bool     haveGuid;
+    bool     driven;
+    bool     killedByUs;     // a KILL from the host was applied (one shot)
+    uint8_t  savedMoveMode;
+    float    lastHp, maxHp;
+    float    pos[3], yaw;
+    uint32_t seenPass;
+};
+EnemyRec        g_en[256];
+int             g_enN = 0;
+void*           g_enemyBaseCls = nullptr;
+uint32_t        g_enPass = 1;
+int             g_enCursor = 0;
+enemy::HostView g_hostView;
+enemy::KillLog  g_killLog;
+enemy::RowCursor g_rowCursor;
+int             g_deadCursor = 0;
+bool            g_inOwnDamage = false;
+bool            g_inOwnRecord = false;
+void*           g_clsYes[32];  int g_clsYesN = 0;    // class -> derives from the enemy base
+void*           g_clsNo[256];  int g_clsNoN = 0;     // (reset with the world: classes unload)
+
+EnemyRec* EnemyByActor(void* a) { for (int i = 0; i < g_enN; ++i) if (g_en[i].actor == a) return &g_en[i]; return nullptr; }
+EnemyRec* EnemyByGuid(const uint32_t g[4])
+{
+    for (int i = 0; i < g_enN; ++i) if (g_en[i].haveGuid && enemy::SameGuid(g_en[i].guid, g)) return &g_en[i];
+    return nullptr;
+}
+
+bool SpawnerGuid(void* spawner, uint32_t out[4])
+{
+    static Fn f = {};
+    if (!spawner || !f.Resolve(spawner, "GetSaveGUID")) return false;
+    Call c(f);
+    if (!c.Run(spawner)) return false;
+    uint8_t* p = OutParm(c, 16);
+    if (!p) return false;
+    memcpy(out, p, 16);
+    return !enemy::ZeroGuid(out);
+}
+
+bool EnemyHp(void* actor, float* hp, float* maxHp)
+{
+    static Fn fHp = {}, fMax = {};
+    return CallGetFloat(actor, fHp, "GetHP", hp) && CallGetFloat(actor, fMax, "GetMaxHP", maxHp);
+}
+
+bool EnemyDead(void* actor)
+{
+    uint8_t d = 0;
+    return BytePropC(actor, "bDead", &d) && d != 0;
+}
+
+// Incremental discovery: 16 K object slots per frame, so a full pass costs no single
+// frame more than a fraction of a millisecond.  At the end of a pass, records whose
+// actor was not seen are dropped.
+void EnemyScanStep()
+{
+    if (!g_enemyBaseCls) {
+        static uint32_t lastTry = 0;
+        uint32_t now = Net::Now();
+        if (now - lastTry < 5000) return;
+        lastTry = now;
+        g_enemyBaseCls = FindClassByName("FS_EnemyCharacterBase");
+        if (!g_enemyBaseCls) { QDLOG(LOG_DEBUG, "enemy sync: FS_EnemyCharacterBase not loaded yet"); return; }
+        QDLOG(LOG_INFO, "enemy sync: FS_EnemyCharacterBase found");
+    }
+    void** clsYes = g_clsYes; int& nYes = g_clsYesN;
+    void** clsNo = g_clsNo;   int& nNo = g_clsNoN;
+    int total = ObjectCount();
+    int end = g_enCursor + 16384;
+    if (end > total) end = total;
+    for (int i = g_enCursor; i < end; ++i) {
+        void* o = ObjectAt(i);
+        if (!o || !LooksLikeUObject(o)) continue;
+        void* cls = ObjClass(o);
+        bool yes = false, known = false;
+        for (int k = 0; k < nYes; ++k) if (clsYes[k] == cls) { yes = known = true; break; }
+        if (!known) for (int k = 0; k < nNo; ++k) if (clsNo[k] == cls) { known = true; break; }
+        if (!known) {
+            yes = DerivesFrom(cls, g_enemyBaseCls);
+            if (yes) { if (nYes < 32) clsYes[nYes++] = cls; }
+            else if (nNo < 256) clsNo[nNo++] = cls;
+            else nNo = 0;                       // a bounded cache that restarts, never grows
+        }
+        if (!yes) continue;
+        char nm[12];
+        if (FNameToString(ObjNameRaw(o), nm, sizeof(nm)) > 0 && strncmp(nm, "Default__", 9) == 0) continue;
+        EnemyRec* r = EnemyByActor(o);
+        if (!r) {
+            if (g_enN >= (int)(sizeof(g_en) / sizeof(g_en[0]))) continue;
+            r = &g_en[g_enN++];
+            memset(r, 0, sizeof(*r));
+            r->actor = o;
+            r->lastHp = -1.0f;
+        }
+        r->seenPass = g_enPass;
+        void* sp = ObjPropC(o, "OwningSpawner");
+        if (sp != r->spawner) { r->spawner = sp; r->haveGuid = false; }
+        if (sp && !r->haveGuid) {
+            r->haveGuid = SpawnerGuid(sp, r->guid);
+            if (r->haveGuid) {
+                char d[96];
+                ObjDescribe(o, d, sizeof(d));
+                QDLOG(LOG_DEBUG, "enemy ", d, " guid=", hex32(r->guid[0]), "-", hex32(r->guid[1]));
+            }
+        }
+    }
+    g_enCursor = end;
+    if (g_enCursor >= total) {
+        g_enCursor = 0;
+        for (int i = 0; i < g_enN;) {
+            if (g_en[i].seenPass == g_enPass && ObjectIsLive(g_en[i].actor)) { ++i; continue; }
+            g_en[i] = g_en[--g_enN];
+        }
+        static int lastN = -1;
+        if (g_enN != lastN) { lastN = g_enN; QDLOG(LOG_INFO, "enemy sync: ", dec(g_enN), " live enemies"); }
+        ++g_enPass;
+    }
+}
+
+// The game's own damage path, read back.
+bool DamageEnemy(void* actor, float amount, void* causer)
+{
+    FnApplyDamage ad = (FnApplyDamage)Ptr<void*>(0x028D2190u);
+    if (!ad || !actor || !ObjectIsLive(actor) || !(amount > 0.0f)) return false;
+    float before = 0, after = 0, mx = 0;
+    bool haveBefore = EnemyHp(actor, &before, &mx);
+    g_inOwnDamage = true;
+    float dealt = ad(actor, amount, nullptr, causer, nullptr);
+    g_inOwnDamage = false;
+    bool haveAfter = EnemyHp(actor, &after, &mx);
+    bool took = haveBefore && haveAfter && after < before;
+    static int failures = 0;
+    if (!took && haveBefore && haveAfter && failures++ < 5)
+        QDLOG(LOG_WARN, "enemy damage had NO effect: asked ", flt(amount, 1), " dealt ", flt(dealt, 1),
+              " hp ", flt(before, 1), " -> ", flt(after, 1));
+    return took;
+}
+
+// Peer: hand the copy to the host (AI off) or back to its own AI.
+void EnemyDrive(EnemyRec& r, bool on)
+{
+    static Fn fTick = {}, fTickCtl = {}, fMode = {}, fStop = {};
+    void* a = r.actor;
+    void* ctl = ObjPropC(a, "Controller");
+    void* cmc = ObjPropC(a, "CharacterMovement");
+    bool aiFlag = WriteBytePropC(a, "bIsAIDisabled", on ? 1 : 0);
+    bool tick = CallBool1(a, fTick, "SetActorTickEnabled", !on);
+    if (ctl) {
+        CallBool1(ctl, fTickCtl, "SetActorTickEnabled", !on);
+        if (on) CallNoArgs(ctl, fStop, "StopMovement");
+    }
+    if (cmc) {
+        if (on) BytePropC(cmc, "MovementMode", &r.savedMoveMode);
+        // MOVE_None while driven: otherwise the movement component re-derives velocity
+        // and gravity every tick and fights the position written from the host's row
+        // (Dolls F-12.16).  Both arguments, always.
+        if (fMode.Resolve(cmc, "SetMovementMode")) {
+            Call c(fMode);
+            uint8_t mode = on ? 0 : (r.savedMoveMode ? r.savedMoveMode : 1);
+            if (fMode.sig.props > 0) c.U8(fMode.sig.p[0].name, mode);
+            if (fMode.sig.props > 1) c.U8(fMode.sig.p[1].name, 0);
+            c.Run(cmc);
+        }
+    }
+    r.driven = on;
+    QDLOG(LOG_INFO, "enemy ", hex32(r.guid[0]), (on ? " DRIVEN by host" : " released to local AI"),
+          " (bIsAIDisabled ", (aiFlag ? "set" : "MISSING"), ", tick ", (tick ? "ok" : "FAILED"),
+          ", controller ", (ctl ? "yes" : "none"), ")");
+}
+
+// Host: rows for every live enemy with a key, then a few recent deaths.
+void EnemyHostSend(uint32_t now)
+{
+    static uint32_t last = 0;
+    if (now - last < 50) return;      // 20 Hz (WIRE.md 3.9)
+    last = now;
+    static wire::EnemyRow rows[256];
+    int n = 0;
+    for (int i = 0; i < g_enN; ++i) {
+        EnemyRec& r = g_en[i];
+        if (!r.haveGuid || !ObjectIsLive(r.actor) || EnemyDead(r.actor)) continue;
+        ActorXform x;
+        if (!ReadActorXform(r.actor, &x)) continue;
+        float hp = 0, mx = 0;
+        if (!EnemyHp(r.actor, &hp, &mx) || hp <= 0.0f) continue;
+        if (g_killLog.Count()) g_killLog.Remove(r.guid);    // alive again: it respawned
+        wire::EnemyRow& w = rows[n++];
+        memcpy(w.guid, r.guid, 16);
+        w.px = wire::QuantizePos(x.px); w.py = wire::QuantizePos(x.py); w.pz = wire::QuantizePos(x.pz);
+        w.yaw = wire::QuantizeAngle(x.yaw);
+        w.hp = enemy::HpFrac(hp, mx);
+        w.flags = enemy::kAlive | enemy::kBody;
+    }
+    int count = 0;
+    int first = g_rowCursor.Take(n, 16, &count);     // 16 live + up to 4 dead = 20 rows
+    wire::EnemyRow out[20];
+    int m = 0;
+    for (int i = 0; i < count; ++i) out[m++] = rows[first + i];
+    for (int k = 0; k < 4 && g_killLog.Count() > 0; ++k) {
+        if (g_deadCursor >= g_killLog.Count()) g_deadCursor = 0;
+        const uint32_t* g = g_killLog.At(g_deadCursor++);
+        wire::EnemyRow& w = out[m++];
+        memset(&w, 0, sizeof(w));
+        memcpy(w.guid, g, 16);
+    }
+    if (m == 0) return;
+    uint8_t body[wire::kMaxBody];
+    wire::Writer w(body, sizeof(body));
+    wire::WriteEnemyHeader(w, (uint16_t)m);
+    wire::WriteEnemyChunk(w, out, m, 0);
+    if (w.ok) g_net.SendUnreliable(wire::K_ENEMY, body, w.len);
+}
+
+void SendEnemyIntentHit(const uint32_t guid[4], int32_t frac)
+{
+    uint8_t body[64];
+    wire::Writer w(body, sizeof(body));
+    wire::WriteIntentEnemyHit(w, 0, guid, frac);
+    if (w.ok) g_net.SendReliable(wire::K_INTENT, body, w.len);
+}
+
+// Peer: drive, follow, converge, report hits.
+void EnemyPeerPump(uint32_t now)
+{
+    static uint32_t lastMs = 0, lastHpMs = 0;
+    float dt = lastMs ? (float)(now - lastMs) / 1000.0f : 0.0f;
+    lastMs = now;
+    bool hpTick = now - lastHpMs >= 100;
+    if (hpTick) lastHpMs = now;
+    for (int i = 0; i < g_enN; ++i) {
+        EnemyRec& r = g_en[i];
+        if (!r.haveGuid || !ObjectIsLive(r.actor)) continue;
+        enemy::Owner o = g_hostView.Decide(r.guid, r.driven, now);
+        const enemy::HostRow* row = g_hostView.Get(r.guid);
+        if (o == enemy::KILL) {
+            if (!r.killedByUs && !EnemyDead(r.actor)) {
+                float hp = 0, mx = 0;
+                if (EnemyHp(r.actor, &hp, &mx) && hp > 0.0f) {
+                    QDLOG(LOG_INFO, "enemy ", hex32(r.guid[0]), ": host says dead, killing the copy");
+                    DamageEnemy(r.actor, enemy::ConvergeDamage(hp, mx, 0, false), g_localPawn);
+                }
+                r.killedByUs = true;
+            }
+            continue;
+        }
+        r.killedByUs = false;
+        if (o == enemy::DRIVEN) {
+            if (!r.driven) {
+                EnemyDrive(r, true);
+                ActorXform x;
+                if (ReadActorXform(r.actor, &x)) { r.pos[0] = x.px; r.pos[1] = x.py; r.pos[2] = x.pz; r.yaw = x.yaw; }
+                r.lastHp = -1.0f;
+            }
+            float tgt[3] = {wire::DequantizePos(row->px), wire::DequantizePos(row->py), wire::DequantizePos(row->pz)};
+            enemy::Follow(r.pos, tgt, dt);
+            r.yaw = enemy::FollowYaw(r.yaw, wire::DequantizeAngle(row->yaw), dt);
+            SetActorXform(r.actor, r.pos[0], r.pos[1], r.pos[2], r.yaw);
+            if (hpTick) {
+                float hp = 0, mx = 0;
+                if (EnemyHp(r.actor, &hp, &mx)) {
+                    // A drop this mod did not cause is the local player's hit: the host
+                    // decides what it did.
+                    int32_t hit = (r.lastHp >= 0.0f) ? enemy::HitFrac(r.lastHp, hp, mx) : 0;
+                    if (hit > 0) SendEnemyIntentHit(r.guid, hit);
+                    float d = enemy::ConvergeDamage(hp, mx, row->hp, true);
+                    if (d > 0.0f) { DamageEnemy(r.actor, d, g_localPawn); EnemyHp(r.actor, &hp, &mx); }
+                    r.lastHp = hp;
+                    r.maxHp = mx;
+                }
+            }
+        } else if (r.driven) {
+            EnemyDrive(r, false);
+        }
+    }
+}
+
+void OnEnemyRows(wire::Reader& r, uint32_t now)
+{
+    uint16_t n = 0;
+    if (!wire::ReadEnemyHeader(r, &n)) return;
+    for (int i = 0; i < n && i < 32; ++i) {
+        wire::EnemyRow e;
+        if (!wire::ReadEnemyRow(r, &e)) break;
+        g_hostView.OnRow(e.guid, e.px, e.py, e.pz, e.yaw, e.hp, e.flags, now);
+    }
+    if (g_hostView.Overflowed()) {
+        static bool said = false;
+        if (!said) { said = true; QDLOG(LOG_WARN, "enemy sync: host view full; some enemies run locally"); }
+    }
+}
+
+// Host: a peer hit or a peer-made persistence record.
+void HostApplyEnemyIntent(const wire::IntentBody& b)
+{
+    if (!Cfg().enemy_sync) return;
+    EnemyRec* r = EnemyByGuid(b.guid);
+    if (b.kind == wire::I_ENEMY_HIT) {
+        if (!r || !ObjectIsLive(r->actor) || EnemyDead(r->actor)) return;
+        float hp = 0, mx = 0;
+        if (!EnemyHp(r->actor, &hp, &mx) || mx <= 0.0f) return;
+        float dmg = mx * (float)b.value / 65535.0f;
+        bool ok = DamageEnemy(r->actor, dmg, g_puppetActor ? g_puppetActor : g_localPawn);
+        QDLOG(LOG_INFO, "peer hit enemy ", hex32(b.guid[0]), " for ", flt(dmg, 1), (ok ? "" : " (no effect)"));
+    } else if (b.kind == wire::I_ENEMY_RECORD) {
+        QdGuid g = {b.guid[0], b.guid[1], b.guid[2], b.guid[3]};
+        float respawn = (float)b.value / 100.0f, hp = (float)b.value2 / 100.0f;
+        void* ctx = (r && ObjectIsLive(r->spawner)) ? r->spawner : GWorldPtr();
+        g_inOwnRecord = true;
+        StoreEnemySaveState(ctx, g, respawn, hp);       // through the hook: lands in the kill log
+        g_inOwnRecord = false;
+        QDLOG(LOG_INFO, "peer enemy record applied guid=", hex32(b.guid[0]), " hp=", flt(hp, 1),
+              " respawn=", flt(respawn, 1));
+        // The host could have spawned it meanwhile: the record is the truth.
+        if (hp <= 0.0f && r && ObjectIsLive(r->actor) && !EnemyDead(r->actor)) {
+            float cur = 0, mx = 0;
+            if (EnemyHp(r->actor, &cur, &mx)) DamageEnemy(r->actor, enemy::ConvergeDamage(cur, mx, 0, false), g_localPawn);
+        }
+    }
+}
+
+void EnemyPump(uint32_t now)
+{
+    if (!Cfg().enemy_sync) return;
+    if (!g_substrateReady || !EnsureActorApi()) return;
+    static void* lastWorld = nullptr;
+    void* world = GWorldPtr();
+    if (world != lastWorld) {
+        lastWorld = world;
+        g_enN = 0; g_enCursor = 0;
+        g_propCacheN = 0;           // classes reload with the world
+        g_enemyBaseCls = nullptr;
+        g_clsYesN = g_clsNoN = 0;
+    }
+    EnemyScanStep();
+    if (!g_net.Connected()) {
+        // Never leave a copy frozen after the session ends.
+        for (int i = 0; i < g_enN; ++i) if (g_en[i].driven && ObjectIsLive(g_en[i].actor)) EnemyDrive(g_en[i], false);
+        return;
+    }
+    if (g_net.IsHost()) EnemyHostSend(now);
+    else EnemyPeerPump(now);
+}
+
+// ===========================================================================
+// 6c. Dialogue
+// ===========================================================================
+// Read from the game's own state, never inferred from input: the player's
+// DialogueManager component carries RunningDialogue, CurrentDialogueNPC and
+// CurrentDialogueSequenceIndex (cooked names, DialogueManager.uasset).  The partner's
+// NPC is made non-interactable here with NPC_Base's own BlockInteract /
+// ReenableInteract.  See qddialogue.h TalkBoard for why it is per slot and not a lock.
+dialogue::TalkBoard g_talk;
+struct DlgLocal {
+    bool     talking;
+    uint8_t  npc[16];
+    uint16_t line;
+    uint32_t seq;
+    uint32_t lastSend;
+} g_dlg = {};
+void*   g_blockedNpc = nullptr;
+uint8_t g_blockedId[16];
+
+void NpcIdOf(void* npc, uint8_t out[16])
+{
+    char path[256];
+    int k = 0;
+    // object / level / world, innermost first: placed actors are unique per level.
+    void* o = npc;
+    for (int depth = 0; o && depth < 3; ++depth, o = ObjOuter(o)) {
+        char nm[80];
+        if (FNameToString(ObjNameRaw(o), nm, sizeof(nm)) <= 0) break;
+        for (int i = 0; nm[i] && k < (int)sizeof(path) - 2; ++i) path[k++] = nm[i];
+        path[k++] = '/';
+    }
+    path[k] = 0;
+    dialogue::StableId(path, out);
+}
+
+void SendDialogue()
+{
+    wire::DialogueBody d;
+    memset(&d, 0, sizeof(d));
+    d.seq = g_dlg.seq;
+    memcpy(d.npc, g_dlg.npc, 16);
+    d.slot = g_dlg.talking ? (uint8_t)LocalSlot() : dialogue::kSlotFree;
+    d.line = g_dlg.line;
+    uint8_t body[64];
+    wire::Writer w(body, sizeof(body));
+    wire::WriteDialogue(w, d);
+    if (w.ok) g_net.SendUnreliable(wire::K_DIALOGUE, body, w.len);
+}
+
+void* FindNpcById(const uint8_t id[16])
+{
+    static void* npcBase = nullptr;
+    if (!npcBase || !ObjectIsLive(npcBase)) npcBase = FindClassByName("NPC_Base_C");
+    if (!npcBase) return nullptr;
+    int total = ObjectCount();
+    for (int i = 0; i < total; ++i) {
+        void* o = ObjectAt(i);
+        if (!o || !LooksLikeUObject(o) || !DerivesFrom(ObjClass(o), npcBase)) continue;
+        char nm[12];
+        if (FNameToString(ObjNameRaw(o), nm, sizeof(nm)) > 0 && strncmp(nm, "Default__", 9) == 0) continue;
+        uint8_t got[16];
+        NpcIdOf(o, got);
+        if (dialogue::TalkBoard::SameId(got, id)) return o;
+    }
+    return nullptr;
+}
+
+void NpcSetBlocked(void* npc, bool block)
+{
+    static Fn fBlock = {}, fUnblock = {};
+    bool ok = block ? CallNoArgs(npc, fBlock, "BlockInteract") : CallNoArgs(npc, fUnblock, "ReenableInteract");
+    char d[96];
+    ObjDescribe(npc, d, sizeof(d));
+    QDLOG(LOG_INFO, "dialogue: ", (block ? "BLOCK " : "unblock "), d, (ok ? "" : " (call FAILED)"));
+    static bool sigShown = false;
+    if (!sigShown && fBlock.fn) { sigShown = true; LogSignature("NPC_Base.BlockInteract", fBlock.sig); }
 }
 
 void DialoguePump(uint32_t now)
 {
     if (!Cfg().dialogue_sync) return;
-    g_dialogue.Tick(now);
+    static uint32_t last = 0;
+    if (now - last < 100) return;
+    last = now;
+
+    // ---- local state ---------------------------------------------------------
+    bool talking = false;
+    uint8_t npc[16] = {0};
+    uint16_t line = 0;
+    void* npcActor = nullptr;
+    if (IsGameplayPawn(g_localPawn)) {
+        void* dm = ObjPropC(g_localPawn, "DialogueManager");
+        uint8_t running = 0;
+        if (dm && BytePropC(dm, "RunningDialogue", &running) && running) {
+            npcActor = ObjPropC(dm, "CurrentDialogueNPC");
+            int32_t idx = 0;
+            IntPropC(dm, "CurrentDialogueSequenceIndex", &idx);
+            line = (uint16_t)idx;
+            if (npcActor) { talking = true; NpcIdOf(npcActor, npc); }
+        }
+    }
+    bool changed = talking != g_dlg.talking || (talking && !dialogue::TalkBoard::SameId(npc, g_dlg.npc)) ||
+                   line != g_dlg.line;
+    if (changed) {
+        if (talking != g_dlg.talking || (talking && !dialogue::TalkBoard::SameId(npc, g_dlg.npc))) {
+            char d[96] = "-";
+            if (npcActor) ObjDescribe(npcActor, d, sizeof(d));
+            QDLOG(LOG_INFO, "dialogue: local ", (talking ? "started with " : "ended"), (talking ? d : ""));
+            if (talking && g_talk.OtherTalkingTo((uint8_t)LocalSlot(), npc, now))
+                QDLOG(LOG_WARN, "dialogue: the partner is in the same conversation (started within one "
+                                "round trip); host progression decides");
+        }
+        g_dlg.talking = talking;
+        memcpy(g_dlg.npc, npc, 16);
+        g_dlg.line = line;
+        ++g_dlg.seq;
+    }
+    if (g_net.Connected() && (changed || now - g_dlg.lastSend >= 1000)) {
+        g_dlg.lastSend = now;
+        SendDialogue();
+    }
+
+    // ---- the partner's NPC is not interactable here --------------------------
+    uint8_t want[16];
+    bool have = g_net.Connected() && g_talk.RemoteNpc((uint8_t)RemoteSlot(), want, now);
+    if (have && g_blockedNpc && dialogue::TalkBoard::SameId(want, g_blockedId) && ObjectIsLive(g_blockedNpc)) return;
+    if (g_blockedNpc) {
+        if (ObjectIsLive(g_blockedNpc)) NpcSetBlocked(g_blockedNpc, false);
+        g_blockedNpc = nullptr;
+    }
+    if (!have) return;
+    // Never block the NPC the local player is talking to: that would strand the local
+    // conversation.  The overlap is logged above and host progression settles it.
+    if (g_dlg.talking && dialogue::TalkBoard::SameId(want, g_dlg.npc)) return;
+    static uint32_t lastSearch = 0;
+    if (now - lastSearch < 1000) return;       // the NPC may be in a level not shown here
+    lastSearch = now;
+    void* n = FindNpcById(want);
+    if (!n) return;
+    NpcSetBlocked(n, true);
+    g_blockedNpc = n;
+    memcpy(g_blockedId, want, 16);
+}
+
+void OnDialogue(wire::Reader& r, uint32_t now)
+{
+    wire::DialogueBody d;
+    if (!wire::ReadDialogue(r, &d)) return;
+    uint8_t npc[16];
+    memcpy(npc, d.npc, 16);
+    bool talking = d.slot != dialogue::kSlotFree;
+    if (g_talk.Accept((uint8_t)RemoteSlot(), d.seq, talking, npc, d.line, now))
+        QDLOG(LOG_DEBUG, "dialogue: partner ", (talking ? "talking" : "free"), " seq=", dec((int)d.seq));
 }
 
 // ---------------------------------------------------------------------------
@@ -725,7 +2838,28 @@ void DispatchInbound(const InboundPacket& p, uint32_t now)
         s.yaw = row.yaw;
         s.pitch = row.pitch;
         s.flags = row.flags;
-        g_peerInterp.Push(s);
+        bool inGame = (row.flags & 0x20) == 0;
+        if (inGame != g_peerInGameplay) {
+            g_peerInGameplay = inGame;
+            QDLOG(LOG_INFO, "peer is ", (inGame ? "in the game world" : "in a menu world"));
+            g_peerInterp.Reset();
+        }
+        if (inGame) g_peerInterp.Push(s);
+        // Unreliable rows can arrive out of order; an older row must not roll the
+        // action counter back (that would replay a swing).
+        if ((int32_t)(row.sample_ms - g_peerActionMs) >= 0) {
+            g_peerActionMs = row.sample_ms;
+            g_peerAction = row.action;
+            g_peerAirborne = (row.flags & 0x01) ? 0 : 1;
+        }
+        g_puppet.DataArrived(now);
+        break;
+    }
+    case wire::K_EFFECT:
+    case wire::K_EFFECT_MOVE: {
+        wire::EffectBody e;
+        if (!wire::ReadEffect(r, &e)) return;
+        if (Cfg().puppet_sync && IsGameplayPawn(g_localPawn)) SpawnEffect(e, 0, 0);
         break;
     }
     case wire::K_WORLD_FLAGS:
@@ -734,31 +2868,37 @@ void DispatchInbound(const InboundPacket& p, uint32_t now)
     case wire::K_INTENT:
         if (g_net.IsHost()) HostApplyIntent(r);
         break;
-    case wire::K_DIALOGUE: {
-        wire::DialogueBody d;
-        if (!wire::ReadDialogue(r, &d)) return;
-        dialogue::DialogueState st;
-        st.seq = d.seq;
-        for (int i = 0; i < 4; ++i) memcpy(st.npc + i * 4, &d.npc[i], 4);
-        st.slot = d.slot;
-        st.line = d.line;
-        st.entry = d.entry;
-        if (!g_dialogue.Accept(st)) {
-            QDLOG(LOG_DEBUG, "stale dialogue state seq=", dec(d.seq), " discarded");
-        }
+    case wire::K_DIALOGUE:
+        // Per-slot talk state, both directions (qddialogue.h TalkBoard).
+        if (Cfg().dialogue_sync) OnDialogue(r, now);
+        break;
+    case wire::K_LEVEL_UNION:
+        if (Cfg().stream_union) OnLevelUnion(r, now);
+        break;
+    case wire::K_STATUS: {
+        uint32_t rev = 0, mask = 0;
+        if (!wire::ReadStatus(r, &rev, &mask)) return;
+        if (mask != g_peerStatus) QDLOG(LOG_INFO, "peer status mask ", hex32(mask), " rev ", dec((int)rev));
+        g_peerStatusRev = rev;
+        g_peerStatus = mask;
         break;
     }
-    case wire::K_LEVEL_UNION:
-        // Bits + optional name table; the guard owns the merge.
+    case wire::K_EQUIPMENT: {
+        wire::EquipBody e;
+        if (!wire::ReadEquip(r, &e)) return;
+        if (e.rev == g_peerEquip.rev && EquipEqual(e, g_peerEquip)) break;
+        g_peerEquip = e;
+        g_peerEquipDirty = true;
+        QDLOG(LOG_INFO, "peer equipment rev ", dec((int)e.rev), ": ", dec(e.n), " item(s)",
+              (e.n > 0 ? " first=" : ""), (e.n > 0 ? e.items[0].path : ""));
         break;
+    }
     case wire::K_ENEMY:
-        // Peer applies persistence through StoreEnemySaveState on its own spawner;
-        // the spawner lookup by authored GUID is the next slice's binding work.
+        if (Cfg().enemy_sync && g_net.IsPeer()) OnEnemyRows(r, now);
         break;
     default:
         break;
     }
-    (void)now;
 }
 
 // ---------------------------------------------------------------------------
@@ -766,45 +2906,64 @@ void DispatchInbound(const InboundPacket& p, uint32_t now)
 // ---------------------------------------------------------------------------
 void SendLocalPlayer(uint32_t now)
 {
-    if (!g_net.Connected()) return;
-    int hz = Cfg().player_hz;
-    uint32_t interval = (uint32_t)(1000 / hz);
-    if (now - g_lastPlayerPushMs < interval) return;
-    g_lastPlayerPushMs = now;
-
-    // The pawn is re-resolved every time rather than cached: a cached pawn across a
-    // map change is the access violation the corpus warns about.
-    typedef void* (*FnGetPawn)(void*, int32_t);
-    FnGetPawn gp = (FnGetPawn)Ptr<void*>(0x028E0640u);
-    void* world = Save().world;
-    void* pawn = nullptr;
-    if (gp && world) pawn = gp(world, 0);
+    // The local pawn is tracked even without a session: the puppet class comes from it.
+    void* pawn = LocalPawn();
+    if (pawn == g_puppetActor) pawn = nullptr;     // never report the puppet as ourselves
     if (pawn != g_localPawn) {
         g_localPawn = pawn;
         if (pawn) {
             char d[160];
             ObjDescribe(pawn, d, sizeof(d));
             QDLOG(LOG_INFO, "local pawn: ", d);
-            g_peerInterp.Reset();
         }
     }
+
+    if (!g_net.Connected()) return;
+    int hz = Cfg().player_hz;
+    if (hz <= 0) hz = 30;
+    uint32_t interval = (uint32_t)(1000 / hz);
+    if (now - g_lastPlayerPushMs < interval) return;
+    g_lastPlayerPushMs = now;
     if (!pawn) return;
 
-    // Position is read through the reflection-free route: the pawn's own transform is
-    // reached via the actor's root component.  Until that binding is verified live the
-    // row is sent with zero transform -- a valid, non-crashing row that keeps the
-    // session and the animation state alive, rather than guessing an offset.  The
-    // corpus's rule governs: "measure it, then pin it", never assume a stride.
+    // The real transform, through reflected offsets.  The first version sent a zeroed
+    // row because the offsets were unknown -- the puppet could never move.
+    ActorXform x;
+    if (!ReadActorXform(pawn, &x)) return;
+    // Heading = where the player looks; the pawn root does not turn with the view.
+    { float vp, vy; if (LocalViewRotation(&vp, &vy)) { x.yaw = vy; x.pitch = vp; } }
+
     wire::PlayerRow row;
     memset(&row, 0, sizeof(row));
     row.slot = g_net.IsHost() ? 0 : 1;
     row.sample_ms = now;
-    row.action = 0;
+    row.px = wire::QuantizePos(x.px);
+    row.py = wire::QuantizePos(x.py);
+    row.pz = wire::QuantizePos(x.pz);
+    row.yaw = wire::QuantizeAngle(x.yaw);
+    row.pitch = wire::QuantizeAngle(x.pitch);
+    row.vx = wire::QuantizeVel(x.vx);
+    row.vy = wire::QuantizeVel(x.vy);
+    row.vz = wire::QuantizeVel(x.vz);
+    // WIRE.md 3.5: action = kind | counter << 5; move_mode = EMovementMode;
+    // flags bit0 = grounded, bit5 = menu (the sender is not in the game world).
+    row.action = g_localAct.byte;
+    row.move_mode = g_localAct.moveMode;
+    row.flags = IsGameplayPawn(pawn) ? 0 : 0x20;
+    if (!g_localAct.airborne) row.flags |= 0x01;
+    if (g_dlg.talking) row.flags |= 0x10;          // WIRE.md 3.5 bit4: in a dialogue
 
     uint8_t body[64];
     wire::Writer w(body, sizeof(body));
     wire::WritePlayer(w, row);
     if (w.ok) g_net.SendUnreliable(wire::K_PLAYER, body, w.len);
+
+    static uint32_t lastPosLog = 0;
+    if (now - lastPosLog > 10000) {
+        lastPosLog = now;
+        QDLOG(LOG_INFO, "local pos ", flt(x.px, 0), ",", flt(x.py, 0), ",", flt(x.pz, 0),
+              " yaw=", flt(x.yaw, 0));
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -844,7 +3003,882 @@ bool ValidateSubstrateOnGameThread()
         return false;
     }
     g_substrateReady = true;
+    { QdName bp; if (FNameFromAnsi("ReceiveBeginPlay", &bp)) g_beginPlayIdx = bp.comparison_index; }
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// DEV ONLY -- load a save slot without driving the menu by keyboard
+// ---------------------------------------------------------------------------
+// Two-instance testing needs both games in the world, and keyboard navigation of File
+// Select proved unreliable (presses dropped, cursor jumping) -- one attempt started a
+// NEW GAME on an empty slot.  With QDCOOP_AUTOLOAD=<slot> in the environment, the
+// title screen's own widget functions are called instead.  Off unless the variable is
+// set; never in a player's build of the config.
+int DevEnvInt(const char* name, int dflt)
+{
+    char buf[32];
+    DWORD n = GetEnvironmentVariableA(name, buf, sizeof(buf));
+    if (n == 0 || n >= sizeof(buf)) return dflt;
+    return atoi(buf);
+}
+
+// A live, non-CDO instance of a class, by class name.
+void* FindInstanceOf(const char* className)
+{
+    int n = ObjectCount();
+    for (int i = 0; i < n; ++i) {
+        void* o = ObjectAt(i);
+        if (!o || !LooksLikeUObject(o)) continue;
+        if (!ObjNameIs(ObjClass(o), className)) continue;
+        char nm[16];
+        if (FNameToString(ObjNameRaw(o), nm, sizeof(nm)) > 0 && nm[0] == 'D' && nm[1] == 'e' &&
+            nm[2] == 'f' && nm[3] == 'a' && nm[4] == 'u' && nm[5] == 'l' && nm[6] == 't')
+            continue;
+        return o;
+    }
+    return nullptr;
+}
+
+// Value of a -key=value command-line switch (case-insensitive key, quotes stripped).
+bool CmdArg(const char* key, char* out, int cap)
+{
+    out[0] = 0;
+    const char* cl = GetCommandLineA();
+    for (const char* p = cl; p && *p; ++p) {
+        const char* a = p;
+        const char* k = key;
+        while (*k && (*a | 0x20) == (*k | 0x20)) { ++a; ++k; }
+        if (*k != 0 || *a != '=') continue;
+        ++a;
+        bool q = (*a == '"');
+        if (q) ++a;
+        int t = 0;
+        while (*a && t < cap - 1 && (q ? *a != '"' : *a != ' ')) out[t++] = *a++;
+        out[t] = 0;
+        return t > 0;
+    }
+    return false;
+}
+
+// The rig's save for slot N: <UserDir>\Saved_<suffix>\SaveGames\World<N>.sav.  Without
+// -UserDir (a normal player launch) this refuses, so autoload can never touch a real
+// save, and it never loads a slot that has no save -- that is what starts a new game.
+bool DevSlotHasSave(int slot)
+{
+    char ud[260], sfx[40];
+    if (!CmdArg("-UserDir", ud, sizeof(ud)) || !CmdArg("-saveddirsuffix", sfx, sizeof(sfx))) return false;
+    char path[400];
+    wsprintfA(path, "%s\\Saved_%s\\SaveGames\\World%d.sav", ud, sfx, slot);
+    DWORD a = GetFileAttributesA(path);
+    QDLOG(LOG_INFO, "dev autoload: ", path, (a == INVALID_FILE_ATTRIBUTES ? " MISSING" : " present"));
+    return a != INVALID_FILE_ATTRIBUTES && !(a & FILE_ATTRIBUTE_DIRECTORY);
+}
+
+bool DevCallNoArgs(void* obj, const char* fn)
+{
+    void* f = FindFunction(obj, fn);
+    LayoutResult s = Signature(f);
+    ArgList a;
+    char err[128];
+    bool ok = s.valid && Invoke(obj, f, s, a, nullptr, err, sizeof(err));
+    QDLOG(LOG_INFO, "dev autoload: ", fn, (ok ? " called" : " FAILED"));
+    return ok;
+}
+
+// QDCOOP_AUTOLOAD=<slot index>; index 0 is the first File Select row (World0.sav).
+void DevAutoLoad(uint32_t now)
+{
+    static int slot = DevEnvInt("QDCOOP_AUTOLOAD", -1);
+    static int stage = 0;           // 0 wait UI, 1 settle, 2 loaded, 3 suspend confirmed
+    static uint32_t t0 = 0, last = 0;
+    if (slot < 0 || stage < 0) return;
+    if (IsGameplayPawn(g_localPawn)) { stage = -1; QDLOG(LOG_INFO, "dev autoload: in game"); return; }
+    if (now - last < 1000) return;
+    last = now;
+    if (!Lay().valid && !EnsureActorApi()) return;
+
+    static void* ui = nullptr;
+    if (!ui || !ObjectIsLive(ui)) { ui = FindInstanceOf("TitleScreenUI_C"); if (!ui) return; }
+    if (stage == 0) {
+        if (!DevSlotHasSave(slot)) { stage = -1; QDLOG(LOG_WARN, "dev autoload: refused"); return; }
+        stage = 1; t0 = now;
+        return;
+    }
+    // Let the intro splashes and shader warm-up finish; the menu calls from there.
+    if (stage == 1 && now - t0 > 10000) {
+        void* f = FindFunction(ui, "Load Slot");
+        LayoutResult s = Signature(f);
+        ArgList a;
+        a.AddInt("Slot", slot);
+        a.AddBool("Backup", false);
+        a.AddInt("BackupSlot", 0);
+        char err[128];
+        bool ok = s.valid && Invoke(ui, f, s, a, nullptr, err, sizeof(err));
+        QDLOG(LOG_INFO, "dev autoload: Load Slot(", dec(slot), ") ", (ok ? "called" : err));
+        stage = ok ? 2 : -1; t0 = now;
+        return;
+    }
+    // A suspend save on the slot raises a "resume?" modal; accept it once.
+    if (stage == 2 && now - t0 > 3000) {
+        int mo = FindPropertyOffsetIn(ObjClass(ui), "ModalOpen");
+        bool modal = mo >= 0 && *((uint8_t*)ui + mo) != 0;
+        QDLOG(LOG_INFO, "dev autoload: modal open=", dec(modal ? 1 : 0));
+        if (modal) DevCallNoArgs(ui, "ConfirmLoadSuspend");
+        stage = 3;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DEV ONLY -- body test: QDCOOP_AVATAR_TEST=1 spawns candidate bodies in front of the
+// local player so they can be judged on a screenshot with ONE instance.
+// ---------------------------------------------------------------------------
+void DevLogAttached(void* pawn)
+{
+    avatar::Api& a = avatar::A();
+    if (a.attachParent < 0) return;
+    int n = ObjectCount(), shown = 0;
+    for (int i = 0; i < n && shown < 40; ++i) {
+        void* o = ObjectAt(i);
+        if (!o || !LooksLikeUObject(o)) continue;
+        char cn[96];
+        if (FNameToString(ObjNameRaw(ObjClass(o)), cn, sizeof(cn)) <= 0) continue;
+        if (!EndsWith(cn, "MeshComponent")) continue;
+        if (ObjOuter(o) == pawn) continue;
+        void* p = o;
+        bool ours = false;
+        for (int d = 0; d < 6 && p; ++d) {
+            p = *(void**)((uint8_t*)p + a.attachParent);
+            if (p && ObjOuter(p) == pawn) { ours = true; break; }
+        }
+        if (!ours) continue;
+        ++shown;
+        char d1[160], d2[160], asset[200] = "-", sock[64] = "-";
+        ObjDescribe(o, d1, sizeof(d1));
+        ObjDescribe(ObjOuter(o), d2, sizeof(d2));
+        int mo = FindPropertyOffsetIn(ObjClass(o), "StaticMesh");
+        if (mo < 0) mo = FindPropertyOffsetIn(ObjClass(o), "SkeletalMesh");
+        if (mo >= 0) avatar::AssetPath(*(void**)((uint8_t*)o + mo), asset, sizeof(asset));
+        void* ap = *(void**)((uint8_t*)o + a.attachParent);
+        if (a.attachSocket >= 0) FNameToString(*(QdName*)((uint8_t*)o + a.attachSocket), sock, sizeof(sock));
+        char d3[160];
+        ObjDescribe(ap, d3, sizeof(d3));
+        QDLOG(LOG_INFO, "  attached ", d1, " of ", d2, " mesh=", asset, " parent=", d3, " socket=", sock,
+              " b14d=", hex32(*((uint8_t*)o + 0x14D)));
+    }
+    QDLOG(LOG_INFO, "attached mesh components: ", dec(shown));
+}
+
+void DevLogBones(void* comp)
+{
+    int nb = avatar::NumBones(comp);
+    QDLOG(LOG_INFO, "body bones: ", dec(nb));
+    for (int i = 0; i < nb && i < 200; ++i) {
+        QdName bn = avatar::BoneName(comp, i);
+        char b[64], pn[64] = "-";
+        if (FNameToString(bn, b, sizeof(b)) <= 0) continue;
+        if (b[0] == 'H' && b[1] == 'a' && b[2] == 'i') continue;           // hair chain
+        FNameToString(avatar::ParentBone(comp, bn), pn, sizeof(pn));
+        avatar::Xf x;
+        if (!avatar::SocketTransform(comp, bn, 2, &x)) continue;
+        QDLOG(LOG_INFO, "  bone ", dec(i), " ", b, " <- ", pn, "  t=", flt(x.tx, 1), ",", flt(x.ty, 1), ",",
+              flt(x.tz, 1), " q=", flt(x.qx, 3), ",", flt(x.qy, 3), ",", flt(x.qz, 3), ",", flt(x.qw, 3));
+    }
+}
+
+// QDCOOP_AVATAR_TEST=1: a "mirror" body that copies the LOCAL player -- position offset
+// ahead along the VIEW direction it had when spawned, same heading, same walk speed,
+// same weapon -- so the remote-body code path can be judged with one instance.
+//   QDCOOP_TEST_DIST   cm ahead (default 300)
+//   QDCOOP_TEST_FACE=1 face the camera instead of copying the heading
+//   QDCOOP_TEST_SPEED  walk in place at this speed (cm/s) and do not follow
+bool g_devMirrorOn = false;
+float g_devMirrorOffX = 0, g_devMirrorOffY = 0;
+
+// Mirror mode: show the local throw as the peer would see it, from the mirror body.
+void DevMirrorEffect(const wire::EffectBody& e)
+{
+    if (g_devMirrorOn) SpawnEffect(e, g_devMirrorOffX, g_devMirrorOffY);
+}
+
+// QDCOOP_TEST_FIRE=<projectile class path>: every 7 s, throw it through the player's own
+// FireDagger(Class) -- for saves where throwing is not unlocked yet.
+void DevTestFire(uint32_t now)
+{
+    static char path[256];
+    static int on = GetEnvironmentVariableA("QDCOOP_TEST_FIRE", path, sizeof(path)) ? 1 : 0;
+    static uint32_t last = 0, t0 = 0;
+    static Fn fFire = {};
+    if (!on) return;
+    if (!IsGameplayPawn(g_localPawn)) { t0 = now; return; }
+    static bool checked = true;
+    if (!checked && now - last > 1200) {
+        checked = true;
+        ActorXform l, c2;
+        bool hl = g_fxLastLocal && ObjectIsLive(g_fxLastLocal) && ReadActorXform(g_fxLastLocal, &l);
+        bool hc = g_fxLastCopy && ObjectIsLive(g_fxLastCopy) && ReadActorXform(g_fxLastCopy, &c2);
+        QDLOG(LOG_INFO, "test fire +1.2s: local ", (hl ? "" : "GONE "), flt(l.px, 0), ",", flt(l.py, 0), ",", flt(l.pz, 0),
+              "  copy ", (hc ? "" : "GONE "), flt(c2.px, 0), ",", flt(c2.py, 0), ",", flt(c2.pz, 0),
+              "  offset ", flt(g_devMirrorOffX, 0), ",", flt(g_devMirrorOffY, 0));
+    }
+    if (now - t0 < 25000 || now - last < 7000) return;
+    checked = false;
+    last = now;
+    void* cls = avatar::LoadAsset(path);
+    if (!cls || !fFire.Resolve(g_localPawn, "FireDagger")) { QDLOG(LOG_WARN, "test fire: no class or no FireDagger"); on = 0; return; }
+    Call c(fFire);
+    c.Obj("Class", cls);
+    bool ran = c.Run(g_localPawn);
+    uint8_t* ok = c.At("Success", 1);
+    QDLOG(LOG_INFO, "test fire: FireDagger(", path, ") ran=", dec(ran ? 1 : 0), " success=", dec(ok ? *ok : -1));
+}
+
+// QDCOOP_TEST_TP="x,y,z,yaw": TEST INSTANCES ONLY -- 15 s into gameplay, put the local
+// pawn there (and turn the view to yaw), so two instances can stand in each other's view.
+void DevTeleport(uint32_t now)
+{
+    static char spec[96];
+    static int stage = GetEnvironmentVariableA("QDCOOP_TEST_TP", spec, sizeof(spec)) ? 0 : -1;
+    static uint32_t t0 = 0;
+    if (stage < 0) return;
+    if (!IsGameplayPawn(g_localPawn)) { t0 = now; return; }
+    if (now - t0 < 15000) return;
+    stage = -1;
+    float v[4] = {0, 0, 0, 0};
+    char* save = nullptr;
+    char work[96];
+    lstrcpynA(work, spec, sizeof(work));
+    int n = 0;
+    for (char* t = strtok_s(work, ",", &save); t && n < 4; t = strtok_s(nullptr, ",", &save)) v[n++] = (float)atof(t);
+    bool ok = SetActorXform(g_localPawn, v[0], v[1], v[2], v[3]);
+    void* pc = LocalController();
+    int ro = pc ? FindPropertyOffsetIn(ObjClass(pc), "ControlRotation") : -1;
+    if (ro >= 0) { float* r = (float*)((uint8_t*)pc + ro); r[0] = 0.0f; r[1] = v[3]; }
+    QDLOG(LOG_INFO, "dev teleport to ", flt(v[0], 0), ",", flt(v[1], 0), ",", flt(v[2], 0), " yaw ", flt(v[3], 0),
+          ok ? "" : " FAILED");
+}
+
+void DevAvatarTest(uint32_t now)
+{
+    static int on = DevEnvInt("QDCOOP_AVATAR_TEST", 0);
+    static int stage = 0;
+    static uint32_t t0 = 0;
+    static avatar::Body body = {};
+    static float offX = 0, offY = 0, baseX = 0, baseY = 0, baseZ = 0, baseYaw = 0;
+    static uint32_t lastEquipRev = 0;
+    static int face = DevEnvInt("QDCOOP_TEST_FACE", 0);
+    static int force = DevEnvInt("QDCOOP_TEST_SPEED", 0);
+    if (!on || stage < 0) return;
+    if (!IsGameplayPawn(g_localPawn)) { t0 = now; return; }
+    ActorXform x;
+    if (!ReadActorXform(g_localPawn, &x)) return;
+    float viewPitch = 0, viewYaw = x.yaw;
+    LocalViewRotation(&viewPitch, &viewYaw);
+    if (stage == 0) {
+        static bool tp = GetEnvironmentVariableA("QDCOOP_TEST_TP", nullptr, 0) > 0;
+        if (now - t0 < (tp ? 18000u : 12000u)) return;   // the view settles after a load (and a test teleport)
+        float yr = viewYaw * 3.14159265f / 180.0f;
+        float d = (float)DevEnvInt("QDCOOP_TEST_DIST", 300);
+        offX = cosf(yr) * d;
+        offY = sinf(yr) * d;
+        baseX = x.px + offX; baseY = x.py + offY; baseZ = x.pz;
+        baseYaw = face ? viewYaw + 180.0f : viewYaw;
+        if (!SpawnBody(&body, baseX, baseY, baseZ, baseYaw)) { stage = -1; return; }
+        body.forceSpeed = (float)force;
+        body.actSlow = (float)DevEnvInt("QDCOOP_TEST_ACTSLOW", 1);
+        g_devMirrorOn = true; g_devMirrorOffX = offX; g_devMirrorOffY = offY;
+        g_devMirrorBody = &body;
+        QDLOG(LOG_INFO, "dev mirror: body spawned ", flt(d, 0), " cm ahead; pawn yaw=", flt(x.yaw, 0),
+              " view yaw=", flt(viewYaw, 0), " pitch=", flt(viewPitch, 0),
+              " pawn at ", flt(x.px, 0), ",", flt(x.py, 0), ",", flt(x.pz, 0));
+        ActorXform bx;
+        if (ReadActorXform(body.actor, &bx))
+            QDLOG(LOG_INFO, "dev mirror: body actor at ", flt(bx.px, 0), ",", flt(bx.py, 0), ",",
+                  flt(bx.pz, 0), " yaw=", flt(bx.yaw, 0));
+        stage = 1;
+        return;
+    }
+    if (!ObjectIsLive(body.actor)) { QDLOG(LOG_INFO, "dev mirror: body gone"); stage = -1; return; }
+    if (g_localEquip.rev != lastEquipRev) {
+        lastEquipRev = g_localEquip.rev;
+        static char hold[220];
+        static int hasHold = GetEnvironmentVariableA("QDCOOP_TEST_HOLD", hold, sizeof(hold)) ? 1 : 0;
+        if (hasHold && g_localEquip.n > 0) {
+            // The real item's grip transform, another mesh: exercises the receiving
+            // side of a skeletal weapon on a save that cannot equip one.
+            wire::EquipBody e = g_localEquip;
+            char* k = strchr(hold, '#');
+            int kind = k ? atoi(k + 1) : 1;
+            if (k) *k = 0;
+            lstrcpynA(e.items[0].path, hold, sizeof(e.items[0].path));
+            e.items[0].mesh_kind = (uint8_t)kind;
+            if (k) *k = '#';
+            ApplyEquip(&body, e);
+        } else {
+            ApplyEquip(&body, g_localEquip);
+        }
+    }
+    avatar::SetAction(&body, g_localAct.byte);
+    body.airIn = g_localAct.airborne ? 1 : 0;
+    // QDCOOP_TEST_FXGALLERY="path;path;...": each system attached to the body in a row
+    // (80 cm apart, chest height), once, to judge candidates on one screenshot.
+    static int gal = 0;
+    if (gal == 0) {
+        static char list[1024];
+        gal = GetEnvironmentVariableA("QDCOOP_TEST_FXGALLERY", list, sizeof(list)) ? 1 : -1;
+        if (gal == 1) {
+            char* save = nullptr;
+            int i = 0;
+            for (char* t = strtok_s(list, ";", &save); t; t = strtok_s(nullptr, ";", &save), ++i) {
+                float loc[3] = {-270.0f + 135.0f * i + (i >= 2 ? 135.0f : 0.0f), 0.0f, 110.0f}, rot[3] = {0, 0, 0};
+                void* c = NiagaraSpawnAttached(avatar::LoadAsset(t), body.pose, loc, rot, false);
+                QDLOG(LOG_INFO, "fx gallery #", dec(i), " ", t, c ? " shown" : " FAILED");
+            }
+        }
+    }
+    if (force > 0) PlaceBody(&body, baseX, baseY, baseZ, baseYaw, now);
+    else PlaceBody(&body, x.px + offX, x.py + offY, x.pz, face ? viewYaw + 180.0f : viewYaw, now);
+    static uint32_t lastLog = 0;
+    if (now - lastLog > 3000) {
+        lastLog = now;
+        avatar::Xf h;
+        bool got = avatar::GetBoneXf(body.pose, body.bone[avatar::B_HAND_L], &h);
+        QDLOG(LOG_INFO, "dev mirror: speed=", flt(body.speed, 0), " phase=", flt(body.phase, 2),
+              " rigged=", dec(body.rigged ? 1 : 0), " air=", flt(body.air, 2),
+              " handL target=", flt(body.dbgHandL.x, 1), ",", flt(body.dbgHandL.y, 1), ",", flt(body.dbgHandL.z, 1),
+              " actual=", (got ? "" : "?"), flt(h.tx, 1), ",", flt(h.ty, 1), ",", flt(h.tz, 1),
+              " view yaw=", flt(viewYaw, 0));
+    }
+}
+
+// QDCOOP_PROBE=1: one-shot discovery dump, 15 s into gameplay -- every UFunction whose
+// name mentions items, equipment, attacks, jumping or magic; the pawn's properties and
+// components.  QDCOOP_PE_TRACE=1: hook ProcessEvent; record every (object class,
+// function) pair silently for a baseline window, then log each NEW pair once, so the
+// functions an attack / jump / spell runs show up next to the key press that caused it.
+bool ContainsCI(const char* s, const char* k)
+{
+    for (int i = 0; s[i]; ++i) {
+        int j = 0;
+        for (; k[j]; ++j) {
+            char a = s[i + j], b = k[j];
+            if (!a) return false;
+            if (a >= 'A' && a <= 'Z') a = (char)(a + 32);
+            if (a != b) break;
+        }
+        if (!k[j]) return true;
+    }
+    return false;
+}
+
+volatile int g_peTraceState = 0;     // 0 off, 1 baseline, 2 logging new pairs
+bool g_peWide = false;               // QDCOOP_PE_TRACE=2
+void* g_peSeen[16384];
+volatile long g_peSeenCount = 0;
+
+bool PeSeenInsert(void* key)
+{
+    uintptr_t h = ((uintptr_t)key >> 4) * 0x9E3779B97F4A7C15ull;
+    for (int n = 0; n < 16384; ++n) {
+        int i = (int)((h + n) & 16383);
+        void* cur = g_peSeen[i];
+        if (cur == key) return false;
+        if (!cur) {
+            if (InterlockedCompareExchangePointer(&g_peSeen[i], key, nullptr) == nullptr) {
+                InterlockedIncrement(&g_peSeenCount);
+                return true;
+            }
+            if (g_peSeen[i] == key) return false;
+        }
+    }
+    return false;
+}
+
+void PeTraceObserve(void* self, void* func)
+{
+    if (g_peTraceState == 0 || !self || !func) return;
+    if (g_peSeenCount > 15000) return;
+    // key: function XOR class, so the same function on two classes is two entries
+    // QDCOOP_PE_TRACE=2: also every call on the local pawn (and its components) in the
+    // 1.5 s after one of its input events, each name once per window.
+    if (g_peTraceState == 2 && g_peWide && (self == g_localPawn || ObjOuter(self) == g_localPawn)) {
+        static void* winSeen[256]; static int winN = 0; static DWORD winUntil = 0;
+        char fn[96];
+        if (FNameToString(ObjNameRaw(func), fn, sizeof(fn)) > 0) {
+            DWORD t = GetTickCount();
+            if (fn[0] == 'I' && fn[1] == 'n' && fn[2] == 'p' && fn[3] == 'A' && fn[4] == 'c') { winUntil = t + 1500; winN = 0; }
+            if ((int32_t)(winUntil - t) > 0 && !ContainsCI(fn, "tick")) {
+                bool seen = false;
+                for (int i = 0; i < winN && !seen; ++i) seen = winSeen[i] == func;
+                if (!seen && winN < 256) {
+                    winSeen[winN++] = func;
+                    char ob[160];
+                    ObjDescribe(self, ob, sizeof(ob));
+                    QDLOG(LOG_INFO, "PE win: ", fn, "  on ", ob);
+                }
+            }
+        }
+    }
+    void* key = (void*)((uintptr_t)func ^ ((uintptr_t)ObjClass(self) << 1));
+    if (!PeSeenInsert(key)) return;
+    if (g_peTraceState != 2) return;
+    char fn[96], ob[160];
+    if (FNameToString(ObjNameRaw(func), fn, sizeof(fn)) <= 0) return;
+    ObjDescribe(self, ob, sizeof(ob));
+    QDLOG(LOG_INFO, "PE new: ", fn, "  on ", ob);
+}
+
+void DevProbe(uint32_t now)
+{
+    static int on = DevEnvInt("QDCOOP_PROBE", 0);
+    static int pe = DevEnvInt("QDCOOP_PE_TRACE", 0);
+    static int stage = 0;
+    static uint32_t t0 = 0;
+    if ((!on && !pe) || stage < 0) return;
+    if (!IsGameplayPawn(g_localPawn)) { t0 = now; return; }
+    if (stage == 0 && pe && now - t0 > 5000) { g_peTraceState = 1; stage = 1; }
+    if (stage <= 1 && now - t0 > 15000) {
+        stage = 2;
+        if (pe) {
+            g_peTraceState = 2;
+            g_peWide = pe >= 2;
+            QDLOG(LOG_INFO, "PE trace: baseline ", dec((int)g_peSeenCount), " pairs; logging new ones");
+        }
+        if (!on) return;
+        static const char* const kw[] = {"item", "inventor", "equip", "attack", "jump", "spell",
+                                         "magic", "cast", "swing", "grant", "give", "unlock",
+                                         "weapon", "montage", "charge", "dagger", "throw"};
+        int n = ObjectCount(), shown = 0;
+        for (int i = 0; i < n && shown < 1500; ++i) {
+            void* o = ObjectAt(i);
+            if (!o || !LooksLikeUObject(o) || !IsFunctionObject(o)) continue;
+            char nm[96];
+            if (FNameToString(ObjNameRaw(o), nm, sizeof(nm)) <= 0) continue;
+            bool hit = false;
+            for (int k = 0; k < (int)(sizeof(kw) / sizeof(kw[0])) && !hit; ++k) hit = ContainsCI(nm, kw[k]);
+            if (!hit) continue;
+            char outer[96];
+            if (FNameToString(ObjNameRaw(ObjOuter(o)), outer, sizeof(outer)) <= 0) outer[0] = 0;
+            QDLOG(LOG_INFO, "fnscan ", outer, ".", nm);
+            ++shown;
+        }
+        QDLOG(LOG_INFO, "fnscan: ", dec(shown), " functions");
+        LogPropertiesOf(ObjClass(g_localPawn), "pawn", 700);
+        for (int i = 0; i < n; ++i) {
+            void* o = ObjectAt(i);
+            if (!o || ObjOuter(o) != g_localPawn) continue;
+            char d[160];
+            ObjDescribe(o, d, sizeof(d));
+            QDLOG(LOG_INFO, "pawn child: ", d);
+        }
+        static const char* const sigs[] = {"AddItemToInventory", "GiveItem", "AutoEquipItem", "EquipItem",
+                                           "EquipItemWeapon", "GiveAllWeapons", "GiveAllThrowingWeapons",
+                                           "GetCurrentActiveMontage", "FireDagger", "SpawnDaggerVisuals"};
+        for (int i = 0; i < n; ++i) {
+            void* o = ObjectAt(i);
+            if (!o || !LooksLikeUObject(o) || !IsFunctionObject(o)) continue;
+            for (int k = 0; k < (int)(sizeof(sigs) / sizeof(sigs[0])); ++k) {
+                if (!ObjNameIs(o, sigs[k])) continue;
+                char lab[200], outer[96];
+                if (FNameToString(ObjNameRaw(ObjOuter(o)), outer, sizeof(outer)) <= 0) outer[0] = 0;
+                wsprintfA(lab, "%s.%s", outer, sigs[k]);
+                LogSignature(lab, Signature(o));
+            }
+        }
+        { char d[160]; void* ch = FindInstanceOf("FS_Cheats_C"); ObjDescribe(ch, d, sizeof(d)); QDLOG(LOG_INFO, "cheats instance: ", d); }
+        void* ws = FindInstanceOf("WeaponSystem_C");
+        if (ws) { LogPropertiesOf(ObjClass(ws), "WeaponSystem", 120); LogFunctionsOf(ws, "WeaponSystem", 200); }
+        stage = -1;
+    }
+}
+
+// QDCOOP_GIVE="<item path>;<item path>..." -- TEST INSTANCES ONLY: 20 s into gameplay,
+// grant each item through the game's own cheat object (FS_Cheats_C.GiveItem) and then
+// FS_PlayerChar_C.AutoEquipItem, so a weapon swap / thrown weapon can be exercised on a
+// save that owns only the starting sword.  The game persists it into that instance's
+// save like any pickup.
+void DevGive(uint32_t now)
+{
+    static char list[1024];
+    static int stage = GetEnvironmentVariableA("QDCOOP_GIVE", list, sizeof(list)) ? 0 : -1;
+    static uint32_t t0 = 0;
+    static Fn fGive = {}, fEquip = {};
+    if (stage < 0) return;
+    if (!IsGameplayPawn(g_localPawn)) { t0 = now; return; }
+    if (now - t0 < (stage == 0 ? 20000u : 23000u)) return;
+    void* cheats = FindInstanceOf("FS_Cheats_C");
+    char* save = nullptr;
+    char work[1024];
+    lstrcpynA(work, list, sizeof(work));
+    for (char* tok = strtok_s(work, ";", &save); tok; tok = strtok_s(nullptr, ";", &save)) {
+        // "path@slotId": equip into that slot (EquipItem) instead of the first free one.
+        int slotId = -1;
+        bool select = false;
+        if (char* at = strchr(tok, '@')) { *at = 0; select = (at[1] == 's'); slotId = select ? -1 : atoi(at + 1); }
+        // "+path": SaveFunctions_C.AddItemToInventory -- the pickup path, for key items
+        // the cheat's GiveItem does not add (measured: the Dagger Belt).
+        if (tok[0] == '+') {
+            if (stage != 0) continue;
+            static Fn fa = {};
+            void* cdo = FindCdo("SaveFunctions_C");
+            void* item = avatar::LoadAsset(tok + 1);
+            if (!cdo || !item || !fa.Resolve(cdo, "AddItemToInventory")) { QDLOG(LOG_WARN, "dev give: cannot add ", tok + 1); continue; }
+            static bool logged = false;
+            if (!logged) { logged = true; LogSignature("AddItemToInventory", fa.sig); }
+            Call c(fa);
+            bool haveItem = false;
+            for (int i = 0; i < fa.sig.props; ++i) {
+                const PropDesc& d = fa.sig.p[i];
+                if (d.flags & (CPF_OutParm | CPF_ReturnParm)) continue;
+                uint8_t* at = c.buf + d.offset;
+                if (strcmp(d.name, "__WorldContext") == 0) *(void**)at = g_localPawn;
+                else if (strcmp(d.type, "ObjectProperty") == 0 && !haveItem) { *(void**)at = item; haveItem = true; }
+                else if (strcmp(d.type, "SoftObjectProperty") == 0 && !haveItem && d.size >= 40) {
+                    // FSoftObjectPtr: weak ptr (left null), tag, FSoftObjectPath{FName @16,
+                    // FString @24}: the path alone resolves the already loaded asset.
+                    QdName nm = {};
+                    haveItem = FNameFromAnsi(tok + 1, &nm);
+                    if (haveItem) memcpy(at + 16, &nm, sizeof(nm));
+                }
+                else if (strcmp(d.type, "IntProperty") == 0) *(int32_t*)at = 1;
+            }
+            bool ok = c.Run(cdo);
+            QDLOG(LOG_INFO, "dev give: AddItemToInventory(", tok + 1, ") ", ok ? "ran" : "FAILED");
+            continue;
+        }
+        // "!CheatName": one of FS_Cheats_C's no-argument grants (GiveAllConsumables...).
+        if (tok[0] == '!') {
+            if (stage != 0) continue;
+            Fn fc = {};
+            if (!cheats || !fc.Resolve(cheats, tok + 1)) { QDLOG(LOG_WARN, "dev give: no cheat ", tok + 1); continue; }
+            Call c(fc);
+            bool ok = c.Run(cheats);
+            QDLOG(LOG_INFO, "dev give: cheat ", tok + 1, " ", ok ? "ran" : "FAILED");
+            continue;
+        }
+        if (stage == 0) {
+            if (!cheats || !fGive.Resolve(cheats, "GiveItem")) { QDLOG(LOG_ERROR, "dev give: no cheat object"); stage = -1; return; }
+            static wchar_t wbuf[256];
+            int nch = MultiByteToWideChar(CP_UTF8, 0, tok, -1, wbuf, 256);
+            Call c(fGive);
+            uint8_t* fs = c.At("Path", 16);
+            if (!fs || nch <= 0) { QDLOG(LOG_ERROR, "dev give: bad GiveItem signature"); stage = -1; return; }
+            *(wchar_t**)fs = wbuf;
+            *(int32_t*)(fs + 8) = nch;
+            *(int32_t*)(fs + 12) = nch;
+            bool ok = c.Run(cheats);
+            QDLOG(LOG_INFO, "dev give: GiveItem(", tok, ") ", ok ? "ran" : "FAILED");
+        } else {
+            void* item = avatar::LoadAsset(tok);
+            static Fn fEquipAt = {}, fSel = {};
+            if (!item) continue;
+            if (select) {
+                void* ws = FindInstanceOf("WeaponSystem_C");
+                if (!ws || !fSel.Resolve(ws, "SetSelectedWeaponByItem")) continue;
+                Call c(fSel);
+                c.Obj("Item", item);
+                bool ok = c.Run(ws);
+                QDLOG(LOG_INFO, "dev give: SetSelectedWeaponByItem(", tok, ") ", ok ? "ran" : "FAILED");
+                continue;
+            }
+            if (slotId >= 0) {
+                if (!fEquipAt.Resolve(g_localPawn, "EquipItem")) continue;
+                Call c(fEquipAt);
+                c.Obj("Item", item);
+                c.I32("SlotIndex", slotId);
+                bool ok = c.Run(g_localPawn);
+                QDLOG(LOG_INFO, "dev give: EquipItem(", tok, ", ", dec(slotId), ") ", ok ? "ran" : "FAILED");
+                continue;
+            }
+            if (!fEquip.Resolve(g_localPawn, "AutoEquipItem")) continue;
+            Call c(fEquip);
+            c.Obj("Item", item);
+            bool ok = c.Run(g_localPawn);
+            QDLOG(LOG_INFO, "dev give: AutoEquipItem(", tok, ") ", ok ? "ran" : "FAILED");
+        }
+    }
+    stage = stage == 0 ? 1 : -1;
+}
+
+// QDCOOP_PROBE2=1: discovery for status effects and the melee arc.
+//   +20 s  property layouts of the status components, the weapon scripts, NiagaraComponent
+//   QDCOOP_TEST_STATUS=1: +30 s FS_Cheats_C.MagicFireMe, +70 s MagicPoisonMe
+//   while on: status property changes; after each local attack, the Niagara components
+//   that hang off the pawn (asset, parent, socket, relative transform).
+void ProbeLogNiagara(const char* tag)
+{
+    avatar::Api& a = avatar::A();
+    if (a.attachParent < 0) return;
+    int n = ObjectCount(), shown = 0;
+    static int relLoc = -2, relRot = -2, assetOff = -2;
+    for (int i = 0; i < n && shown < 30; ++i) {
+        void* o = ObjectAt(i);
+        if (!o || !LooksLikeUObject(o) || !ObjNameIs(ObjClass(o), "NiagaraComponent")) continue;
+        bool ours = ObjOuter(o) == g_localPawn || (ObjOuter(o) && ObjOuter(ObjOuter(o)) == g_localPawn);
+        void* p = o;
+        for (int d = 0; d < 8 && p && !ours; ++d) {
+            p = *(void**)((uint8_t*)p + a.attachParent);
+            if (p && (p == g_localPawn || ObjOuter(p) == g_localPawn)) ours = true;
+        }
+        if (!ours) continue;
+        if (relLoc == -2) {
+            relLoc = FindPropertyOffsetIn(a.clsScene, "RelativeLocation");
+            relRot = FindPropertyOffsetIn(a.clsScene, "RelativeRotation");
+            assetOff = FindPropertyOffsetIn(ObjClass(o), "Asset");
+        }
+        char d1[160], d2[160], d3[160], asset[200] = "-", sock[64] = "-";
+        ObjDescribe(o, d1, sizeof(d1));
+        ObjDescribe(ObjOuter(o), d2, sizeof(d2));
+        void* ap = *(void**)((uint8_t*)o + a.attachParent);
+        ObjDescribe(ap, d3, sizeof(d3));
+        if (assetOff >= 0) avatar::AssetPath(*(void**)((uint8_t*)o + assetOff), asset, sizeof(asset));
+        if (a.attachSocket >= 0) FNameToString(*(QdName*)((uint8_t*)o + a.attachSocket), sock, sizeof(sock));
+        const float* l = (const float*)((uint8_t*)o + relLoc);
+        const float* r = (const float*)((uint8_t*)o + relRot);
+        uint8_t active = *((uint8_t*)o + 138);
+        QDLOG(LOG_INFO, "probe2 ", tag, " niagara ", d1, " outer=", d2, " asset=", asset, " parent=", d3,
+              " sock=", sock, " active=", hex32(active), " rel=", flt(l[0], 1), ",", flt(l[1], 1), ",", flt(l[2], 1),
+              " rot=", flt(r[0], 1), ",", flt(r[1], 1), ",", flt(r[2], 1));
+        ++shown;
+    }
+    QDLOG(LOG_INFO, "probe2 ", tag, " niagara components on the pawn: ", dec(shown));
+}
+
+void DevCheatAmount(const char* fn, float amount)
+{
+    static Fn f[2] = {};
+    void* ch = FindInstanceOf("FS_Cheats_C");
+    Fn& ff = f[fn[5] == 'F' ? 0 : 1];
+    if (!ch || !ff.Resolve(ch, fn)) { QDLOG(LOG_WARN, "dev cheat: ", fn, " unavailable"); return; }
+    Call c(ff);
+    c.F32("Amount", amount);
+    bool ok = c.Run(ch);
+    QDLOG(LOG_INFO, "dev cheat: ", fn, "(", flt(amount, 0), ") ", ok ? "ran" : "FAILED");
+}
+
+// Every NiagaraComponent in the world whose asset looks like a melee arc / swing FX.
+void ProbeLogArcs(const char* tag)
+{
+    avatar::Api& a = avatar::A();
+    static int assetOff = -2, relLoc = -2, relRot = -2;
+    int n = ObjectCount(), shown = 0;
+    for (int i = 0; i < n && shown < 12; ++i) {
+        void* o = ObjectAt(i);
+        if (!o || !LooksLikeUObject(o) || !ObjNameIs(ObjClass(o), "NiagaraComponent")) continue;
+        if (assetOff == -2) {
+            assetOff = FindPropertyOffsetIn(ObjClass(o), "Asset");
+            relLoc = FindPropertyOffsetIn(a.clsScene, "RelativeLocation");
+            relRot = FindPropertyOffsetIn(a.clsScene, "RelativeRotation");
+        }
+        char asset[200] = "-";
+        if (assetOff >= 0) avatar::AssetPath(*(void**)((uint8_t*)o + assetOff), asset, sizeof(asset));
+        { char oc[64] = ""; FNameToString(ObjNameRaw(ObjClass(ObjOuter(o))), oc, sizeof(oc));
+          if (ContainsCI(oc, "class")) continue; }        // a template on a class, not a live FX
+        static Fn fLoc = {};
+        float wl[3] = {0, 0, 0};
+        if (fLoc.Resolve(o, "K2_GetComponentLocation")) {
+            Call lc(fLoc);
+            if (lc.Run(o) && lc.Ret()) memcpy(wl, lc.Ret(), 12);
+        }
+        ActorXform pp = {};
+        ReadActorXform(g_localPawn, &pp);
+        if (fabsf(wl[0] - pp.px) + fabsf(wl[1] - pp.py) + fabsf(wl[2] - pp.pz) > 600.0f) continue;
+        QDLOG(LOG_INFO, "probe2 ", tag, " fx world ", flt(wl[0], 0), ",", flt(wl[1], 0), ",", flt(wl[2], 0));
+        char d1[160], d2[160], d3[160] = "-", d4[160] = "-", sock[64] = "-";
+        ObjDescribe(o, d1, sizeof(d1));
+        ObjDescribe(ObjOuter(o), d2, sizeof(d2));
+        void* ap = a.attachParent >= 0 ? *(void**)((uint8_t*)o + a.attachParent) : nullptr;
+        if (ap) { ObjDescribe(ap, d3, sizeof(d3)); ObjDescribe(ObjOuter(ap), d4, sizeof(d4)); }
+        if (a.attachSocket >= 0) FNameToString(*(QdName*)((uint8_t*)o + a.attachSocket), sock, sizeof(sock));
+        const float* l = (const float*)((uint8_t*)o + relLoc);
+        const float* r = (const float*)((uint8_t*)o + relRot);
+        ActorXform px = {};
+        ReadActorXform(g_localPawn, &px);
+        QDLOG(LOG_INFO, "probe2 ", tag, " fx ", d1, " outer=", d2, " asset=", asset, " parent=", d3, " of ", d4,
+              " sock=", sock, " active=", hex32(*((uint8_t*)o + 138)), " rel=", flt(l[0], 1), ",", flt(l[1], 1), ",",
+              flt(l[2], 1), " rot=", flt(r[0], 1), ",", flt(r[1], 1), ",", flt(r[2], 1),
+              " pawn=", flt(px.px, 0), ",", flt(px.py, 0), ",", flt(px.pz, 0), " yaw=", flt(px.yaw, 0));
+        ++shown;
+    }
+    QDLOG(LOG_INFO, "probe2 ", tag, " fx shown: ", dec(shown));
+}
+
+void* g_devPokeComp[4]; int g_devPokeOff[4]; uint32_t g_devPokeUntil[4]; int g_devPokeN = 0;
+void DevProbe2(uint32_t now)
+{
+    for (int i = 0; i < 4; ++i)
+        if (g_devPokeComp[i] && (int32_t)(now - g_devPokeUntil[i]) > 0) {
+            if (ObjectIsLive(g_devPokeComp[i])) *((uint8_t*)g_devPokeComp[i] + g_devPokeOff[i]) = 0;
+            g_devPokeComp[i] = nullptr;
+        }
+    static int on = DevEnvInt("QDCOOP_PROBE2", 0);
+    static int status = DevEnvInt("QDCOOP_TEST_STATUS", 0);
+    static int stage = 0;
+    static uint32_t t0 = 0, lastWatch = 0, atkAt = 0;
+    static uint8_t lastAct = 0;
+    if (!on) return;
+    if (!IsGameplayPawn(g_localPawn)) { t0 = now; return; }
+    uint32_t t = now - t0;
+    if (stage == 0 && t > 20000) {
+        stage = 1;
+        static const char* const cls[] = {"StatusEffectComponent_C", "MagicFireEffectLogic_C",
+                                          "MagicPoisonDebuffLogic_C", "StatusEffectVisBase_C",
+                                          "MagicFireStatusEffectVis_C", "WeaponScriptBase_C"};
+        for (int k = 0; k < 6; ++k) {
+            void* c = FindClassByName(cls[k]);
+            if (!c) { QDLOG(LOG_INFO, "probe2 class ", cls[k], " not loaded"); continue; }
+            LayoutResult r;
+            if (WalkFieldsRaw(c, Lay(), false, &r))
+                for (int i = 0; i < r.props; ++i)
+                    QDLOG(LOG_INFO, "probe2 prop ", cls[k], ".", r.p[i].name, " : ", r.p[i].type,
+                          " @", dec(r.p[i].offset), " size=", dec(r.p[i].size));
+        }
+        void* nc = FindClassByName("NiagaraComponent");
+        if (nc) LogPropertiesOf(nc, "NiagaraComponent", 60);
+        void* fs = FindClassByName("FS_MeleeFXOverride");
+        if (fs) LogPropertiesOf(fs, "FS_MeleeFXOverride", 20);
+        void* ch = FindInstanceOf("FS_Cheats_C");
+        if (ch) {
+            LogSignature("MagicFireMe", Signature(FindFunction(ch, "MagicFireMe")));
+            LogSignature("MagicPoisonMe", Signature(FindFunction(ch, "MagicPoisonMe")));
+        }
+        ProbeLogNiagara("idle");
+        for (const void* s = ObjClass(g_localPawn); s; s = SuperOf(s)) {
+            LayoutResult r;
+            if (!WalkFieldsRaw(s, Lay(), false, &r)) break;
+            for (int i = 0; i < r.props; ++i) {
+                const char* nm = r.p[i].name;
+                if (!ContainsCI(nm, "slot") && !ContainsCI(nm, "dagger") && !ContainsCI(nm, "consumable") &&
+                    !ContainsCI(nm, "equip"))
+                    continue;
+                uint32_t v = 0;
+                memcpy(&v, (uint8_t*)g_localPawn + r.p[i].offset, 4);
+                QDLOG(LOG_INFO, "probe2 pawn ", nm, " : ", r.p[i].type, " @", dec(r.p[i].offset),
+                      " size=", dec(r.p[i].size), " first4=", hex32(v));
+            }
+        }
+        static const char* const sg[] = {"EquipItem", "EquipSpecifiedWeapon", "SetSelectedWeaponByItem",
+                                         "AddItemToQuickSlots", "UseItem", "Equip To Slot"};
+        for (int k = 0; k < 6; ++k) {
+            void* f = FindFunction(g_localPawn, sg[k]);
+            void* ws = FindInstanceOf("WeaponSystem_C");
+            if (!f && ws) f = FindFunction(ws, sg[k]);
+            if (f) LogSignature(sg[k], Signature(f));
+        }
+    }
+    static char wantWeapon[64];
+    static int ww = GetEnvironmentVariableA("QDCOOP_TEST_WEAPON", wantWeapon, sizeof(wantWeapon)) ? 1 : 0;
+    if (ww == 1 && t > 26000) {
+        ww = 2;
+        void* ws = FindInstanceOf("WeaponSystem_C");
+        int ao = ws ? FindPropertyOffsetIn(ObjClass(ws), "AllWeapons") : -1;
+        QDLOG(LOG_INFO, "dev weapon: want ", wantWeapon, " ws=", hex((uintptr_t)ws), " AllWeapons@", dec(ao));
+        if (ao >= 0) {
+            void** data = *(void***)((uint8_t*)ws + ao);
+            int num = *(int*)((uint8_t*)ws + ao + 8);
+            for (int i = 0; i < num && data; ++i) {
+                char cn[96] = "";
+                FNameToString(ObjNameRaw(ObjClass(data[i])), cn, sizeof(cn));
+                QDLOG(LOG_INFO, "probe2 AllWeapons[", dec(i), "] ", cn);
+                if (!ContainsCI(cn, wantWeapon)) continue;
+                static Fn fe = {};
+                if (!fe.Resolve(ws, "EquipSpecifiedWeapon")) break;
+                Call c(fe);
+                c.I32("Index", i);
+                QDLOG(LOG_INFO, "dev weapon: EquipSpecifiedWeapon(", dec(i), ") ", c.Run(ws) ? "ran" : "FAILED");
+                break;
+            }
+        }
+    }
+    if (status && stage == 1 && t > 30000) {
+        stage = 2;
+        DevCheatAmount("MagicFireMe", (float)DevEnvInt("QDCOOP_TEST_FIREAMT", 60));
+    }
+    if (status && stage == 2 && t > 50000) {
+        stage = 3;
+        static char list[256];
+        if (GetEnvironmentVariableA("QDCOOP_TEST_APPLY", list, sizeof(list))) {
+            char* save = nullptr;
+            for (char* tok = strtok_s(list, ";", &save); tok; tok = strtok_s(nullptr, ";", &save)) {
+                char* colon = strchr(tok, ':');
+                float dur = colon ? (float)atof(colon + 1) : 8.0f;
+                if (colon) *colon = 0;
+                void* comp = nullptr;
+                int n = ObjectCount();
+                for (int i = 0; i < n && !comp; ++i) {
+                    void* o = ObjectAt(i);
+                    if (o && ObjOuter(o) == g_localPawn && ObjNameIs(o, tok)) comp = o;
+                }
+                void* f = comp ? FindFunction(comp, "Apply") : nullptr;
+                LayoutResult sg = Signature(f);
+                LogSignature(tok, sg);
+                Fn fa = {};
+                bool ran = false;
+                if (comp && fa.Resolve(comp, "Apply")) {
+                    LogSignature("StatusEffectComponent.Apply", fa.sig);
+                    Call c(fa);
+                    if (fa.Off("Duration") >= 0) c.F32("Duration", dur);
+                    ran = c.Run(comp);
+                    QDLOG(LOG_INFO, "dev apply: ", tok, ".Apply ", ran ? "ran" : "FAILED");
+                }
+                if (!ran) {
+                    // No callable Apply: flip the flag the status reader looks at, for
+                    // `dur` seconds (exercises detection -> STATUS -> the body's FX).
+                    if (comp) LogFunctionsOf(comp, tok, 40);
+                    int ao = comp ? FindPropertyOffsetIn(ObjClass(comp), "Applied") : -1;
+                    if (ao >= 0) {
+                        *((uint8_t*)comp + ao) = 1;
+                        g_devPokeComp[g_devPokeN & 3] = comp; g_devPokeOff[g_devPokeN & 3] = ao;
+                        g_devPokeUntil[g_devPokeN & 3] = now + (uint32_t)(dur * 1000.0f); ++g_devPokeN;
+                        QDLOG(LOG_INFO, "dev apply: ", tok, ".Applied = 1 for ", flt(dur, 1), " s (test flag)");
+                    }
+                    continue;
+                }
+            }
+            return;
+        }
+        DevCheatAmount("MagicPoisonMe", (float)DevEnvInt("QDCOOP_TEST_POISONAMT", 25));
+    }
+    // Watch: status-ish properties on the pawn's components, logged on change.
+    if (stage >= 1 && now - lastWatch > 500) {
+        lastWatch = now;
+        static const char* const props[] = {"Applied", "Duration", "Permanent", "Active",
+                                            "CurrentMagicFireDamagePool", "CurrentBuildup", "IsActive"};
+        static uint32_t seen[64][7];
+        int n = ObjectCount(), idx = 0;
+        for (int i = 0; i < n && idx < 64; ++i) {
+            void* o = ObjectAt(i);
+            if (!o || ObjOuter(o) != g_localPawn) continue;
+            char cn[96];
+            if (FNameToString(ObjNameRaw(ObjClass(o)), cn, sizeof(cn)) <= 0) continue;
+            if (!ContainsCI(cn, "status") && !ContainsCI(cn, "magicfire") && !ContainsCI(cn, "magicpoison")) continue;
+            for (int k = 0; k < 7; ++k) {
+                int sz = 0;
+                int off = FindPropertyOffsetIn(ObjClass(o), props[k], &sz);
+                if (off < 0 || off < 200) continue;
+                uint32_t v = 0;
+                memcpy(&v, (uint8_t*)o + off, sz >= 4 ? 4 : (sz > 0 ? sz : 1));
+                if (sz == 1) v &= 0xFF;
+                if (v != seen[idx][k]) {
+                    seen[idx][k] = v;
+                    char d[160];
+                    ObjDescribe(o, d, sizeof(d));
+                    float fv;
+                    memcpy(&fv, &v, 4);
+                    QDLOG(LOG_INFO, "probe2 status ", d, ".", props[k], " = ", hex32(v),
+                          " size=", dec(sz), " f=", flt(fv, 2));
+                }
+            }
+            ++idx;
+        }
+    }
+    if (g_localAct.byte != lastAct) {
+        lastAct = g_localAct.byte;
+        if ((lastAct & 0x1F) != 0) atkAt = now;
+    }
+    if (atkAt && now - atkAt > 250) { ProbeLogArcs("attack+250"); atkAt = 0; }
+    static uint32_t lastFx = 0;
+    if (status && stage >= 2 && now - lastFx > 5000) { lastFx = now; ProbeLogArcs("status"); }
 }
 
 bool HK_Tick(void* engineLoop)
@@ -877,17 +3911,25 @@ bool HK_Tick(void* engineLoop)
     if (tracing) QDLOG(LOG_DEBUG, "  frame ", dec(g_frame), " save layer done");
     MirrorPump(now);
     if (tracing) QDLOG(LOG_DEBUG, "  frame ", dec(g_frame), " mirror done");
+    LocalActionPump(now);
     SendLocalPlayer(now);
     if (tracing) QDLOG(LOG_DEBUG, "  frame ", dec(g_frame), " player sent");
 
-    if (g_net.IsHost()) {
-        HostPushFlags(now);
-        if (Cfg().enemy_sync && now - g_lastEnemyPushMs > 50) {
-            g_lastEnemyPushMs = now;
-        }
-    }
+    if (g_net.IsHost()) HostPushFlags(now);
+    DevAutoLoad(now);
+    LocalEquipPump(now);
+    DevAvatarTest(now);
+    DevProbe(now);
+    DevProbe2(now);
+    DevGive(now);
     PuppetPump(now);
+    FxPump(now);
+    ArcObservePump(now);
+    StatusPump(now);
+    DevTestFire(now);
+    DevTeleport(now);
     StreamPump(now);
+    EnemyPump(now);
     DialoguePump(now);
 
     if (tracing) QDLOG(LOG_DEBUG, "  frame ", dec(g_frame), " end");
@@ -918,26 +3960,84 @@ void HK_StoreEnemySaveState(void* self, const QdGuid* guid, float respawn, float
 {
     if (g_oStoreEnemy) g_oStoreEnemy(self, guid, respawn, hp);
 
-    // D5 is closed and this is the whole of enemy persistence sync: the record is
-    // {bValid, RespawnTime, RemainingHP} keyed by an authored GUID.  Capture it and
-    // let the host broadcast; a peer never originates one.
-    if (!Cfg().enemy_sync || !g_net.IsHost() || !guid) return;
-    for (int i = 0; i < 32; ++i) {
-        if (!g_kills[i].used) {
-            g_kills[i].guid = *guid;
-            g_kills[i].respawn = respawn;
-            g_kills[i].hp = hp;
-            g_kills[i].seen_ms = Net::Now();
-            g_kills[i].used = true;
-            QDLOG(LOG_INFO, "enemy persistence write captured guid=", hex32(guid->a),
-                  " hp=", flt(hp, 1), " respawn=", flt(respawn, 1));
-            return;
+    // The record is {bValid, RespawnTime, RemainingHP} keyed by the spawner's authored
+    // GUID (D5 closed live: a kill is hp 0).
+    if (!Cfg().enemy_sync || !guid || !g_net.Connected()) return;
+    uint32_t g[4] = {guid->a, guid->b, guid->c, guid->d};
+    if (g_net.IsHost()) {
+        // A death joins the kill log, re-broadcast as dead rows (qdenemy.h KillLog).
+        if (hp <= 0.0f) {
+            g_killLog.Add(g);
+            QDLOG(LOG_INFO, "enemy death recorded guid=", hex32(g[0]), " respawn=", flt(respawn, 1),
+                  (g_inOwnRecord ? " (peer's record)" : ""));
         }
+        return;
     }
+    // Peer: forward only a record for an enemy THIS machine ran.  A driven copy or a
+    // host-ordered kill writes the same record the host already has.
+    EnemyRec* r = EnemyByGuid(g);
+    if (g_hostView.Decide(g, r ? r->driven : false, Net::Now()) != enemy::LOCAL) return;
+    uint8_t body[64];
+    wire::Writer w(body, sizeof(body));
+    wire::WriteIntentEnemyRecord(w, 0, g, (int32_t)(respawn * 100.0f), (int32_t)(hp * 100.0f));
+    if (w.ok) g_net.SendReliable(wire::K_INTENT, body, w.len);
+    QDLOG(LOG_INFO, "enemy record sent to host guid=", hex32(g[0]), " hp=", flt(hp, 1));
+}
+
+// A rest clears every enemy record on the host (ClearAllEnemySaveStates, called from
+// Checkpoint_C), so its kill log must forget them too, or the peer would keep killing
+// enemies the rest brought back.  Seen as the local pawn's PlayerRested event.
+void RestObserve(void* self, void* func)
+{
+    static void* fnRest = nullptr;
+    static void* other[256];
+    static int nOther = 0;
+    if (!self || self != g_localPawn || !func || !Cfg().enemy_sync) return;
+    if (func != fnRest) {
+        if (fnRest) return;
+        for (int i = 0; i < nOther; ++i) if (other[i] == func) return;
+        char fn[64];
+        if (FNameToString(ObjNameRaw(func), fn, sizeof(fn)) <= 0) return;
+        if (strcmp(fn, "PlayerRested") != 0) { if (nOther < 256) other[nOther++] = func; return; }
+        fnRest = func;
+    }
+    if (g_net.IsHost() && g_killLog.Count()) {
+        QDLOG(LOG_INFO, "enemy sync: rest -- ", dec(g_killLog.Count()), " death(s) forgotten");
+        g_killLog.Clear();
+    }
+}
+
+// Using an item plays no first-person montage (measured: Berserker's Brew, herbs).
+// What the pawn runs is InpActEvt_UseItem and then, when something was consumed,
+// InventoryChanged; a teleport fossil or the grimoire opens a menu and changes
+// nothing.  So: the input, then an inventory change within 400 ms = "used an item".
+void UseObserve(void* self, void* func)
+{
+    static void* fnUse = nullptr;
+    static void* fnInv = nullptr;
+    static void* other[256];
+    static int nOther = 0;
+    static DWORD armedAt = 0;
+    if (!self || self != g_localPawn || !func) return;
+    if (func != fnUse && func != fnInv) {
+        for (int i = 0; i < nOther; ++i) if (other[i] == func) return;
+        char fn[96];
+        if (FNameToString(ObjNameRaw(func), fn, sizeof(fn)) <= 0) return;
+        if (strncmp(fn, "InpActEvt_UseItem", 17) == 0) fnUse = func;
+        else if (strcmp(fn, "InventoryChanged") == 0) fnInv = func;
+        else { if (nOther < 256) other[nOther++] = func; return; }
+    }
+    DWORD t = GetTickCount();
+    if (func == fnUse) { armedAt = t; return; }
+    if (armedAt && t - armedAt < 400) { g_localUsed = true; armedAt = 0; }
 }
 
 void HK_ProcessEvent(void* self, void* func, void* parms)
 {
+    FxObserve(self, func);
+    UseObserve(self, func);
+    RestObserve(self, func);
+    PeTraceObserve(self, func);
     if (g_oProcessEvent) g_oProcessEvent(self, func, parms);
 }
 
@@ -972,7 +4072,29 @@ DWORD WINAPI BootstrapThread(LPVOID)
     int cut = (int)n;
     while (cut > 0 && dir[cut - 1] != '\\' && dir[cut - 1] != '/') --cut;
     dir[cut > 0 ? cut - 1 : 0] = 0;
-    LogOpen(dir);
+    // Per-instance log name from -saveddirsuffix=<x>, which the test rig gives every
+    // instance; a normal launch has none and logs to qdcoop.log as before.
+    char tag[32] = {0};
+    {
+        const char* cl = GetCommandLineA();
+        const char* key = "saveddirsuffix=";
+        for (const char* p = cl; p && *p; ++p) {
+            const char* a = p;
+            const char* k = key;
+            while (*k && (*a | 0x20) == (*k | 0x20)) { ++a; ++k; }
+            if (*k != 0) continue;
+            int t = 0;
+            while (*a && *a != ' ' && *a != '"' && t < (int)sizeof(tag) - 1) {
+                char c = *a++;
+                char lc = (char)(c | 0x20);
+                if ((c >= '0' && c <= '9') || (lc >= 'a' && lc <= 'z') || c == '_' || c == '-')
+                    tag[t++] = c;
+            }
+            tag[t] = 0;
+            break;
+        }
+    }
+    LogOpen(dir, tag);
     LogSetLevel(Cfg().log_level);
 
     QDLOG(LOG_INFO, "qdcMp bootstrap: pid=", dec(GetCurrentProcessId()),
@@ -1009,7 +4131,9 @@ DWORD WINAPI BootstrapThread(LPVOID)
         const QdTarget* tPause = nullptr;
         const QdTarget* tStore = nullptr;
         const QdTarget* tPE = nullptr;
+        const QdTarget* tVis = nullptr;
         for (unsigned k = 0; k < kQdTargetCount; ++k) {
+            if (NameEquals(kQdTargets[k].name, "ULevelStreaming::SetShouldBeVisible")) tVis = &kQdTargets[k];
             if (NameEquals(kQdTargets[k].name, "FEngineLoop::Tick")) tTick = &kQdTargets[k];
             if (NameEquals(kQdTargets[k].name, "UGameplayStatics::SetGamePaused")) tPause = &kQdTargets[k];
             if (NameEquals(kQdTargets[k].name, "StoreEnemySaveState")) tStore = &kQdTargets[k];
@@ -1026,9 +4150,18 @@ DWORD WINAPI BootstrapThread(LPVOID)
         if (tStore) { if (InstallHook(*tStore, (void*)&HK_StoreEnemySaveState, (void**)&g_oStoreEnemy)) ++installed; }
         else QDLOG(LOG_WARN, "target not found in the table: StoreEnemySaveState");
         QDLOG(LOG_INFO, "hooks installed: ", dec(installed), " of 3 (ProcessEvent is opt-in)");
+        // The streaming veto is an engine-wide setter; it is hooked only when the union
+        // is switched on, so a session without it runs the engine untouched.
+        if (Cfg().stream_union) {
+            if (tVis) InstallHook(*tVis, (void*)&HK_SetShouldBeVisible, (void**)&g_oSetVis);
+            else QDLOG(LOG_ERROR, "target not found in the table: ULevelStreaming::SetShouldBeVisible");
+        }
         // ProcessEvent is the widest hook in the process and costs the most; it stays
         // off unless someone is tracing a specific Blueprint surface.
-        if (tPE && Cfg().log_level >= LOG_TRACE) {
+        // Effect sync needs it to see thrown weapons begin play (one compare per call).
+        // Enemy sync needs it to see the host rest (RestObserve).
+        if (tPE && (Cfg().puppet_sync || Cfg().enemy_sync || Cfg().log_level >= LOG_TRACE ||
+                    DevEnvInt("QDCOOP_PE_TRACE", 0))) {
             InstallHook(*tPE, (void*)&HK_ProcessEvent, (void**)&g_oProcessEvent);
         }
     }

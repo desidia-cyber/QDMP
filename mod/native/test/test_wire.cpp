@@ -318,6 +318,64 @@ static void TestIntentDecode()
 }
 
 // ---------------------------------------------------------------------------
+// The three world bodies (enemy, intents 7/8, level union) round-trip, and a level
+// union that lies about its lengths is refused rather than read past.
+static void TestWorldBodies()
+{
+    using namespace qd::wire;
+    uint8_t buf[kMaxBody];
+
+    EnemyRow rows[2];
+    memset(rows, 0, sizeof(rows));
+    rows[0].guid[0] = 0x5ae3b37bu; rows[0].px = -800; rows[0].hp = 65535; rows[0].flags = kEnemyAlive | kEnemyBody;
+    rows[1].guid[3] = 7; rows[1].pz = 123456; rows[1].yaw = -16384; rows[1].hp = 0; rows[1].flags = 0;
+    {
+        Writer w(buf, sizeof(buf));
+        WriteEnemyHeader(w, 2);
+        WriteEnemyChunk(w, rows, 2, 0);
+        CHECK(w.ok && w.len == 2 + 2 * 33, "enemy body size");
+        Reader r(buf, w.len);
+        uint16_t n = 0;
+        EnemyRow a, b;
+        CHECK(ReadEnemyHeader(r, &n) && n == 2, "enemy header");
+        CHECK(ReadEnemyRow(r, &a) && ReadEnemyRow(r, &b), "enemy rows read");
+        CHECK(a.guid[0] == 0x5ae3b37bu && a.px == -800 && a.hp == 65535 && a.flags == 5, "enemy row 0 round-trips");
+        CHECK(b.guid[3] == 7 && b.pz == 123456 && b.yaw == -16384 && b.flags == 0, "enemy row 1 round-trips");
+        CHECK(r.pos == r.len, "enemy body fully consumed");
+    }
+    {
+        const uint32_t g[4] = {1, 2, 3, 4};
+        Writer w(buf, sizeof(buf));
+        WriteIntentEnemyHit(w, 9, g, 70000);
+        Reader r(buf, w.len);
+        IntentBody b;
+        CHECK(ReadIntent(r, &b) && b.kind == I_ENEMY_HIT && b.based_on_rev == 9 && b.guid[3] == 4 &&
+              b.value == 70000, "intent enemy_hit round-trips");
+        Writer w2(buf, sizeof(buf));
+        WriteIntentEnemyRecord(w2, 0, g, 12000, 0);
+        Reader r2(buf, w2.len);
+        CHECK(ReadIntent(r2, &b) && b.kind == I_ENEMY_RECORD && b.value == 12000 && b.value2 == 0,
+              "intent enemy_record round-trips");
+    }
+    {
+        const char* names[3] = {"L_Main", "L_Dungeon", "L_Boss"};
+        uint8_t bits[2] = {0x05, 0x02};
+        Writer w(buf, sizeof(buf));
+        WriteLevelUnion(w, bits, 2, names, 3);
+        Reader r(buf, w.len);
+        static LevelUnionBody b;
+        CHECK(ReadLevelUnion(r, &b) && b.has_names && b.n == 3, "level union reads");
+        CHECK(strcmp(b.name[1], "L_Dungeon") == 0, "level union name");
+        CHECK(LevelUnionBit(b, 0) && !LevelUnionBit(b, 1) && LevelUnionBit(b, 2) && LevelUnionBit(b, 9),
+              "level union bits LSB-first");
+        CHECK(!LevelUnionBit(b, 200), "level union bit past the end is clear");
+        // bits_len larger than the body: refused.
+        uint8_t bad[4] = {0x40, 0x00, 0x01, 0x02};
+        Reader rb(bad, 4);
+        CHECK(!ReadLevelUnion(rb, &b), "level union with a lying bits_len is refused");
+    }
+}
+
 int main()
 {
     printf("=== qdwire contract tests ===\n");
@@ -329,6 +387,7 @@ int main()
     TestReaderRefusesOverrun();
     TestFlagsChunking();
     TestIntentDecode();
+    TestWorldBodies();
     printf("=== %d passed, %d failed ===\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

@@ -370,12 +370,55 @@ private:
         case wire::K_KEEPALIVE:
             if (role_ == ROLE_NONE) SendHello();
             break;
+        case wire::K_INTENT:
+        case wire::K_EFFECT: {
+            // Reliable kinds (WIRE.md 1): ack every copy -- the ack for the first may
+            // have been lost -- and deliver only the first.  Without this the sender
+            // retransmitted until it gave up and the receiver applied every copy
+            // (measured: one thrown fireball arrived and spawned six times).
+            uint8_t ack[4];
+            wire::Writer aw(ack, sizeof(ack));
+            aw.U32(e.seq);
+            SendUnreliableRaw(wire::K_ACK, ack, aw.len);
+            if (SeenReliable(e.seq)) break;
+            QueuePacket(e, r);
+            break;
+        }
         default:
             // Everything else is for the game thread.  A full queue is a drop, not a
             // block: a stalled consumer must never stall the socket.
             QueuePacket(e, r);
             break;
         }
+    }
+
+    // Duplicate suppression for reliable kinds: the last 64 seqs delivered.  The seq
+    // space is per sender and there is one remote sender per session.
+    bool SeenReliable(uint32_t seq)
+    {
+        // A sender that restarted counts from 1 again; its seqs then sit far below
+        // the last ones seen (every packet of every kind takes a seq, thousands a
+        // minute, while retransmits are seconds old), so forget the old ones.
+        if (seq + 4096u < maxSeenRel_) {
+            for (int i = 0; i < 64; ++i) seenRel_[i] = 0;
+            maxSeenRel_ = 0;
+        }
+        if (seq > maxSeenRel_) maxSeenRel_ = seq;
+        for (int i = 0; i < 64; ++i) if (seenRel_[i] == seq) return true;
+        seenRel_[seenRelNext_] = seq;
+        seenRelNext_ = (seenRelNext_ + 1) & 63;
+        return false;
+    }
+
+    // SendUnreliable without the session check of the public path: an ack goes out
+    // from the receive thread.
+    void SendUnreliableRaw(uint8_t kind, const uint8_t* body, int bodyLen)
+    {
+        uint8_t pkt[64];
+        wire::Writer w(pkt, sizeof(pkt));
+        wire::WriteHeader(w, kind, session_, NextSeq(), (uint16_t)bodyLen);
+        if (bodyLen > 0) w.Bytes(body, bodyLen);
+        if (w.ok) SendRaw(pkt, w.len);
     }
 
     void QueuePacket(const wire::Envelope& e, wire::Reader& r)
@@ -464,6 +507,9 @@ private:
     int         qhead_, qtail_;
     ReliableSlot rel_[kReliableSlots];
     NetStats    stats_;
+    uint32_t    seenRel_[64] = {};
+    int         seenRelNext_ = 0;
+    uint32_t    maxSeenRel_ = 0;
 };
 
 } // namespace qd

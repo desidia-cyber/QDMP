@@ -139,6 +139,11 @@ public:
     // A level change invalidates the handle: the actor graph is rebuilt, so a
     // remembered pointer is a dangling address.  Back to Wanted with the attempt
     // counter cleared -- a new level is a new chance, not a continued failure.
+    // The pump destroyed (or found already gone) the body it was asked to destroy.
+    // Without this the request stayed latched forever and every later Get() asked for
+    // another destroy.
+    void AckDestroy() { destroyWanted_ = false; }
+
     void LocalWorldChanged(uint32_t now_ms)
     {
         (void)now_ms;

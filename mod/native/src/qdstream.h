@@ -115,6 +115,29 @@ public:
         return false;
     }
 
+    // Wanted by a live PEER list (the local slot excluded).  This is the question the
+    // visibility veto asks: "may this level be hidden?"  The local slot is the game's
+    // own wish and the game is allowed to act on it; only the partner's need overrides.
+    bool PeerWants(const char* name, uint32_t now_ms) const
+    {
+        for (int s = 1; s < kSlots; ++s) {
+            const SlotList& l = slot_[s];
+            if (!l.present || IsStale(l, now_ms)) continue;
+            for (int i = 0; i < l.n; ++i) {
+                if (SameName(l.name[i], name)) return true;
+            }
+        }
+        return false;
+    }
+
+    bool AnyPeerLive(uint32_t now_ms) const
+    {
+        for (int s = 1; s < kSlots; ++s) {
+            if (slot_[s].present && !IsStale(slot_[s], now_ms)) return true;
+        }
+        return false;
+    }
+
     bool PeerListStale(uint32_t now_ms) const
     {
         for (int s = 1; s < kSlots; ++s) {
@@ -205,6 +228,100 @@ private:
     int      seenN_ = 0;
     char     prev_[kMaxLevels][kMaxNameLen];
 };
+
+// ---------------------------------------------------------------------------
+// ForceBook -- which levels this machine is holding visible FOR THE PARTNER.
+// ---------------------------------------------------------------------------
+// Two rules, both from the failure being avoided:
+//
+//   * A forced level is NEVER reported as the local player's own wish.  If it were,
+//     each machine would publish the other's levels back and the union could never
+//     shrink again (the two lists would hold each other up forever).
+//   * Release is delayed (kReleaseMs).  A partner walking along a level boundary
+//     flips its list in and out; hiding on every flip is exactly the "level removed,
+//     every enemy in it loses its brain" churn the union exists to prevent.
+class ForceBook {
+public:
+    static const uint32_t kReleaseMs = 5000;
+    static const int      kMax = kMaxLevels * 2;
+
+    ForceBook() { Reset(); }
+    void Reset() { for (int i = 0; i < kMax; ++i) e_[i].used = false; }
+
+    // The partner needs `name` now.  Returns true if it was not forced before (the
+    // caller must make it visible).
+    bool Need(const char* name, uint32_t now_ms)
+    {
+        Entry* e = Find(name);
+        if (e) { e->last_need_ms = now_ms; return false; }
+        e = Alloc(name);
+        if (!e) return false;               // full: reported by Full(), never silent
+        e->last_need_ms = now_ms;
+        return true;
+    }
+
+    bool IsForced(const char* name) const { return FindC(name) != nullptr; }
+
+    // Called for every forced level each pump.  Returns true when the caller should
+    // hide it now: not needed by the partner for kReleaseMs AND not wanted by the
+    // local game.  A level the local player walked into simply stops being "forced":
+    // the game owns it again and will hide it itself when it is done with it.
+    bool ShouldRelease(const char* name, bool peerWants, bool localWants, uint32_t now_ms)
+    {
+        Entry* e = Find(name);
+        if (!e) return false;
+        if (peerWants) { e->last_need_ms = now_ms; return false; }
+        if (localWants) { e->used = false; return false; }
+        uint32_t idle = (now_ms > e->last_need_ms) ? now_ms - e->last_need_ms : 0;
+        if (idle < kReleaseMs) return false;
+        e->used = false;
+        return true;
+    }
+
+    int Count() const { int n = 0; for (int i = 0; i < kMax; ++i) n += e_[i].used ? 1 : 0; return n; }
+    bool Full() const { return Count() >= kMax; }
+
+private:
+    struct Entry { bool used; uint32_t last_need_ms; char name[kMaxNameLen]; };
+
+    static bool Same(const char* a, const char* b)
+    {
+        for (int i = 0; a[i] || b[i]; ++i) if (a[i] != b[i]) return false;
+        return true;
+    }
+    Entry* Find(const char* n) { for (int i = 0; i < kMax; ++i) if (e_[i].used && Same(e_[i].name, n)) return &e_[i]; return nullptr; }
+    const Entry* FindC(const char* n) const { for (int i = 0; i < kMax; ++i) if (e_[i].used && Same(e_[i].name, n)) return &e_[i]; return nullptr; }
+    Entry* Alloc(const char* n)
+    {
+        for (int i = 0; i < kMax; ++i) {
+            if (e_[i].used) continue;
+            e_[i].used = true;
+            int k = 0;
+            for (; n[k] && k < kMaxNameLen - 1; ++k) e_[i].name[k] = n[k];
+            e_[i].name[k] = 0;
+            return &e_[i];
+        }
+        return nullptr;
+    }
+
+    Entry e_[kMax];
+};
+
+// Short, machine-independent level name from a package path:
+// "/Game/Maps/Ruins/100_GR.100_GR" -> "100_GR".  Both machines run the same cooked
+// world, so the short name is the same on both and needs no negotiation.
+inline void ShortLevelName(const char* path, char* out, int cap)
+{
+    if (!out || cap <= 0) return;
+    out[0] = 0;
+    if (!path) return;
+    int start = 0, end = 0;
+    for (int i = 0; path[i]; ++i) { if (path[i] == '/') start = i + 1; end = i + 1; }
+    for (int i = start; i < end; ++i) if (path[i] == '.') { end = i; break; }
+    int k = 0;
+    for (int i = start; i < end && k < cap - 1; ++i) out[k++] = path[i];
+    out[k] = 0;
+}
 
 } // namespace stream
 } // namespace qd

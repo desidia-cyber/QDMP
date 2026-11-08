@@ -1,4 +1,4 @@
-﻿// qdsubstrate.h -- the engine substrate: image base, verified targets, GObjects,
+// qdsubstrate.h -- the engine substrate: image base, verified targets, GObjects,
 // FName, ProcessEvent.
 //
 // CONFIDENCE OF EVERY CONSTANT HERE
@@ -258,13 +258,72 @@ inline void ObjDescribe(const void* o, char* out, int cap)
 }
 
 // ---------------------------------------------------------------------------
+// GObjects
+// ---------------------------------------------------------------------------
+// GUObjectArray at 0x04A64250.  In UE4.27 `ObjObjects` is a FChunkedFixedUObjectArray
+// at +0x10:
+//   +0x10 FUObjectItem** Objects       -- a table of CHUNK pointers
+//   +0x18 FUObjectItem*  PreAllocated
+//   +0x20 int32 MaxElements, +0x24 int32 NumElements
+//   +0x28 int32 MaxChunks,   +0x2C int32 NumChunks
+// Each chunk holds 65536 FUObjectItem of 0x18 bytes, with the UObject* at item+0.
+//
+// THE BUG THIS REPLACES.  Earlier versions indexed `Objects` as a flat UObject*[]:
+// `arr[i]`.  `Objects` is the chunk table, so arr[0] and arr[1] were the two chunk
+// pointers and arr[2..] ran off the end of a small allocation into the heap.  That is
+// exactly the "measurement" in LIVE-TEST-LOG R12 (two live pointers, then zeros, uneven
+// deltas) and the "walking GObjects terminates the game" of R13: the walk read half a
+// megabyte of unrelated heap and decoded whatever it found as objects.  The 0x18
+// stride constant had been measured correctly and was simply never used.
+static const uint32_t kGUObjectArrayRva = 0x04A64250u;
+static const int kUObjectArrayObjectsOff   = 0x10;
+static const int kUObjectArrayNumOff       = 0x24;
+static const int kUObjectArrayNumChunksOff = 0x2C;
+static const int kFUObjectItemStride       = 0x18;
+static const int kObjectsPerChunk          = 65536;
+
+inline uint8_t** ObjectChunks()
+{
+    return *(uint8_t***)((uintptr_t)Ptr<uint8_t>(kGUObjectArrayRva) + kUObjectArrayObjectsOff);
+}
+
+inline int ObjectCount()
+{
+    return *(int*)((uintptr_t)Ptr<uint8_t>(kGUObjectArrayRva) + kUObjectArrayNumOff);
+}
+
+inline int ObjectChunkCount()
+{
+    return *(int*)((uintptr_t)Ptr<uint8_t>(kGUObjectArrayRva) + kUObjectArrayNumChunksOff);
+}
+
+// The object at index i, or null.  Bounds-checked against both the element count and
+// the chunk count, so a bad index can never leave the chunk table.
+inline void* ObjectAt(int i)
+{
+    if (i < 0 || i >= ObjectCount()) return nullptr;
+    int c = i / kObjectsPerChunk;
+    if (c >= ObjectChunkCount()) return nullptr;
+    uint8_t** chunks = ObjectChunks();
+    if (!chunks) return nullptr;
+    uint8_t* chunk = chunks[c];
+    if (!chunk) return nullptr;
+    return *(void**)(chunk + (size_t)(i % kObjectsPerChunk) * kFUObjectItemStride);
+}
+
+// Liveness: the object's InternalIndex must lead back to the object itself.
+inline bool ObjectIsLive(const void* o)
+{
+    if (!o) return false;
+    return ObjectAt(ObjInternalIndex(o)) == o;
+}
+
+// ---------------------------------------------------------------------------
 // Slot safety
 // ---------------------------------------------------------------------------
-// A UObject begins with a vtable pointer that lives inside the game's own image. That
-// is a two-instruction test, and it is what makes walking the object array survivable:
-// the array is SPARSE and holds UObject* slots (measured: slots 0 and 1 are live heap
-// pointers, slots 2..7 are null), and a slot can hold a pointer that is no longer
-// mapped. Dereferencing one of those is an access violation in the middle of a scan.
+// With correct chunk indexing every non-null slot is a live UObject (UE nulls the slot
+// when an object is destroyed), so these checks are belt and braces.  The vtable test
+// is cheap and catches a slot that is mid-construction.
 inline bool LooksLikeUObject(const void* p)
 {
     if (p == nullptr) return false;
@@ -276,9 +335,25 @@ inline bool LooksLikeUObject(const void* p)
     return vt >= base && vt < base + (uintptr_t)QD_IMAGE_SIZE;
 }
 
-// A fault inside one slot must cost that slot, not the process. The guard lives in its
-// own function because __try cannot share a frame with C++ object unwinding (C2712).
-// Every scan in this mod goes through here.
+// Class objects: native classes are of class "Class", Blueprint classes of class
+// "BlueprintGeneratedClass" (widgets/anim BPs have their own).  The first version
+// demanded exactly "Class", so FS_Full_PlayerChar_C -- a Blueprint -- could never be
+// found and the puppet could never resolve its class.
+inline bool IsClassClassName(const char* n)
+{
+    static const char* kAccept[] = {"Class", "BlueprintGeneratedClass",
+                                    "WidgetBlueprintGeneratedClass",
+                                    "AnimBlueprintGeneratedClass"};
+    for (unsigned k = 0; k < sizeof(kAccept) / sizeof(kAccept[0]); ++k) {
+        const char* a = kAccept[k];
+        int i = 0;
+        for (; a[i] && n[i] && a[i] == n[i]; ++i) {}
+        if (a[i] == 0 && n[i] == 0) return true;
+    }
+    return false;
+}
+
+// className == "*Class" means "any class-of-classes" (see IsClassClassName).
 inline bool SlotMatches(void* o, const char* name, const char* className,
                         void* outer, void** out)
 {
@@ -287,7 +362,15 @@ inline bool SlotMatches(void* o, const char* name, const char* className,
         if (!LooksLikeUObject(o)) return true;
         if (!ObjNameIs(o, name)) return true;
         if (outer != nullptr && ObjOuter(o) != outer) return true;
-        if (className != nullptr && !ObjNameIs(ObjClass(o), className)) return true;
+        if (className != nullptr) {
+            if (className[0] == '*') {
+                char cn[64];
+                if (FNameToString(ObjNameRaw(ObjClass(o)), cn, sizeof(cn)) <= 0) return true;
+                if (!IsClassClassName(cn)) return true;
+            } else if (!ObjNameIs(ObjClass(o), className)) {
+                return true;
+            }
+        }
         *out = o;
         return true;
     }
@@ -297,66 +380,27 @@ inline bool SlotMatches(void* o, const char* name, const char* className,
 }
 
 // ---------------------------------------------------------------------------
-// GObjects
-// ---------------------------------------------------------------------------
-// Measured: GUObjectArray at 0x04A64250; the object array (FUObjectItem**) is at
-// +0x10 and the count (int32) at +0x24; FUObjectItem stride 0x18 with the UObject*
-// at item+0.  The stride was measured, not assumed: 0x14 gave 0/64 valid objects
-// and 0x18 gave 64/64 (ANALYSIS.md section 6, "Reflection and hooking").
-static const uint32_t kGUObjectArrayRva = 0x04A64250u;
-static const int kUObjectArrayObjectsOff = 0x10;
-static const int kUObjectArrayNumOff     = 0x24;
-static const int kFUObjectItemStride     = 0x18;
-
-inline void** ObjectsArray()
-{
-    return *(void***)((uintptr_t)Ptr<uint8_t>(kGUObjectArrayRva) + kUObjectArrayObjectsOff);
-}
-
-inline int ObjectCount()
-{
-    return *(int*)((uintptr_t)Ptr<uint8_t>(kGUObjectArrayRva) + kUObjectArrayNumOff);
-}
-
-// Liveness is not "a plausible header": it is the object array slot at that index
-// pointing back at the object (ANALYSIS.md section 6).  This is the check, and it
-// is cheap enough to run before every use.
-inline bool ObjectIsLive(const void* o)
-{
-    if (!o) return false;
-    int32_t idx = ObjInternalIndex(o);
-    if (idx < 0 || idx >= ObjectCount()) return false;
-    void** arr = ObjectsArray();
-    if (!arr) return false;
-    return arr[idx] == o;
-}
-
-// ---------------------------------------------------------------------------
 // Object enumeration
 // ---------------------------------------------------------------------------
-// Used to find a class by name once, then compare OBJECTS (the corpus rule: "DO
-// NOT FIX A CLASS-NAME BUG WITH A STRING COMPARISON -- RESOLVE THE CLASS OBJECT
-// ONCE AND COMPARE OBJECTS").  No hash map: the array is walked linearly because
-// the object graph is ~500 k entries and this runs a handful of times per level.
-inline void* FindObjectByNameAndClass(const char* name, const char* className)
+// Linear walk; a few milliseconds over ~60k objects.  Callers cache the result and
+// re-check it with ObjectIsLive.
+inline void* FindObjectByNameAndClass(const char* name, const char* className,
+                                      void* outer = nullptr)
 {
     int n = ObjectCount();
-    void** arr = ObjectsArray();
-    if (!arr) return nullptr;
     for (int i = 0; i < n; ++i) {
+        void* o = ObjectAt(i);
+        if (!o) continue;
         void* m = nullptr;
-        SlotMatches(arr[i], name, className, nullptr, &m);
+        SlotMatches(o, name, className, outer, &m);
         if (m) return m;
     }
     return nullptr;
 }
 
-// The class default object of a Blueprint generated class is named
-// "Default__<Class>" -- that is UE's own naming, so finding a Blueprint function
-// library's CDO needs no UClass::ClassDefaultObject offset at all.
 inline void* FindClassByName(const char* className)
 {
-    return FindObjectByNameAndClass(className, "Class");
+    return FindObjectByNameAndClass(className, "*Class");
 }
 
 inline void* FindCdo(const char* bpyClassName)
@@ -367,6 +411,15 @@ inline void* FindCdo(const char* bpyClassName)
     for (int i = 0; bpyClassName[i] && w < (int)sizeof(want) - 1; ++i) want[w++] = bpyClassName[i];
     want[w] = 0;
     return FindObjectByNameAndClass(want, nullptr);
+}
+
+// UStruct::SuperStruct.  4.27 shipping builds carry FStructBaseChain at UStruct+0x30
+// (array) / +0x38 (count) -- confirmed in this image: GetActiveBaseSave's IsA test at
+// 0x00E2D136 reads class+0x30 and class+0x38 -- so SuperStruct follows at +0x40.
+static const int kStructSuper = 0x40;
+inline void* SuperOf(const void* ustruct)
+{
+    return ustruct ? *(void**)((const uint8_t*)ustruct + kStructSuper) : nullptr;
 }
 
 // ---------------------------------------------------------------------------
@@ -464,12 +517,10 @@ inline SubstrateStatus RuntimeValidate()
     for (; want[i] && cls[i]; ++i) if (want[i] != cls[i]) break;
     s.fname_ok = (want[i] == 0 && cls[i] == 0 && n > 0);
 
-    // GObjects liveness: at least one object must pass the slot round-trip.
-    int probe = ObjectCount();
-    if (probe > 0 && ObjectsArray() != nullptr) {
-        void** arr = ObjectsArray();
-        s.gobjects_ok = ObjectIsLive(arr[0]);
-    }
+    // GObjects round trip on an object found independently of the array: GEngine's
+    // InternalIndex must lead back to GEngine, and its class to the same class object.
+    // (The old check looked at arr[0] of the chunk table and passed by coincidence.)
+    s.gobjects_ok = ObjectIsLive(gengine) && ObjectIsLive(ObjClass(gengine));
     return s;
 }
 

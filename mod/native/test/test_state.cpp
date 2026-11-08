@@ -22,6 +22,7 @@
 #include "qdpuppet.h"
 #include "qdstream.h"
 #include "qddialogue.h"
+#include "qdenemy.h"
 #include "qdflags.h"
 
 static int g_pass = 0;
@@ -534,6 +535,167 @@ static void TestFlags()
 }
 
 // ===========================================================================
+// stream: the partner-forced set (the veto's bookkeeping)
+// ===========================================================================
+static void TestStreamForce()
+{
+    stream::UnionGuard g;
+    const char* mine[] = {"100_GR"};
+    const char* theirs[] = {"500_AUT", "100_GR"};
+    g.OnLocalList(mine, 1, 1000);
+    g.OnPeerList(1, theirs, 2, 1000);
+    CHECK(g.PeerWants("500_AUT", 1500), "force/peer wants its own level");
+    CHECK(!g.PeerWants("140_GR_ShopIsleOnly", 1500), "force/peer does not want an unlisted level");
+    // The local slot never counts as "the partner needs it" -- the game may hide its
+    // own levels; only the partner overrides.
+    const char* none[] = {"x"};
+    g.OnPeerList(1, none, 0, 2000);
+    CHECK(!g.PeerWants("100_GR", 2500), "force/local wish is not a partner need");
+    CHECK(g.AnyPeerLive(2500), "force/an empty peer list is still a live peer");
+    CHECK(!g.AnyPeerLive(2000 + stream::UnionGuard::kPeerStaleMs + 1), "force/a silent peer goes stale");
+
+    stream::ForceBook b;
+    CHECK(b.Need("500_AUT", 1000), "force/first need asks the caller to show");
+    CHECK(!b.Need("500_AUT", 1200), "force/second need is a refresh, not a second show");
+    CHECK(b.IsForced("500_AUT"), "force/is forced");
+    // Hysteresis: a partner stepping out for less than kReleaseMs keeps the level.
+    CHECK(!b.ShouldRelease("500_AUT", false, false, 1200 + 1000), "force/no release inside the window");
+    CHECK(b.ShouldRelease("500_AUT", false, false, 1200 + stream::ForceBook::kReleaseMs), "force/release after the window");
+    CHECK(!b.IsForced("500_AUT"), "force/released level is no longer forced");
+    // A level the local game now wants is handed back, never hidden by us.
+    b.Need("300_X", 0);
+    CHECK(!b.ShouldRelease("300_X", false, true, 999999), "force/local wish: no hide");
+    CHECK(!b.IsForced("300_X"), "force/local wish: the game owns it again");
+    // Partner still needs it: refresh, no release however long.
+    b.Need("400_Y", 0);
+    CHECK(!b.ShouldRelease("400_Y", true, false, 999999), "force/still needed: kept");
+
+    char out[64];
+    stream::ShortLevelName("/Game/Maps/Ruins/100_GR.100_GR", out, sizeof(out));
+    CHECK(strcmp(out, "100_GR") == 0, "force/short name from a package path");
+    stream::ShortLevelName("140_GR_ShopIsleOnly", out, sizeof(out));
+    CHECK(strcmp(out, "140_GR_ShopIsleOnly") == 0, "force/short name of a bare name");
+}
+
+// ===========================================================================
+// dialogue: per-slot talk board (SYNC-DESIGN 2.7, no global lock)
+// ===========================================================================
+static void TestTalkBoard()
+{
+    dialogue::TalkBoard t;
+    uint8_t npcA[16], npcB[16];
+    dialogue::StableId("Chef_NPC_2/PersistentLevel/100_GR/", npcA);
+    dialogue::StableId("Merchant_NPC_BP_2/PersistentLevel/140_GR_ShopIsleOnly/", npcB);
+    CHECK(!dialogue::TalkBoard::SameId(npcA, npcB), "talk/distinct actors get distinct ids");
+    uint8_t again[16];
+    dialogue::StableId("Chef_NPC_2/PersistentLevel/100_GR/", again);
+    CHECK(dialogue::TalkBoard::SameId(npcA, again), "talk/the id is stable");
+
+    CHECK(t.Accept(1, 5, true, npcA, 0, 1000), "talk/accept");
+    CHECK(t.OtherTalkingTo(0, npcA, 1100), "talk/partner talking to A");
+    CHECK(!t.OtherTalkingTo(1, npcA, 1100), "talk/own slot is not 'other'");
+    CHECK(!t.OtherTalkingTo(0, npcB, 1100), "talk/not talking to B");
+    // Older seq is discarded, never applied backwards.
+    CHECK(!t.Accept(1, 4, false, npcA, 0, 1200), "talk/stale seq discarded");
+    CHECK(t.OtherTalkingTo(0, npcA, 1200), "talk/stale seq changed nothing");
+    // The same seq again only refreshes liveness.
+    CHECK(!t.Accept(1, 5, true, npcA, 0, 5500), "talk/repeat is not a change");
+    CHECK(t.OtherTalkingTo(0, npcA, 5500 + dialogue::TalkBoard::kStaleMs - 1), "talk/repeat kept it live");
+    // A sender that stops publishing does not block an NPC forever.
+    CHECK(!t.OtherTalkingTo(0, npcA, 5500 + dialogue::TalkBoard::kStaleMs + 1), "talk/stale sender releases");
+    // End of talk.
+    CHECK(t.Accept(1, 6, false, npcA, 0, 6000), "talk/end accepted");
+    uint8_t got[16];
+    CHECK(!t.RemoteNpc(1, got, 6001), "talk/ended: no remote npc");
+    // seq wraparound is ordered, not refused.
+    t.Accept(0, 0xFFFFFFF0u, true, npcB, 0, 7000);
+    CHECK(t.Accept(0, 3, true, npcA, 0, 7001), "talk/seq wraps forward");
+}
+
+// ===========================================================================
+// enemy: ownership, convergence, kill log, row budget
+// ===========================================================================
+static void TestEnemy()
+{
+    const uint32_t g1[4] = {0x5ae3b37bu, 0x4f721b25u, 0xbd55a3b5u, 0x958ab1c2u};
+    const uint32_t g2[4] = {1, 2, 3, 4};
+    enemy::HostView v;
+    CHECK(v.Decide(g1, false, 1000) == enemy::LOCAL, "enemy/no host row: the peer runs it");
+    v.OnRow(g1, 0, 0, 0, 0, 40000, enemy::kAlive, 1000);
+    CHECK(v.Decide(g1, false, 1500) == enemy::DRIVEN, "enemy/fresh row: driven");
+    CHECK(v.Decide(g1, false, 1000 + enemy::HostView::kFreshMs + 1) == enemy::LOCAL,
+          "enemy/never-driven copy with an old row stays local");
+    // Hysteresis: one late datagram must not wake the AI of a driven copy.
+    CHECK(v.Decide(g1, true, 1000 + enemy::HostView::kFreshMs + 1) == enemy::DRIVEN,
+          "enemy/driven copy holds through a short gap");
+    CHECK(v.Decide(g1, true, 1000 + enemy::HostView::kReleaseMs + 1) == enemy::LOCAL,
+          "enemy/driven copy released after the gap");
+    // Death, refreshed by the host's re-broadcast, then forgotten after a rest.
+    v.OnRow(g1, 0, 0, 0, 0, 0, 0, 3000);
+    CHECK(v.Decide(g1, false, 3100) == enemy::KILL, "enemy/dead row: kill");
+    CHECK(v.Decide(g1, false, 3000 + enemy::HostView::kDeadStaleMs + 1) == enemy::LOCAL,
+          "enemy/a death the host stopped sending (rest) no longer kills");
+    // Alive again replaces dead.
+    v.OnRow(g1, 0, 0, 0, 0, 65535, enemy::kAlive, 4000);
+    CHECK(v.Decide(g1, false, 4001) == enemy::DRIVEN, "enemy/respawn replaces the death");
+    v.OnRow(g2, 0, 0, 0, 0, 1, enemy::kAlive, 4000);
+    CHECK(v.Count() == 2, "enemy/two keys");
+    const uint32_t zero[4] = {0, 0, 0, 0};
+    v.OnRow(zero, 0, 0, 0, 0, 1, enemy::kAlive, 4000);
+    CHECK(v.Count() == 2, "enemy/zero guid ignored");
+
+    // HP fraction.
+    CHECK(enemy::HpFrac(100, 100) == 65535, "enemy/full hp");
+    CHECK(enemy::HpFrac(0, 100) == 0, "enemy/zero hp");
+    CHECK(enemy::HpFrac(0.0001f, 100) == 1, "enemy/a sliver is alive, not 0");
+    CHECK(enemy::HpFrac(50, 0) == 0, "enemy/no max is not a divide");
+
+    // Convergence: downward only, dead band, overkill on death.
+    CHECK(Approx(enemy::ConvergeDamage(100, 100, 32768, true), 50.0f, 0.1f), "enemy/converge to host fraction");
+    CHECK(enemy::ConvergeDamage(40, 100, 32768, true) == 0.0f, "enemy/never heals");
+    CHECK(enemy::ConvergeDamage(50.5f, 100, 32768, true) == 0.0f, "enemy/inside the dead band");
+    CHECK(enemy::ConvergeDamage(30, 100, 0, false) > 30.0f, "enemy/host dead: overkill");
+    CHECK(enemy::ConvergeDamage(0, 100, 0, false) == 0.0f, "enemy/already dead: nothing");
+
+    // A hit is a fraction of max, so the host scales it by its own max.
+    CHECK(enemy::HitFrac(100, 75, 100) == 16384, "enemy/hit fraction");
+    CHECK(enemy::HitFrac(75, 100, 100) == 0, "enemy/regen is not a hit");
+
+    // Kill log: dedup, removal, bounded.
+    enemy::KillLog k;
+    k.Add(g1); k.Add(g1); k.Add(g2);
+    CHECK(k.Count() == 2, "enemy/kill log dedups");
+    k.Remove(g1);
+    CHECK(k.Count() == 1 && enemy::SameGuid(k.At(0), g2), "enemy/kill log removal");
+    for (uint32_t i = 0; i < 200; ++i) { uint32_t g[4] = {i + 10, 0, 0, 1}; k.Add(g); }
+    CHECK(k.Count() == enemy::KillLog::kMax, "enemy/kill log bounded");
+
+    // Row budget: never more than asked, every row visited, then wraps.
+    enemy::RowCursor c;
+    int n = 0;
+    int f = c.Take(45, 16, &n);
+    CHECK(f == 0 && n == 16, "enemy/cursor first chunk");
+    f = c.Take(45, 16, &n);
+    CHECK(f == 16 && n == 16, "enemy/cursor second chunk");
+    f = c.Take(45, 16, &n);
+    CHECK(f == 32 && n == 13, "enemy/cursor tail");
+    f = c.Take(45, 16, &n);
+    CHECK(f == 0 && n == 16, "enemy/cursor wraps");
+    f = c.Take(10, 16, &n);
+    CHECK(f == 0 && n == 10, "enemy/cursor survives a shrinking set");
+
+    // Follow: snaps on a teleport, eases otherwise, yaw takes the short way.
+    float cur[3] = {0, 0, 0};
+    float far[3] = {5000, 0, 0};
+    enemy::Follow(cur, far, 0.016f);
+    CHECK(cur[0] == 5000.0f, "enemy/follow snaps across a teleport");
+    float near_[3] = {5100, 0, 0};
+    enemy::Follow(cur, near_, 0.016f);
+    CHECK(cur[0] > 5000.0f && cur[0] < 5100.0f, "enemy/follow eases");
+    CHECK(enemy::FollowYaw(170.0f, -170.0f, 1.0f) > 170.0f, "enemy/yaw short way round");
+}
+
+// ===========================================================================
 int main()
 {
     printf("=== qd state-machine tests ===\n");
@@ -542,6 +704,9 @@ int main()
     TestStream();
     TestDialogue();
     TestFlags();
+    TestStreamForce();
+    TestTalkBoard();
+    TestEnemy();
     printf("=== %d passed, %d failed ===\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

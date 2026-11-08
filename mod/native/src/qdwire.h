@@ -33,6 +33,10 @@ enum Kind {
     K_ACTOR_STATES= 0x12,
     K_INVENTORY   = 0x13,
     K_ENEMY       = 0x14,
+    K_EQUIPMENT   = 0x15,
+    K_EFFECT      = 0x16,
+    K_EFFECT_MOVE = 0x17,
+    K_STATUS      = 0x18,
     K_INTENT      = 0x20,
     K_DIALOGUE    = 0x21,
     K_LEVEL_UNION = 0x22,
@@ -46,6 +50,8 @@ enum IntentKind {
     I_DIALOGUE_ANS  = 4,
     I_CHECKPOINT    = 5,
     I_ACTOR_STATE   = 6,
+    I_ENEMY_HIT     = 7,   // peer hit a host-driven enemy copy (WIRE.md 3.10)
+    I_ENEMY_RECORD  = 8,   // peer wrote a persistence record for an enemy it ran itself
 };
 
 // --------------------------------------------------------------------------
@@ -203,6 +209,100 @@ inline bool ReadPlayer(Reader& r, PlayerRow* out)
     return r.ok;
 }
 
+// ---- equipment (WIRE.md 3.13) ---------------------------------------------
+// What the sender holds, absolute and latest-wins: rev(u32) n(u8) then per item
+// hand(u8: 0 right, 1 left) mesh_kind(u8: 1 static, 2 skeletal) path(str)
+// xform(10 x i32: location 1/100 cm, quaternion 1/1e6, scale 1/1000).
+static const int kMaxEquipItems = 4;
+
+struct EquipItem {
+    uint8_t hand;
+    uint8_t mesh_kind;
+    char    path[200];
+    int32_t xform[10];
+};
+
+struct EquipBody {
+    uint32_t  rev;
+    int       n;
+    EquipItem items[kMaxEquipItems];
+};
+
+inline void WriteEquip(Writer& w, const EquipBody& b)
+{
+    int n = b.n < 0 ? 0 : (b.n > kMaxEquipItems ? kMaxEquipItems : b.n);
+    w.U32(b.rev);
+    w.U8((uint8_t)n);
+    for (int i = 0; i < n; ++i) {
+        w.U8(b.items[i].hand);
+        w.U8(b.items[i].mesh_kind);
+        w.Str(b.items[i].path);
+        for (int k = 0; k < 10; ++k) w.I32(b.items[i].xform[k]);
+    }
+}
+
+inline bool ReadEquip(Reader& r, EquipBody* b)
+{
+    b->rev = r.U32();
+    b->n = r.U8();
+    if (b->n > kMaxEquipItems) return false;
+    for (int i = 0; i < b->n; ++i) {
+        b->items[i].hand = r.U8();
+        b->items[i].mesh_kind = r.U8();
+        if (r.Str(b->items[i].path, sizeof(b->items[i].path)) >= (int)sizeof(b->items[i].path)) return false;
+        for (int k = 0; k < 10; ++k) b->items[i].xform[k] = r.I32();
+    }
+    return r.ok;
+}
+
+// ---- effect (WIRE.md 3.14) ------------------------------------------------
+// One visual event from the sender's world: kind(u8: 1 projectile spawned, 2 ended --
+// both sent as EFFECT, reliable; 3 moved -- sent as EFFECT_MOVE 0x17, unreliable, 15 Hz) id(u16, the sender's handle for it) class(str "<package>.<object>"
+// of the actor class, "" for kind 2) x,y,z(i32 1/8 cm) pitch,yaw(i16 1/65536 turn)
+// vx,vy,vz(i32 1/8 cm/s) life_ms(u16).
+struct EffectBody {
+    uint8_t  kind;
+    uint16_t id;
+    char     cls[200];
+    int32_t  px, py, pz;
+    int16_t  pitch, yaw;
+    int32_t  vx, vy, vz;
+    uint16_t life_ms;
+};
+
+inline void WriteEffect(Writer& w, const EffectBody& e)
+{
+    w.U8(e.kind);
+    w.U16(e.id);
+    w.Str(e.cls);
+    w.I32(e.px); w.I32(e.py); w.I32(e.pz);
+    w.I16(e.pitch); w.I16(e.yaw);
+    w.I32(e.vx); w.I32(e.vy); w.I32(e.vz);
+    w.U16(e.life_ms);
+}
+
+inline bool ReadEffect(Reader& r, EffectBody* e)
+{
+    e->kind = r.U8();
+    e->id = r.U16();
+    if (r.Str(e->cls, sizeof(e->cls)) >= (int)sizeof(e->cls)) return false;
+    e->px = r.I32(); e->py = r.I32(); e->pz = r.I32();
+    e->pitch = r.I16(); e->yaw = r.I16();
+    e->vx = r.I32(); e->vy = r.I32(); e->vz = r.I32();
+    e->life_ms = r.U16();
+    return r.ok;
+}
+
+// ---- STATUS (WIRE.md 3.15) -------------------------------------------------
+// Body: rev(u32) mask(u32).  Latest-wins; bits are StatusBit.
+enum StatusBit : uint32_t {
+    ST_MAGIC_FIRE = 1u << 0, ST_MAGIC_POISON = 1u << 1, ST_POISON = 1u << 2, ST_DISEASE = 1u << 3,
+    ST_WEAKEN = 1u << 4, ST_HEAVY = 1u << 5, ST_BINDING = 1u << 6, ST_BERSERK = 1u << 7,
+    ST_IRONSKIN = 1u << 8, ST_RADIANT = 1u << 9,
+};
+inline void WriteStatus(Writer& w, uint32_t rev, uint32_t mask) { w.U32(rev); w.U32(mask); }
+inline bool ReadStatus(Reader& r, uint32_t* rev, uint32_t* mask) { *rev = r.U32(); *mask = r.U32(); return r.ok; }
+
 // ---- flags ----------------------------------------------------------------
 // Body: rev(u32), n(u16), then as many entries as fit.
 //
@@ -315,6 +415,30 @@ inline int WriteEnemyChunk(Writer& w, const EnemyRow* e, int n, int first)
     return i;
 }
 
+inline bool ReadEnemyHeader(Reader& r, uint16_t* n)
+{
+    *n = r.U16();
+    return r.ok;
+}
+
+inline bool ReadEnemyRow(Reader& r, EnemyRow* e)
+{
+    r.Guid(e->guid);
+    e->px = r.I32(); e->py = r.I32(); e->pz = r.I32();
+    e->yaw = r.I16();
+    e->hp = r.U16();
+    e->flags = r.U8();
+    return r.ok;
+}
+
+// ENEMY.flags (WIRE.md 3.9).  hp is a FRACTION of the sender's max HP, 0..65535:
+// both machines run the same enemy data, but the max can differ (equipment such as
+// the crown multiplies enemy HP on one machine only), so an absolute value would
+// mean a different health bar on each side.
+static const uint8_t kEnemyAlive  = 0x01;
+static const uint8_t kEnemyDriven = 0x02;
+static const uint8_t kEnemyBody   = 0x04;
+
 // ---- dialogue -------------------------------------------------------------
 struct DialogueBody {
     uint32_t seq;
@@ -362,6 +486,63 @@ inline void WriteLevelUnionNamesFlag(Writer& w, uint8_t hasNames)
     w.U8(hasNames);
 }
 
+static const int kLevelUnionMaxNames = 64;
+static const int kLevelUnionNameCap  = 64;
+
+// The whole body.  `names`/`n` is the sender's list; bit i set = names[i] wanted.
+// names == nullptr sends the steady-state body (bits only).
+inline void WriteLevelUnion(Writer& w, const uint8_t* bits, uint16_t bitsLen,
+                            const char* const* names, uint16_t n)
+{
+    WriteLevelUnionHeader(w, bitsLen);
+    if (bitsLen) w.Bytes(bits, bitsLen);
+    WriteLevelUnionNamesFlag(w, names ? 1 : 0);
+    if (names) {
+        w.U16(n);
+        for (uint16_t i = 0; i < n; ++i) w.Str(names[i]);
+    }
+}
+
+struct LevelUnionBody {
+    uint16_t bits_len;
+    uint8_t  bits[kLevelUnionMaxNames / 8];
+    bool     has_names;
+    uint16_t n;                 // names actually stored (<= kLevelUnionMaxNames)
+    uint16_t n_sent;            // names the sender listed
+    char     name[kLevelUnionMaxNames][kLevelUnionNameCap];
+};
+
+inline bool LevelUnionBit(const LevelUnionBody& b, int i)
+{
+    if (i < 0 || i / 8 >= b.bits_len || i / 8 >= (int)sizeof(b.bits)) return false;
+    return (b.bits[i / 8] >> (i % 8)) & 1;
+}
+
+inline bool ReadLevelUnion(Reader& r, LevelUnionBody* b)
+{
+    b->bits_len = r.U16();
+    if (!r.Room(b->bits_len)) { r.ok = false; return false; }
+    for (int i = 0; i < (int)sizeof(b->bits); ++i) b->bits[i] = 0;
+    for (int i = 0; i < b->bits_len; ++i) {
+        uint8_t v = r.U8();
+        if (i < (int)sizeof(b->bits)) b->bits[i] = v;
+    }
+    b->has_names = r.U8() != 0;
+    b->n = b->n_sent = 0;
+    if (b->has_names) {
+        b->n_sent = r.U16();
+        for (int i = 0; i < b->n_sent && r.ok; ++i) {
+            char tmp[kLevelUnionNameCap];
+            if (r.Str(tmp, sizeof(tmp)) < 0) return false;
+            if (b->n < kLevelUnionMaxNames) {
+                memcpy(b->name[b->n], tmp, sizeof(tmp));
+                ++b->n;
+            }
+        }
+    }
+    return r.ok;
+}
+
 // ---- inventory ------------------------------------------------------------
 // Body: rev(u32), n(u16), then n x {str path, i32 count}.  Cross-checked against
 // doc/vectors.txt `inventory`.
@@ -392,13 +573,34 @@ struct IntentBody {
     uint16_t    line;
     uint16_t    option;
     uint32_t    guid[4];
+    int32_t     value2;    // I_ENEMY_RECORD: remaining HP (centi)
 };
+
+// kind 7: guid spawner, i32 damage as a fraction of max HP (1/65535 units, may
+// exceed 65535 for an overkill).  kind 8: guid spawner, i32 respawn_centi,
+// i32 hp_centi -- the three scalars of StoreEnemySaveState (bValid is implicit).
+inline void WriteIntentEnemyHit(Writer& w, uint32_t basedOnRev, const uint32_t guid[4],
+                                int32_t damageFrac)
+{
+    WriteIntentHeader(w, I_ENEMY_HIT, basedOnRev);
+    w.Guid(guid);
+    w.I32(damageFrac);
+}
+
+inline void WriteIntentEnemyRecord(Writer& w, uint32_t basedOnRev, const uint32_t guid[4],
+                                   int32_t respawnCenti, int32_t hpCenti)
+{
+    WriteIntentHeader(w, I_ENEMY_RECORD, basedOnRev);
+    w.Guid(guid);
+    w.I32(respawnCenti);
+    w.I32(hpCenti);
+}
 
 inline bool ReadIntent(Reader& r, IntentBody* b)
 {
     b->kind = r.U8();
     b->based_on_rev = r.U32();
-    b->value = 0; b->mode = 0; b->line = 0; b->option = 0;
+    b->value = 0; b->mode = 0; b->line = 0; b->option = 0; b->value2 = 0;
     b->guid[0] = b->guid[1] = b->guid[2] = b->guid[3] = 0;
     b->name[0] = 0;
     switch (b->kind) {
@@ -416,8 +618,14 @@ inline bool ReadIntent(Reader& r, IntentBody* b)
         b->option = r.U16();
         break;
     case I_ACTOR_STATE:
+    case I_ENEMY_HIT:
         r.Guid(b->guid);
         b->value = r.I32();
+        break;
+    case I_ENEMY_RECORD:
+        r.Guid(b->guid);
+        b->value = r.I32();
+        b->value2 = r.I32();
         break;
     default:
         return false;

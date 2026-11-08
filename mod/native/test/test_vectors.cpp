@@ -295,6 +295,18 @@ static void TestAll()
         w.I32(42);
         Compare("intent_actor_state", buf, w.len);
     }
+    {
+        Writer w(buf, sizeof(buf));
+        const uint32_t g[4] = { 0x03020100u, 0x07060504u, 0x0b0a0908u, 0x0f0e0d0cu };
+        WriteIntentEnemyHit(w, 11, g, 16384);
+        Compare("intent_enemy_hit", buf, w.len);
+    }
+    {
+        Writer w(buf, sizeof(buf));
+        const uint32_t g[4] = { 0x03020100u, 0x07060504u, 0x0b0a0908u, 0x0f0e0d0cu };
+        WriteIntentEnemyRecord(w, 12, g, 30000, 0);
+        Compare("intent_enemy_record", buf, w.len);
+    }
 
     // dialogue_state
     {
@@ -322,6 +334,14 @@ static void TestAll()
         w.Str("L_Main");
         w.Str("L_Dungeon");
         w.Str("L_Boss");
+        Compare("level_union", buf, w.len);
+    }
+    // The same body through the one-call writer the module uses.
+    {
+        const char* names[3] = {"L_Main", "L_Dungeon", "L_Boss"};
+        const uint8_t bits[2] = {0x05, 0x02};
+        Writer w(buf, sizeof(buf));
+        WriteLevelUnion(w, bits, 2, names, 3);
         Compare("level_union", buf, w.len);
     }
     // level_union_steady: same bits, no name table

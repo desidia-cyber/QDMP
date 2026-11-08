@@ -200,5 +200,114 @@ private:
     mutable bool  overflow_;
 };
 
+// ---------------------------------------------------------------------------
+// TalkBoard -- who is talking to which NPC, per player slot.
+// ---------------------------------------------------------------------------
+// SYNC-DESIGN 2.7 (owner's decision, 24-quest-closeout 5a/5b): there is NO global
+// NPC lock; both players may talk at once, progression is host-authoritative.  What
+// must not happen is two players in the SAME conversation, because both machines then
+// run the same talk Blueprint and its one-time actions (turn-ins, gifts) fire twice.
+// So the published state is per slot, and the only enforcement is local: the NPC the
+// partner is talking to is made non-interactable on this machine with the game's own
+// BlockInteract / ReenableInteract pair.
+//
+// A slot's state is latest-wins by `seq` (a lost datagram costs a beat), and it goes
+// stale: a sender that stops publishing (crash, disconnect) must not leave an NPC
+// blocked for the rest of the session.
+struct TalkState {
+    bool     present;
+    uint32_t seq;
+    bool     talking;
+    uint8_t  npc[16];
+    uint16_t line;
+    uint32_t rx_ms;
+};
+
+class TalkBoard {
+public:
+    static const int      kSlots = 2;
+    static const uint32_t kStaleMs = 5000;    // senders republish at 1 Hz
+
+    TalkBoard() { Reset(); }
+    void Reset()
+    {
+        for (int i = 0; i < kSlots; ++i) { s_[i].present = false; s_[i].seq = 0; s_[i].talking = false; s_[i].rx_ms = 0; }
+    }
+
+    // Remote publish.  Returns false (discarded) for an older or repeated seq; a repeat
+    // still refreshes liveness, which is what the 1 Hz republish is for.
+    bool Accept(uint8_t slot, uint32_t seq, bool talking, const uint8_t npc[16],
+                uint16_t line, uint32_t now_ms)
+    {
+        if (slot >= kSlots) return false;
+        TalkState& t = s_[slot];
+        if (t.present && (int32_t)(seq - t.seq) <= 0) {
+            if (seq == t.seq) t.rx_ms = now_ms;
+            return false;
+        }
+        t.present = true;
+        t.seq = seq;
+        t.talking = talking;
+        for (int i = 0; i < 16; ++i) t.npc[i] = npc ? npc[i] : 0;
+        t.line = line;
+        t.rx_ms = now_ms;
+        return true;
+    }
+
+    void Forget(uint8_t slot) { if (slot < kSlots) s_[slot].present = false; }
+
+    // Is a live slot other than `self` talking to this NPC?
+    bool OtherTalkingTo(uint8_t self, const uint8_t npc[16], uint32_t now_ms) const
+    {
+        for (int i = 0; i < kSlots; ++i) {
+            if (i == self) continue;
+            const TalkState& t = s_[i];
+            if (!t.present || !t.talking || Stale(t, now_ms)) continue;
+            if (SameId(t.npc, npc)) return true;
+        }
+        return false;
+    }
+
+    // The NPC a live remote slot is talking to.
+    bool RemoteNpc(uint8_t slot, uint8_t out[16], uint32_t now_ms) const
+    {
+        if (slot >= kSlots) return false;
+        const TalkState& t = s_[slot];
+        if (!t.present || !t.talking || Stale(t, now_ms)) return false;
+        for (int i = 0; i < 16; ++i) out[i] = t.npc[i];
+        return true;
+    }
+
+    static bool SameId(const uint8_t* a, const uint8_t* b)
+    {
+        for (int i = 0; i < 16; ++i) if (a[i] != b[i]) return false;
+        return true;
+    }
+
+private:
+    static bool Stale(const TalkState& t, uint32_t now_ms)
+    {
+        uint32_t age = (now_ms > t.rx_ms) ? now_ms - t.rx_ms : 0;
+        return age > kStaleMs;
+    }
+    TalkState s_[kSlots];
+};
+
+// Stable 128-bit id for an actor placed in a cooked level: FNV-1a over its path
+// ("<world>/<level>/<object name>"), two lanes.  NPC_Base exposes no authored GUID the
+// native side can read without an oracle, but a placed object's name and outer chain
+// come from the same cooked package on both machines, so they agree without any
+// negotiation.  (A runtime-spawned NPC would get a per-machine name; none is known.)
+inline void StableId(const char* path, uint8_t out[16])
+{
+    uint64_t h1 = 1469598103934665603ULL, h2 = 0x84222325CBF29CE4ULL;
+    for (int i = 0; path && path[i]; ++i) {
+        h1 = (h1 ^ (uint8_t)path[i]) * 1099511628211ULL;
+        h2 = (h2 ^ (uint8_t)path[i]) * 1099511628211ULL;
+        h2 ^= h2 >> 29;
+    }
+    for (int i = 0; i < 8; ++i) { out[i] = (uint8_t)(h1 >> (8 * i)); out[8 + i] = (uint8_t)(h2 >> (8 * i)); }
+}
+
 } // namespace dialogue
 } // namespace qd
