@@ -1006,4 +1006,283 @@ death detection waiting for an event the damage path never sends. The two lanes 
 unproven -- G2's chest refresh and the in-world travel follow -- are both a resolver/identity
 problem now, not a transport one.
 
+---
+
+## Session 8 — 2026-11-08 (parity live, G2's real identity, and the two stop mechanisms)
+
+This branch is `sync-fix` at `80364e3` plus the enemy-parity merge, then `sync-fix` at
+`3f0e5ed` (the offline G3 soft-pointer grant and G4 player-HP fallback). Every write path is
+on (`SuppressMenuPause=1` too, so the pause/dilation hooks are exercised), `LogLevel=3` so
+the parity debug lines exist. `tools/session8.ps1` is the whole run in one process: relay,
+two instances, the driving, the collection and the teardown. It reads the roles from
+`session established`: **host=inst1, peer=inst2** in every run below.
+
+### R65. The load crash: a silent exit at the autoload, and the containment that fixed it
+
+The first full run **ended the host at 22:02:45**, exactly after
+`dev autoload: Load Slot(0) called` (the log's last line is the new `clock:` line). There was
+**no WER event, no dump, and no `ERR` line** — the process exited rather than faulted, which
+is the class of failure Session 7's two use-after-free bugs also looked like from outside.
+
+A single instance with the same image and switches survived its own load and reached
+gameplay, so the load itself was fine; the difference is a **connected peer during the
+load**. The two always-on reads added this round touch UObjects every frame: the menu check
+(`LocalOpenMenuName`) reads the pawn and its menu widgets, and the loot scan's derived key
+reads the drop actor's class and transform. Session 7's rule (R64) is that a pump reading a
+pointer across a world switch is a read of freed memory; both are now **SEH-contained**, the
+same pattern the enemy pumps use. Measured afterwards:
+
+```
+PASS [1] alive after 180s idle
+PASS [2] alive after 180s idle
+[1] error/fault lines: 0
+[2] error/fault lines: 0
+```
+
+and the same for a later 60 s idle. The exact fault was not left in WER; the containment is
+the fix, and it has not recurred over four full boots (two hosts, two peers) and two partial
+runs. If it returns, the next datum is the `qdcoop-qd1.log.prev` boundary and the UE
+`-abslog` file (now passed by `run-hidden.ps1 -AbsLog`).
+
+### R66. Enemy parity live: three identity sources, the same key, and the bandwidth line
+
+The identity lines now exist at INFO for all three sources, and the two logs agree on the
+keys:
+
+```
+[1] enemy id: spawner 13F4155E (Ribber_Base_BP_C)
+[2] enemy id: spawner 13F4155E (Ribber_Base_BP_C)
+...
+shared enemy keys: inst1=256 inst2=133 common=61
+```
+
+The `common` set is keys minted by one machine and seen by the other; the count is large
+because the spawner set is shared and because adoption only runs for hash-derived keys. The
+detail lane and its budget report as the design asks:
+
+```
+INFO enemy detail sent guid=B55C570E anim=1 seq=17 status=00000000 boss=0 d=19082 /Game/Enemies/Crawler/Animations/Crawler_JumpingBite_Montage...
+DBG  enemy detail: candidates=1 sent=1 budgetDrops=0 farSkips=0 overflows=0
+```
+
+and the follower's montage read-back appeared in the first run of the pair:
+
+```
+INFO enemy anim: Montage_Play verified by read-back guid=9988EA07
+INFO enemy detail applied guid=9988EA07 anim=1 seq=2 played (montage proven at least once this session)
+```
+
+The peer's own bandwidth line is absent in the later runs because the peer's enemies were
+not animating there; the host's is present. `sent` never exceeded 10 in a rolling second in
+any captured block; `budgetDrops=0`, `overflows=0`.
+
+### R67. G2's chest is NOT a SavableActor on this build — and that is the answer
+
+`near:closedchest` now resolves the SA chest and the interact dump names its state:
+
+```
+INFO dev interact: resolved 'closedchest' -> SG_Chest_BP2 at 6185,-18108,-14047 dist=23818
+INFO dev interact: target=SG_Chest_BP2 [SG_Chest_BP_C] component=found verb=Interact
+INFO dev state: SG_Chest_BP2 [SG_Chest_BP_C] savable=no guid=- index=-1 value=-1
+     isset=? opened=0 isOpen=n/a mySaveData=1 guids=0
+INFO flag CHANGE TotalChestsOpened : 1 -> 2
+```
+
+The chest has **no GUID, no `SavableActorStates` entry and no `GUIDs` array**. Its opened
+state is its own **`Opened` bool** (0 here) plus the global `TotalChestsOpened` flag. So the
+R60 observation was not "the chest was already open": it was the wrong lane. `ActorStateSync`
+cannot carry this actor at all, because the lane's identity is the GUID.
+
+The peer's local `Opened` did change (the verb ran), and the **key** pickup's savable did make
+the round trip — this is the `based_on=0` fix (R70) working:
+
+```
+INFO actor-state intent applied: guid=000934FA-4BD964EC-ABDD8DBE-59AF657E value=1
+INFO actor-state refresh ok ... opened=1
+```
+
+The chest half is therefore **FAIL as an actor-state**, with a concrete next step: give the
+chest a stable key of its own (the level path hash the placed-enemy identity already uses)
+and sync its `Opened` bool through a lane that is not keyed by GUID, or make the chest's own
+Blueprint write a per-chest `NamedSaveData` key. The `dev state:` line is what makes that a
+design decision rather than another guess.
+
+### R68. The in-world travel resolver is fixed; the follower's verb is the next wall
+
+The resolver now keeps the actor `RigFindNear` found, and the follower resolves the same
+name through a streamed level:
+
+```
+INFO travel: resolved 'Teleporter_Aqr' without the outer-chain test (its level is streamed, not the world)
+```
+
+The origin's call no longer re-resolves by name, and it runs. The follower then reports a
+different, real fact:
+
+```
+WARN travel: cannot follow Teleporter_GR/Ruins_Level_00: TeleportToLocation has no LocationData parameter
+```
+
+The chest run and the travel run both resolved `Teleporter_GR`, so the resolver half of R61
+is closed. The follower's `FS_PlayerChar.TeleportToLocation` signature does not expose the
+`Location Data` object parameter on that machine's pawn class; the next probe is the live
+signature dump of that pawn (the error now names its class). `travel: followed` is still
+**NOT-REACHED**.
+
+### R69. Loot: the derived key works; the tombstone half did not fire in the last window
+
+The build's drop actor exposes no `{source, item}` property (R62), so the identity is derived
+from the item class and the quantized spawn point. Measured:
+
+```
+INFO loot: drop 8CD5056D#0 = /Game/Items/Consumables/Herb/Herb_Item_BP.Herb_Item_BP_C
+INFO loot: merged 1 entry rev=69
+```
+
+The two machines agree on the derived key and the host merges the set. `near:loot` selects the
+ledger's actor rather than the nearest placed pickup (the earlier `near:drop` picked a placed
+herb). The pickup/tombstone lines did not appear in the final window: the ledger entry and the
+actor the player touched were not the same one in time. The lane is **PARTIAL**: identity
+proven, disappearance not.
+
+### R70. The G3 grant and consumption halves both land
+
+The key pickup, grant and consumption, on the two machines:
+
+```
+[2] INFO item intent sent /Game/Items/KeyItems/BookKeys/Alchemy/BookKey_00_Alchemy_Item... x1 rev=857 try 1/5
+[1] INFO write api: AddItemToInventory /Game/Items/KeyItems/BookKeys/Alchemy/BookKey_00_Alchemy_Item... +1 read back 1 -> 2
+[1] INFO inventory grant applied: ... x1 (peer total 1 rev=929)
+[2] INFO item intent confirmed: ... host=1
+[2] INFO rig: use lever -> ... removed=1 ok=1
+[2] INFO write api: TryConsumingItemFromInventory ... -1 read back 2 -> 1
+[2] INFO item consume sent ... rev=933 try 1/5
+[1] INFO inventory consume applied: ... -1 (peer total 1 rev=933)
+[2] INFO item consume confirmed: ... host=1
+```
+
+Both halves PASS. The grant path's soft-object write is the `3f0e5ed` fix; the consumption
+path is driven through the game's own consumer, and the `last`-grant path removes the need to
+reconstruct a soft path from a log line.
+
+### R71. The G4 receiver moves the player's HP and names the path
+
+The host sends one `K_DAMAGE`, the peer applies it through the new fallback, and the HP moves:
+
+```
+[1] INFO rig: pdmg -> guid=C22D6A9C amount=20.0 centi=2000 sent=1 (G4 receiver provocation)
+[2] INFO damage: TryApplyDamage param DamageToApply size=216 on the local player, amount -> DamageAmount @0
+[2] INFO damage: player hp via Health (TryApplyDamage had no effect) 20.0 (TryApplyDamage returned 0.00) hp 400.0 -> 380.0
+[2] INFO damage from enemy C22D6A9C melee: 20.0 applied hp 400.0 -> 380.0 (no local actor for the attacker)
+[2] INFO god: health refilled 380.0 -> 400.0 (refills=2)
+```
+
+PASS. No `player damage had NO effect` line. The `god` floor is the rig's, not the
+receiver's; the `damage:` line is printed from the value read back inside the call.
+
+### R72. Menu time dilation: both stop mechanisms, and a stray 0.00 with no menu
+
+The pause hook (`SuppressMenuPause=1`) now has a sibling on
+`UGameplayStatics::SetGlobalTimeDilation`, and a poll that restores a direct
+`AWorldSettings` write. Measured on the host, with the pretend-menu lever:
+
+```
+INFO rig: menu lever -> pretend menu open, SetGlobalTimeDilation(0.20) issued; dilation 1.00 -> 0.20
+WARN restored global time dilation 0.20 -> 1.00 (menu DevPretendMenu)
+```
+
+and with **no menu at all** — which is the case the first run found on the peer, whose
+`unpaused` clock sat at `840.3` while its `dilation` read `0.00`:
+
+```
+INFO rig: menu lever -> no menu, pretend menu closed, SetGlobalTimeDilation(0.20) issued
+WARN restored global time dilation 0.20 -> 1.00 (menu none)
+PASS a stray low dilation with no menu did not stop the world
+```
+
+Both worlds' `unpaused` clocks advance across every window, on the host and on the peer:
+
+```
+INFO clock: dilation=1.00 real=... unpaused=... delta=... menu=-
+PASS the host world clock keeps advancing with its menu open
+PASS the peer world clock keeps advancing
+```
+
+The only exception is the Escape `PauseMenu_C` (the task's named exception). Enemy hit-stop
+is a deliberate casualty of the rule: a local slow-mo is not worth a frozen partner. PASS.
+
+### R73. The re-broadcast bug in the actor-state lane: `based_on=0` was refused as stale
+
+The peer's intent carried `rev=0` in every run, and the host refused every one:
+
+```
+[2] INFO actor-state intent sent guid=23B24B15... value=38 rev=0 try 1/5
+[1] INFO actor-state intent refused (stale): based_on=0 last_sent=442
+```
+
+`based_on=0` means "this peer has not yet applied ANY host body", not "an older world". The
+gate now accepts zero and still refuses a non-zero baseline older than the last publish. The
+key's savable then applied on the host and refreshed (`actor-state intent applied`,
+`actor-state refresh ok ... opened=1`). The residual finding is separate and named: **neither
+log contains `actor states applied=...`**, so the host's absolute `K_ACTOR_STATES` body is
+still not being applied on the peer. The intent gate is now correct; the peer's mirror and
+its `confirmed=1` line still need that body.
+
+### R74. Item 7: no game hit was provoked
+
+The enemies near the players did attack — the montage lane carried
+`Crawler_JumpingBite_Montage` — but the damage lane refused them as out of range:
+
+```
+DBG damage: swing not sent guid=44D6AA74 owner=1 peerInWorld=1 worldsAgree=1 havePos=1 range=350 (GetAttackRange)
+```
+
+No `player body hit ... -> sent` appeared. The enemy Blueprint surface near the player is a
+trap enemy with no attack UFUNCTION (`InitDeathFade`, `ActivateTrap`, `EnterTrapMode`,
+`ExecuteUbergraph`), so the rig's `qd.eattack` cannot call one. Provoking a hit needs a
+melee enemy whose `TargetPlayer` is the proxy at attack range; the target steering itself is
+proven (`TargetPlayer ... -> the remote body (read back)`). **FAIL (no hit)**.
+
+### Bugs fixed this session
+
+* **Load crash containment** (R65): SEH on the always-on menu/pawn read and on the loot
+  key read; no recurrence across four boots.
+* **Travel resolver** (R68): `FollowTravelActor` uses the actor the search found;
+  `FindTravelActor` falls back to the cooked instance name for a streamed level.
+* **Loot identity** (R69): `{item class, quantized spawn point, coincidence index}`, with
+  unit tests; `near:loot` selects the ledger's actor, not a placed pickup.
+* **G2's question answered and instrumented** (R67): `dev state:` prints GUID/index/value/
+  `Opened`/`mySaveData`; `near:closedchest`; the chest is not a Savable.
+* **Menu dilation** (R72): the setter hook, the restore poll, and the no-menu case, with the
+  `clock:` line on both machines.
+* **G3 consumption** (R70): the writer remembers the last granted path; `qd.use=last`.
+* **Actor-state intent gate** (R73): `based_on=0` is "no baseline", not stale.
+* **Enemy identity at INFO** for all three sources, so the parity run can compare keys.
+
+### Verdicts, item by item
+
+| Item | Verdict | Key line |
+|---|---|---|
+| 1. Load, all switches, 3 min idle + parity | **PASS** | `PASS [1] alive after 180s idle` / `PASS [2] ...`; `switches: ... pause=1` |
+| 2. Enemy parity: sources, same key, montage, bandwidth | **PASS** | `common=61`; `enemy detail: candidates=1 sent=1`; `Montage_Play verified by read-back` |
+| 3. G2 chest | **FAIL (NOT-REACHED as actor-state)** | `dev state: SG_Chest_BP2 [SG_Chest_BP_C] savable=no guid=- ... opened=0 mySaveData=1` |
+| 4. In-world teleport follow | **FAIL (NOT-REACHED)** | resolver: `travel: resolved ... without the outer-chain test`; follower: `TeleportToLocation has no LocationData parameter` |
+| 5. Loot drop disappears on the other | **PARTIAL** | `loot: drop 8CD5056D#0 = ...` + `loot: merged 1 entry`; no tombstone in the last window |
+| 6. Menu time dilation | **PASS** | `restored global time dilation 0.20 -> 1.00 (menu none)`; both clocks advance |
+| 7. Enemy attack on the partner body | **FAIL (no hit)** | `damage: swing not sent ... range=350`; no `player body hit ... -> sent` |
+| 8. G3 key grant + consumption | **PASS** | `+1 read back 1 -> 2` -> `inventory grant applied` -> `item intent confirmed`; `-1 read back 2 -> 1` -> `inventory consume applied` -> `item consume confirmed` |
+| 9. G4 receiver | **PASS** | `damage: player hp via Health ... hp 400.0 -> 380.0`; `damage from enemy ... applied hp 400.0 -> 380.0` |
+| Session survival | **PASS** | `process alive=True` on both, four boots |
+
+### What this session cost, and what it settled
+
+The identity question that has followed G2 since Session 6 is answered by one line: the
+chest is not a savable, it has its own `Opened` bool and a global counter. The travel
+resolver's "no live actor" was a real bug and is fixed; the remaining refusal is the
+follower's verb signature, which now names itself. The two stop mechanisms are both under
+the session rule, including the stray 0.00 that no menu explained. The lane that still
+needs work is the *receive* side of the absolute actor-state body (no `actor states
+applied=` on either machine), which is why the peer's `confirmed=1` and the chest's
+partner-side refresh are still missing. That is the next round's first measurement.
+
 

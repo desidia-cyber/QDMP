@@ -829,7 +829,13 @@ void HostApplyIntent(wire::Reader& r)
         // told is old.  A refusal is not a loss -- the peer's bounded queue retries with
         // the freshest revision it has.
         uint32_t lastSent = g_actorPub.Revision() - 1;
-        if (b.based_on_rev < lastSent) {
+        // `based_on_rev == 0` means the peer has not yet received ANY host body, so it has
+        // no stale view to protect against.  Measured Session 8: the peer's intent carried
+        // rev=0 forever (it never saw a host actor-state body) and every G2 intent was
+        // refused here, so the chest opened on the peer and never on the host.  Zero is
+        // "no baseline", not an older world; the value itself still goes through the
+        // game's own setter and is read back.
+        if (b.based_on_rev != 0 && b.based_on_rev < lastSent) {
             QDLOG(LOG_INFO, "actor-state intent refused (stale): based_on=",
                   dec(b.based_on_rev), " last_sent=", dec(lastSent));
             return;
