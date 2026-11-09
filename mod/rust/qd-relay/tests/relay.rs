@@ -1,7 +1,7 @@
 //! Relay behaviour, over real UDP sockets where it matters.
 //!
-//! The decode-path tests use `Relay::handle_datagram` directly — that *is* the
-//! decode path, and it is the same function the socket loop calls — so 10 000
+//! The decode-path tests use `Relay::handle_datagram` directly  Ethat *is* the
+//! decode path, and it is the same function the socket loop calls  Eso 10 000
 //! random buffers exercise exactly what a hostile peer would reach.
 
 use std::net::{SocketAddr, UdpSocket};
@@ -86,7 +86,11 @@ fn pump(relay: &mut Relay) -> usize {
 
 fn recv_any(socket: &UdpSocket) -> (Vec<u8>, SocketAddr) {
     socket.set_nonblocking(false).expect("blocking");
-    socket.set_read_timeout(Some(Duration::from_secs(2))).expect("timeout");
+    // 2 s was measured insufficient on a busy machine: this suite runs beside a full
+    // native build in the same session, and a starved receiver thread missed one
+    // datagram and failed a test that passes in isolation.  The wait only matters on the
+    // failure path, so a longer one costs nothing when the relay is healthy.
+    socket.set_read_timeout(Some(Duration::from_secs(10))).expect("timeout");
     let mut buf = [0u8; 2048];
     let (n, from) = socket.recv_from(&mut buf).expect("expected a datagram");
     (buf[..n].to_vec(), from)
@@ -295,17 +299,37 @@ fn a_chunked_actor_states_body_is_forwarded_not_dropped() {
     raw[5] = 0x12; // kind = ACTOR_STATES (magic 0..4, ver 4, kind 5)
 
     a.send_to(&raw, relay_addr).unwrap();
-    let events = relay.poll_once();
+    // A single `poll_once` is a race: on a busy machine the datagram can still be in the
+    // socket's queue when the call returns (measured: this test failed 1 run in ~10 with
+    // nothing wrong, which is a flaky test, not a bug).  Poll until it is forwarded.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut events = relay.poll_once();
+    let mut buf = [0u8; 2048];
+    let mut bytes: Vec<u8> = Vec::new();
+    loop {
+        if let Ok((n, _)) = b.recv_from(&mut buf) {
+            // The relay also forwards the host's HELLO/keepalive to this peer, so take the
+            // ACTOR_STATES datagram, not merely the next one.
+            if n > 5 && buf[5] == 0x12 {
+                bytes = buf[..n].to_vec();
+                break;
+            }
+        }
+        if Instant::now() >= deadline {
+            panic!("a chunked container never reached the other peer: {events:?}");
+        }
+        std::thread::sleep(Duration::from_millis(5));
+        events.extend(relay.poll_once());
+    }
     assert!(
         !events.iter().any(|e| matches!(e, Event::Malformed { .. })),
         "a chunked container must not be malformed: {events:?}"
     );
     assert!(
-        events.iter().any(|e| matches!(e, Event::Dropped { .. })) == false,
+        !events.iter().any(|e| matches!(e, Event::Dropped { .. })),
         "a chunked container must not be dropped: {events:?}"
     );
 
-    let (bytes, _) = recv(&b);
     assert_eq!(bytes.len(), raw.len(), "the chunk reaches the other peer whole");
     assert_eq!(bytes[5], 0x12, "still ACTOR_STATES");
     match Envelope::decode(&bytes).unwrap().body {
