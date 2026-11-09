@@ -7288,20 +7288,89 @@ bool CallFlag1(void* obj, Fn& f, const char* name, bool v)
 // ---------------------------------------------------------------------------
 // Cutscenes
 // ---------------------------------------------------------------------------
+// A placed `ALevelSequenceActor` that is PLAYING is a cutscene the manager path cannot see.
+//
+// MEASURED (Session 10, R88): `scan: loose cutscene none` in 997/998/999, and no
+// `cutscene: local started` anywhere -- even though 997 places `RitualCutscene` and 998
+// places three sequences.  The reason is in the packages: the sequences this build starts
+// from ALTARS and EGG BLUEPRINTS (`SecretSword_Altar_BP` -> `SecretSwordGetSequence`,
+// `Dek_Egg_BP` -> `Dek_Egg_Activation`) never set `FS_PlayerChar.CurrentCutsceneManager`,
+// so a detector that only reads that property reports "no cutscene" while the player is
+// watching one.  Reading the sequencer's own player is the game's own state, not a guess.
+//
+// The list is rebuilt on a world change and every 10 s; `IsPlaying` is asked of the
+// sequence player each call, because that is the value that changes.
+void* g_seqActors[16];
+int      g_seqActorN = 0;
+void*    g_seqWorld = nullptr;
+uint32_t g_seqScanAt = 0;
+
+void SequenceScan(uint32_t now)
+{
+    void* world = GWorldPtr();
+    if (!world) return;
+    if (world == g_seqWorld && now - g_seqScanAt < 10000) return;
+    g_seqWorld = world;
+    g_seqScanAt = now;
+    g_seqActorN = 0;
+    void* cls = FindClassByName("LevelSequenceActor");
+    if (!cls) return;
+    int n = ObjectCount();
+    for (int i = 0; i < n && g_seqActorN < (int)(sizeof(g_seqActors) / sizeof(g_seqActors[0])); ++i) {
+        void* o = ObjectAt(i);
+        if (!o || !LooksLikeUObject(o)) continue;
+        void* c = ObjClass(o);
+        if (!c) continue;
+        bool ours = false;
+        __try {
+            if (IsSubclassOf(c, cls) && ActorOuterReachesWorld(o, world)) ours = true;
+        } __except (EXCEPTION_EXECUTE_HANDLER) { ours = false; }
+        if (ours) g_seqActors[g_seqActorN++] = o;
+    }
+}
+
+bool SequencePlayingNow(char* name, int cap)
+{
+    SequenceScan((uint32_t)GetTickCount64());
+    static Fn fPlaying = {};
+    static void* miss = nullptr;
+    for (int i = 0; i < g_seqActorN; ++i) {
+        void* a = g_seqActors[i];
+        if (!a || !ObjectIsLive(a)) continue;
+        void* player = ObjPropC(a, "SequencePlayer");
+        if (!player || !ObjectIsLive(player)) continue;
+        if (!ResolvePerClass(fPlaying, &miss, player, "IsPlaying")) continue;
+        Call c(fPlaying);
+        if (!c.Run(player)) continue;
+        if (!c.Ret() || *(uint8_t*)c.Ret() == 0) continue;
+        if (FNameToString(ObjNameRaw(a), name, cap) <= 0) name[0] = 0;
+        return true;
+    }
+    return false;
+}
+
 bool LocalCutscene(char* name, int cap)
 {
     if (name && cap > 0) name[0] = 0;
-    if (!IsGameplayPawn(g_localPawn)) return false;
-    void* mgr = ObjPropC(g_localPawn, "CurrentCutsceneManager");
-    uint8_t b = 0;
-    if (mgr && ObjectIsLive(mgr)) {
-        if (FNameToString(ObjNameRaw(mgr), name, cap) <= 0) name[0] = 0;
-        return true;
+    // The manager lives ON THE PLAYER, so that branch needs a real gameplay pawn.  The
+    // sequencer does not: a placed sequence that is playing is a cutscene in this world
+    // whichever pawn the machine happens to have -- and the cinematic maps (997/998/999) hand
+    // the player a default pawn after a hard load, which is exactly where a cutscene is due.
+    if (IsGameplayPawn(g_localPawn)) {
+        void* mgr = ObjPropC(g_localPawn, "CurrentCutsceneManager");
+        uint8_t b = 0;
+        if (mgr && ObjectIsLive(mgr)) {
+            if (FNameToString(ObjNameRaw(mgr), name, cap) <= 0) name[0] = 0;
+            return true;
+        }
+        if (BytePropC(g_localPawn, "InIntroCutscene", &b) && b) {
+            sequence::CutsceneBoard::Copy(name, cap, "IntroCutscene");
+            return true;
+        }
     }
-    if (BytePropC(g_localPawn, "InIntroCutscene", &b) && b) {
-        sequence::CutsceneBoard::Copy(name, cap, "IntroCutscene");
-        return true;
-    }
+    // The authored route is a manager; the route these maps actually take is a sequence
+    // started directly by an altar/egg/trigger Blueprint.
+    if (SequencePlayingNow(name, cap)) return true;
     return false;
 }
 
@@ -10028,6 +10097,38 @@ void* RigFindNear(const char* sub, float* distOut, ActorXform* xfOut, char* name
             if (nameOut && nameCap > 0) { nameOut[0] = 0; FNameToString(ObjNameRaw(a2), nameOut, nameCap); }
         }
     }
+
+    // LAST RESORT: any placed actor whose instance or class name matches.  The stored sets
+    // and the class table above are curated; they cannot name an actor that was placed by
+    // content nobody has looked at yet -- an altar, a `LevelSequenceActor`, a boss spawner.
+    // Session 9 spent a run on `near:chest` matching a quest chest for exactly this reason,
+    // so the generic match is the FINAL step and never overrides a curated one.
+    if (!best) {
+        void* actorBase = FindClassByName("Actor");
+        void* world = GWorldPtr();
+        if (actorBase && world) {
+            int count = ObjectCount();
+            for (int i = 0; i < count; ++i) {
+                void* o = ObjectAt(i);
+                if (!o || !LooksLikeUObject(o)) continue;
+                bool member = false;
+                __try {
+                    member = IsSubclassOf(ObjClass(o), actorBase) && ActorOuterReachesWorld(o, world)
+                             && RigNameMatches(o, sub);
+                } __except (EXCEPTION_EXECUTE_HANDLER) { member = false; }
+                if (!member) continue;
+                ActorXform x;
+                if (!ReadActorXform(o, &x)) continue;
+                float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
+                float d = sqrtf(dx * dx + dy * dy + dz * dz);
+                if (bestD >= 0.0f && d >= bestD) continue;
+                bestD = d; best = o; bestXf = x;
+            }
+            if (best)
+                QDLOG(LOG_INFO, "rig: near '", sub, "' matched a placed actor by name (the curated "
+                      "sets did not carry it)");
+        }
+    }
     if (!best) return nullptr;
     if (distOut) *distOut = bestD;
     if (xfOut) *xfOut = bestXf;
@@ -10516,6 +10617,118 @@ bool RigCallVerb(void* obj, const char* name, void* arg, const char** ranName)
     return ok;
 }
 
+// The object-property writer lives with the travel lever (it seeds the teleporter targets);
+// the interaction lever needs the same primitive, so it is declared here.
+void WriteObjPropRaw(void* obj, const char* name, void* v);
+
+// The player's compiled `Interact` input event, resolved by prefix once per process.  These
+// live at file scope, not in the function: a function-local `static Fn` needs a thread-safe
+// init guard, and the enclosing frame then requires object unwinding -- the same trap that
+// rules out `__try` around it (LIVE-TEST-LOG R76's note).
+Fn   g_rigInteractInput = {};
+char g_rigInteractInputName[96] = "";
+
+// WHY THE GAME ITSELF MAY NOT OFFER AN OBJECT.  The interaction component does not simply
+// trace: it asks each candidate `GetInteractInfo(InteractingPlayer)` and keeps the actor only
+// if that says it is interactible (the interface is on 119 packages).  So a chest/door whose
+// own Blueprint refuses is one a real key press cannot open either, and the difference
+// matters: it is a CONTENT fact, not a failure of this lane.  Measured once per target.
+void RigLogInteractInfo(void* target)
+{
+    static Fn f = {};
+    static void* miss = nullptr;
+    if (!target) return;
+    if (!ResolvePerClass(f, &miss, target, "GetInteractInfo")) {
+        static void* saidFor = nullptr;
+        if (saidFor != target) {
+            saidFor = target;
+            QDLOG(LOG_INFO, "dev interact: this object has no GetInteractInfo; the component's "
+                            "own gate cannot be asked why it refuses");
+        }
+        return;
+    }
+    Call c(f);
+    if (f.Off("InteractingPlayer") >= 0) c.Obj("InteractingPlayer", g_localPawn);
+    else if (f.sig.props > 0) c.Obj(f.sig.p[0].name, g_localPawn);
+    if (!c.Run(target)) { QDLOG(LOG_WARN, "dev interact: GetInteractInfo faulted"); return; }
+    const int oi = f.Off("IsInteractible");
+    const int oe = f.Off("EnableInteractDistanceOverride");
+    const int od = f.Off("InteractDistanceOverride");
+    bool interactible = false, haveI = false;
+    bool overrideOn = false, haveO = false;
+    float dist = 0.0f;
+    if (oi >= 0 && oi + 1 <= f.sig.parms_size) { interactible = c.buf[oi] != 0; haveI = true; }
+    if (oe >= 0 && oe + 1 <= f.sig.parms_size) { overrideOn = c.buf[oe] != 0; haveO = true; }
+    if (od >= 0 && od + 4 <= f.sig.parms_size) memcpy(&dist, c.buf + od, 4);
+    QDLOG(LOG_INFO, "dev interact: the game's own gate says IsInteractible=",
+          (haveI ? (interactible ? "1" : "0") : "n/a"),
+          " distanceOverride=", (haveO ? (overrideOn ? "1" : "0") : "n/a"),
+          " override=", flt(dist, 0),
+          (haveI && !interactible ? " -- a key press cannot open this object either" : ""));
+}
+
+// A cheap fingerprint of the state a one-shot object exposes, so a lever can answer "did the
+// thing I just did change the object?" instead of assuming it did.  `Opened`/`IsOpen` are the
+// gate a chest and a door use; the savable value is what a trigger uses.
+int RigObjectStateCode(void* actor)
+{
+    if (!actor) return 0;
+    int code = 0;
+    uint8_t b = 0;
+    if (BytePropC(actor, "Opened", &b)) code |= (b ? 1 : 0);
+    if (BytePropC(actor, "IsOpen", &b)) code |= (b ? 1 : 0) << 1;
+    static ActorStateOwner owners[512];
+    static int64_t cachedAt = 0;
+    static int ownersN = -1;
+    // Rebuilt at most once a second: the container walk is not free and an act lever fires
+    // once per instruction.
+    const int64_t nowMs = (int64_t)GetTickCount64();
+    if (ownersN < 0 || nowMs - cachedAt > 1000) {
+        ownersN = BuildActorStateOwners(owners, 512);
+        cachedAt = nowMs;
+    }
+    for (int i = 0; i < ownersN; ++i) {
+        if (owners[i].actor != actor) continue;
+        int32_t value = 0;
+        bool isSet = false;
+        char err[128] = "";
+        if (ReadActorStateViaGetterGuarded(actor, owners[i].index, &value, &isSet, err, sizeof(err)))
+            code |= (int)(value & 0xFFFF) << 2;
+        break;
+    }
+    return code;
+}
+
+// Stand within reach of `target` and look at it: the interact trace the game runs is a
+// forward trace from the view, and the pawn arrives here with whatever yaw the teleport was
+// given.  `qd.tp near:<x>` already does this when it moves the pawn; this is the same rule
+// applied at the moment of interacting, which is what makes the two levers independent.
+void RigFaceTarget(void* target)
+{
+    ActorXform t = {}, me = {};
+    if (!g_localPawn || !target) return;
+    if (!ReadActorXform(target, &t) || !ReadActorXform(g_localPawn, &me)) return;
+    float dx = me.px - t.px, dy = me.py - t.py;
+    float len = sqrtf(dx * dx + dy * dy);
+    if (len < 1.0f) { dx = 1.0f; dy = 0.0f; len = 1.0f; }
+    float px = me.px, py = me.py, pz = me.pz;
+    if (len > 400.0f) {
+        // Out of any interact range: stand where the teleport lever would have put it.
+        px = t.px + (dx / len) * 120.0f;
+        py = t.py + (dy / len) * 120.0f;
+        pz = t.pz;
+    }
+    float yaw = atan2f(-(dx / len), -(dy / len)) * 57.29578f;
+    bool ok = SetActorXform(g_localPawn, px, py, pz, yaw);
+    void* pc = LocalController();
+    int ro = pc ? FindPropertyOffsetIn(ObjClass(pc), "ControlRotation") : -1;
+    if (ro >= 0) { float* r = (float*)((uint8_t*)pc + ro); r[0] = 0.0f; r[1] = yaw; }
+    char nm[64] = "-";
+    FNameToString(ObjNameRaw(target), nm, sizeof(nm));
+    QDLOG(LOG_INFO, "dev interact: faced ", nm, " at ", flt(px, 0), ",", flt(py, 0), ",",
+          flt(pz, 0), " yaw ", flt(yaw, 0), " dist=", flt(len, 0), (ok ? "" : " FAILED"));
+}
+
 // One line naming where a one-shot actor's state actually lives.  Added for Session 8's
 // G2 question: R60's chest changed only `TotalChestsOpened`, so the next run must say
 // whether the actor is a Savable (GUID + container index), what its container value and
@@ -10559,13 +10772,22 @@ void DevActorStateDump(void* actor)
 
 void DevInteractBody(void* explicitTarget)
 {
-    // WHERE THE VERB ACTUALLY IS.  Measured (Session 6): `PlayerInteractionComponent_C`
-    // has exactly five UFUNCTIONs -- `Update`, `ReceiveBeginPlay`, `ReceiveTick`,
-    // `ExecuteUbergraph_...` and a delegate signature.  It TRACKS the target
-    // (`Current Interact Actor`); it does not interact.  The verb is on the target
-    // itself: `Checkpoint_C.Interact` was the one call that ran in Session 5.  So a
-    // scenario names the actor (`qd.act` = `near:checkpoint`) and this calls the
-    // target's own verb -- an interaction the component's trace would have dispatched.
+    // WHERE THE VERB ACTUALLY IS, AND WHERE THE GATE IS.
+    //
+    // Measured (Session 6): `PlayerInteractionComponent_C` has exactly five UFUNCTIONs --
+    // `Update`, `ReceiveBeginPlay`, `ReceiveTick`, `ExecuteUbergraph_...` and a delegate
+    // signature.  It TRACKS the target (`Current Interact Actor`); it does not interact.
+    // The verb is on the target itself: `Checkpoint_C.Interact` was the one call that ran
+    // in Session 5.
+    //
+    // Measured (Session 10, R86): calling that verb is not enough.  The peer stood on a
+    // closed `Chest_Merchant2` / `Shop_Door_00_SM`, `dev interact: ... verb=Interact` ran,
+    // and `opened=0` stayed -- because the Blueprint's own open gate reads the PLAYER
+    // interaction component's `Current Interact Actor`, which the engine's trace fills on a
+    // real key press and which read `-` here.  So the lever now does what the press does:
+    // stand and face the object, fill that exact field, and dispatch the player's own
+    // compiled `Interact` input event.  The target's verb stays as the fallback, and it is
+    // only used when the game's own path provably did not change the object.
     void* comp = ObjPropC(g_localPawn, "PlayerInteractionComponent");
     void* tgt = explicitTarget;
     if (!tgt && comp) tgt = ObjPropC(comp, "Current Interact Actor");
@@ -10573,43 +10795,91 @@ void DevInteractBody(void* explicitTarget)
     char d[96] = "-";
     if (tgt) ObjDescribe(tgt, d, sizeof(d));
 
-    // PRESS THEN HOLD.  A key press is not one message: the game's own binding calls
-    // `Interact` and then `InteractHeld` for as long as the key is down, and an
-    // interactable that fills a bar over time only completes on the second.
-    const char* ran1 = nullptr;
-    const char* ran2 = nullptr;
-    static const char* const onTgt[]  = {"Interact", "InteractHeld", "OnInteract", "Use", "Activate",
-                                         // A chest's own open verb, and a picked-up drop's own:
-                                         // `Chest_C` exports both `Interact` and `Open`, and
-                                         // `ItemPickup_Base` exports `Interact` and `Pickup`
-                                         // (measured from the cooked packages).  Trying them
-                                         // after Interact keeps the game's normal path first.
-                                         "Open", "Pickup",
-                                         "StartDialogue", "Talk", "BeginDialogue", "StartConversation"};
-    static const char* const onComp[] = {"Interact", "DoInteract"};
-    static const char* const onPawn[] = {"Interact", "DoInteract"};
-    for (int i = 0; i < (int)(sizeof(onTgt) / sizeof(onTgt[0])) && !ran1; ++i)
-        RigCallVerb(tgt, onTgt[i], g_localPawn, &ran1);
-    for (int i = 0; i < (int)(sizeof(onComp) / sizeof(onComp[0])) && !ran1; ++i)
-        RigCallVerb(comp, onComp[i], tgt, &ran1);
-    for (int i = 0; i < (int)(sizeof(onPawn) / sizeof(onPawn[0])) && !ran1; ++i)
-        RigCallVerb(g_localPawn, onPawn[i], tgt, &ran1);
-    if (ran1) {
-        RigCallVerb(tgt, "InteractHeld", g_localPawn, &ran2);
-        if (!ran2) RigCallVerb(comp, "InteractHeld", tgt, &ran2);
-    }
+    // 1. Stand and look at it.  The interact trace is a FORWARD trace from the view, and the
+    //    scenario passes an explicit yaw to the teleport (`near:x,<yaw>`) so the pawn lands
+    //    looking somewhere other than where it is about to interact.
+    if (tgt) RigFaceTarget(tgt);
 
-    QDLOG(LOG_INFO, "dev interact: target=", d, " component=", (comp ? "found" : "MISSING"),
-          (ran1 ? " verb=" : " no verb ran"), (ran1 ? ran1 : ""), (ran2 ? "+" : ""), (ran2 ? ran2 : ""));
-    if (tgt) DevActorStateDump(tgt);
-    if (!ran1 && tgt) {
-        // A refused verb is only diagnosable if the real surface is on the record.
-        static void* dumpedFor = nullptr;
-        if (dumpedFor != tgt) {
-            dumpedFor = tgt;
-            LogFunctionsOf(tgt, d, 40);
+    // 1b. Ask the game's own gate, once per target: if the object says it is not
+    //     interactible, a real key press cannot open it either and that is content, not
+    //     this lane.
+    if (tgt) RigLogInteractInfo(tgt);
+
+    // 2. Fill the field the trace fills -- the one the Blueprint gate reads.
+    bool wrote = false, readBack = false;
+    if (comp && tgt) {
+        WriteObjPropRaw(comp, "Current Interact Actor", tgt);
+        wrote = true;
+        readBack = ObjPropC(comp, "Current Interact Actor") == tgt;
+    }
+    QDLOG(LOG_INFO, "dev interact: component target ", (wrote ? "set" : "NOT SET"),
+          (wrote ? (readBack ? " (read back ok)" : " (READ BACK MISMATCH)") : ""),
+          " -- the field the Blueprint open gate reads");
+
+    int codeBefore = tgt ? RigObjectStateCode(tgt) : 0;
+
+    // 3. Press the key.  `DefaultInput.ini` binds action `Interact` to E, and the compiled
+    //    Blueprint event for that action is `InpActEvt_Interact_K2Node_InputActionEvent` --
+    //    the function the input component calls.  Its suffix is compiler-generated, hence
+    //    the prefix lookup.
+    bool evRan = false;
+    if (g_localPawn && g_rigInteractInput.ResolvePrefix(g_localPawn, "InpActEvt_Interact",
+                                                        g_rigInteractInputName,
+                                                        sizeof(g_rigInteractInputName))) {
+        Call c(g_rigInteractInput);
+        evRan = c.Run(g_localPawn);
+    }
+    QDLOG(LOG_INFO, "dev interact: the player's Interact input event ",
+          (g_rigInteractInputName[0] ? g_rigInteractInputName : "(none)"),
+          (evRan ? " ran -- a key press runs exactly this" : " did not run"));
+
+    int codeAfter = tgt ? RigObjectStateCode(tgt) : 0;
+    bool moved = (codeBefore != codeAfter);
+    if (evRan && moved) {
+        QDLOG(LOG_INFO, "dev interact: the input event changed the object (state ",
+              dec(codeBefore), " -> ", dec(codeAfter), "); the target's verb is NOT driven as well");
+    } else {
+        if (evRan)
+            QDLOG(LOG_INFO, "dev interact: the input event ran and the object did not change (state ",
+                  dec(codeBefore), "); driving the target's own verb");
+        // PRESS THEN HOLD.  A key press is not one message: the game's own binding calls
+        // `Interact` and then `InteractHeld` for as long as the key is down, and an
+        // interactable that fills a bar over time only completes on the second.
+        const char* ran1 = nullptr;
+        const char* ran2 = nullptr;
+        static const char* const onTgt[]  = {"Interact", "InteractHeld", "OnInteract", "Use", "Activate",
+                                             // A chest's own open verb, and a picked-up drop's own:
+                                             // `Chest_C` exports both `Interact` and `Open`, and
+                                             // `ItemPickup_Base` exports `Interact` and `Pickup`
+                                             // (measured from the cooked packages).  Trying them
+                                             // after Interact keeps the game's normal path first.
+                                             "Open", "Pickup",
+                                             "StartDialogue", "Talk", "BeginDialogue", "StartConversation"};
+        static const char* const onComp[] = {"Interact", "DoInteract"};
+        static const char* const onPawn[] = {"Interact", "DoInteract"};
+        for (int i = 0; i < (int)(sizeof(onTgt) / sizeof(onTgt[0])) && !ran1; ++i)
+            RigCallVerb(tgt, onTgt[i], g_localPawn, &ran1);
+        for (int i = 0; i < (int)(sizeof(onComp) / sizeof(onComp[0])) && !ran1; ++i)
+            RigCallVerb(comp, onComp[i], tgt, &ran1);
+        for (int i = 0; i < (int)(sizeof(onPawn) / sizeof(onPawn[0])) && !ran1; ++i)
+            RigCallVerb(g_localPawn, onPawn[i], tgt, &ran1);
+        if (ran1) {
+            RigCallVerb(tgt, "InteractHeld", g_localPawn, &ran2);
+            if (!ran2) RigCallVerb(comp, "InteractHeld", tgt, &ran2);
+        }
+
+        QDLOG(LOG_INFO, "dev interact: target=", d, " component=", (comp ? "found" : "MISSING"),
+              (ran1 ? " verb=" : " no verb ran"), (ran1 ? ran1 : ""), (ran2 ? "+" : ""), (ran2 ? ran2 : ""));
+        if (!ran1 && tgt) {
+            // A refused verb is only diagnosable if the real surface is on the record.
+            static void* dumpedFor = nullptr;
+            if (dumpedFor != tgt) {
+                dumpedFor = tgt;
+                LogFunctionsOf(tgt, d, 40);
+            }
         }
     }
+    if (tgt) DevActorStateDump(tgt);
 }
 
 char     g_devActPath[MAX_PATH];

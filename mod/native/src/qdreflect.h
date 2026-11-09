@@ -338,6 +338,47 @@ inline void* FindFunctionInClass(const void* cls, const char* fnName)
     return nullptr;
 }
 
+// The same walk, matching a PREFIX.  A Blueprint's compiled input events are named after
+// the input action plus a compiler-generated suffix (`InpActEvt_Interact_K`,
+// `InpActEvt_Interact_K2Node_InputActionEvent`), and that suffix is not something this
+// module can predict -- so the action name is the handle and the suffix is whatever the
+// compiler emitted.  The name that matched is returned, because a log line that says
+// which event ran is the difference between a measurement and a guess.
+inline void* FindFunctionInClassPrefix(const void* cls, const char* prefix, char* nameOut, int nameCap)
+{
+    if (nameOut && nameCap > 0) nameOut[0] = 0;
+    const size_t plen = prefix ? strlen(prefix) : 0;
+    if (!cls || plen == 0) return nullptr;
+    __try {
+        const void* c = cls;
+        for (int depth = 0; c && depth < 32; ++depth) {
+            const void* f = *(const void* const*)((const uint8_t*)c + kStructChildren);
+            int guard = 0;
+            while (f && guard++ < 4096) {
+                if (!LooksLikeUObject(f)) break;
+                if (ObjOuter(f) != c) break;
+                if (IsFunctionObject(f)) {
+                    char nm[96];
+                    if (FNameToString(ObjNameRaw(f), nm, sizeof(nm)) > 0 &&
+                        strncmp(nm, prefix, plen) == 0) {
+                        if (nameOut && nameCap > 0) {
+                            int i = 0;
+                            for (; nm[i] && i < nameCap - 1; ++i) nameOut[i] = nm[i];
+                            nameOut[i] = 0;
+                        }
+                        return (void*)f;
+                    }
+                }
+                f = *(const void* const*)((const uint8_t*)f + kUFieldNext);
+            }
+            c = SuperOf(c);
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    return nullptr;
+}
+
 // Lookup on an object's class.  Falls back to a GObjects scan (UFunctions are objects,
 // with the owning class as Outer) if the Children walk finds nothing.
 inline void* FindFunction(void* obj, const char* fnName)
@@ -598,29 +639,55 @@ struct Fn {
     bool         tried = false;
     LayoutResult sig = {};
 
+    // Shared tail of both lookups: a signature the type walk produced must also be USABLE.
+    bool Accept(void* found, const char* label)
+    {
+        fn = found;
+        sig = Signature(fn);
+        if (!sig.valid) {
+            QDLOG(LOG_WARN, "fn ", label, ": ", (fn ? sig.note : "not found"));
+            fn = nullptr;
+            return false;
+        }
+        // `props` indexes a fixed array and `parms_size` a fixed frame.  Anything outside
+        // those bounds is a decode of the wrong object, not a function this module may call.
+        if (sig.props < 0 || sig.props > kMaxProps || sig.parms_size < 0 ||
+            sig.parms_size > kMaxFrameBytes) {
+            QDLOG(LOG_WARN, "fn ", label, ": signature is not usable (props=", dec(sig.props),
+                  " parms=", dec(sig.parms_size), "); refusing to call it");
+            fn = nullptr;
+            sig.valid = false;
+            return false;
+        }
+        return true;
+    }
+
     bool Resolve(void* objOrNull, const char* name, const void* cls = nullptr)
     {
         if (fn && sig.valid) return true;
         if (tried) return false;
         tried = true;
-        if (cls) fn = FindFunctionInClass(cls, name);
-        else fn = FindFunction(objOrNull, name);
-        sig = Signature(fn);
-        if (!sig.valid) {
-            QDLOG(LOG_WARN, "fn ", name, ": ", (fn ? sig.note : "not found"));
-            fn = nullptr;
-            return false;
-        }
-        // A signature the type walk produced must also be USABLE: `props` indexes a fixed
-        // array and `parms_size` a fixed frame.  Anything outside those bounds is a decode
-        // of the wrong object, not a function this module may call.
-        if (sig.props < 0 || sig.props > kMaxProps || sig.parms_size < 0 ||
-            sig.parms_size > kMaxFrameBytes) {
-            QDLOG(LOG_WARN, "fn ", name, ": signature is not usable (props=", dec(sig.props),
-                  " parms=", dec(sig.parms_size), "); refusing to call it");
-            fn = nullptr;
-            sig.valid = false;
-            return false;
+        if (cls) return Accept(FindFunctionInClass(cls, name), name);
+        return Accept(FindFunction(objOrNull, name), name);
+    }
+
+    // By prefix, for a name a compiler generated: the Blueprint input event for an action is
+    // `<action>_K2Node_InputActionEvent` and that suffix is not predictable.  The name that
+    // matched is reported, because a log line naming the event that ran is a measurement and
+    // the action name alone is a guess.
+    bool ResolvePrefix(void* obj, const char* prefix, char* nameOut, int nameCap)
+    {
+        if (fn && sig.valid) return true;
+        if (tried) return false;
+        tried = true;
+        char matched[96] = "";
+        void* found = FindFunctionInClassPrefix(obj ? ObjClass(obj) : nullptr, prefix, matched,
+                                                sizeof(matched));
+        if (!Accept(found, prefix)) return false;
+        if (nameOut && nameCap > 0) {
+            int i = 0;
+            for (; matched[i] && i < nameCap - 1; ++i) nameOut[i] = matched[i];
+            nameOut[i] = 0;
         }
         return true;
     }
