@@ -2428,3 +2428,221 @@ at both hub nodes even after `UnlockAllTeleporters`. The boss+sequence worlds ar
 the ones behind those two walls. The next job is one of: a real `QueueTeleportLevelLoad`
 route into 780/760 (the game's own travel), or a local-pawn spawn/possess lever for a world
 that starts without a GameMode — Session 11's closing note, still the right one.
+
+---
+
+## Session 14 — 2026-11-09 (the kill sets converge; the streaming area's actors do not)
+
+This branch is `sync-fix` at `f7a38e5`. Every write path is on (`ObjectSync=1`),
+`LogLevel=3`, `PlayerBody=1`; `tools/session14.ps1` is the whole run in one process, one
+phase per boot (`-Phase item1|item2|item3|all`). It reads the roles from
+`session established`: **host=inst1, peer=inst2**. Fresh pairs are seeded from
+`analysis/save-backup-before-live` with `make_test_instance.ps1 -Force`.
+
+The session took the three NOT-REACHED items from Session 13 and, for each, first asked what
+the two machines actually HELD rather than what one scan line said. Two of the three
+questions were answered by that; the third turned out to be a content fact, not a lane.
+
+### R108. The kill sets diverge because a death is addressed to a COPY, and there was no copy (fixed)
+
+R107 counted deaths and found `host=104 peer=49` with 55 GUIDs host-only, and concluded the
+divergence was "by design". It is not the co-op requirement. The requirement is per GUID: an
+enemy killed on one machine ends up dead — or recorded dead and never respawned — on the
+other, whichever machine killed it.
+
+The first reproduction here has exactly R107's shape, taken from each machine's OWN
+`enemy death recorded` lines over a 180 s host-only kill soak:
+
+```
+host recorded 172 death(s) itself; the peer recorded 96 itself
+host-only (the peer held no copy for these): 76 -> 0F9C6E14,12978E27,14B7B0CE,...
+peer-only:
+```
+
+76 keys where only the host ever recorded the death, 0 the other way — R107's 55, one scale
+step up. The reason is in the name of the lane: a dead row is applied to a **copy**. A
+spawner only spawns while ITS local player is in activation range, so on the peer those 76
+enemies had no actor at all, the kill had nothing to land on, and when that player later
+walked into range the enemy was alive again.
+
+**Fix.** `qdenemy.h DeadLedger`: a death the other machine ran is remembered by KEY for
+20 s, refreshed by each repeat of the dead row (so it lives exactly as long as the sender
+keeps saying it, and expires when the sender stops — which is what a rest looks like), and
+re-applied whenever a local copy appears, through the game's own damage path. Two companion
+rules: the peer never publishes a key the other machine recorded dead (an echo strong enough
+to erase the death over there), and a re-apply is rate-limited to once a second per enemy
+(the first smoke run logged 924 lines for one key in 97 s).
+
+`KillLog::kMax` went 64 → 512 for the same reason one layer down: a 104-death soak is larger
+than the ring that re-broadcasts deaths, so 40 of them were never on the wire at all.
+
+Measured, the same run, per-GUID FINAL STATE on both machines:
+
+```
+host keys=195 (dead 172); peer keys=198 (dead 172)
+KILLED SET (dead on either machine): 172 unique GUID(s)
+dead on the host but NOT on the peer: 0 ->
+dead on the peer but NOT on the host: 0 ->
+PASS every key ONLY the host ever recorded is DEAD on the peer -- carried from the wire=76/76
+PASS the per-GUID kill sets DIFF TO ZERO -- host=172 peer=172 diff=0
+```
+
+A fact about the venue, measured and recorded rather than glossed: the seeded hub save has
+its enemies **persisted at HP 0**, so the kill lever cannot add to the set —
+`123 hit(s) attempted, 0 landed (ran=1), 123 found the target already at 0 HP`, every line
+`ran=0 hp 0.0 -> 0.0`. The death set this run converges is therefore the persisted one
+(which is what R107 was also counting), and item 3 below measures why a chosen enemy cannot
+be killed through damage at all.
+
+### R109. A streamed area is entered, not loaded — and its actors still do not arrive
+
+R102's `arrive: ... ended with no pawn to place` is a property of the LANDING, not of the
+area. `780_SZ_Depths`, `760_SZ_AUT`, `210_AQ_underground`, `100_GR` — and, measured here,
+`900_SipehaWorld`, `990_B33sment` and the 997/998/999 cutscene maps — are **sublevels of the
+persistent world**. The live level table names them all:
+
+```
+8:16:54.956 INFO level name: 780_SZ_Depths from WorldAsset
+8:16:54.956 INFO level name: 760_SZ_AUT from WorldAsset
+8:16:54.956 INFO level name: 900_SipehaWorld from WorldAsset
+```
+
+So the check is exact rather than a list: a name the world this machine is IN streams is a
+sublevel by construction, and loading its package as a world is the pawn-less path R102
+measured. `FollowHardTravel` now asks that question before the loader, and the answer is the
+game's own mechanism — load it and SHOW it:
+
+```
+[1] stream travel: 780_SZ_Depths is a sublevel of this world -- loaded and SHOWN (visible=1 loaded=1)
+[1] rig: hard lever -> 780_SZ_Depths streamed=1 (a sublevel of this world: loaded and SHOWN; ...)
+[2] stream travel: 780_SZ_Depths is a sublevel of this world -- loaded and SHOWN (visible=1 loaded=1)
+PASS [1] no "ended with no pawn to place" line (the R102 failure) -- count=0
+PASS [2] no "ended with no pawn to place" line (the R102 failure) -- count=0
+PASS [1] the host is standing somewhere real in 780 (a pawn exists)  4,019,-1,732,148
+PASS [2] the peer is standing somewhere real in 780 (a pawn exists)  4,019,-1,732,148
+```
+
+**R102 is closed**: both players are inside a streamed area with a pawn, and no hard load
+happened. Two fixes were needed to get the SHOW to mean anything, and the first one is the
+interesting measurement:
+
+* `SetShouldBeLoaded` through ProcessEvent produced `bShouldBeVisible=1` and **not one actor
+  in the world 90 s later** — several `ULevelStreaming` subclasses override that thunk with a
+  bare `ret`. `ForceLevel` now writes the engine's own `bShouldBeLoaded` bit and calls the
+  one body this file already proved honours it.
+* The game's manager hides out-of-range levels on its own schedule, and a hidden level's
+  actors are not in the world at all (the absent shop merchant). A PINNED level (one a
+  streamed travel put the rig inside) is now vetoed at the same two setters the union already
+  guards, so it is not hidden a second after being shown.
+
+What did not follow is the content. With `loaded=1 visible=1` on both machines, 780's own
+actors still do not materialise:
+
+```
+[1] scan: loose sequence none in this world
+[1] scan: loose boss none in this world
+dev teleport near: no live actor matches 'SecretSword_Altar_BP'
+```
+
+and the anchor that DID resolve, `Checkpoint19`, is 252 cm from the player's saved hub
+position — so it is hub geometry, not 780's. **The boss and the cutscene remain
+NOT-REACHED, and the blocker has moved one layer down**: the sublevel's `ULevelStreaming`
+flags are set but its package has not been streamed into the world, so no actor from it
+exists to detect, press or fight. The next lever is the game's own stack
+(`AddLevelListToStack` with `GreenRuins_SZ`, whose 13 levels include 780) applied by the
+manager's per-frame pass — **not** `FlushLevelManagerActions`, which replaces the visible set
+(measured 21 → 11) and would drop the player through the hub.
+
+### R110. The two machines DO hold the same enemies — R106's "different GUIDs" was a nearest-enemy read
+
+Item 3 needed an enemy both machines hold by the same key. R106 concluded from two `scan:
+kind enemy` lines that the hub's copies differ (`A8D5C9E1` vs `186F6D14`). That line reports
+the NEAREST local enemy, and the two players were standing in different places, so it was
+comparing two different enemies. The full key sets intersect:
+
+```
+host keys=205; peer keys=183; COMMON keys ALIVE WITH HP on both=22
+common: FDAD4F86,F9B1FAF9,1C1AF92B,05E77BA8,FAD4EE3D,A9824174,F11060B0,72D6234C,...
+PASS the two machines hold at least one enemy by the SAME key -- 22 common key(s)
+```
+
+`qd.tp guid:<8 hex>` then puts BOTH players on ONE enemy — a name resolver cannot, because
+`near:<class>` lands each machine beside its own nearest copy — and four of those shared keys
+were killed on the host and recorded on both machines. **The identity half is proven.**
+
+The drop half is not, and the reason is content: none of the four classes dropped anything on
+either machine.
+
+```
+key=1C1AF92B: loot:drop lines host=0 peer=1
+key=05E77BA8: loot:drop lines host=0 peer=0
+key=F11060B0: loot:drop lines host=0 peer=0
+key=72D6234C: loot:drop lines host=0 peer=0
+```
+
+Damage could not produce the death either, which is the second measured fact behind this:
+most of this build's enemy classes do not implement `TryApplyDamage`, so `ApplyDamageToActor`
+cannot even build its call frame (`ran=0`), and the death had to be produced through the
+enemy's own `Kill` (`rig: enemykill -> key=... the enemy's own Kill ran`). A class that will
+not take damage and does not drop is not a loot target; the hiding half stays NOT-REACHED
+with the blocker now named as a class property rather than a lane.
+
+### Bugs fixed this session
+
+* **`qdenemy.h DeadLedger`** (R108): a death the other machine ran is remembered by KEY and
+  applied when a copy appears, so a kill no longer needs a local actor to land on.
+* **`KillLog::kMax` 64 → 512** (R108): one soak records more deaths than the old ring could
+  hold or re-broadcast.
+* **`EnemySendPump` never publishes a key the other machine recorded dead** (R108) — no echo
+  that could erase the death over there; and the ledger re-apply is rate-limited (R108).
+* **`ApplyEnemyRecordIntent` feeds the ledger** (R108): `hp 0` is a death, `hp > 0` a revive.
+* **`StreamTravelTo` + `FollowHardTravel`** (R109): a name the current world streams is
+  loaded and SHOWN as a sublevel; the world load is refused with the reason in the log.
+* **`ForceLevel` writes `bShouldBeLoaded` and drives the honouring body** (R109): the
+  ProcessEvent thunk is a no-op on some subclasses and the level never loaded.
+* **A pinned level is not hidden or unloaded** (R109): both setters veto it, like the
+  partner's levels.
+* **Four rig levers** — `qd.enemies` (per-GUID state dump, the measurement item 1 needed),
+  `qd.tp guid:<key>` (both players to ONE enemy), `qd.sequence` (the sequencer's own `Play`),
+  `qd.enemykill` (the enemy's own `Kill`, for classes with no damage entry).
+* **`tools/session14.ps1`** — the whole run in one process, with three harness bugs found by
+  running it: a `Verdict` given an ARRAY instead of a bool, a soak re-teleport that repeated
+  the same line the tp lever ignores, and a level anchor list that matched hub geometry.
+
+### Verdicts, item by item
+
+| Item | Verdict | Key line |
+|---|---|---|
+| 1. Every kill on one machine is dead on the other (per GUID) | **PASS** | `the per-GUID kill sets DIFF TO ZERO -- host=172 peer=172 diff=0`; `carried from the wire=76/76` |
+| 1b. R107's condition reproduced first | **PASS** | `host-only (the peer held no copy for these): 76` |
+| 1c. Does the kill lever itself add deaths? | **MEASURED, NO** | `123 hit(s) attempted, 0 landed (ran=1), 123 found the target already at 0 HP` |
+| 2a. A streamed area is entered, not loaded | **PASS (R102 closed)** | `stream travel: 780_SZ_Depths ... loaded and SHOWN (visible=1 loaded=1)`; `no "ended with no pawn to place" -- count=0` on both |
+| 2b. Both players inside 780 with a pawn | **PASS** | `4,019,-1,732,148` on both machines |
+| 2c. Boss detection + bar on both | **NOT-REACHED** | `scan: loose boss none in this world`; `GreenDragon_Spawner` unresolved |
+| 2d. `SecretSwordGetSequence` play/hold/joint resume | **NOT-REACHED** | `scan: loose sequence none in this world`; `no live actor matches 'SecretSword_Altar_BP'` |
+| 3a. An enemy both machines hold by the SAME key | **PASS** | `COMMON keys ALIVE WITH HP on both=22` |
+| 3b. Both players at THAT enemy, killed, recorded on both | **PASS** | `tp[1]/tp[2] -> guid:1C1AF92B` then `enemy death recorded guid=1C1AF92B` |
+| 3c. `loot: hiding local drop` on the other machine | **NOT-REACHED (content)** | `loot:drop lines host=0 peer=0` on all four shared keys |
+| Session survival | **PASS** | both processes alive at the end of all three runs; 0 `ERR`/fault lines |
+
+### What this session settled
+
+The kill divergence was never "by design". It was a death addressed to a copy on a machine
+that had no copy, and once the death is remembered by KEY the two sets agree exactly —
+172/172, diff 0, including all 76 keys only one machine ever recorded. That is the co-op
+requirement, and it is now a number.
+
+The streaming question split in two. The LANDING is solved: a sublevel is entered the way the
+game enters it, both players keep a pawn, and no `ended with no pawn to place` line exists
+any more. The CONTENT is not: setting the `ULevelStreaming` flags is not the same as the
+engine streaming the package in, so 780's altar, dragon and sequence are still absent even
+with `loaded=1 visible=1`. That is now a single, sharply defined question — drive
+`AddLevelListToStack` with `GreenRuins_SZ` and let the manager's own per-frame pass apply it —
+and it is the next job.
+
+Item 3 changed shape rather than closing. The machines share enemy keys (22 of them), so R106's
+"different GUIDs" was a read of the nearest-enemy line, not a parity failure; `qd.tp guid:`
+can put both players on one enemy and the kill lands on both. What stops the hiding proof is
+content: the shared classes neither take damage nor drop. So the remaining work there is to
+find an enemy class with a drop table — not to fix a lane.
+

@@ -461,7 +461,7 @@ bool TryInitSaveLayer(uint32_t now)
     if (!g_probeDone) {
         RunApiProbe();
         g_probeDone = true;
-        // §5 step 1 wants the write-path oracle at LOAD, not at the first write.
+        // sec 5 step 1 wants the write-path oracle at LOAD, not at the first write.
         // Measured in Session 5: the session produced no `NAMED-SAVE ORACLE` line at all,
         // because the oracle only ran when the first flag write asked for it and nothing
         // wrote.  Resolving it here makes "this build's write path is proven" a load-time
@@ -1247,6 +1247,9 @@ void* ObjPropC(void* obj, const char* name);
 bool CallBool1(void* obj, Fn& f, const char* fn, bool v);
 bool CallNoArgs(void* obj, Fn& f, const char* fn);
 bool WriteBytePropC(void* obj, const char* name, uint8_t v);
+// Defined with the rig levers further down; the enemy-kill lever sits before them because
+// it belongs with the other enemy rig verbs.
+bool DevRigText(const char* envName, const char* leaf, char* out, int cap);
 
 bool IsGameplayPawn(void* pawn)
 {
@@ -2865,6 +2868,10 @@ typedef void (*FnSetShouldBeLoaded)(void* levelStreaming, bool loaded);
 FnSetShouldBeVisible g_oSetVis = nullptr;
 FnSetShouldBeLoaded  g_oSetLoaded = nullptr;
 stream::ForceBook    g_force;
+// A level this machine keeps loaded and SHOWN for the rig or for a streamed travel.  It
+// lives here rather than beside its lever because the travel path below has to be able to
+// pin a name too (a streamed area is entered, not loaded).
+char                 g_rigLevelPin[64] = "";
 
 static const int kLevelVisByte = 0xBA;     // ULevelStreaming flags byte (setter bytes verify it)
 static const int kLevelVisBit  = 0x08;     // bShouldBeVisible
@@ -2907,6 +2914,24 @@ bool LevelLoaded(void* ls)
 {
     bool v = false;
     return ls && LevelLoadBitGuarded(ls, &v) && v;
+}
+
+// Write the engine's own `bShouldBeLoaded` bit.  MEASURED (Session 14): showing a sublevel
+// by calling `SetShouldBeLoaded` through ProcessEvent produced
+// `bShouldBeVisible=1` and NOT ONE ACTOR in the world 90 s later, because several
+// ULevelStreaming subclasses override that thunk with a bare `ret` (the note at the hook
+// above) -- the level was marked visible, never loaded.  The bit is the value the engine's
+// own streaming pass reads (`ShouldBeLoaded` +0x278), and it is the same field
+// `SetShouldBeVisible` writes for visibility, so a streamed area is driven through it.
+bool SetLevelLoadBit(void* ls, bool on)
+{
+    if (!ls) return false;
+    __try {
+        uint8_t* p = (uint8_t*)ls + kLevelVisByte;
+        if (on) *p |= (uint8_t)kLevelLoadBit;
+        else    *p &= (uint8_t)~(uint8_t)kLevelLoadBit;
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 
 LevelRec* LevelFind(void* ls)
@@ -3087,7 +3112,15 @@ void HK_SetShouldBeVisible(void* ls, bool visible)
         if (r) {
             if (visible && r->skipNextShow) r->skipNextShow = false;
             else r->gameWants = visible ? 1 : 0;
-            if (!visible && StreamVetoes(r) && LevelVisible(ls)) {
+            // A PINNED level is one this machine must keep: a streamed travel put the rig
+            // inside it (Session 14), and the game's manager hides out-of-range levels on
+            // its own schedule.  A hidden level's actors are NOT in the world
+            // (analysis/21: the absent shop merchant), so without this veto the sublevel a
+            // boss and a sequence live in would be hidden a second after it was shown and
+            // every actor in it would vanish out from under the test.
+            const bool pinned = (r->name[0] && g_rigLevelPin[0] &&
+                                 SameNameText(r->name, g_rigLevelPin));
+            if (!visible && (StreamVetoes(r) || pinned) && LevelVisible(ls)) {
                 void* mgr = LevelManager();
                 if (mgr && FlipPendingHideGuarded(mgr, ls)) r->skipNextShow = true;
                 ++g_vetoCount;
@@ -3095,8 +3128,11 @@ void HK_SetShouldBeVisible(void* ls, bool visible)
                 uint32_t now = Net::Now();
                 if (now - lastLog > 1000) {
                     lastLog = now;
-                    QDLOG(LOG_INFO, "BLOCK hide of ", r->name, " (the partner is in it); vetoes=",
-                          dec((int)g_vetoCount), (r->skipNextShow ? " queue entry flipped" : ""));
+                    QDLOG(LOG_INFO, "BLOCK hide of ", r->name,
+                          (pinned ? " (pinned: this machine is standing in it)"
+                                  : " (the partner is in it)"),
+                          "; vetoes=", dec((int)g_vetoCount),
+                          (r->skipNextShow ? " queue entry flipped" : ""));
                 }
                 return;
             }
@@ -3115,7 +3151,9 @@ void HK_SetShouldBeLoaded(void* ls, bool loaded)
 {
     if (ls && g_engineReady && !loaded) {
         LevelRec* r = LevelFind(ls);
-        if (r && StreamVetoes(r) && LevelLoaded(ls)) {
+        const bool pinned = r && r->name[0] && g_rigLevelPin[0] &&
+                            SameNameText(r->name, g_rigLevelPin);
+        if (r && (StreamVetoes(r) || pinned) && LevelLoaded(ls)) {
             void* mgr = LevelManager();
             bool flipped = mgr && FlipPendingHideGuarded(mgr, ls);
             if (flipped) r->skipNextShow = true;
@@ -3125,8 +3163,9 @@ void HK_SetShouldBeLoaded(void* ls, bool loaded)
             if (now - lastLog > 1000) {
                 lastLog = now;
                 QDLOG(LOG_INFO, "BLOCK unload of ", r->name,
-                      " (the partner is in it); vetoes=", dec((int)g_vetoCount),
-                      (flipped ? " queue entry flipped" : ""));
+                      (pinned ? " (pinned: this machine is standing in it)"
+                              : " (the partner is in it)"),
+                      "; vetoes=", dec((int)g_vetoCount), (flipped ? " queue entry flipped" : ""));
             }
             return;
         }
@@ -3196,7 +3235,20 @@ bool LevelNotForcible(const char* n)
 void ForceLevel(LevelRec& r, bool show, bool quiet = false)
 {
     static Fn fLoad = {};
-    if (show) CallBool1(r.ls, fLoad, "SetShouldBeLoaded", true);
+    if (show) {
+        // LOAD is the engine's own bit PLUS the body that honours it.  ProcessEvent alone
+        // is not enough: measured Session 14, a streamed sublevel showed bShouldBeVisible=1
+        // and had no actors in the world at all, because the subclass thunk ignores the
+        // request.  `g_oSetLoaded` is the one body this file already proved honours it.
+        SetLevelLoadBit(r.ls, true);
+        if (g_oSetLoaded) {
+            g_ownVisCall = true;
+            g_oSetLoaded(r.ls, true);
+            g_ownVisCall = false;
+        } else {
+            CallBool1(r.ls, fLoad, "SetShouldBeLoaded", true);
+        }
+    }
     // Release is VISIBILITY ONLY: this path never calls SetShouldBeLoaded(false), so a
     // forced level stays loaded after the partner leaves it.  That is the deliberate
     // trade-off -- the level's package and actors stay resident (memory) in exchange
@@ -3212,7 +3264,8 @@ void ForceLevel(LevelRec& r, bool show, bool quiet = false)
     if (!quiet)
         QDLOG(LOG_INFO, "level union: ", (show ? "SHOW " : "release "), r.name,
               " -> bShouldBeVisible=", dec(LevelVisible(r.ls) ? 1 : 0),
-              (show && !fLoad.fn ? " (SetShouldBeLoaded not found)" : ""));
+              " bShouldBeLoaded=", dec(LevelLoaded(r.ls) ? 1 : 0),
+              (show && !g_oSetLoaded ? " (the load body was not hooked)" : ""));
 }
 
 void SendLevelUnion(const char* const* names, int n)
@@ -3877,8 +3930,45 @@ uint32_t g_enDeathSuppressUntil = 0;
 void ArrivalArm(const char* map, uint32_t now);
 void ArrivalPump(uint32_t now);
 
-bool FollowHardTravel(const char* map, char* err, int errCap)
+// ---------------------------------------------------------------------------
+// A streamed area is entered, not loaded (Session 14, R102)
+// ---------------------------------------------------------------------------
+// `780_SZ_Depths`, `760_SZ_AUT`, `210_AQ_underground`, `100_GR`, ... are not worlds.  They
+// are SUBLEVELS of the persistent world `Ruins_Level_00`: the game enters one by pushing a
+// level list onto `AFS_LevelManager`, whose own apply pass loads and SHOWS the sublevel
+// (`analysis/22-close-out.md` sec 4; 42 sublevels measured).  A hard load of one produces a
+// `UWorld` whose GameMode spawns no pawn at all -- measured R102 on both machines:
+//
+//     arrive: 780_SZ_Depths places no arrival marker of its own ... waiting for the partner
+//     arrive: 780_SZ_Depths ended with no pawn to place          (and no `scan: local at`)
+//
+// So the check is the level table of the world this machine is IN: a name that is one of
+// this world's streaming levels is a sublevel by construction, and the correct follow is
+// the game's own mechanism -- load it and SHOW it -- never `LoadMapWithLoadingScreen`.
+// Pinning the name re-asserts it every second (`DevLevelLever`), because the game's own
+// manager hides out-of-range levels on its own schedule and a hidden level's actors are not
+// in the world at all (the missing shop merchant, `analysis/21-streaming-ai-lesson.md`).
+bool StreamTravelTo(const char* name)
 {
+    if (!name || !name[0]) return false;
+    LevelsRefresh();
+    for (int i = 0; i < g_levelN; ++i) {
+        if (!SameNameText(g_levels[i].name, name)) continue;
+        if (!ObjectIsLive(g_levels[i].ls)) continue;
+        lstrcpynA(g_rigLevelPin, name, sizeof(g_rigLevelPin));
+        ForceLevel(g_levels[i], true, true);
+        QDLOG(LOG_INFO, "stream travel: ", name, " is a sublevel of this world -- loaded and "
+              "SHOWN (visible=", dec(LevelVisible(g_levels[i].ls) ? 1 : 0),
+              " loaded=", dec(LevelLoaded(g_levels[i].ls) ? 1 : 0),
+              "); the game enters it this way, not by loading its package as a world");
+        return true;
+    }
+    return false;
+}
+
+bool FollowHardTravel(const char* map, char* err, int errCap, bool* streamed = nullptr)
+{
+    if (streamed) *streamed = false;
     if (err && errCap > 0) err[0] = 0;
     if (!map || !map[0] || !stream::PlausibleLevelName(map)) {
         ErrSet(err, errCap, "not a plausible map name: ", map ? map : "?");
@@ -3899,6 +3989,13 @@ bool FollowHardTravel(const char* map, char* err, int errCap)
     if (!ReflectionReady()) {
         ErrSet(err, errCap, "property layout not validated: ", Lay().note);
         return false;
+    }
+    // Before the loader, and only after the "already here" refusal: a name this world
+    // streams is a sublevel, and loading it as a world is the pawn-less path R102 measured.
+    if (StreamTravelTo(map)) {
+        if (streamed) *streamed = true;
+        ErrSet(err, errCap, "streamed as a sublevel of this world", "");
+        return true;
     }
     void* world = GWorldPtr();
     void* gi = world ? GameInstanceOf(world) : nullptr;
@@ -4141,14 +4238,28 @@ void OnTravel(wire::Reader& r, uint32_t now)
             if (v == travel::HV_LOAD) {
                 g_hard.Arm(now);
                 char err[160];
-                bool ok = FollowHardTravel(t.map, err, sizeof(err));
-                g_hard.OnLoadResult(ok, now);
-                if (ok)
-                    QDLOG(LOG_INFO, "travel: hard transition: loading ", t.map,
-                          " through GameInstance.LoadMapWithLoadingScreen");
-                else
-                    QDLOG(LOG_WARN, "travel: cannot follow hard transition to ", t.map,
-                          ": ", err, " (recorded; this map is not retried)");
+                bool streamed = false;
+                bool ok = FollowHardTravel(t.map, err, sizeof(err), &streamed);
+                if (streamed) {
+                    // The area is a sublevel of the world we are already in: it was loaded
+                    // and SHOWN, the world name does not change, and there is nothing to
+                    // arrive AT -- the local player simply walks in.  Reporting an arrival
+                    // keeps the sender's handshake from waiting for a load that must not
+                    // happen (R102: a hard load of one has no pawn to place).
+                    g_hard.OnLoadResult(true, now);
+                    g_hard.MarkLocalArrived();
+                    g_hard.NoteAnnounce(2);       // ARRIVED, so no handshake waits on a load
+                    QDLOG(LOG_INFO, "travel: ", t.map, " is a streamed sublevel -- entered by "
+                          "streaming it, not by a hard transition");
+                } else {
+                    g_hard.OnLoadResult(ok, now);
+                    if (ok)
+                        QDLOG(LOG_INFO, "travel: hard transition: loading ", t.map,
+                              " through GameInstance.LoadMapWithLoadingScreen");
+                    else
+                        QDLOG(LOG_WARN, "travel: cannot follow hard transition to ", t.map,
+                              ": ", err, " (recorded; this map is not retried)");
+                }
             } else if (v == travel::HV_ANNOUNCE_ARRIVE) {
                 g_hard.NoteAnnounce(2);       // ARRIVED
                 QDLOG(LOG_INFO, "travel: already in ", t.map, "; reporting arrival");
@@ -4229,11 +4340,19 @@ void OnTravel(wire::Reader& r, uint32_t now)
         travel::DestParts dp;
         if (Cfg().travel_sync && travel::SplitDest(t.dest, &dp)) {
             char err[160];
-            if (FollowHardTravel(dp.world, err, sizeof(err))) {
-                g_hard.OnPeerBegin(t.seq, dp.world, cur, false);
-                g_hard.Arm(now);
-                QDLOG(LOG_INFO, "travel: following the partner's world switch to ",
-                      dp.world, " (an in-world destination cannot cross a map)");
+            bool streamed = false;
+            if (FollowHardTravel(dp.world, err, sizeof(err), &streamed)) {
+                if (streamed) {
+                    // The destination's world is a sublevel of the one we are in: it was
+                    // streamed and shown, so there is no world switch and no load to arm.
+                    QDLOG(LOG_INFO, "travel: ", dp.world, " is a streamed sublevel of this "
+                          "world; streamed it instead of switching worlds");
+                } else {
+                    g_hard.OnPeerBegin(t.seq, dp.world, cur, false);
+                    g_hard.Arm(now);
+                    QDLOG(LOG_INFO, "travel: following the partner's world switch to ",
+                          dp.world, " (an in-world destination cannot cross a map)");
+                }
             } else {
                 QDLOG(LOG_WARN, "travel: cannot follow ", t.dest, ": ", err);
             }
@@ -4310,6 +4429,12 @@ struct EnemyRec {
     bool     bossArenaExitSent; // the arena exit is a one-shot, not a state
     bool     bossBarShown;
     uint32_t bossBarAt;
+    // When this machine last applied a death it learned by KEY from the other machine
+    // (qdenemy.h DeadLedger).  Rate limits the attempt: the game's own damage path can
+    // leave a FROZEN copy standing with HP on it, and re-applying every frame is both
+    // wasteful and the loudest line in the log (924 lines for one key in 97 s, measured
+    // Session 14's first smoke run).
+    uint32_t ledgerKillAt;
 };
 EnemyRec        g_en[256];
 int             g_enN = 0;
@@ -4332,6 +4457,7 @@ uint32_t        g_enPass = 1;
 int             g_enCursor = 0;
 enemy::HostView g_hostView;        // the other machine's rows (either direction)
 enemy::KillLog  g_killLog;         // deaths this machine ran, re-broadcast as dead rows
+enemy::DeadLedger g_remoteDead;    // deaths the OTHER machine ran, applied by key (R107)
 enemy::RowCursor g_rowCursor;
 enemyown::OwnerSet g_own;          // who runs each enemy (qdenemyown.h)
 enemydmg::SwingGate g_dmgGate;     // one K_DAMAGE per swing, bounded per second
@@ -6273,6 +6399,41 @@ void EnemyOwnPump(uint32_t now)
         __try {
         if (!r.haveGuid || !ObjectIsLive(r.actor)) continue;
 
+        // A death the OTHER machine ran, applied by KEY (qdenemy.h DeadLedger).  This is
+        // the half R107 measured missing: a copy whose spawner activates LATE -- or whose
+        // sublevel streams in late -- had no actor at the instant of the kill, so the
+        // row-driven path below had nothing to kill and the death was simply lost here.
+        // The game's own damage path is used, exactly as for a local kill, so the death
+        // animation, its drop and the copy's own StoreEnemySaveState all happen.
+        if (!r.killedByUs && g_remoteDead.Has(r.guid, now) && !EnemyDead(r.actor) &&
+            now - r.ledgerKillAt >= 1000) {
+            r.ledgerKillAt = now;
+            float rhp = 0, rmx = 0;
+            if (EnemyHp(r.actor, &rhp, &rmx) && rhp > 0.0f) {
+                // Once per second overall, not per enemy: with a hundred dead keys the
+                // per-enemy line is a log flood, and the fact does not change between them.
+                static uint32_t saidAt = 0;
+                static int saidN = 0;
+                if (now - saidAt >= 2000) {
+                    saidAt = now;
+                    QDLOG(LOG_INFO, "enemy ", hex32(r.guid[0]),
+                          ": the other machine recorded this death; killing the local copy "
+                          "(hp ", flt(rhp, 1), ")");
+                } else {
+                    ++saidN;
+                    if (saidN % 100 == 0)
+                        QDLOG(LOG_INFO, "enemy ", hex32(r.guid[0]),
+                              ": still applying remote deaths (", dec(saidN), " since the last line)",
+                              " -- these copies are the ones this machine held no record of");
+                }
+                g_inRemoteDeath = true;
+                ApplyEnemyDamage(r.actor, enemy::ConvergeDamage(rhp, rmx, 0, false), g_localPawn);
+                g_inRemoteDeath = false;
+                if (!ObjectIsLive(r.actor)) { r.actor = nullptr; r.haveGuid = false; continue; }
+            }
+            r.killedByUs = true;
+        }
+
         float ex[3] = {0, 0, 0};
         bool haveEx = false;
         float exYaw = 0.0f;
@@ -6456,6 +6617,9 @@ void EnemySendPump(uint32_t now)
         EnemyRec& r = g_en[i];
         __try {
         if (!r.haveGuid || !ObjectIsLive(r.actor) || EnemyDead(r.actor)) continue;
+        // A death the other machine already recorded is not published back as "alive":
+        // that would be an echo strong enough to erase the death over there.
+        if (g_remoteDead.Has(r.guid, now)) continue;
         enemyown::Publish pub = g_own.Publishing(r.guid);
         if (pub == enemyown::PUB_NONE) continue;
         ActorXform x;
@@ -6588,6 +6752,13 @@ void OnEnemyRows(wire::Reader& r, uint32_t now)
         // view all speak about the same enemy from this instant on.
         if (!EnemyByGuid(e.guid)) AdoptUnknownKey(e, now);
         g_hostView.OnRow(e.guid, e.px, e.py, e.pz, e.yaw, e.hp, e.flags, now);
+        // Remember the death by KEY, not only by the local copy.  R107: the host recorded
+        // 104 deaths and this machine 49, and 55 of the missing ones were keys this machine
+        // held no actor for at that instant -- its own spawner activates only while its own
+        // player is in range.  Without the ledger the death was simply lost here, and the
+        // enemy was alive again the moment that player walked into range.
+        if (!(e.flags & enemy::kAlive)) g_remoteDead.Add(e.guid, now);
+        else g_remoteDead.Remove(e.guid);
         // The owner says it is alive: a death this machine still held from when IT ran
         // the enemy is stale and must stop being broadcast.
         if ((e.flags & enemy::kAlive) && g_killLog.Count() &&
@@ -6635,6 +6806,10 @@ void ApplyEnemyRecordIntent(const wire::IntentBody& b)
     g_inOwnRecord = true;
     StoreEnemySaveState(ctx, g, respawn, hp);       // through the hook: lands in the kill log
     g_inOwnRecord = false;
+    // The record lane is the second half of the per-key death memory: a record that says
+    // hp 0 is a death, whether or not this machine has an actor for it (R107).
+    if (hp <= 0.0f) g_remoteDead.Add(b.guid, Net::Now());
+    else g_remoteDead.Remove(b.guid);
     QDLOG(LOG_INFO, "enemy record applied guid=", hex32(b.guid[0]), " hp=", flt(hp, 1),
           " respawn=", flt(respawn, 1));
     // The host could have spawned it meanwhile: the record is the truth.
@@ -6975,6 +7150,7 @@ void EnemyPump(uint32_t now)
         g_own.Reset();
         g_hostView.Reset();
         g_killLog.Clear();
+        g_remoteDead.Reset();
         g_deadCursor = 0;
         // A swing sequence is per-world too; carrying it across a map change would
         // treat the first attack in the new world as already described.
@@ -10460,20 +10636,13 @@ void* RigFindNear(const char* sub, float* distOut, ActorXform* xfOut, char* name
 
 // QDCOOP_TEST_NEAR: cm to stand from a `near:` target.  Far enough not to spawn inside
 // it, close enough that the interaction trace reaches it.
-void DevTeleportToTarget(const char* sub, float yawOverride, bool haveYaw)
+// The placement half, shared by the name resolver and the key resolver below: the offset
+// is horizontal along the approach direction, at the TARGET's own height (the actor is the
+// authority on where the ground is), facing the target unless a yaw was given.
+void RigStandBeside(void* actor, const ActorXform& t, const char* label, float d,
+                    float yawOverride, bool haveYaw)
 {
-    float d = 0.0f;
-    ActorXform t = {};
-    char nm[64] = "-";
-    void* actor = RigFindNear(sub, &d, &t, nm, sizeof(nm));
-    if (!actor) {
-        QDLOG(LOG_WARN, "dev teleport near: no live actor matches '", sub, "'");
-        return;
-    }
-    // The distance is a per-mACHINE lever, not one global: the B7 target lines need
-    // one player nearer an enemy than the other, and the DAMAGE lane needs the proxy
-    // inside melee range while the owner's own player is further out.  `qd.near` is
-    // read at each teleport, so a scenario can move one machine and then the other.
+    if (!actor) return;
     int wantOff = DevLever("QDCOOP_TEST_NEAR", "qd.near", 140, 140);
     float off = wantOff > 0 ? (float)wantOff : 140.0f;
     if (off < 40.0f) off = 40.0f;
@@ -10488,17 +10657,67 @@ void DevTeleportToTarget(const char* sub, float yawOverride, bool haveYaw)
 
     float px = t.px + dx * off;
     float py = t.py + dy * off;
-    // The actor's own height is the level's ground for that actor; a `z` copied from a
-    // distant log line is not.
     float pz = t.pz;
     float yaw = haveYaw ? yawOverride : atan2f(-dx, -dy) * 57.29578f;  // face the target
     bool ok = SetActorXform(g_localPawn, px, py, pz, yaw);
     void* pc = LocalController();
     int ro = pc ? FindPropertyOffsetIn(ObjClass(pc), "ControlRotation") : -1;
     if (ro >= 0) { float* r = (float*)((uint8_t*)pc + ro); r[0] = 0.0f; r[1] = yaw; }
-    QDLOG(LOG_INFO, "dev teleport near '", sub, "' -> ", nm, " at ", flt(t.px, 0), ",", flt(t.py, 0),
-          ",", flt(t.pz, 0), " dist=", flt(d, 0), "; standing at ", flt(px, 0), ",", flt(py, 0), ",",
-          flt(pz, 0), " offset=", flt(off, 0), (ok ? "" : " FAILED"));
+    QDLOG(LOG_INFO, "dev teleport near '", label, "' -> ", label, " at ", flt(t.px, 0), ",",
+          flt(t.py, 0), ",", flt(t.pz, 0), " dist=", flt(d, 0), "; standing at ", flt(px, 0), ",",
+          flt(py, 0), ",", flt(pz, 0), " offset=", flt(off, 0), (ok ? "" : " FAILED"));
+}
+
+void DevTeleportToTarget(const char* sub, float yawOverride, bool haveYaw)
+{
+    float d = 0.0f;
+    ActorXform t = {};
+    char nm[64] = "-";
+    void* actor = RigFindNear(sub, &d, &t, nm, sizeof(nm));
+    if (!actor) {
+        QDLOG(LOG_WARN, "dev teleport near: no live actor matches '", sub, "'");
+        return;
+    }
+    RigStandBeside(actor, t, sub, d, yawOverride, haveYaw);
+}
+
+// `guid:<8 hex>` -- stand beside the enemy with THAT key, whatever its class or name.
+//
+// This is what makes "bring both players to the SAME enemy" an instruction rather than a
+// hope.  A name resolver (`near:Mossy_Fighter_BP_C`) lands each machine beside its own
+// nearest copy, which is why Session 13's loot step could never put the two players on one
+// enemy even when both machines held it.
+bool DevTeleportToGuid(const char* hex8, float yawOverride, bool haveYaw)
+{
+    if (!hex8 || !hex8[0]) return false;
+    uint32_t want = 0;
+    for (int i = 0; hex8[i]; ++i) {
+        char c = hex8[i];
+        uint32_t v;
+        if (c >= '0' && c <= '9') v = (uint32_t)(c - '0');
+        else if (c >= 'a' && c <= 'f') v = (uint32_t)(c - 'a' + 10);
+        else if (c >= 'A' && c <= 'F') v = (uint32_t)(c - 'A' + 10);
+        else if (c == ' ') break;
+        else { QDLOG(LOG_WARN, "dev teleport guid: '", hex8, "' is not hex"); return false; }
+        want = (want << 4) | v;
+    }
+    for (int i = 0; i < g_enN; ++i) {
+        EnemyRec& r = g_en[i];
+        if (!r.haveGuid || r.guid[0] != want || !ObjectIsLive(r.actor)) continue;
+        ActorXform t = {};
+        if (!ReadActorXform(r.actor, &t)) continue;
+        float d = 0.0f;
+        { ActorXform me; if (ReadActorXform(g_localPawn, &me)) {
+              float dx = me.px - t.px, dy = me.py - t.py, dz = me.pz - t.pz;
+              d = sqrtf(dx * dx + dy * dy + dz * dz); } }
+        RigStandBeside(r.actor, t, "guid", d, yawOverride, haveYaw);
+        QDLOG(LOG_INFO, "dev teleport: resolved guid=", hex32(want), " (the key both machines "
+              "hold, so both players arrive at the SAME enemy)");
+        return true;
+    }
+    QDLOG(LOG_WARN, "dev teleport guid: this machine holds no live enemy with key=",
+          hex32(want), " (", dec(g_enN), " record(s))");
+    return false;
 }
 
 void DevTeleportFile(uint32_t now)
@@ -10533,6 +10752,17 @@ void DevTeleportFile(uint32_t now)
     if (buf[0] == 0 || strcmp(buf, applied) == 0) return;
     lstrcpynA(applied, buf, sizeof(applied));
 
+    if (!strncmp(buf, "guid:", 5)) {
+        // `guid:<8 hex>[,yaw]` -- stand beside the enemy with that KEY (see
+        // DevTeleportToGuid).  Both machines given the same key arrive at the same enemy.
+        char* spec = buf + 5;
+        float yaw = 0.0f;
+        bool haveYaw = false;
+        for (char* p = spec; *p; ++p)
+            if (*p == ',') { *p = 0; yaw = (float)atof(p + 1); haveYaw = true; break; }
+        DevTeleportToGuid(spec, yaw, haveYaw);
+        return;
+    }
     if (!strncmp(buf, "near:", 5)) {
         // `near:<substring>[,yaw]` -- stand beside a live actor by name.
         char* spec = buf + 5;
@@ -11432,6 +11662,72 @@ void DevKillNearest(uint32_t now)
     }
 }
 
+// QDCOOP_TEST_ENEMYKILL (<UserDir>\qd.enemykill = 8 hex): TEST INSTANCES ONLY -- call the
+// enemy's OWN `Kill`/`Die`, by key.
+//
+// The damage lane needs the class to implement `TryApplyDamage`, and in this build most of
+// the hub's enemy classes do not: measured Session 14, 123 hits over 120 s produced
+// `ran=0 hp 0.0 -> 0.0` every time (`ApplyDamageToActor` could not even build the call
+// frame), so there was no way to produce a DEATH on a chosen enemy and therefore no way to
+// produce a DROP from it.  `Kill` is the function the Green Dragon was defeated with (D9,
+// `22-close-out.md`), takes no parameters, and runs the game's own death path -- so the
+// death event, the drop and the copy's save record all happen exactly as for a damage kill.
+// It is a rig-only lever: the mod never calls it.
+char     g_devEnemyKillApplied[32] = "";
+uint32_t g_devEnemyKillPoll = 0;
+
+void DevEnemyKill(uint32_t now)
+{
+    static char path[MAX_PATH];
+    static int on = -1;
+    if (on < 0) {
+        DevRigPath("QDCOOP_TEST_ENEMYKILL", "qd.enemykill", path, sizeof(path));
+        on = path[0] != 0;
+        if (on) QDLOG(LOG_INFO, "rig: enemykill control '", path, "' enabled exists=",
+                      (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES ? "yes" : "no"));
+    }
+    if (!on) return;
+    if (now - g_devEnemyKillPoll < 500) return;
+    g_devEnemyKillPoll = now;
+    char want[32];
+    if (!DevRigText("QDCOOP_TEST_ENEMYKILL", "qd.enemykill", want, sizeof(want))) return;
+    if (!want[0] || strcmp(want, g_devEnemyKillApplied) == 0) return;
+    lstrcpynA(g_devEnemyKillApplied, want, sizeof(g_devEnemyKillApplied));
+
+    uint32_t key = 0;
+    int digits = 0;
+    for (int i = 0; want[i] && digits < 8; ++i, ++digits) {
+        char c = want[i];
+        uint32_t v;
+        if (c >= '0' && c <= '9') v = (uint32_t)(c - '0');
+        else if (c >= 'a' && c <= 'f') v = (uint32_t)(c - 'a' + 10);
+        else if (c >= 'A' && c <= 'F') v = (uint32_t)(c - 'A' + 10);
+        else break;
+        key = (key << 4) | v;
+    }
+    if (digits == 0) { QDLOG(LOG_WARN, "rig: enemykill -- '", want, "' is not a hex key"); return; }
+
+    EnemyRec* r = nullptr;
+    for (int i = 0; i < g_enN; ++i)
+        if (g_en[i].haveGuid && g_en[i].guid[0] == key) { r = &g_en[i]; break; }
+    if (!r || !ObjectIsLive(r->actor)) {
+        QDLOG(LOG_WARN, "rig: enemykill -- no live enemy with key=", hex32(key));
+        return;
+    }
+    static Fn fKill = {}, fDie = {};
+    bool ran = false;
+    __try { ran = CallNoArgs(r->actor, fKill, "Kill"); }
+    __except (EXCEPTION_EXECUTE_HANDLER) { ran = false; }
+    if (!ran) {
+        __try { ran = CallNoArgs(r->actor, fDie, "Die"); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { ran = false; }
+        QDLOG(ran ? LOG_INFO : LOG_WARN, "rig: enemykill -> key=", hex32(key),
+              (ran ? " the enemy's own Die ran (Kill was absent)" : " -- this class exposes neither Kill nor Die"));
+        return;
+    }
+    QDLOG(LOG_INFO, "rig: enemykill -> key=", hex32(key), " the enemy's own Kill ran");
+}
+
 // QDCOOP_TEST_CHEAT=<function> (<UserDir>\qd.cheat, argument in qd.cheatarg): TEST
 // INSTANCES ONLY -- call one of the game's own `FS_Cheats_C` UFUNCTIONs on this machine.
 //
@@ -11713,9 +12009,16 @@ void DevHardLever(uint32_t now)
     lstrcpynA(g_devHardApplied, map, sizeof(g_devHardApplied));
 
     char err[160];
-    bool ok = FollowHardTravel(map, err, sizeof(err));
-    QDLOG(ok ? LOG_INFO : LOG_WARN, "rig: hard lever -> ", map,
-          " LoadMapWithLoadingScreen ran=", dec(ok ? 1 : 0), (ok ? "" : ": "), (ok ? "" : err));
+    bool streamed = false;
+    bool ok = FollowHardTravel(map, err, sizeof(err), &streamed);
+    if (streamed)
+        QDLOG(LOG_INFO, "rig: hard lever -> ", map, " streamed=1 (a sublevel of this world: "
+              "loaded and SHOWN; the game enters these by streaming, never by loading the "
+              "package as a world)");
+    else
+        QDLOG(ok ? LOG_INFO : LOG_WARN, "rig: hard lever -> ", map,
+              " LoadMapWithLoadingScreen ran=", dec(ok ? 1 : 0), (ok ? "" : ": "),
+              (ok ? "" : err));
 }
 
 // The hub world streams its areas as sublevels, and a sublevel loaded as a STANDALONE
@@ -11724,8 +12027,175 @@ void DevHardLever(uint32_t now)
 // stream the area in, which is the engine's own mechanism and keeps the player in a
 // world that has a GameMode.  The pin is re-asserted every second because the game's
 // level manager hides out-of-range levels on its own schedule.
+// QDCOOP_TEST_ENEMIES: TEST INSTANCES ONLY -- dump this machine's per-GUID enemy state.
+//
+// Session 13's soak compared the two machines' DEATH EVENTS, which can only show the
+// deaths each machine announced; it could not answer the question the co-op requirement
+// asks, which is about the final state of every enemy on both machines.  So the rig asks
+// for state instead: one line per KEY, whether that key is alive or dead HERE, taken from
+// the union of the three places a key's fate is remembered -- the live record, this
+// machine's own KillLog (deaths it ran) and the DeadLedger (deaths the other machine ran).
+// A scenario then diffs the two lists, and the answer is a count of GUIDs, not an opinion.
+//
+// The trigger is the control file's CONTENT, so the rig dumps on demand by rewriting it and
+// never gets a dump per tick.
+char     g_devEnemiesApplied[64] = "";
+uint32_t g_devEnemiesPoll = 0;
+
+void DevEnemyDumpNow(uint32_t now)
+{
+    int alive = 0, dead = 0;
+    int ledgerLive = g_remoteDead.Count(now);
+    int killLive = g_killLog.Count();
+    for (int i = 0; i < g_enN; ++i) {
+        EnemyRec& r = g_en[i];
+        if (!r.haveGuid) continue;
+        bool isDead = false;
+        __try {
+            isDead = !ObjectIsLive(r.actor) || EnemyDead(r.actor);
+        } __except (EXCEPTION_EXECUTE_HANDLER) { isDead = true; }
+        if (!isDead && g_remoteDead.Has(r.guid, now)) isDead = true;
+        if (!isDead) {
+            for (int k = 0; k < g_killLog.Count(); ++k) {
+                const uint32_t* kg = g_killLog.At(k);
+                if (kg && enemy::SameGuid(kg, r.guid)) { isDead = true; break; }
+            }
+        }
+        char cls[64] = "";
+        float rhp = 0, rmx = 0;
+        bool haveHp = false;
+        __try {
+            FNameToString(ObjNameRaw(ObjClass(r.actor)), cls, sizeof(cls));
+            haveHp = EnemyHp(r.actor, &rhp, &rmx);
+        } __except (EXCEPTION_EXECUTE_HANDLER) { cls[0] = 0; haveHp = false; }
+        QDLOG(LOG_INFO, "enemykey ", hex32(r.guid[0]), (isDead ? " DEAD" : " ALIVE"),
+              " local=", dec(g_own.Running(r.guid) ? 1 : 0), " src=", dec((int)r.src),
+              " hp=", (haveHp ? flt(rhp, 1) : flt(-1.0f, 1)),
+              " cls=", (cls[0] ? cls : "?"));
+        if (isDead) ++dead; else ++alive;
+    }
+    // Deaths with no live record: the machine that did not run the enemy still has to
+    // report it dead, or the diff can never be zero (R107's 55 GUIDs were exactly these).
+    for (int k = 0; k < killLive; ++k) {
+        const uint32_t* kg = g_killLog.At(k);
+        if (!kg || EnemyByGuid(kg)) continue;
+        QDLOG(LOG_INFO, "enemykey ", hex32(kg[0]), " DEAD local=0 src=-1 cls=(killed here)");
+        ++dead;
+    }
+    for (int k = 0; k < ledgerLive; ++k) {
+        const uint32_t* rg = g_remoteDead.At(k, now);
+        if (!rg || EnemyByGuid(rg)) continue;
+        bool inKill = false;
+        for (int j = 0; j < g_killLog.Count(); ++j) {
+            const uint32_t* kg = g_killLog.At(j);
+            if (kg && enemy::SameGuid(kg, rg)) { inKill = true; break; }
+        }
+        if (inKill) continue;
+        QDLOG(LOG_INFO, "enemykey ", hex32(rg[0]), " DEAD local=0 src=-1 cls=(killed there)");
+        ++dead;
+    }
+    QDLOG(LOG_INFO, "enemykey n=", dec(alive + dead), " alive=", dec(alive), " dead=",
+          dec(dead), " killlog=", dec(killLive), " ledger=", dec(ledgerLive));
+}
+
+void DevEnemyDump(uint32_t now)
+{
+    static char path[MAX_PATH];
+    static int on = -1;
+    if (on < 0) {
+        DevRigPath("QDCOOP_TEST_ENEMIES", "qd.enemies", path, sizeof(path));
+        on = path[0] != 0;
+        if (on) QDLOG(LOG_INFO, "rig: enemies control '", path, "' enabled exists=",
+                      (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES ? "yes" : "no"));
+    }
+    if (!on) return;
+    if (now - g_devEnemiesPoll < 500) return;
+    g_devEnemiesPoll = now;
+    char want[64];
+    if (!DevRigText("QDCOOP_TEST_ENEMIES", "qd.enemies", want, sizeof(want))) return;
+    if (!want[0] || strcmp(want, g_devEnemiesApplied) == 0) return;
+    lstrcpynA(g_devEnemiesApplied, want, sizeof(g_devEnemiesApplied));
+    QDLOG(LOG_INFO, "rig: enemy dump -- ", want,
+          " (records ", dec(g_enN), ", ledger ", dec(g_remoteDead.Count(now)), ")");
+    g_remoteDead.Expire(now);
+    DevEnemyDumpNow(now);
+}
+
+// QDCOOP_TEST_SEQUENCE: TEST INSTANCES ONLY -- start a placed `LevelSequenceActor`'s own
+// player, which is the call the altar/egg Blueprints make.
+//
+// The cutscene lane can only be proven with a sequence actually playing, and the content
+// gate in front of the altar is not part of the claim: R90/R105 measured that a real press
+// reaches the Blueprint and the Blueprint still does nothing.  So the rig starts the
+// sequence directly on ONE machine through the sequencer's own `Play`, and what is under
+// test is what happens next: the other machine holds, and both resume when it ends
+// (qdsequence.h).  Playing the sequence is the game's own action, not a fabricated state --
+// `SequencePlayingNow` reads the same `IsPlaying()` the detector trusts.
+//
+// The control holds a substring of the sequence actor's name, or "first".
+char     g_devSeqApplied[64] = "";
+uint32_t g_devSeqPoll = 0;
+
+void DevSequenceLever(uint32_t now)
+{
+    static char path[MAX_PATH];
+    static int on = -1;
+    if (on < 0) {
+        DevRigPath("QDCOOP_TEST_SEQUENCE", "qd.sequence", path, sizeof(path));
+        on = path[0] != 0;
+        if (on) QDLOG(LOG_INFO, "rig: sequence control '", path, "' enabled exists=",
+                      (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES ? "yes" : "no"));
+    }
+    if (!on) return;
+    if (now - g_devSeqPoll < 500) return;
+    g_devSeqPoll = now;
+    char want[64];
+    if (!DevRigText("QDCOOP_TEST_SEQUENCE", "qd.sequence", want, sizeof(want))) return;
+    if (!want[0] || strcmp(want, g_devSeqApplied) == 0) return;
+    lstrcpynA(g_devSeqApplied, want, sizeof(g_devSeqApplied));
+
+    SequenceScan(now);
+    if (g_seqActorN == 0) {
+        QDLOG(LOG_WARN, "rig: sequence lever -- this world places no LevelSequenceActor");
+        return;
+    }
+    int best = -1;
+    for (int i = 0; i < g_seqActorN && best < 0; ++i) {
+        void* a = g_seqActors[i];
+        if (!a || !ObjectIsLive(a)) continue;
+        char nm[96] = "";
+        if (FNameToString(ObjNameRaw(a), nm, sizeof(nm)) <= 0) continue;
+        if (!strcmp(want, "first") || enemyown::HasCI(nm, want)) best = i;
+    }
+    if (best < 0) {
+        // Name what IS here, so a wrong name is a measurement and not a silent no-op.
+        for (int i = 0; i < g_seqActorN && i < 8; ++i) {
+            void* a = g_seqActors[i];
+            if (!a || !ObjectIsLive(a)) continue;
+            char nm[96] = "";
+            if (FNameToString(ObjNameRaw(a), nm, sizeof(nm)) > 0)
+                QDLOG(LOG_INFO, "rig: sequence lever -- placed sequence actor '", nm, "'");
+        }
+        QDLOG(LOG_WARN, "rig: sequence lever -- no LevelSequenceActor matches '", want, "'");
+        return;
+    }
+    void* a = g_seqActors[best];
+    char nm[96] = "";
+    FNameToString(ObjNameRaw(a), nm, sizeof(nm));
+    void* player = ObjPropC(a, "SequencePlayer");
+    if (!player || !ObjectIsLive(player)) {
+        QDLOG(LOG_WARN, "rig: sequence lever -- '", nm, "' has no SequencePlayer");
+        return;
+    }
+    static Fn fPlay = {}, fLoop = {};
+    bool ran = CallNoArgs(player, fPlay, "Play");
+    if (!ran) ran = CallNoArgs(player, fLoop, "PlayLooping");
+    QDLOG(ran ? LOG_INFO : LOG_WARN, "rig: sequence lever -> ", nm,
+          (ran ? " Play ran on its own SequencePlayer (the call the altar Blueprint makes)"
+               : " -- Play did not resolve or run on the SequencePlayer"));
+}
+
 char     g_devLevelApplied[64] = "";
-char     g_rigLevelPin[64] = "";
 uint32_t g_devLevelPoll = 0;
 
 void DevLevelLever(uint32_t now)
@@ -12935,14 +13405,17 @@ bool HK_Tick(void* engineLoop)
     DevTeleport(now);
     DevTeleportFile(now);
     DevScanNearest(now);
+    DevEnemyDump(now);
     DevInteract(now);
     DevGod(now);
     DevKillNearest(now);
+    DevEnemyKill(now);
     DevCheat(now);
     DevKill(now);
     DevTravelLever(now);
     DevHardLever(now);
     DevLevelLever(now);
+    DevSequenceLever(now);
     DevMenuLever(now);
     DevEFuncLever(now);
     DevUseLever(now);

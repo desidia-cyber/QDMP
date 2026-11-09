@@ -189,9 +189,16 @@ private:
 // A live row stops when the enemy dies, so without this a peer that was not looking
 // (area not loaded, datagram lost) would never learn of the death and would later run
 // that enemy alive.  Captured from the host's own StoreEnemySaveState(hp = 0).
+//
+// kMax was 64, and that was a measured ceiling rather than a guess: the Session 13 soak
+// (R107) recorded 104 deaths in five minutes on one machine, so 40 of them were never on
+// the wire at all -- the ring overwrote them before the peer's 4-deaths-per-datagram
+// cursor came round.  A kill list that silently forgets kills is indistinguishable from
+// a kill that did not converge, so the bound is now above any single raid's death count.
+// It stays bounded: a session cannot grow it without limit.
 class KillLog {
 public:
-    static const int kMax = 64;
+    static const int kMax = 512;
     KillLog() { Reset(); }
     void Reset() { n_ = 0; next_ = 0; }
 
@@ -220,6 +227,159 @@ public:
 private:
     uint32_t g_[kMax][4];
     int n_, next_;
+};
+
+// ---------------------------------------------------------------------------
+// DeadLedger -- deaths the OTHER machine ran, remembered here by KEY.
+// ---------------------------------------------------------------------------
+// THE GAP THIS CLOSES (Session 14, R107)
+// -------------------------------------
+// A death crossed the wire already -- as a dead row, and HostView turned it into "kill the
+// local copy" -- but only a machine that HELD that enemy could act on it.  In the soak the
+// host recorded 104 deaths and the peer 49, with 55 GUIDs the peer had never held: its own
+// spawner had not activated for those enemies (a spawner only spawns while ITS local player
+// is in range), so there was no copy to kill and nothing anywhere recorded the fact.  When
+// that player later walked into range the enemy was alive again on that machine.
+//
+// The co-op requirement is per GUID, not per actor: an enemy killed on one machine is dead
+// on the other, whether or not the other machine happened to have a copy at the instant.
+// So a death is remembered by KEY and re-applied whenever a local copy appears.
+//
+// WHY A TIME TO LIVE AND NOT A TOMBSTONE
+// --------------------------------------
+// The sender re-broadcasts a death for as long as it believes it (KillLog), so an entry
+// that is refreshed by each repeat lives exactly as long as the sender keeps saying it.
+// When the sender stops, the entry expires -- and that is the correct meaning too: the game
+// clears every enemy record on a rest (`ClearAllEnemySaveStates`), so a rest brings the
+// enemies back and a permanent tombstone here would keep them dead for the session.
+//
+// Header-only and dependency-free, compiled into native/test like the other state machines.
+class DeadLedger {
+public:
+    // 512: above the 104-death soak, and the same bound as KillLog so one machine can
+    // never be told about more deaths than the other can hold.
+    static const int      kMax    = 512;
+    // Longer than one full re-broadcast cycle of a full log: 512 keys at 4 deaths per
+    // 50 ms datagram is 6.4 s, so 20 s survives several dropped datagrams and still
+    // expires well inside a session.
+    static const uint32_t kKeepMs = 20000;
+
+    DeadLedger() { Reset(); }
+
+    void Reset()
+    {
+        for (int i = 0; i < kMax; ++i) s_[i].used = false;
+        overflow_ = 0;
+    }
+
+    // Remember a death.  Returns true when the key was not already live.
+    bool Add(const uint32_t guid[4], uint32_t now)
+    {
+        if (ZeroGuid(guid)) return false;
+        Rec* r = Find(guid);
+        if (r) { r->lastMs = now; return false; }
+        r = Alloc(now);
+        if (!r) { ++overflow_; return false; }
+        r->used = true;
+        for (int k = 0; k < 4; ++k) r->guid[k] = guid[k];
+        r->lastMs = now;
+        return true;
+    }
+
+    // The other machine says it is alive again (a respawn, or a rest it also observed).
+    // Removing rather than waiting for the TTL keeps a revived enemy from being killed on
+    // sight for the rest of the window.
+    bool Remove(const uint32_t guid[4])
+    {
+        Rec* r = Find(guid);
+        if (!r) return false;
+        r->used = false;
+        return true;
+    }
+
+    bool Has(const uint32_t guid[4], uint32_t now) const
+    {
+        const Rec* r = Find(guid);
+        if (!r) return false;
+        return Age(*r, now) <= kKeepMs;
+    }
+
+    // Drop entries whose sender has gone quiet (a rest, or the other machine left).
+    int Expire(uint32_t now)
+    {
+        int gone = 0;
+        for (int i = 0; i < kMax; ++i) {
+            if (!s_[i].used) continue;
+            if (Age(s_[i], now) <= kKeepMs) continue;
+            s_[i].used = false;
+            ++gone;
+        }
+        return gone;
+    }
+
+    int Count(uint32_t now) const
+    {
+        int n = 0;
+        for (int i = 0; i < kMax; ++i) n += (s_[i].used && Age(s_[i], now) <= kKeepMs) ? 1 : 0;
+        return n;
+    }
+
+    // The `i`-th LIVE entry, so the rig can dump the set for a per-GUID diff.
+    const uint32_t* At(int i, uint32_t now) const
+    {
+        if (i < 0) return nullptr;
+        int seen = 0;
+        for (int k = 0; k < kMax; ++k) {
+            if (!s_[k].used || Age(s_[k], now) > kKeepMs) continue;
+            if (seen == i) return s_[k].guid;
+            ++seen;
+        }
+        return nullptr;
+    }
+
+    uint32_t Overflows() const { return overflow_; }
+
+private:
+    struct Rec {
+        bool     used;
+        uint32_t guid[4];
+        uint32_t lastMs;
+    };
+
+    static uint32_t Age(const Rec& r, uint32_t now)
+    {
+        return (now > r.lastMs) ? now - r.lastMs : 0;
+    }
+
+    Rec* Find(const uint32_t g[4])
+    {
+        for (int i = 0; i < kMax; ++i)
+            if (s_[i].used && SameGuid(s_[i].guid, g)) return &s_[i];
+        return nullptr;
+    }
+    const Rec* Find(const uint32_t g[4]) const
+    {
+        for (int i = 0; i < kMax; ++i)
+            if (s_[i].used && SameGuid(s_[i].guid, g)) return &s_[i];
+        return nullptr;
+    }
+
+    Rec* Alloc(uint32_t now)
+    {
+        for (int i = 0; i < kMax; ++i) if (!s_[i].used) return &s_[i];
+        // Full: take the slot that expired longest ago.  A live entry is never replaced --
+        // losing one would be a kill that stops converging.
+        int victim = -1;
+        uint32_t oldest = 0;
+        for (int i = 0; i < kMax; ++i) {
+            uint32_t age = Age(s_[i], now);
+            if (age > kKeepMs && age > oldest) { oldest = age; victim = i; }
+        }
+        return victim < 0 ? nullptr : &s_[victim];
+    }
+
+    Rec      s_[kMax];
+    uint32_t overflow_;
 };
 
 // ---------------------------------------------------------------------------

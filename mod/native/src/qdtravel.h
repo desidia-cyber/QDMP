@@ -524,6 +524,12 @@ public:
         resuming_ = true;
     }
 
+    // This machine is in the target world WITHOUT a load: the target is a streamed sublevel
+    // of the world it is already in, so the map name never changes and `OnLocalMap` can
+    // never observe an arrival (Session 14, R102).  Called only by the streamed-travel
+    // branch, which has just done what the game does instead of loading.
+    void MarkLocalArrived() { localArrived_ = true; }
+
     // True when the deadline expired and the transition was abandoned.
     bool Tick(uint32_t now)
     {
@@ -616,7 +622,7 @@ private:
 // MEASURED (Session 11 R92): `LoadMapWithLoadingScreen(<the map we are already in>)`
 // tears down the current UWorld while it is the current world, and the GAME faults with
 // a stack entirely inside QueensDomain-Win64-Shipping (no WINMM frame, so it is not a
-// mod pointer): `UE4CC-Windows-C2CD747E…`, EXCEPTION_ACCESS_VIOLATION, 214 s in.
+// mod pointer): `UE4CC-Windows-C2CD747E...`, EXCEPTION_ACCESS_VIOLATION, 214 s in.
 //
 // The handshake already answers "we are already there" with an arrival instead of a
 // load, but two other paths reach the loader with a name they did not cross-check: the

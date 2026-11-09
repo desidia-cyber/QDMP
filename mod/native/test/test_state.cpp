@@ -700,8 +700,42 @@ static void TestEnemy()
     CHECK(k.Count() == 2, "enemy/kill log dedups");
     k.Remove(g1);
     CHECK(k.Count() == 1 && enemy::SameGuid(k.At(0), g2), "enemy/kill log removal");
-    for (uint32_t i = 0; i < 200; ++i) { uint32_t g[4] = {i + 10, 0, 0, 1}; k.Add(g); }
+    // R107: a five-minute soak recorded 104 deaths on one machine, so the log must hold
+    // more than one raid's worth -- and must still be bounded.
+    int soakDeaths = 104;
+    CHECK(enemy::KillLog::kMax > soakDeaths, "enemy/kill log holds more than one soak's deaths");
+    for (uint32_t i = 0; i < 700; ++i) { uint32_t g[4] = {i + 10, 0, 0, 1}; k.Add(g); }
     CHECK(k.Count() == enemy::KillLog::kMax, "enemy/kill log bounded");
+
+    // Dead ledger: the deaths the OTHER machine ran, keyed by enemy, applied whenever a
+    // copy appears.  This is R107's 55-GUID gap: a death must land even on a machine that
+    // held no copy at the instant.
+    enemy::DeadLedger led;
+    CHECK(!led.Has(g1, 1000), "enemy/a key with no death is alive");
+    CHECK(led.Add(g1, 1000), "enemy/ledger takes a death");
+    CHECK(!led.Add(g1, 1500), "enemy/ledger dedups and refreshes");
+    CHECK(led.Has(g1, 1000 + enemy::DeadLedger::kKeepMs), "enemy/ledger keeps through the window");
+    CHECK(!led.Has(g1, 1500 + enemy::DeadLedger::kKeepMs + 1), "enemy/ledger expires when the sender stops");
+    CHECK(led.Add(g2, 2000), "enemy/ledger re-arms after expiry");
+    CHECK(led.Remove(g2), "enemy/ledger forgets a revive");
+    CHECK(!led.Has(g2, 2100), "enemy/a revived enemy is not killed on sight");
+    CHECK(led.Count(2100) == 1, "enemy/the revive removed exactly that key");
+    // A zero key is not an enemy, exactly as everywhere else.
+    CHECK(!led.Add(zero, 2200), "enemy/ledger refuses a zero key");
+    // Bounded: past kMax live entries the oldest EXPIRED slot is reused, never a live one.
+    led.Reset();
+    for (uint32_t i = 0; i < (uint32_t)enemy::DeadLedger::kMax; ++i) {
+        uint32_t g[4] = {i + 1, 0, 0, 2}; led.Add(g, 3000);
+    }
+    CHECK(led.Count(3000) == enemy::DeadLedger::kMax, "enemy/ledger holds kMax deaths");
+    uint32_t extra[4] = {0xFFFF, 0, 0, 3};
+    led.Add(extra, 3100);
+    CHECK(led.Count(3100) == enemy::DeadLedger::kMax, "enemy/ledger stays bounded");
+    led.Add(extra, 3000 + enemy::DeadLedger::kKeepMs + 5000);   // now every slot is stale
+    CHECK(led.Has(extra, 3000 + enemy::DeadLedger::kKeepMs + 5000),
+          "enemy/ledger reclaims an expired slot for a new death");
+    CHECK(led.At(0, 3000 + enemy::DeadLedger::kKeepMs + 5000) != nullptr,
+          "enemy/ledger can be walked for the per-GUID diff");
 
     // Row budget: never more than asked, every row visited, then wraps.
     enemy::RowCursor c;
