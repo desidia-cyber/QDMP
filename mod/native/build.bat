@@ -76,14 +76,21 @@ REM exactly the machinery that must not run this early).
 REM /MT matches a static CRT: the DLL is loaded by the game before its own CRT is
 REM initialised, so it must not require a runtime it cannot see.  ws2_32 is the
 REM transport; nothing else is needed (no CRT varargs, no STL in hot paths).
+REM /Zi + /DEBUG emit a PDB: the module is a stripped release DLL, so without it a
+REM crash report is only an RVA (`WINMM+0x3b357`) and a human has to guess.  With it,
+REM dumpbin /DISASM:NOBYTES /LINENUMBERS, or a dump's stack, names the function AND
+REM the line.  /OPT:REF,ICF /INCREMENTAL:NO are spelled out because /DEBUG would
+REM otherwise leave the linker's debug defaults (no COMDAT folding beyond 8) in place:
+REM the release code layout is the thing under test, so it must stay as it ships.
 cl /nologo /LD /O2 /std:c++17 /EHsc /W3 /MT /D_CRT_SECURE_NO_WARNINGS /DWIN32_LEAN_AND_MEAN ^
-   /D_WINSOCK_DEPRECATED_NO_WARNINGS ^
+   /D_WINSOCK_DEPRECATED_NO_WARNINGS /Zi ^
    "%SRC%\proxy.cpp" "%SRC%\fwd_symbols.c" ^
    "%MH%\src\buffer.c" "%MH%\src\hook.c" "%MH%\src\trampoline.c" "%MH%\src\hde\hde64.c" ^
    /I"%MH%\include" /I"%MH%\src" /I"%SRC%" ^
    /Fe"%OUT%\winmm.dll" /Fo"%OUT%\\" ^
    /link /DEF:"%HERE%\proxy.def" /MACHINE:X64 /DYNAMICBASE /NXCOMPAT ^
-   ws2_32.lib user32.lib /MAP:"%OUT%\winmm.map" /IMPLIB:"%OUT%\winmm.lib"
+   /DEBUG /PDB:"%OUT%\winmm.pdb" /OPT:REF /OPT:ICF /INCREMENTAL:NO ^
+   /MAP:"%OUT%\winmm.map" /IMPLIB:"%OUT%\winmm.lib" ws2_32.lib user32.lib
 if errorlevel 1 goto :build_failed
 
 echo.
