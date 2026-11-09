@@ -73,6 +73,7 @@ arrives late is still correct.
 | `0x28` | `SUSPEND` | both | reliable | event |
 | `0x29` | `BOSS` | both | reliable | on change |
 | `0x2A` | `OBJECTS` | host → peer | reliable | on change + 5 s repair |
+| `0x2B` | `ENEMY_SPAWN` | owner → follower | reliable | once per key |
 | `0x30` | `LOG` | both | unreliable | event |
 
 The design rule being followed (DollsMP 12 §4.6 E8): **the event channel is a
@@ -342,6 +343,54 @@ when it could observe nothing.
 
 Reliable, on change only: a boss bar that fails to appear because a datagram was lost is
 the failure a player reports as "the boss fight is broken".
+
+### 3.9c `ENEMY_SPAWN` (0x2B)
+
+```
+guid guid            the enemy's key, the same one an `ENEMY` row carries
+u8   flags           bit0 = the receiver should hold this as a mirrored copy
+i32  px              position, the same 1/8 cm quantization a row uses
+i32  py
+i32  pz
+i16  yaw
+u16  hp              HP as the same 0..65535 fraction an `ENEMY` row carries
+str  path            the enemy ACTOR's class asset path, "<package>.<object>"
+```
+
+A spawner only spawns while *its own* machine's player is inside its activation range
+(`PlayerIsInActivationRange`, which reads `GetPlayerCharacter` — player 0 of that machine),
+so an enemy whose spawner activated on one machine **does not exist at all** on the other.
+Measured in `780_SZ_Depths`: the Green Dragon (`Dragon_Green_BP_C`, key `17181166`) is a
+live actor on the owner and the partner "holds no copy of this GUID". Every other enemy
+lane — rows, detail, boss, damage — is addressed to a *copy*, so on the machine with no
+actor there is nothing to follow, nothing to hit and nothing to kill.
+
+The rows already say a key is alive and where it is. What a row cannot carry is **which
+class to construct**, and it cannot be derived: a summon's key hashes its summoner and a
+spawn point, and a placed key hashes a path, so neither names a package. The class
+therefore rides the wire as an asset path, for the same reason `ENEMY_DETAIL.path` does —
+both machines load the same cooked assets in their own order, so an index would select a
+different class on each side.
+
+Rules that keep this a repair rather than a second simulation:
+
+- **Only the owner sends it**, and only while the key is alive. A dead key is the death
+  ledger's job, not a reason to construct a corpse.
+- **Reliable, on change, once per key.** A missing copy that never appears because a
+  datagram was lost is a partner fighting an invisible boss.
+- The copy is constructed through the engine's **deferred spawn** pair, with `Paused`,
+  `bIsAIDisabled`, `AutoPossessPlayer` and `AutoPossessAI` cleared in the window before
+  `FinishSpawning` — the same window B7's player body uses, and the only place those
+  properties still decide anything.
+- It carries the owner's key from its first frame, has **no `OwningSpawner`**, and is
+  marked so that it never publishes rows, is never persisted by `StoreEnemySaveState`, and
+  never takes ownership of its own AI.
+- It is **destroyed** when the owner's row says dead, when that row stops (the owner left
+  the area), or on a world change / session end.
+- Receiver-side switch: `MirrorSpawn`. It constructs a full gameplay enemy Blueprint whose
+  own `BeginPlay` runs, so it was OFF until a live session proved it; **Session 16 proved it**
+  (`item1` 15/15, `boss` 25/25 in `780_SZ_Depths`) and the compiled default is now 1. It stays
+  a switch so a broken mirror can be turned off without losing the rest of the enemy lane.
 
 ### 3.10 `INTENT` (0x20)
 

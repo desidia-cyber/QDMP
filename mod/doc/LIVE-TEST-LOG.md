@@ -2858,3 +2858,281 @@ the game will say "this is a boss". The second is the damage lane on the dragon:
 does not implement `TryApplyDamage`, so `ApplyDamageToActor` returns `ran=0` and its HP
 cannot be moved by a hit — the same content property R108 measured for the hub's classes.
 Both are content/API facts, not lanes, and they are what the next session should attack.
+## Session 16 — 2026-11-09 (the missing enemy, the one HP, and the release)
+
+This branch is `sync-fix` at `9e6ca43`. Every write path is on (`ObjectSync=1`), `LogLevel=3`,
+`PlayerBody=1`, and — new this session — `MirrorSpawn=1`; `tools/session16.ps1` is the whole
+run in one process, one phase per boot (`-Phase item1|boss|cut|all`), each phase in its own
+instance root so two phases cannot corrupt each other. Roles are read from
+`session established`: **host=inst1, peer=inst2**. Fresh pairs are seeded from
+`analysis/save-backup-before-live`.
+
+Session 15 ended on three named questions: the Green Dragon exists only on the machine whose
+spawner activated; its class "does not implement `TryApplyDamage`"; and no boss predicate in
+this build answers. This session took all three, and the first thing it established is that
+two of those three facts were wrong.
+
+### R117. The peer could not hold the dragon because no lane carries a CLASS (fixed)
+
+The requirement is not "ship rows for it" — every enemy lane (rows, detail, boss, damage) is
+addressed to a **copy**, and on the machine whose spawner never activated there was no copy
+to address. The spawner only spawns while *its own* machine's player is inside its activation
+range (`PlayerIsInActivationRange` reads `GetPlayerCharacter`, i.e. player 0 of that machine),
+so the dragon simply did not exist on the peer:
+
+```
+[1] scan: kind enemy Dragon_Green_BP_C guid=17181166 at -28573,754,-13028 local-run=1
+[2] (nothing: the peer held no actor for this GUID)
+```
+
+The rows already said the key was alive and where. What a row cannot carry is **which class to
+construct**, and it cannot be derived — a summon's key hashes its summoner and a spawn point,
+and a placed key hashes a path, so neither names a package. So the class rides the wire in a
+new reliable body, `ENEMY_SPAWN (0x2B)`: the key, the owner's transform and HP fraction, and
+the actor's class asset path. Measured, both machines:
+
+```
+[1] enemy spawn: described guid=17181166 class=/Game/Enemies/Dragon/Dragon_Green_BP.Dragon_Green_BP_C
+[2] enemy spawn: received guid=17181166 class=/Game/Enemies/Dragon/Dragon_Green_BP.Dragon_Green_BP_C ... (no record here)
+[2] enemy spawn: class resolved /Game/Enemies/Dragon/Dragon_Green_BP.Dragon_Green_BP_C (by asset path)
+[2] enemy mirror: the engine constructed the actor (FinishSpawning returned it)
+[2] enemy spawn: constructed guid=17181166 ... at -28573,754,-13028 hp=65535 -- AI off, driven by the owner's rows, never persisted (mirrors=1)
+[2] enemykey 17181166 ALIVE local=0 src=0 hp=3500.0 mirrored=1 cls=Dragon_Green_BP_C
+PASS [2] the PARTNER now holds a copy of the same GUID
+PASS [2] both machines report the SAME HP for the shared boss -- host=3500 peer=3500
+```
+
+### R118. Four bugs inside the mirror lane, each measured before it was fixed
+
+The lane is short and every one of its guards had a failure that looked like a different bug:
+
+* **A reliable body that a receiver refuses is refused FOR EVER.** The lane is acked on
+  arrival, so the sender never retransmits. The receiver's "one construction per 400 ms"
+  limit therefore dropped the dragon's body permanently while it built an ordinary enemy:
+  `kind=0000002B seq=2417 received; ack sent` and then nothing, with no line saying why. A
+  refused body is now **stored whole** (the class path is the point) and drained later.
+* **The scan sweep deleted the copy's record.** `EnemyScanStep` drops records it did not see
+  in a pass, and a constructed actor is not "seen" — so `constructed=1` was followed one sweep
+  later by a record-less actor. A mirror is now kept by liveness; its removal is the mirror
+  pump's job.
+* **A death older than the copy killed it.** Three copies were destroyed 46–765 ms after
+  construction because a *kill-log* dead row was still the freshest row for those keys. A
+  death only counts if the row is NEWER than the construction — the row's own timestamp is
+  the ordering fact.
+* **Silence was read as "the owner left".** At 10 s every copy died exactly 10031 ms after
+  birth, because rows round-robin 16 per datagram over 200+ enemies and one key can wait many
+  seconds. Silence now **hides** the copy (guarded, reversible) and a returning row shows it
+  again; only a dead row or a world change actually removes it.
+
+The construction itself uses the engine's deferred spawn pair, with `Paused`,
+`bIsAIDisabled`, `AutoPossessPlayer` and `AutoPossessAI` cleared between `BeginDeferred` and
+`FinishSpawning` — the same window B7's player body uses, and the only place those properties
+still decide anything. A mirror never publishes rows, is refused by `StoreEnemySaveState`
+before the game's writer, is never released to its own AI by any distance preference, and is
+destroyed on a world change or session end.
+
+### R119. The dragon DOES declare `TryApplyDamage` — and it moves nothing (corrected fact)
+
+Session 15 recorded "the class has no `TryApplyDamage`, so `ran=0`" and called it a content
+fact. Both halves are wrong. The class exports it (761 bytes), the call runs, and it still
+moves nothing:
+
+```
+[1] damage: TryApplyDamage param DamageToApply size=216 on an enemy, amount -> DamageAmount @0
+[1] WARN enemy damage had NO effect: TryApplyDamage ran asked 200.0 returned 0.00 hp 3500.0 -> 3500.0
+```
+
+`ran=0` is `ApplyDamageToActor`'s return (its HP-movement oracle), not "the function was
+absent". Two further entries were then tried and measured rather than assumed:
+
+* `EnemyBase_C.DamageHP` — the base class's own entry — takes **no input at all**. Its single
+  parameter is `out:ReceivedHPDamage`:
+  `damage: DamageHP on Dragon_Green_BP_C parms=1 in-params=0 size=4 -> out:ReceivedHPDamage`.
+  So the module cannot ask it to subtract anything.
+* Filling the entry's empty `Hit` object parameter (its `SourceGUID` field) changed nothing.
+
+What does work is the degradation the module already uses for the player: the HP is a real,
+readable, writable number (`GetHP()`/`GetMaxHP()` both answer), so the amount is applied as a
+**clamped, downward-only** write and read back:
+
+```
+[1] damage: enemy hp via HP write 3500.0 -> 3300.0 (the class has no callable damage entry; the write is clamped and never heals)
+[1] damage: enemy hp via HP write 3300.0 -> 3100.0 (...)
+```
+
+It is deliberately the last resort: it skips the enemy's hit reactions and status. But it is
+the difference between a boss with a shared health pool and a boss that cannot be hurt at all.
+
+### R120. The boss bar: the predicate does not exist, the CONTENT says who is a boss (fixed)
+
+Session 15's `boss probe: ... part=-1 info=-1` was read as "this build has no boss
+predicates". The probe was asking the wrong question: `Enemy_IsPartOfBossEncounter` and
+`Enemy_GetBossInfo` are imported by `EnemyBase` and declared by `EnemyDataInterface`, but an
+unimplemented interface message is not a class function, so `FindFunction` correctly found
+nothing. The game's own answer is in the **data**:
+
+* `EnemyData` (the class `GreenDragon_Data` is an instance of) declares a `Boss` property
+  (offset 592, from the cooked class), and the dragon's data says `Boss = 1`.
+
+So boss membership is now asked of the enemy's own `Data` after the predicates:
+
+```
+[1] boss probe: Dragon_Green_BP_C enemy=-1 spawner=-1 data.Boss=1 -> boss=1
+[1] boss: guid=17181166 is a boss
+[1] boss: ActivateBossHPBar called for this machine's own copy
+[1] boss: sent guid=17181166 phase=0 bar on hp=65535
+[2] boss: follower raised its own bar for guid=17181166 hp=...
+```
+
+`ActivateBossHPBar` itself was never missing — `PlayerStatsAndUtils_C` carries it (export 8,
+591 bytes) and `FS_PlayerChar` carries a wrapper (`ActivateBossHPbar`), so the bar has a second
+route on a build where the CDO is not loaded.
+
+Turning the bar ON at the partner took three more guards, each of which alone left it dark:
+
+* the mirror must not run `BossPump` (it is the other machine's boss, so it is the FOLLOWER —
+  without this it sent `boss: sent guid=… bar on` of its own and never raised anything);
+* `OnBoss` must accept a **mirror** as the local copy, because the ownership table has never
+  heard of a key this machine did not spawn and answers `O_LOCAL`, not `O_FROZEN`;
+* and the owner must **republish** the bar, because its first body arrives before the partner
+  holds a copy and is acked and dropped. That repair is per boss, only while the bar is up,
+  every 3 s:
+
+```
+[2] boss: follower raised its own bar for guid=17181166 hp=65535 phase=0
+[2] boss: follower lowered its own bar for guid=17181166 hp=58046 phase=0
+```
+
+### R121. Two players on ONE number (proved)
+
+The partner's hit on its mirrored copy travels along the existing enemy-hit intent, and the
+OWNER applies it through the damage path this session repaired. Both hits land on the one HP,
+and both machines report it:
+
+```
+  HP before: host=3500 peer=3500
+[1] rig: hitguid -> key=17181166 LOCAL hit amount=200.0
+[2] rig: hitguid -> key=17181166 the other player's hit sent amount=200.0 frac=3744 (this machine holds a frozen copy)
+[1] hit on enemy 17181166 from the other player, 199.9
+  HP after:  host=3100 peer=3100
+PASS the dragon's HP FELL on the owner (damage from both players) -- 3500 -> 3100
+PASS both machines report the SAME HP after the hits -- host=3100 peer=3100
+```
+
+The death is the game's own `Kill` on the owner, recorded there, and the partner learns it
+through the DeadLedger and kills its copy — which is why the partner's copy dies too.
+
+### R122. The cutscene: HOLD and RELEASE, and why it took four runs (fixed)
+
+Session 15 proved the play and the hold but never the resume, because
+`SecretSwordGetSequence` was still playing when the window closed. This session added a rig
+lever that ends it on purpose (`qd.sequence = stop`, the sequencer player's own `Stop`), and
+the release immediately exposed three real bugs:
+
+* **`stop` was routed through the name matcher**, so it reported
+  `no LevelSequenceActor matches 'stop'` while the sequence it was asked to end played on.
+  It is now decided before the match, and ends whatever is playing.
+* **Both machines played the sequence.** The area's own level list is pushed on both, so the
+  placed `LevelSequenceActor` is in both worlds; the holder's `BeginCutsceneWithManager`
+  started a second copy locally, after which neither machine ever released. A machine that
+  can already see the sequence holds instead of starting another.
+* **A finished cutscene was re-played.** After the end, each side's next publish still named
+  the last sequence it played, so the pair restarted each other indefinitely. The board now
+  refuses to act on a publication it has already released, and a machine that just ended a
+  sequence does not start it again while the partner still names it.
+
+Measured, the whole lane:
+
+```
+[2] rig: sequence lever -> SecretSwordGetSequence Play ran on its own SequencePlayer
+[2] cutscene: local started SecretSwordGetSequence
+[1] cutscene: holding the local player for the partner's cutscene (enter=1 lock=1)
+[2] rig: sequence lever -> SecretSwordGetSequence Stop ran on its own SequencePlayer (the sequence is ended)
+[2] cutscene: local ended SecretSwordGetSequence
+[1] cutscene: partner's cutscene ended; resuming together (exit=1 unlock=1)
+=== 15 PASS, 0 FAIL ===
+```
+
+### Bugs fixed this session
+
+* **`ENEMY_SPAWN (0x2B)`** (R117): a new reliable body carrying the enemy key, transform, HP
+  fraction and CLASS asset path, so a machine that never spawned an enemy can construct it.
+  `qdwire.h`, `protocol.rs`, `WIRE.md` §3.9c, `doc/vectors.txt` and both test suites together.
+* **The mirror lane** (R118): deferred spawn with AI/possession cleared pre-finish; never
+  publishes rows; refused by the save hook; never released to local AI; destroyed on a dead
+  row, a world change or a session end; hidden (not destroyed) on owner silence; kept by the
+  scan sweep by liveness rather than by being "seen".
+* **`QueuedMirror`** (R118): a body a receiver cannot construct *yet* is stored whole and
+  drained later, because the sender will never resend an acked body.
+* **The HP degradation for enemies** (R119): `TryApplyDamage`, then `DamageHP`, then a
+  clamped downward-only write of `HP` with a read-back. `DamageHP`'s real signature
+  (out-only) is logged once per class so the reason is visible.
+* **Boss membership from `EnemyData.Boss`** (R120): the content's own authored flag, tried
+  after the predicates and named in the probe line; the bar has a second route through the
+  player class.
+* **The follower's bar on a mirrored boss** (R120): a mirror does not run `BossPump` (it is
+  the other machine's boss), `OnBoss` accepts a mirror as the local copy (ownership answers
+  `O_LOCAL` for a key it never spawned), and the owner republishes a raised bar every 3 s
+  because its first body can arrive before the partner holds anything.
+* **`stop` on the sequence lever, decided before the name match** (R122).
+* **The cutscene hold/release rules** (R122): the holder does not start a second copy, a
+  released publication is not acted on again, and a machine that just ended a sequence does
+  not restart it.
+* **`tools/session16.ps1`**: one process per phase in its own instance root, run-wide scans
+  instead of windows that open after the line was written, and the per-KEY persistence check
+  the previous version scoped to the whole log.
+
+
+
+### Verdicts, item by item
+
+| Item | Verdict | Key line |
+|---|---|---|
+| 1a. The owner publishes the class of a key the partner cannot hold | **PASS** | `[1] enemy spawn: described guid=17181166 class=/Game/Enemies/Dragon/Dragon_Green_BP.Dragon_Green_BP_C` |
+| 1b. The machine with no actor CONSTRUCTS the copy | **PASS** | `[2] enemy spawn: constructed guid=17181166 ... (by asset path) at -28573,754,-13028 -- AI off, driven by the owner's rows, never persisted` |
+| 1c. The partner holds the same GUID, marked as a mirror | **PASS** | `[2] enemykey 17181166 ALIVE local=0 src=0 hp=3500.0 mirrored=1 cls=Dragon_Green_BP_C` |
+| 1d. Both machines report the same HP from the start | **PASS** | `both machines report the SAME HP for the shared boss -- host=3500 peer=3500` |
+| 1e. The mirror is never persisted by the partner | **PASS** | `the mirrored copy was never persisted by the partner -- records for THIS key=0` |
+| 2a. The content says the dragon is a boss | **PASS** | `boss probe: Dragon_Green_BP_C enemy=-1 spawner=-1 data.Boss=1 -> boss=1` |
+| 2b. The bar is raised on BOTH machines | **PASS** | `[1] boss: ActivateBossHPBar called`; `[2] boss: follower raised its own bar for guid=17181166 hp=65535` |
+| 2c. Both players' damage lands on ONE HP | **PASS** | `[1] hit on enemy 17181166 from the other player, 199.9`; `HP after: host=3100 peer=3100` |
+| 2d. The HP fell (not just converged) | **PASS** | `the dragon's HP FELL on the owner -- 3500 -> 3100`; `damage: enemy hp via HP write 3500.0 -> 3300.0` |
+| 2e. The death is recorded on BOTH | **PASS** | `[1] enemy death recorded guid=17181166`; `[2] the other machine recorded this death; killing the local copy (hp 3100.0)` |
+| 2f. The partner's copy is removed | **PASS** | `[2] enemykey 17181166 DEAD local=0 src=-1` |
+| 3a. The sequence starts on one machine | **PASS** | `[2] rig: sequence lever -> SecretSwordGetSequence Play ran`; `cutscene: local started` |
+| 3b. The other machine holds | **PASS** | `[1] cutscene: holding the local player for the partner's cutscene (enter=1 lock=1)` |
+| 3c. The sequence can be ended on purpose | **PASS** | `[2] rig: sequence lever -> SecretSwordGetSequence Stop ran (the sequence is ended)` |
+| 3d. Joint resume, the held partner RELEASED | **PASS** | `[1] cutscene: partner's cutscene ended; resuming together (exit=1 unlock=1)` |
+| Session survival | **PASS** | both processes alive at the end of every phase; 0 error/fault lines |
+
+`item1` finished **15 PASS / 0 FAIL**, `boss` **25 PASS / 0 FAIL** and `cut` **15 PASS / 0
+FAIL** — 55 assertions across the three phases, every one of them a line from a live run.
+
+### What this session settled
+
+The co-op gap that Session 15 named is closed at the level it was stated. A partner can now
+see and fight an enemy its own spawner never created, because the one fact a row cannot carry
+— the class — was put on the wire, and the copy that machine builds is a follower in every
+respect that matters: it never publishes, never persists, never runs its own AI, and it is
+removed when the owner says dead.
+
+Two of Session 15's three "content facts" were wrong and both corrections are measurements,
+not guesses. `TryApplyDamage` exists on the dragon and runs; it simply refuses a
+module-built payload, and neither `TryApplyDamage` nor the base class's `DamageHP` (out-only)
+can subtract an amount this module chooses — so the shared HP is driven by a clamped,
+downward-only write with a read-back, which is the same degradation the module already uses
+for the player. And the boss predicate does exist in the build; the content just does not
+implement the interface message on the enemy classes, while the enemy's own `EnemyData.Boss`
+says plainly who is a boss.
+
+The cutscene requirement is now a full loop rather than a hold with no exit: play on one
+machine, hold on the other, end it on purpose, and both machines resume together. The release
+was where three real bugs lived — `stop` routed through the name matcher, both machines
+starting a second copy of a sequence that exists in both worlds, and a finished cutscene being
+replayed because each side still named it.
+
+What is left is not a lane: the mirrored copy's damage goes through a legacy write rather than
+the class's own hit pipeline, so the enemy does not play its hit reaction for damage this
+module applies. That is named here rather than smoothed over, and the entry the build would
+need (`ApplyDamageToHitboxTarget`, per-hitbox, with a hit the Blueprint saw) is the next thing
+to attack.

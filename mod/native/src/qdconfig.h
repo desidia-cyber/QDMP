@@ -37,6 +37,7 @@ struct Config {
     int  actor_state_sync; // SavableActorStates
     int  object_sync;      // placed world objects that are NOT SavableActors (K_OBJECTS)
     int  enemy_sync;       // enemy rows + StoreEnemySaveState
+    int  mirror_spawn;     // construct a copy of an enemy this machine never spawned
     int  puppet_sync;      // remote body spawn/drive
     int  player_body;      // ... as the game's own player class (B7 / G4 / G5)
     int  dialogue_sync;    // lock + first-answer-decides
@@ -82,6 +83,15 @@ inline void ConfigDefaults()
     // for the `object apply:` line (`SYNC-GAPS` section 5.5).
     c.object_sync      = 0;
     c.enemy_sync       = 0;
+    // ON: proven live in 780_SZ_Depths (LIVE-TEST-LOG Session 16).  This is the one write
+    // path that CONSTRUCTS a full gameplay enemy Blueprint -- `Dragon_Green_BP_C` and friends
+    // -- whose own BeginPlay runs, so the rule above ("off until a live session has shown it")
+    // is what it was measured against: the partner now holds a copy of an enemy its own
+    // spawner never created (item1 15/15, boss 25/25 in that run), it never publishes, it is
+    // refused by the save hook, and it is removed when the owner says dead or the world
+    // changes.  It stays a switch so one broken mirror can be turned off without losing the
+    // rest of the enemy lane.
+    c.mirror_spawn     = 1;
     c.puppet_sync      = 0;
     // OFF, like every other write path.  This one asks the engine to CONSTRUCT a full
     // gameplay Blueprint (`FS_PlayerChar_C`), whose ReceiveBeginPlay runs; enable it only
@@ -229,6 +239,7 @@ inline int ConfigLoad()
         else if (detail::StrEq(k, "ActorStateSync")) c.actor_state_sync = detail::ParseInt(v, c.actor_state_sync);
         else if (detail::StrEq(k, "ObjectSync"))    c.object_sync = detail::ParseInt(v, c.object_sync);
         else if (detail::StrEq(k, "EnemySync"))     c.enemy_sync = detail::ParseInt(v, c.enemy_sync);
+        else if (detail::StrEq(k, "MirrorSpawn"))   c.mirror_spawn = detail::ParseInt(v, c.mirror_spawn);
         else if (detail::StrEq(k, "PuppetSync"))    c.puppet_sync = detail::ParseInt(v, c.puppet_sync);
         else if (detail::StrEq(k, "PlayerBody"))    c.player_body = detail::ParseInt(v, c.player_body);
         else if (detail::StrEq(k, "DialogueSync"))  c.dialogue_sync = detail::ParseInt(v, c.dialogue_sync);

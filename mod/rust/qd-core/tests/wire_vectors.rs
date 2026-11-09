@@ -184,6 +184,21 @@ fn vectors() -> Vec<Vector> {
             expected: "2a 07 00 00 00 01 00 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 01 01",
         },
         Vector {
+            // guid, flags, pos(3 x i32), yaw, hp fraction, class path.
+            name: "enemy_spawn",
+            body: Body::EnemySpawn(EnemySpawn {
+                id: sample_guid(),
+                flags: enemy_spawn_flags::MIRROR,
+                px: 100,
+                py: -200,
+                pz: 50,
+                yaw: 16384,
+                hp: 40000,
+                class_path: "/Game/Enemies/Dragon/Dragon_Green_BP.Dragon_Green_BP_C".to_owned(),
+            }),
+            expected: "2b 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 01 64 00 00 00 38 ff ff ff 32 00 00 00 00 40 40 9c 36 00 2f 47 61 6d 65 2f 45 6e 65 6d 69 65 73 2f 44 72 61 67 6f 6e 2f 44 72 61 67 6f 6e 5f 47 72 65 65 6e 5f 42 50 2e 44 72 61 67 6f 6e 5f 47 72 65 65 6e 5f 42 50 5f 43",
+        },
+        Vector {
             name: "intent_set_flag",
             body: Body::Intent(Intent {
                 based_on_rev: 5,

@@ -4700,12 +4700,21 @@ struct EnemyRec {
     bool     bossArenaExitSent; // the arena exit is a one-shot, not a state
     bool     bossBarShown;
     uint32_t bossBarAt;
+    uint32_t bossSentAt;        // when this bar was last PUBLISHED (the slow repair's clock)
     // When this machine last applied a death it learned by KEY from the other machine
     // (qdenemy.h DeadLedger).  Rate limits the attempt: the game's own damage path can
     // leave a FROZEN copy standing with HP on it, and re-applying every frame is both
     // wasteful and the loudest line in the log (924 lines for one key in 97 s, measured
     // Session 14's first smoke run).
     uint32_t ledgerKillAt;
+    // A copy THIS machine constructed because the owner held an enemy our own spawner never
+    // activated (Session 16, qdwire.h K_ENEMY_SPAWN).  `mirror` is the whole marker: a
+    // mirrored copy must never be persisted by the local spawner or the save, must never
+    // publish its own rows, and must be destroyed when the owner's row says it is gone.
+    bool     mirror;
+    bool     mirrorPathSent;   // this key's class path has been published at least once
+    bool     mirrorHidden;     // silence hid the copy; a returning row shows it again
+    uint32_t mirrorSpawnAt;
 };
 EnemyRec        g_en[256];
 int             g_enN = 0;
@@ -5100,8 +5109,18 @@ void EnemyScanStep()
     if (g_enCursor >= total) {
         g_enCursor = 0;
         for (int i = 0; i < g_enN;) {
-            if (g_en[i].seenPass == g_enPass && ObjectIsLive(g_en[i].actor)) { ++i; continue; }
-            g_en[i] = g_en[--g_enN];
+            // A MIRRORED record is NOT re-derived by this walk.  It is CONSTRUCTED, and the
+            // walk only marks `seenPass` when it happens to reach the actor -- one pass in
+            // hundreds will.  Dropping it on an unseen pass would delete the copy's record
+            // within one sweep, which is exactly what a successful engine spawn followed by
+            // `constructed=0` measured.  So a mirror is kept while its actor is alive, and
+            // its removal is EnemyMirrorPump's job (the owner's death, or the row stopping).
+            if (!g_en[i].mirror && g_en[i].seenPass != g_enPass) {
+                g_en[i] = g_en[--g_enN];
+                continue;
+            }
+            if (!ObjectIsLive(g_en[i].actor)) { g_en[i] = g_en[--g_enN]; continue; }
+            ++i;
         }
         static int lastN = -1;
         if (g_enN != lastN) { lastN = g_enN; QDLOG(LOG_INFO, "enemy sync: ", dec(g_enN), " live enemies"); }
@@ -5177,7 +5196,6 @@ struct DamageStruct {
     bool         haveAmount;
 };
 DamageStruct g_dmgStruct = {};
-
 bool DamageStructInit()
 {
     DamageStruct& s = g_dmgStruct;
@@ -5403,6 +5421,27 @@ bool ApplyDamageToActor(void* actor, float amount, void* causer, bool player,
         else continue;
         memcpy(base + d.offset, &v, 8);
     }
+    // EVERY non-out OBJECT parameter is filled with the causer, not only the ones named
+    // after damage.  MEASURED (Session 16): the dragon's `TryApplyDamage` declares
+    // `Hit`, `DamageToApply` and `Applier`, and calling it with `Hit` zeroed takes the
+    // function's early-out -- it runs, returns 0 and moves no HP, while the same payload
+    // against an ordinary enemy applies in full.  The payload was never the difference; the
+    // EMPTY HIT was.  A null `Hit` is not "no hit", it is the absence of the very thing the
+    // entry is deciding about, so it gets the attacker that caused the damage.
+    for (int i = 0; i < a.fn.sig.props; ++i) {
+        const PropDesc& d = a.fn.sig.p[i];
+        if (d.flags & (CPF_OutParm | CPF_ReturnParm)) continue;
+        if (d.size < 8) continue;
+        if (!NameEquals(d.type, "ObjectProperty")) continue;
+        if (NameEquals(d.name, a.param->name)) continue;      // the payload struct
+        char nm[64];
+        strncpy(nm, d.name, sizeof(nm) - 1);
+        nm[sizeof(nm) - 1] = 0;
+        uint8_t* p = c.At(nm, 8);
+        if (!p) continue;
+        void* v = causer;
+        memcpy(p, &v, 8);
+    }
     bool ran = c.Run(actor);
     // NOTE: `ret` is the function's ReturnValue slot, not its `AppliedDamage` out
     // parameter, so it can be 0 on a call that did apply (and 1 on one that did not).
@@ -5434,6 +5473,185 @@ bool ApplyDamageToActor(void* actor, float amount, void* causer, bool player,
                 took = back < before;
                 path = "Health (TryApplyDamage had no effect)";
                 if (back <= 0.0f) died = CallPlayerDeath(actor);
+            }
+        }
+    }
+
+    // The ENEMY half of the same degradation, and the one this build needs (Session 16).
+    //
+    // MEASURED: `Dragon_Green_BP_C` DOES declare `TryApplyDamage` (its export table carries
+    // it, 761 bytes, and Session 15's log shows the call running), so the previous round's
+    // "the class has no damage entry" was wrong.  What the call does with a payload this
+    // module builds from reflection is return 0 and move nothing: the entry's gates are on
+    // the HIT it came from (its own `Hit`/`HitResult` parameters), and a synthesized hit is
+    // not the swing the game's Blueprint saw.  So HP never moves and the class counts as
+    // undamageable, which is what the boss fight needs least.
+    //
+    // `EnemyBase_C` -- every enemy's base -- declares `DamageHP`, the Blueprint's OWN
+    // "subtract from HP" entry, and that is the function its hit path converges on.  It is
+    // tried only when the game's message produced NO movement at all, exactly like the
+    // player's `Health` fallback above: a partial application is the game's own answer and
+    // is never overridden.  The HP read-back is still the only oracle.
+    if (!player && haveBefore && !took && before > 0.0f) {
+        // One cache per CLASS.  `Fn::Resolve` latches `tried`, so a miss is permanent FOR
+        // THAT FUNCTION OBJECT; the class it missed on is remembered so a different class
+        // gets a fresh attempt instead of inheriting the first class's answer.
+        static Fn fDmgHp = {}, fKill = {};
+        static void* cachedCls = nullptr;
+        void* cls = ObjClass(actor);
+        if (cachedCls != cls) {
+            cachedCls = cls;
+            fDmgHp = Fn{};
+            fKill = Fn{};
+        }
+        float back = 0.0f;
+        bool called = false;
+        if (fDmgHp.Resolve(actor, "DamageHP")) {
+            // MEASURED (Session 16, from the shipped class and the live signature):
+            // `EnemyBase_C.DamageHP` takes NO input parameter.  It has one 4-byte parameter
+            // and that parameter is an OUT (`CPF_OutParm`) -- the function subtracts an
+            // amount it derives from its own state and hands back what it applied.  So the
+            // amount this module wants to apply cannot be passed in at all, and the honest
+            // reading is that this entry is the enemy's own "I took damage" bookkeeping, not
+            // a settable HP path.
+            //
+            // It is still tried, because a build that ignores the out parameter applies
+            // whatever its own hit pipeline produced, and the HP read-back decides.  What is
+            // NOT done is a raw write to the HP property: unlike the player's `Health`, this
+            // class keeps HP behind `UFB_AttributeComponent` (14-combat-save-answers D5-p2),
+            // so a plain field write would be invisible to the game's own stats and would
+            // desynchronise the copy from its attribute component.
+            static void* saidCls = nullptr;
+            if (saidCls != cls) {
+                saidCls = cls;
+                char cn[64] = "";
+                FNameToString(ObjNameRaw(cls), cn, sizeof(cn));
+                int ins = 0;
+                char sig[160] = "";
+                int w = 0;
+                for (int i = 0; i < fDmgHp.sig.props && w < (int)sizeof(sig) - 32; ++i) {
+                    const PropDesc& d = fDmgHp.sig.p[i];
+                    const char* tag = (d.flags & CPF_OutParm) ? "out:" : "in:";
+                    for (int k = 0; tag[k] && w < (int)sizeof(sig) - 2; ++k) sig[w++] = tag[k];
+                    for (int k = 0; d.name[k] && w < (int)sizeof(sig) - 2; ++k) sig[w++] = d.name[k];
+                    sig[w++] = ' ';
+                    if (!(d.flags & CPF_OutParm)) ++ins;
+                }
+                sig[w] = 0;
+                QDLOG(LOG_INFO, "damage: DamageHP on ", (cn[0] ? cn : "?"), " parms=",
+                      dec(fDmgHp.sig.props), " in-params=", dec(ins),
+                      " size=", dec(fDmgHp.sig.parms_size), " -> ", (sig[0] ? sig : "(none)"));
+            }
+            Call hc(fDmgHp);
+            bool filled = false;
+            for (int i = 0; i < fDmgHp.sig.props; ++i) {
+                const PropDesc& d = fDmgHp.sig.p[i];
+                if (d.flags & CPF_OutParm) continue;
+                if (d.size != 4) continue;
+                if (d.type[0] == 'F') {                          // FloatProperty
+                    float v = amount;
+                    hc.Set(d.name, &v, 4);
+                    filled = true;
+                } else if (d.type[0] == 'I') {                   // IntProperty
+                    int32_t v = (int32_t)(amount + 0.5f);
+                    hc.Set(d.name, &v, 4);
+                    filled = true;
+                }
+            }
+            // Call it even with no in-parameters: the read-back below is the only oracle, and
+            // the function's own pipeline may move HP from state this module cannot set.
+            called = (filled || fDmgHp.sig.props == 0) && hc.Run(actor);
+            if (!called && !filled && fDmgHp.sig.props > 0) {
+                static int saidN2 = 0;
+                if (saidN2++ < 3)
+                    QDLOG(LOG_INFO, "damage: DamageHP takes no settable amount; it cannot be "
+                                    "used to apply THIS module's damage (HP stays where the "
+                                    "game's own TryApplyDamage left it)");
+            }
+        } else {
+            // Inventoried once at INFO: "this class has no HP entry we can call" is the fact
+            // that decides whether the damage lane can work at all on it, so a run has to be
+            // able to see it without turning DEBUG on.  `FindFunction` walks the Super chain,
+            // and `DamageHP` is declared on `EnemyBase_C`, so a miss here means the class
+            // hierarchy really does not carry it -- worth naming rather than inferring.
+            static void* missCls = nullptr;
+            static int saidN = 0;
+            if (missCls != cls && saidN++ < 6) {
+                missCls = cls;
+                char cn[64] = "";
+                FNameToString(ObjNameRaw(cls), cn, sizeof(cn));
+                void* raw = FindFunction(actor, "DamageHP");
+                QDLOG(LOG_INFO, "damage: ", (cn[0] ? cn : "?"),
+                      " has no callable DamageHP (FindFunction=", (raw ? "found" : "null"),
+                      ", sig.valid=", dec(fDmgHp.sig.valid ? 1 : 0), " note=",
+                      fDmgHp.sig.note, "); TryApplyDamage moved nothing and there is no "
+                      "second entry to try on this class");
+            }
+        }
+        if (called && ActorHp(actor, player, &back, &mx) && back < before) {
+            after = back;
+            haveAfter = true;
+            took = true;
+            path = "DamageHP (TryApplyDamage had no effect)";
+            // `DamageHP` is the game's own subtraction, so its own death branch runs; the
+            // class's own `Kill` is the entry that guarantees the death is committed.
+            if (back <= 0.0f) {
+                died = true;
+                if (fKill.Resolve(actor, "Kill")) { Call kc(fKill); kc.Run(actor); }
+            }
+        } else if (called) {
+            QDLOG(LOG_INFO, "damage: DamageHP ran but HP did not move (hp ", flt(before, 1),
+                  " -> ", flt(back, 1), ")");
+        }
+
+        // THE LAST RESORT, and the one this build actually needs.
+        //
+        // MEASURED (Session 16), all of it on the shipped dragon:
+        //   * `TryApplyDamage` EXISTS on the class and runs, but moves nothing when called
+        //     with a module-built payload -- it returns 0 and HP stays put, whether or not
+        //     its `Hit` is filled;
+        //   * `DamageHP` (the base class's own "I took damage" entry) takes NO input at all --
+        //     its single parameter is `out:ReceivedHPDamage` -- so this module cannot ask it
+        //     to subtract anything;
+        //   * and yet the HP is a real, readable, settable number: `GetHP()` returns 3500.0
+        //     and `GetMaxHP()` 3500.0 on the same actor.
+        //
+        // So the honest degradation is the one the player already has: write the scalar and
+        // READ IT BACK.  It is the last resort because it skips the enemy's own hit reactions
+        // and status, and it is CLAMPED and never raises HP -- a health write that could
+        // heal would undo a real hit the owner already applied.
+        if (!called) {
+            float target = enemydmg::ApplyHpDamage(before, amount).value;
+            if (target < 0.0f) target = 0.0f;
+            if (target < before) {
+                bool wrote = SetFloatPropC(actor, "HP", target);
+                float check = 0.0f, cmax = 0.0f;
+                bool readBack = EnemyHp(actor, &check, &cmax);
+                if (wrote && readBack && check < before) {
+                    back = check;
+                    after = check;
+                    haveAfter = true;
+                    took = true;
+                    path = "HP (TryApplyDamage and DamageHP had no effect)";
+                    if (check <= 0.0f) {
+                        died = true;
+                        if (fKill.Resolve(actor, "Kill")) { Call kc(fKill); kc.Run(actor); }
+                    }
+                    QDLOG(LOG_INFO, "damage: enemy hp via HP write ", flt(before, 1), " -> ",
+                          flt(check, 1), " (the class has no callable damage entry; the write "
+                          "is clamped and never heals)");
+                } else {
+                    static int saidN3 = 0;
+                    if (saidN3++ < 3) {
+                        char cn[64] = "";
+                        FNameToString(ObjNameRaw(cls), cn, sizeof(cn));
+                        QDLOG(LOG_WARN, "damage: ", (cn[0] ? cn : "?"),
+                              " HP could not be written (wrote=", dec(wrote ? 1 : 0),
+                              " readBack=", dec(readBack ? 1 : 0), " hp ",
+                              flt(before, 1), " -> ", flt(check, 1),
+                              "); this class cannot be damaged from this module");
+                    }
+                }
             }
         }
     }
@@ -6165,6 +6383,7 @@ void EnemyDetailPump(uint32_t now)
         EnemyRec& r = g_en[i];
         __try {
         if (!r.haveGuid || !ObjectIsLive(r.actor)) continue;
+        if (r.mirror) continue;              // never publishes: the owner describes it
         if (g_own.State(r.guid) != enemyown::O_LOCAL) continue;
         DetailCand* c = &cands[n];
         if (!BuildDetail(r, now, c)) continue;
@@ -6323,6 +6542,587 @@ void SendEnemyIntentHit(const uint32_t guid[4], int32_t frac)
 }
 
 // ---------------------------------------------------------------------------
+// Mirrored enemies: a copy for a key this machine's own spawner never created
+// ---------------------------------------------------------------------------
+// THE GAP (Session 16)
+// --------------------
+// A spawner spawns only while ITS LOCAL player is inside its activation range
+// (`PlayerIsInActivationRange`, qdenemy.h's note).  So an enemy whose spawner activated on
+// one machine simply does not exist on the other: measured in 780_SZ_Depths, the Green
+// Dragon (`Dragon_Green_BP_C`, key 17181166) is a live actor on the owner and the partner
+// "holds no copy of this GUID".  Every enemy lane is addressed to a COPY -- rows, detail,
+// boss, damage -- so on the machine with no actor there is nothing to see, nothing to hit
+// and nothing to kill.
+//
+// WHAT A MIRROR IS
+// ----------------
+// A local actor constructed from the owner's class, at the owner's transform, whose AI is
+// off and which is driven by the owner's rows exactly like any frozen copy.  It is NOT a
+// second simulation: it never publishes rows, never chooses a target, and its health is the
+// owner's rows.  The things it must never do are the dangerous ones, so they are guarded
+// where they happen rather than assumed:
+//
+//   * the local SPAWNER must not adopt it  -> it has no `OwningSpawner`, so EnemyIdentity's
+//     spawner path cannot resolve, and `adopted` keeps the owner's key from being re-minted;
+//   * the local SAVE must not persist it   -> HK_StoreEnemySaveState refuses a mirror key
+//     before it reaches the game, and EnemyDetectDeaths never records one;
+//   * it must disappear with its reason    -> destroyed when the owner's row says dead, or
+//     when that row goes away (the owner left the area / the enemy was removed), or on a
+//     world change.
+//
+// The spawn uses the engine's deferred pair, exactly as B7's player-body spawn does: the
+// window between BeginDeferred and FinishSpawning is the only place to clear the properties
+// whose value decides possession and AI before PostActorConstruction acts on them.
+// How long an owner's SILENCE means "it is gone" rather than "the row lane skipped it".
+//
+// MEASURED (Session 16): at 10 s every mirrored copy died exactly 10031 ms after
+// construction, because the row lane is unreliable and round-robins 16 rows per datagram
+// over a live set of 200+, so a single key can go many seconds without a sample.  A death is
+// a fact the owner states (and `kMirrorStaleMs` is not consulted for it); removal is only
+// ever INFERRED from silence, so the window has to be long enough that silence means the
+// owner really stopped describing the area -- which is also what an area unload looks like.
+static const uint32_t kMirrorStaleMs = 30000;
+static const uint32_t kMirrorMinGapMs = 400;    // one construction per this interval
+static const int      kMirrorMax = 64;          // bounded: a mirror is a repair, not a mode
+
+void* g_mirrorActor[kMirrorMax];
+uint32_t g_mirrorGuid[kMirrorMax][4];
+uint32_t g_mirrorAt[kMirrorMax];
+int      g_mirrorN = 0;
+uint32_t g_lastMirrorSpawnMs = 0;
+
+static bool TryConstructMirror(const wire::EnemySpawnBody& s, uint32_t now);
+static void QueueMirror(const wire::EnemySpawnBody& s, uint32_t now);
+static void ClearPendingMirrors();
+
+bool IsMirrorActor(void* actor)
+{
+    if (!actor) return false;
+    for (int i = 0; i < g_mirrorN; ++i) if (g_mirrorActor[i] == actor) return true;
+    return false;
+}
+
+void ForgetMirror(void* actor)
+{
+    for (int i = 0; i < g_mirrorN;) {
+        if (g_mirrorActor[i] == actor) {
+            g_mirrorActor[i] = g_mirrorActor[--g_mirrorN];
+            memcpy(g_mirrorGuid[i], g_mirrorGuid[g_mirrorN], 16);
+            g_mirrorAt[i] = g_mirrorAt[g_mirrorN];
+            continue;
+        }
+        ++i;
+    }
+}
+
+void ForgetAllMirrors()
+{
+    g_mirrorN = 0;
+}
+
+// Resolve the class an owner named.  The path is the actor's CLASS asset path
+// (".../Dragon_Green_BP.Dragon_Green_BP_C"), so `LoadAsset` returns the UClass itself.
+// A build that cannot load it by path falls back to the class's short name -- the same
+// fallback the module already trusts for `FS_PlayerChar_C` -- and says which route worked,
+// because "the path is wrong" and "the class is not loaded" are different problems.
+void* ResolveSpawnClass(const char* path, char* how, int cap)
+{
+    if (how && cap > 0) how[0] = 0;
+    if (!path || !path[0]) return nullptr;
+    void* cls = avatar::LoadAsset(path);
+    if (cls) { if (how) travel::CopyText(how, cap, "by asset path"); return cls; }
+    // The last dot component is the object name; a class object's own name is the fallback.
+    const char* dot = nullptr;
+    for (const char* p = path; *p; ++p) if (*p == '.') dot = p;
+    const char* shortName = dot ? dot + 1 : path;
+    cls = FindClassByName(shortName);
+    if (cls) { if (how) travel::CopyText(how, cap, "by class name"); return cls; }
+    if (how) travel::CopyText(how, cap, "unresolved");
+    return nullptr;
+}
+
+// Construct the mirror.  AI, tick and possession are cleared between the deferred begin and
+// the finish; `Paused` is the game's own stop (`EnemySpawner_C.SetEnemiesPaused` writes it),
+// so a mirrored copy is stopped the same way the game stops one.
+void* SpawnMirrorActor(void* cls, float x, float y, float z, float yawRad)
+{
+    void* world = GWorldPtr();
+    if (!world || !cls) return nullptr;
+    FnBeginDeferred begin = (FnBeginDeferred)Ptr<void*>(0x028D3C90u);
+    FnFinishSpawning finish = (FnFinishSpawning)Ptr<void*>(0x028DCD50u);
+    avatar::Xf xf = avatar::XfIdentity();
+    xf.qz = sinf(yawRad * 0.5f); xf.qw = cosf(yawRad * 0.5f);
+    xf.tx = x; xf.ty = y; xf.tz = z;
+    alignas(16) uint8_t buf[48];
+    memcpy(buf, &xf, 48);
+    __try {
+        void* actor = begin(world, cls, buf, 1, nullptr);   // 1 = AlwaysSpawn
+        if (!actor) {
+            QDLOG(LOG_WARN, "enemy mirror: BeginDeferredSpawning returned null for the class "
+                            "(the engine refused to construct it)");
+            return nullptr;
+        }
+        // Between begin and finish is the only window in which these decide anything.
+        WriteBytePropC(actor, "Paused", 1);
+        WriteBytePropC(actor, "bIsAIDisabled", 1);
+        WriteBytePropC(actor, "AutoPossessPlayer", 0);
+        WriteBytePropC(actor, "AutoPossessAI", 0);
+        void* out = finish(actor, buf);
+        QDLOG(LOG_INFO, "enemy mirror: the engine constructed the actor (",
+              (out ? "FinishSpawning returned it" : "FinishSpawning returned null"), ")");
+        return out ? out : actor;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        QDLOG(LOG_ERROR, "enemy mirror: the engine's own spawn pair faulted on the owner's "
+                         "class (exception code 0x", hex32((uint32_t)GetExceptionCode()),
+                         "); this copy is skipped (the row lane still runs)");
+        return nullptr;
+    }
+}
+
+// Register a record for an actor this machine just constructed.  It carries the OWNER's key
+// from the first frame, so the row that caused the spawn applies to it immediately and the
+// scan can never mint a second identity for it.
+EnemyRec* RegisterMirror(void* actor, const uint32_t guid[4], uint32_t now)
+{
+    if (!actor) return nullptr;
+    if (EnemyRec* old = EnemyByActor(actor)) return old;
+    if (g_enN >= (int)(sizeof(g_en) / sizeof(g_en[0]))) {
+        // The record table is capped at 256 and the hub alone holds more than that, so a
+        // mirror must not be refused for lack of room -- the scan re-adds ordinary enemies
+        // on its next pass, but nothing re-adds a mirror: its one body has already been
+        // acked.  Evict the record that is nearest to being re-derived (a non-mirror one,
+        // which the next scan pass restores).
+        int victim = -1;
+        for (int i = 0; i < g_enN; ++i) {
+            if (g_en[i].mirror) continue;
+            victim = i;
+            break;
+        }
+        if (victim < 0) {
+            QDLOG(LOG_WARN, "enemy mirror: the record table is full of mirrors; refusing "
+                            "guid=", hex32(guid[0]));
+            return nullptr;
+        }
+        QDLOG(LOG_INFO, "enemy mirror: record table full (", dec(g_enN),
+              "); evicting guid=", hex32(g_en[victim].guid[0]),
+              " to make room for the mirror guid=", hex32(guid[0]));
+        g_en[victim] = g_en[--g_enN];
+    }
+    EnemyRec* r = &g_en[g_enN++];
+    memset(r, 0, sizeof(*r));
+    r->actor = actor;
+    memcpy(r->guid, guid, 16);
+    r->haveGuid = true;
+    r->spawner = nullptr;          // the game's own "no spawner": identity can never re-mint
+    r->adopted = true;             // the owner's key is the truth
+    r->mirror = true;
+    r->driven = true;              // frozen from the first frame
+    r->fresh = false;
+    r->seenAlive = true;
+    r->lastHp = -1.0f;
+    r->mirrorSpawnAt = now;
+    r->ledgerKillAt = now;
+    if (g_mirrorN < kMirrorMax) {
+        g_mirrorActor[g_mirrorN] = actor;
+        memcpy(g_mirrorGuid[g_mirrorN], guid, 16);
+        g_mirrorAt[g_mirrorN] = now;
+        ++g_mirrorN;
+    }
+    return r;
+}
+
+// Construct one mirror from a described body.  Split out of OnEnemySpawn so a body that
+// was QUEUED (see PendingMirror) is constructed by the same code, not by a second copy of
+// it that can drift.
+static bool TryConstructMirror(const wire::EnemySpawnBody& s, uint32_t now)
+{
+    if (now - g_lastMirrorSpawnMs < kMirrorMinGapMs) {
+        static uint32_t saw = 0;
+        if (now - saw > 5000) { saw = now;
+            QDLOG(LOG_INFO, "enemy spawn: guid=", hex32(s.guid[0]),
+                  " is still inside the construction interval; it stays queued"); }
+        return false;
+    }
+    if (g_mirrorN >= kMirrorMax) {
+        static uint32_t lastWarn = 0;
+        if (now - lastWarn > 5000) {
+            lastWarn = now;
+            QDLOG(LOG_WARN, "enemy spawn: ", dec(g_mirrorN),
+                  " mirrored copies already; refusing to construct more (guid=",
+                  hex32(s.guid[0]), ")");
+        }
+        return false;
+    }
+    char how[48];
+    void* cls = ResolveSpawnClass(s.path, how, sizeof(how));
+    if (!cls) {
+        static int fails = 0;
+        if (fails++ < 40)
+            QDLOG(LOG_WARN, "enemy spawn: could not resolve the class ", s.path,
+                  " for guid=", hex32(s.guid[0]), " (", how, ")");
+        return false;
+    }
+    QDLOG(LOG_INFO, "enemy spawn: class resolved ", s.path, " (", how, ") for guid=",
+          hex32(s.guid[0]));
+    // The class must be an ACTOR: a path that resolves to a texture or a data asset would
+    // otherwise be handed to the engine's spawner.
+    static void* actorBase = nullptr;
+    if (!actorBase || !ObjectIsLive(actorBase)) actorBase = FindClassByName("Actor");
+    if (actorBase) {
+        bool isActor = false;
+        __try { isActor = IsSubclassOf(cls, actorBase); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { isActor = false; }
+        if (!isActor) {
+            QDLOG(LOG_WARN, "enemy spawn: ", s.path, " is not an Actor class; refused");
+            return false;
+        }
+    }
+    g_lastMirrorSpawnMs = now;
+    float yaw = wire::DequantizeAngle(s.yaw) * 3.14159265f / 180.0f;
+    void* actor = SpawnMirrorActor(cls, wire::DequantizePos(s.px), wire::DequantizePos(s.py),
+                                   wire::DequantizePos(s.pz), yaw);
+    if (!actor) {
+        // The engine refused to construct the class.  Saying so is what separates "the mod
+        // never asked" from "the engine would not build it", which are different bugs.
+        static int said = 0;
+        if (said++ < 8)
+            QDLOG(LOG_WARN, "enemy spawn: the engine returned no actor for ", s.path,
+                  " (guid=", hex32(s.guid[0]),
+                  "); BeginDeferred/FinishSpawning refused it on this class");
+        return false;
+    }
+    EnemyRec* rec = RegisterMirror(actor, s.guid, now);
+    if (!rec) { DestroyActor(actor); return false; }
+    // Freeze it through the game's own levers rather than trusting the pre-finish writes: a
+    // Blueprint's ReceiveBeginPlay may have set any of them after the finish.
+    EnemyDrive(*rec, false);
+    EnemyDrive(*rec, true);
+    // `seenPass` is stamped so the very next sweep recognises the record as this pass's
+    // work: a mirror is not "seen by the scan", it is CONSTRUCTED, and the sweep below keeps
+    // it alive by liveness alone.
+    rec->seenPass = g_enPass;
+    QDLOG(LOG_INFO, "enemy spawn: constructed guid=", hex32(s.guid[0]), " class=", s.path,
+          " (", how, ") at ", flt(wire::DequantizePos(s.px), 0), ",",
+          flt(wire::DequantizePos(s.py), 0), ",", flt(wire::DequantizePos(s.pz), 0),
+          " hp=", dec((int)s.hp), " -- AI off, driven by the owner's rows, never persisted "
+          "(mirrors=", dec(g_mirrorN), ")");
+    return true;
+}
+
+// The owner's half: tell the partner which CLASS a key it may not hold is.  Sent once per
+// key (the reliable lane retries a lost body), by whichever machine RUNS the enemy, only
+// while the key is alive.  A dead key is the DeadLedger's job, not a reason to construct.
+//
+// RELEVANCE, and why it is not optional: this lane CONSTRUCTS an actor at the other end, so
+// offering every key the partner happens not to hold would build a menagerie of full
+// gameplay Blueprints in areas nobody is standing in.  The partner's own position is the
+// audience -- the same rule ENEMY_DETAIL uses to rank.
+//
+// THE RADIUS IS SIGHT, NOT INTEREST.  Measured in Session 16's second run: at 60 m the owner
+// described the whole hub (about 20 keys/s), the receiver's pending queue filled, and the
+// dragon's body -- arriving minutes later -- was refused forever.  A copy the partner cannot
+// see is not worth constructing, so this is 25 m: inside the range an enemy actually fights
+// from, and small enough that a fight is a handful of keys.
+static const float kMirrorRelevanceCm = 2500.0f;
+
+void EnemySpawnPump(uint32_t now)
+{
+    static uint32_t last = 0;
+    if (now - last < 100) return;
+    last = now;
+    if (!Cfg().mirror_spawn || !g_net.Connected()) return;
+    // The partner's drawn position is slightly in the past, which a 60 m radius absorbs.
+    float peer[3] = {0, 0, 0};
+    bool havePeer = false;
+    { motion::MoveOut m = g_peerInterp.Sample(now);
+      if (m.valid && !m.frozen) { peer[0] = m.px; peer[1] = m.py; peer[2] = m.pz; havePeer = true; } }
+    int sent = 0;
+    for (int i = 0; i < g_enN && sent < 2; ++i) {
+        EnemyRec& r = g_en[i];
+        __try {
+        if (!r.haveGuid || r.mirror || r.mirrorPathSent) continue;
+        if (!ObjectIsLive(r.actor) || EnemyDead(r.actor)) continue;
+        if (!g_own.Running(r.guid)) continue;      // only the machine that simulates it
+        ActorXform x;
+        if (!ReadActorXform(r.actor, &x)) continue;
+        if (havePeer) {
+            float dx = x.px - peer[0], dy = x.py - peer[1], dz = x.pz - peer[2];
+            if (dx * dx + dy * dy + dz * dz > kMirrorRelevanceCm * kMirrorRelevanceCm) continue;
+        }
+        float hp = 0, mx = 0;
+        if (!EnemyHp(r.actor, &hp, &mx) || hp <= 0.0f) continue;
+        char path[wire::kSpawnPathCap];
+        if (avatar::AssetPath(ObjClass(r.actor), path, sizeof(path)) <= 0 || !path[0]) continue;
+        wire::EnemySpawnBody s;
+        memset(&s, 0, sizeof(s));
+        memcpy(s.guid, r.guid, 16);
+        s.flags = wire::kSpawnMirror;
+        s.px = wire::QuantizePos(x.px); s.py = wire::QuantizePos(x.py); s.pz = wire::QuantizePos(x.pz);
+        s.yaw = wire::QuantizeAngle(x.yaw);
+        s.hp = enemy::HpFrac(hp, mx);
+        travel::CopyText(s.path, sizeof(s.path), path);
+        uint8_t body[wire::kMaxBody];
+        wire::Writer w(body, sizeof(body));
+        wire::WriteEnemySpawn(w, s);
+        if (w.ok && g_net.SendReliable(wire::K_ENEMY_SPAWN, body, w.len)) {
+            r.mirrorPathSent = true;
+            ++sent;
+            QDLOG(LOG_INFO, "enemy spawn: described guid=", hex32(r.guid[0]), " class=", path);
+        }
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            r.actor = nullptr;
+            r.haveGuid = false;
+        }
+    }
+}
+
+// The follower's half.  Everything here is contingent on the owner having said the key is
+// ALIVE (a dead key is the ledger's job) and on this machine holding no actor for it.
+void OnEnemySpawn(wire::Reader& r, uint32_t now)
+{
+    if (!Cfg().enemy_sync) return;
+    wire::EnemySpawnBody s;
+    if (!wire::ReadEnemySpawn(r, &s)) {
+        QDLOG(LOG_WARN, "enemy spawn: the body did not parse; dropped");
+        return;
+    }
+    if (!EnemyRecordsTrustworthy()) {
+        // Reliable lane: this body has been acked and will never come again, so it is
+        // REMEMBERED and retried once the records name this world (see PendingMirror).
+        static uint32_t lastSay = 0;
+        if (now - lastSay > 5000) {
+            lastSay = now;
+            QDLOG(LOG_INFO, "enemy spawn: guid=", hex32(s.guid[0]),
+                  " arrived while the world records are for another world; queued");
+        }
+        QueueMirror(s, now);
+        return;
+    }
+    if (!Cfg().mirror_spawn) {
+        static int said = 0;
+        if (said++ < 3)
+            QDLOG(LOG_INFO, "enemy spawn: the owner described guid=", hex32(s.guid[0]),
+                  " class=", s.path, " but MirrorSpawn is off; no copy is constructed");
+        return;
+    }
+    // Already known?  A repeat is the reliable lane doing its job, not news.
+    EnemyRec* have = EnemyByGuid(s.guid);
+    if (have && ObjectIsLive(have->actor)) {
+        static uint32_t lastSay = 0;
+        if (now - lastSay > 5000) {
+            lastSay = now;
+            QDLOG(LOG_DEBUG, "enemy spawn: guid=", hex32(s.guid[0]),
+                  " already has a live actor here; repeat ignored");
+        }
+        return;
+    }
+    // EVERY body that reaches this point is announced, so "the peer constructed nothing"
+    // is never a silence -- the guards below each say which one refused, and a run can
+    // grep one line per receipt.
+    QDLOG(LOG_INFO, "enemy spawn: received guid=", hex32(s.guid[0]), " class=", s.path,
+          " at ", flt(wire::DequantizePos(s.px), 0), ",", flt(wire::DequantizePos(s.py), 0),
+          ",", flt(wire::DequantizePos(s.pz), 0),
+          (have ? " (a record exists but its actor is not live)" : " (no record here)"));
+    // A death this machine already holds wins: constructing a corpse is worse than a gap.
+    if (g_remoteDead.Has(s.guid, now)) {
+        QDLOG(LOG_INFO, "enemy spawn: guid=", hex32(s.guid[0]),
+              " is already recorded dead; no copy is constructed");
+        return;
+    }
+    if (now - g_lastMirrorSpawnMs < kMirrorMinGapMs) {
+        // QUEUED, not dropped: the lane is reliable, so this body has already been acked
+        // and will never be sent again (see PendingMirror).
+        QueueMirror(s, now);
+        return;
+    }
+    if (g_mirrorN >= kMirrorMax) {
+        static uint32_t lastWarn = 0;
+        if (now - lastWarn > 5000) {
+            lastWarn = now;
+            QDLOG(LOG_WARN, "enemy spawn: ", dec(g_mirrorN),
+                  " mirrored copies already; refusing to construct more (guid=",
+                  hex32(s.guid[0]), ")");
+        }
+        return;
+    }
+    TryConstructMirror(s, now);
+}
+
+// A body that arrives while another construction is in flight is QUEUED, not dropped.
+//
+// THE BUG THIS FIXES (Session 16, measured).  The lane is RELIABLE, so the sender already
+// has an ack for this body and will never send it again -- a receiver that refuses it
+// because "one construction per interval" is refusing it FOREVER.  The first run showed
+// exactly that: the dragon's body arrived (`kind=0000002B seq=2417 received; ack sent`) and
+// the peer constructed nothing, with no line saying why, because the 400 ms interval was
+// still ticking from an ordinary enemy.  So a refused body is stored WHOLE (the class path
+// is the point) and constructed on a later pump.
+//
+// WHY 64 AND WHY IT CANNOT STARVE.  A queue that fills with ambience would drop the one
+// body that mattered, which is the same failure one layer up -- measured in the second run,
+// where the relevance radius let the whole hub through.  The radius is the primary bound
+// (25 m); this is the backstop, and a full queue REPLACES ITS OLDEST entry (the entry least
+// likely to still be wanted) while saying so, instead of refusing the new one.
+struct PendingMirror {
+    bool                   used;
+    wire::EnemySpawnBody   body;
+    uint32_t               at;
+};
+static const int kPendingMirrorMax = 64;
+static PendingMirror g_pendingMirror[kPendingMirrorMax];
+
+static void QueueMirror(const wire::EnemySpawnBody& s, uint32_t now)
+{
+    for (int i = 0; i < kPendingMirrorMax; ++i) {
+        if (g_pendingMirror[i].used && enemy::SameGuid(g_pendingMirror[i].body.guid, s.guid)) {
+            g_pendingMirror[i].at = now;      // a repeat refreshes; the body is the same
+            return;
+        }
+    }
+    for (int i = 0; i < kPendingMirrorMax; ++i) {
+        if (g_pendingMirror[i].used) continue;
+        g_pendingMirror[i].used = true;
+        g_pendingMirror[i].body = s;
+        g_pendingMirror[i].at = now;
+        return;
+    }
+    // Full: replace the entry waiting longest, so the NEW instruction is never the one lost.
+    int victim = 0;
+    for (int i = 1; i < kPendingMirrorMax; ++i)
+        if ((int32_t)(g_pendingMirror[i].at - g_pendingMirror[victim].at) < 0) victim = i;
+    static uint32_t lastWarn = 0;
+    if (now - lastWarn > 5000) {
+        lastWarn = now;
+        QDLOG(LOG_WARN, "enemy spawn: the pending queue is full (", dec(kPendingMirrorMax),
+              "); replacing guid=", hex32(g_pendingMirror[victim].body.guid[0]), " with ",
+              hex32(s.guid[0]));
+    }
+    g_pendingMirror[victim].used = true;
+    g_pendingMirror[victim].body = s;
+    g_pendingMirror[victim].at = now;
+}
+
+static void ClearPendingMirrors()
+{
+    for (int i = 0; i < kPendingMirrorMax; ++i) g_pendingMirror[i].used = false;
+}
+
+//
+// THE GRACE PERIOD IS NOT A TIMER FOR THE COPY'S LIFE, it is the row lane's own latency.
+// Rows round-robin over a live set that is typically 200+ enemies at 16 per datagram, so a
+// key can wait seconds for its first row; measured in the first Session 16 run, a copy was
+// constructed and destroyed again 70 ms later because "no row" was read as "the owner left".
+// An enemy the owner described is alive by construction, so a mirror is only judged stale
+// once it has had at least one full staleness window to hear from its owner.
+void EnemyMirrorPump(uint32_t now)
+{
+    static Fn fMirrorTick = {};
+    // FIRST the queue.  A body that arrived while the construction interval was ticking (or
+    // while the records still named another world) is still owed a copy, and the reliable
+    // lane will never re-send it -- the sender already has its ack.
+    for (int i = 0; i < kPendingMirrorMax; ++i) {
+        if (!g_pendingMirror[i].used) continue;
+        if (now - g_lastMirrorSpawnMs < kMirrorMinGapMs) break;
+        if (!EnemyRecordsTrustworthy()) break;
+        if (g_mirrorN >= kMirrorMax) break;
+        // Two ways the entry stops being owed: the copy appeared anyway, or the key died.
+        EnemyRec* have = EnemyByGuid(g_pendingMirror[i].body.guid);
+        if ((have && ObjectIsLive(have->actor)) ||
+            g_remoteDead.Has(g_pendingMirror[i].body.guid, now)) {
+            g_pendingMirror[i].used = false;
+            continue;
+        }
+        wire::EnemySpawnBody s = g_pendingMirror[i].body;
+        g_pendingMirror[i].used = false;
+        TryConstructMirror(s, now);
+    }
+
+    for (int i = 0; i < g_enN;) {
+        EnemyRec& r = g_en[i];
+        if (!r.mirror) { ++i; continue; }
+        bool gone = !ObjectIsLive(r.actor);
+        const enemy::HostRow* row = r.haveGuid ? g_hostView.Get(r.guid) : nullptr;
+
+        // A DEATH IS ONLY A REASON IF IT IS NEWER THAN THE COPY.  Measured in the third
+        // Session 16 run: three copies were destroyed 46-765 ms after construction by
+        // "the owner says dead", because a DEAD ROW FROM THE KILL LOG was still the freshest
+        // row for those keys at that instant (the spawn body said alive; the kill log had
+        // not yet been superseded by a live row).  The row's own timestamp is the ordering
+        // fact, so a death that predates the construction cannot kill it.
+        bool deadRow = row && !(row->flags & enemy::kAlive) &&
+                       (int32_t)(row->rx_ms - r.mirrorSpawnAt) > 0;
+        uint32_t age = (row && now > row->rx_ms) ? now - row->rx_ms : 0xFFFFFFFFu;
+        uint32_t lived = (now > r.mirrorSpawnAt) ? now - r.mirrorSpawnAt : 0;
+        // Silence needs BOTH: no fresh row for a whole window AND a copy old enough that the
+        // window is meaningful.  The show-back test uses the SAME predicate, so the pair
+        // cannot oscillate -- the first version tested "age <= kMirrorStaleMs" to show, and a
+        // row that arrived between the two reads could hide and show it several times a
+        // second (measured: eight transitions in 200 ms).
+        bool silent = (!row || age > kMirrorStaleMs) && lived > kMirrorStaleMs;
+        bool speaking = !silent;
+
+        if (!gone && deadRow) {
+            // THE GAME'S OWN DEATH, not a raw destroy.  `K2_DestroyActor` on a live gameplay
+            // enemy Blueprint from native code is the access violation this project's corpus
+            // warns about, and it skips the enemy's own death branch (drop, save record,
+            // spawner notification).  Applying lethal damage is the path every other frozen
+            // copy already uses, so the copy dies exactly as it would for the owner.
+            float hp = 0, mx = 0;
+            if (EnemyHp(r.actor, &hp, &mx) && hp > 0.0f) {
+                QDLOG(LOG_INFO, "enemy mirror: the owner says dead -- killing guid=",
+                      hex32(r.guid[0]));
+                g_inRemoteDeath = true;
+                ApplyEnemyDamage(r.actor, enemy::ConvergeDamage(hp, mx, 0, false), g_localPawn);
+                g_inRemoteDeath = false;
+                if (!ObjectIsLive(r.actor)) { ForgetMirror(r.actor); r.actor = nullptr; gone = true; }
+            }
+            if (!gone) {
+                // The death path can leave the actor standing (no damage entry, a Build that
+                // ignores the message).  Then the copy is a corpse with a row saying dead, so
+                // it is removed -- guarded, because this is content-owned memory.
+                __try { DestroyActor(r.actor); } __except (EXCEPTION_EXECUTE_HANDLER) {}
+                ForgetMirror(r.actor);
+                gone = true;
+            }
+        } else if (!gone && silent) {
+            // THE OWNER WENT QUIET, which is not the same as the owner saying "gone".  The
+            // row lane is unreliable and round-robins, so silence is weak evidence; a world
+            // change and a dead row are the FACTS, and both have their own path.  So silence
+            // removes the copy from the player's view without claiming it is dead: it is
+            // hidden and stopped, and a later row for the key makes it visible again on the
+            // next pump (the owner is re-describing an area it is still in).
+            if (!r.mirrorHidden) {
+                r.mirrorHidden = true;
+                QDLOG(LOG_INFO, "enemy mirror: the owner's rows stopped for guid=",
+                      hex32(r.guid[0]), " (", dec(lived), " ms alive); hiding the copy -- a "
+                      "dead row or a world change is what actually removes it");
+                __try {
+                    CallBool1(r.actor, fMirrorTick, "SetActorTickEnabled", false);
+                    SetActorHidden(r.actor, true);
+                } __except (EXCEPTION_EXECUTE_HANDLER) {}
+            }
+        }
+        // A row for the key came back: the owner is still describing this area, so a copy
+        // that silence hid is shown again.  Same predicate as the hide, so they cannot flap.
+        else if (!gone && r.mirrorHidden && speaking) {
+            r.mirrorHidden = false;
+            QDLOG(LOG_INFO, "enemy mirror: the owner is describing guid=", hex32(r.guid[0]),
+                  " again; showing the copy");
+            __try {
+                SetActorHidden(r.actor, false);
+                CallBool1(r.actor, fMirrorTick, "SetActorTickEnabled", true);
+                EnemyDrive(r, true);
+            } __except (EXCEPTION_EXECUTE_HANDLER) {}
+        }
+        if (!gone) { ++i; continue; }
+        if (r.actor) ForgetMirror(r.actor);
+        g_en[i] = g_en[--g_enN];
+    }
+}
+
+
+// ---------------------------------------------------------------------------
 // Bosses: the health bar, the arena exit, and the phase the row cannot carry
 // ---------------------------------------------------------------------------
 // SYNC-RESEARCH 6 measured every per-boss fact and what can be done with it:
@@ -6385,11 +7185,33 @@ int BossProbe(void* obj)
 // Boss membership, asked of the ENEMY and then of its SPAWNER.
 //
 // MEASURED (Session 15): neither `Enemy_IsPartOfBossEncounter` nor `Enemy_GetBossInfo`
-// exists on the enemy classes at all -- the probe reports `part=-1 info=-1` for every
-// enemy Blueprint in the world, including `Dragon_Green_BP_C`.  They do exist on the
-// spawner side (`GreenDragon_Spawner`), which is where the encounter is authored, so the
-// question is asked of the spawner when the enemy itself cannot answer.  Nothing is
-// inferred: if neither object has the predicate, the answer stays "not a boss".
+// resolves on the enemy classes at runtime -- the probe reports `part=-1 info=-1` for every
+// enemy Blueprint in the world, including `Dragon_Green_BP_C`, because both are declared by
+// the `EnemyDataInterface` and an unimplemented interface message is not a class function.
+// So a boss has to be recognised from the game's OWN authored data instead of a predicate
+// that this build cannot answer.
+//
+// MEASURED (Session 16, from the shipped pak's `EnemyData` class): the enemy's data asset
+// carries a `Boss` property (`GreenDragon_Data` is an `EnemyData_C` whose class declares
+// `Boss`, `BestiaryScale`, `Boss Music` …).  That is the content's own statement that this
+// enemy is a boss, and it is readable from the actor at runtime through its `Data`
+// property -- the same object `ActivateBossHPBar` is handed as its `Group` argument.  It is
+// tried AFTER the predicates, so a build that does expose them still gets the game's own
+// answer first, and it is reported in the probe line so a run can see which signal fired.
+bool EnemyDataSaysBoss(void* actor)
+{
+    void* data = ObjPropC(actor, "Data");          // EnemyData_C (the enemy's own data asset)
+    if (!data || !ObjectIsLive(data)) return false;
+    // `Boss` is a bool on EnemyData_C.  A build that widens it to an int is read the same
+    // way, and an object-typed value (a boss-info asset) counts as "present".
+    uint8_t b = 0;
+    if (BytePropC(data, "Boss", &b)) return b != 0;
+    int32_t i = 0;
+    if (IntPropC(data, "Boss", &i)) return i != 0;
+    void* p = ObjPropC(data, "Boss");
+    return p && LooksLikeUObject(p);
+}
+
 bool EnemyIsBoss(void* actor, void* spawner)
 {
     int partR = BossProbe(actor);
@@ -6399,8 +7221,11 @@ bool EnemyIsBoss(void* actor, void* spawner)
         spawnR = BossProbe(spawner);
         if (spawnR == 1) boss = true;
     }
-    // One line per class (a 64-entry table: the first 16 classes in a world are all
-    // ordinary enemies, and the dragon was the 17th).
+    bool byData = false;
+    if (!boss) {
+        byData = EnemyDataSaysBoss(actor);
+        if (byData) boss = true;
+    }
     static void* seen[64];
     static int seenN = 0;
     void* cls = ObjClass(actor);
@@ -6411,7 +7236,8 @@ bool EnemyIsBoss(void* actor, void* spawner)
         char cn[64] = "";
         FNameToString(ObjNameRaw(cls), cn, sizeof(cn));
         QDLOG(LOG_INFO, "boss probe: ", (cn[0] ? cn : "?"), " enemy=", dec(partR),
-              " spawner=", dec(spawnR), " -> boss=", dec(boss ? 1 : 0));
+              " spawner=", dec(spawnR),
+              (byData ? " data.Boss=1" : ""), " -> boss=", dec(boss ? 1 : 0));
     }
     return boss;
 }
@@ -6437,26 +7263,52 @@ uint8_t EnemyBossPhase(void* actor)
 // function takes the enemy and its data group; the group is the enemy's own `Data` when
 // the build records one, and null otherwise (the function tolerates it -- the bar then
 // shows the name and HP only, which is still the fight's bar).
+//
+// TWO ROUTES, BOTH THE GAME'S OWN (Session 16).  `PlayerStatsAndUtils_C.ActivateBossHPBar`
+// is the library call the shipped content uses (`EnemyBase`, `JosamiLord_Green_BP` and
+// `Queen_BP` all import it), and the player class carries a wrapper of its own,
+// `FS_PlayerChar.ActivateBossHPbar`, which the player Blueprint's ubergraph also calls.  A
+// build where the CDO is not loaded would otherwise lose the bar entirely, so the pawn's
+// wrapper is tried second and the log says which of the two ran -- "the bar is on this
+// machine" and "this machine has no callable bar" must be distinguishable from the log.
 void BossBarLocal(void* enemy, bool on)
 {
     if (!enemy || !ObjectIsLive(enemy)) return;
     static void* lib = nullptr;
     static Fn fOn = {}, fOff = {};
+    static Fn fPawnOn = {}, fPawnOff = {};
     if (!lib || !ObjectIsLive(lib))
         lib = FindObjectByNameAndClass("Default__PlayerStatsAndUtils_C", "PlayerStatsAndUtils_C");
+    void* world = GWorldPtr();
+    void* group = ObjPropC(enemy, "Data");
     if (!lib) {
+        // The pawn's own wrapper.  Same arguments by name; the pawn is the `this`, which is
+        // exactly what a library call's `__WorldContext` stands in for anyway.
+        void* pawn = g_localPawn;
+        Fn& f = on ? fPawnOn : fPawnOff;
+        const char* nm = on ? "ActivateBossHPbar" : "DeactivateBossHPbar";
+        if (pawn && IsGameplayPawn(pawn) && f.Resolve(pawn, nm)) {
+            Call c(f);
+            if (f.Off("Enemy") >= 0) c.Obj("Enemy", enemy);
+            else if (on && f.sig.props > 0) c.Obj(f.sig.p[0].name, enemy);
+            if (on && f.Off("Group") >= 0) c.Obj("Group", group);
+            if (f.Off("__WorldContext") >= 0) c.Obj("__WorldContext", world);
+            bool ran = c.Run(pawn);
+            QDLOG(ran ? LOG_INFO : LOG_WARN, "boss: ", nm, " on the player class ",
+                  (ran ? "called" : "FAILED"), " for this machine's own copy");
+            return;
+        }
         static bool said = false;
-        if (!said) { said = true; QDLOG(LOG_WARN, "boss: PlayerStatsAndUtils_C is not loaded; the "
+        if (!said) { said = true; QDLOG(LOG_WARN, "boss: neither PlayerStatsAndUtils_C nor the "
+                                                  "player class exposes a boss-bar entry; the "
                                                   "bar cannot be driven on this machine"); }
         return;
     }
-    void* world = GWorldPtr();
     if (on) {
         if (!fOn.Resolve(lib, "ActivateBossHPBar")) {
             QDLOG(LOG_WARN, "boss: ActivateBossHPBar did not resolve on PlayerStatsAndUtils_C");
             return;
         }
-        void* group = ObjPropC(enemy, "Data");
         Call c(fOn);
         // Named arguments: the first is the enemy, the second its data group, the third
         // is the caller's world context (this machine's own world, which is the point).
@@ -6550,6 +7402,11 @@ void BossPump(uint32_t now)
     for (int i = 0; i < g_enN; ++i) {
         EnemyRec& r = g_en[i];
         if (!r.haveGuid || !ObjectIsLive(r.actor)) continue;
+        // A MIRRORED copy is the other machine's boss, so this machine is the FOLLOWER for it:
+        // raising and publishing its own bar would make both machines the owner of one bar
+        // (measured: the peer sent `boss: sent guid=17181166 bar on` and never raised its
+        // own, so the partner saw no bar at all).  `OnBoss` is this copy's half.
+        if (r.mirror) continue;
         // The boss lane belongs to the machine that RUNS the enemy.  `Running()` is exactly
         // that (O_LOCAL, or O_HANDOFF where this machine still simulates until the partner
         // confirms); requiring O_LOCAL alone skipped the dragon for a whole hand-off
@@ -6598,7 +7455,17 @@ void BossPump(uint32_t now)
         // (bar state, phase).  HP is not a change trigger -- the bar reads the copy's own
         // HP on each machine, and the ENEMY row is already converging it; sending a boss
         // body per HP tick would be a 10 Hz reliable packet per boss for no new fact.
-        if (b.flags == r.pubBossFlags && b.phase == r.pubBossPhaseSent) {
+        //
+        // A SLOW REPAIR anyway, because "on change" has a lost-receiver case that this lane
+        // uniquely creates: the partner's FIRST body can arrive before it holds a copy of the
+        // boss at all (the mirror takes a construction interval), and the body is acked and
+        // dropped -- measured Session 16, the partner never raised its bar.  Republishing
+        // makes a bar the partner missed appear without a reconnect.  It is PER BOSS and only
+        // while the bar is UP: a bar that is down is not repaired (there is nothing to show),
+        // and the arena-exit one-shot below is never re-sent by this path.
+        bool repair = wantBar && now - r.bossSentAt >= 3000;
+        if (repair) r.bossSentAt = now;
+        if (!repair && b.flags == r.pubBossFlags && b.phase == r.pubBossPhaseSent) {
             // The one event that is not a state: a player left the arena.  It is observed
             // on the owner, which is the machine that runs the spawner the game computes
             // the condition on, and it is sent as a one-shot.
@@ -6626,8 +7493,10 @@ void BossPump(uint32_t now)
         wire::Writer w(body, sizeof(body));
         wire::WriteBoss(w, b);
         if (w.ok && g_net.SendReliable(wire::K_BOSS, body, w.len)) {
+            r.bossSentAt = now;
             QDLOG(LOG_INFO, "boss: sent guid=", hex32(r.guid[0]), " phase=",
-                  dec((int)phase), (wantBar ? " bar on" : " bar off"), " hp=", dec((int)b.hp));
+                  dec((int)phase), (wantBar ? " bar on" : " bar off"), " hp=", dec((int)b.hp),
+                  (repair ? " (repair)" : ""));
         } else {
             // Not recorded, so the next pump retries it.
             r.pubBossFlags = 0xFF;
@@ -6664,7 +7533,13 @@ void OnBoss(wire::Reader& r, uint32_t now)
                   "; the bar cannot be raised here");
         return;
     }
-    if (!er->driven || g_own.State(b.guid) != enemyown::O_FROZEN) return;   // owner's own bar
+    // This machine is the FOLLOWER for this key: it either holds a frozen copy of the other
+    // machine's enemy, or a MIRROR of one it never spawned.  A mirror's ownership state is
+    // `O_LOCAL` by construction (the ownership table has never heard of a key it did not
+    // spawn), so requiring O_FROZEN here skipped exactly the case this lane exists for --
+    // measured Session 16, the partner's bar never rose.
+    if (!er->mirror && (!er->driven || g_own.State(b.guid) != enemyown::O_FROZEN))
+        return;                                                          // owner's own bar
 
     er->isBoss = true;
     er->bossPhase = b.phase;
@@ -6757,6 +7632,11 @@ void EnemyOwnPump(uint32_t now)
 
         enemyown::OwnerState st = g_own.Tick(r.guid, true, ex, haveEx,
                                             mine, haveMine, theirs, haveTheirs, now);
+        // A mirrored copy NEVER runs its own AI, whatever this machine's distance says.  It
+        // exists because the owner holds that key, and two simulations of one enemy is the
+        // exact failure ownership exists to prevent; on the machine that constructed a copy
+        // of the owner's enemy, "frozen" is not a preference.
+        if (r.mirror) st = enemyown::O_FROZEN;
         const enemy::HostRow* row = g_hostView.Get(r.guid);
         if (st == enemyown::O_FROZEN && row) {
             // A death the other machine ran reaches the machine that did not kill it.
@@ -6932,6 +7812,10 @@ void EnemySendPump(uint32_t now)
         EnemyRec& r = g_en[i];
         __try {
         if (!r.haveGuid || !ObjectIsLive(r.actor) || EnemyDead(r.actor)) continue;
+        // A mirrored copy is NOT a simulation: its rows would tell the owner's machine about
+        // an enemy it already runs, from a copy that is not running it.  Only the owner
+        // publishes, and the owner is the other machine here.
+        if (r.mirror) continue;
         // A death the other machine already recorded is not published back as "alive":
         // that would be an echo strong enough to erase the death over there.
         if (g_remoteDead.Has(r.guid, now)) continue;
@@ -6962,6 +7846,9 @@ void EnemySendPump(uint32_t now)
     // Detail for the enemies this machine runs.  Reliable, on change only, and ranked by
     // relevance to the partner so a big fight stays inside the budget (qdenemybw.h).
     EnemyDetailPump(now);
+    // And, once per key, WHICH CLASS it is: the one fact a row cannot carry, which is what
+    // lets a machine that never spawned this enemy construct a copy of it (K_ENEMY_SPAWN).
+    EnemySpawnPump(now);
 
     int count = 0;
     int first = g_rowCursor.Take(n, 16, &count);     // 16 live + up to 4 dead = 20 rows
@@ -7402,6 +8289,9 @@ void EnemyDetectDeaths()
     for (int i = 0; i < g_enN; ++i) {
         EnemyRec& r = g_en[i];
         if (!r.haveGuid || !g_own.Running(r.guid)) continue;
+        // A mirrored copy is never persisted by this machine: it exists because the owner
+        // runs that key, and the owner's own spawner/save path is the one that records it.
+        if (r.mirror) continue;
         bool live = ObjectIsLive(r.actor);
         float hp = 0.0f, mx = 0.0f;
         bool haveHp = false;
@@ -7478,6 +8368,12 @@ void EnemyPump(uint32_t now)
         // table: a new world reuses neither a key nor a timestamp.
         g_detailBw.Reset();
         g_summonOrd.Reset();
+        // A mirrored copy belongs to the world it was constructed in.  Its actors go with
+        // that world, so the table must not keep naming them (a later destroy would be a
+        // write into a freed object), and a class path queued for the previous world's
+        // package set is not a class in this one.
+        ForgetAllMirrors();
+        ClearPendingMirrors();
     }
     EnemyScanStep();
     if (!g_net.Connected()) {
@@ -7495,6 +8391,20 @@ void EnemyPump(uint32_t now)
             }
         }
         for (int i = 0; i < g_enN; ++i) if (g_en[i].driven && ObjectIsLive(g_en[i].actor)) EnemyDrive(g_en[i], false);
+        // A mirrored copy exists only while the owner is describing its key.  With no
+        // session there is no owner, so every one of them is destroyed here rather than
+        // left standing in the world as a statue nothing drives.
+        for (int i = 0; i < g_enN;) {
+            if (!g_en[i].mirror) { ++i; continue; }
+            if (ObjectIsLive(g_en[i].actor)) {
+                __try { DestroyActor(g_en[i].actor); } __except (EXCEPTION_EXECUTE_HANDLER) {}
+            }
+            QDLOG(LOG_INFO, "enemy mirror: the session ended -- destroying guid=",
+                  hex32(g_en[i].guid[0]));
+            g_en[i] = g_en[--g_enN];
+        }
+        ForgetAllMirrors();
+        ClearPendingMirrors();
         return;
     }
     g_own.SetHost(g_net.IsHost());
@@ -7505,6 +8415,8 @@ void EnemyPump(uint32_t now)
     EnemyTargetPump(now);
     EnemySendPump(now);
     BossPump(now);
+    // Last: a mirror whose reason has gone is destroyed before anything else reads it.
+    EnemyMirrorPump(now);
 }
 
 // ===========================================================================
@@ -7936,15 +8848,29 @@ void CutsceneAct(sequence::Verdict v)
     void* gi = GameInstanceObj();
     static Fn fEnter = {}, fExit = {}, fBegin = {}, fLock = {}, fUnlock = {};
     if (v == sequence::CV_PLAY) {
-        void* mgr = FindTravelActor(g_cutscene.HeldName(), GWorldPtr());
-        bool played = mgr && IsGameplayPawn(g_localPawn) &&
-                      CallObject1(g_localPawn, fBegin, "BeginCutsceneWithManager", mgr);
-        if (played) {
-            QDLOG(LOG_INFO, "cutscene: playing the partner's sequence ",
-                  g_cutscene.HeldName(), " (resolved its manager locally)");
-            return;
+        // THE HOLDER DOES NOT ALSO PLAY IT.  MEASURED (Session 16): the sequence actor is in
+        // BOTH worlds (the area's own level list is pushed on each machine), so the holder's
+        // `BeginCutsceneWithManager` started the same sequence locally -- after which it was
+        // playing too, never released, and the pair restarted each other for ever.  The lane's
+        // shape is one player and one hold; if this machine can already SEE the sequence, the
+        // hold is what it does.
+        char local[sequence::kMaxNameLen];
+        if (LocalCutscene(local, sizeof(local)) && local[0] &&
+            sequence::CutsceneBoard::Same(local, g_cutscene.HeldName())) {
+            QDLOG(LOG_INFO, "cutscene: this machine already sees ", local,
+                  " playing; holding rather than starting a second copy");
+            v = sequence::CV_HOLD;
+        } else {
+            void* mgr = FindTravelActor(g_cutscene.HeldName(), GWorldPtr());
+            bool played = mgr && IsGameplayPawn(g_localPawn) &&
+                          CallObject1(g_localPawn, fBegin, "BeginCutsceneWithManager", mgr);
+            if (played) {
+                QDLOG(LOG_INFO, "cutscene: playing the partner's sequence ",
+                      g_cutscene.HeldName(), " (resolved its manager locally)");
+                return;
+            }
+            v = sequence::CV_HOLD;      // no manager here: hold consistently instead
         }
-        v = sequence::CV_HOLD;      // no manager here: hold consistently instead
     }
     if (v == sequence::CV_HOLD) {
         bool e = gi && CallFlag1(gi, fEnter, "EnterCutsceneMode", true);
@@ -7971,9 +8897,30 @@ void CutscenePump(uint32_t now)
 
     char name[sequence::kMaxNameLen];
     bool playing = LocalCutscene(name, sizeof(name));
+    // A HOLDING MACHINE'S OWN SEQUENCE IS NOT NEWS.  The area's level list is pushed on BOTH
+    // machines, so the placed `LevelSequenceActor` exists in both worlds and `IsPlaying` can
+    // become true here without this machine having started anything -- measured Session 16:
+    // the holder logged `local started` 26 ms after it began holding, then never released.
+    // What matters for the lane is this machine's own ACTION, so while it is holding the
+    // partner's cutscene its local observation is reported as the partner's state rather than
+    // as a second play.  `g_cutscene.Held()` is exactly "this machine is holding".
+    if (playing && g_cutscene.Held() && g_cutscene.PeerNameIs(name, now)) {
+        static uint32_t lastSay = 0;
+        if (now - lastSay > 5000) {
+            lastSay = now;
+            QDLOG(LOG_DEBUG, "cutscene: ", name, " is playing in this world while this machine "
+                               "holds it for the partner; not reported as a local start");
+        }
+        playing = false;
+        name[0] = 0;
+    }
     bool changed = playing != wasPlaying ||
                    (playing && !sequence::CutsceneBoard::Same(name, lastName));
     bool ended = wasPlaying && !playing;
+    // What THIS machine just stopped playing (see the restart guard below).
+    static char endedLocalName[sequence::kMaxNameLen] = {0};
+    bool endedLocal = ended;
+    if (ended) sequence::CutsceneBoard::Copy(endedLocalName, sizeof(endedLocalName), lastName);
     if (playing) sequence::CutsceneBoard::Copy(lastName, sizeof(lastName), name);
     if (changed || ended) {
         ++g_cutsceneSeq;
@@ -7997,7 +8944,27 @@ void CutscenePump(uint32_t now)
     }
 
     sequence::Verdict v = g_cutscene.Decide((uint8_t)LocalSlot(), playing, name, now);
-    if (v == sequence::CV_PLAY || v == sequence::CV_HOLD || v == sequence::CV_RELEASE)
+    // A machine that is PLAYING the same sequence as its partner is the player, not the
+    // holder: it must not also act on the partner's publication of it.  MEASURED (Session
+    // 16): both machines ended up playing, each because the other published "started", so
+    // neither released when the sequence ended and it restarted on the next publish.
+    bool sameAsPartner = playing && name[0] && g_cutscene.PeerNameIs(name, now);
+
+    // AND A MACHINE THAT JUST ENDED IT DOES NOT START IT AGAIN.  MEASURED (Session 16): after
+    // `stop` the peer held, then played the same sequence 50 ms later, because its partner's
+    // last publication still named it.  The instruction was "end the cutscene", so the lane
+    // remembers which names it ended and refuses to act on them until the sender stops naming
+    // them -- which is what "the cutscene is over" looks like on the wire.
+    static char endedName[sequence::kMaxNameLen] = {0};
+    static uint32_t endedAt = 0;
+    if (endedLocal) {
+        sequence::CutsceneBoard::Copy(endedName, sizeof(endedName), endedLocalName);
+        endedAt = now;
+    }
+    bool justEnded = endedName[0] && now - endedAt < 15000 &&
+                     g_cutscene.PeerNameIs(endedName, now);
+    if (!sameAsPartner && !justEnded &&
+        (v == sequence::CV_PLAY || v == sequence::CV_HOLD || v == sequence::CV_RELEASE))
         CutsceneAct(v);
 }
 
@@ -9917,6 +10884,13 @@ void DispatchInbound(const InboundPacket& p, uint32_t now)
     // before they reach the enemy/dialogue regions.  K_TRAVEL is never filtered: it is how
     // the split is detected and how it clears again, and the hard handshake lives on it.
     // The gate follows travel too, so the follow works with StreamUnion=0.
+    // NOTE ON WHAT IS *NOT* LISTED HERE.  `K_ENEMY_SPAWN` and `K_BOSS` are deliberately
+    // absent: this gate is SILENT, and both lanes carry their own world guard that can
+    // QUEUE instead of dropping (`EnemyRecordsTrustworthy`, which a reliable body needs --
+    // it has already been acked and will never be resent).  Measured in the first Session 16
+    // run: routing the spawn through here dropped the dragon's body with nothing in the log.
+    // A spawn also names a cooked CLASS, which is a package path valid in either world,
+    // unlike a row's absolute position and GUID set.
     if ((Cfg().stream_union || Cfg().travel_sync) && !g_map.PeerStateApplies(now) &&
         (p.kind == wire::K_ENEMY || p.kind == wire::K_DIALOGUE ||
          p.kind == wire::K_ENEMY_DETAIL)) {
@@ -9996,6 +10970,12 @@ void DispatchInbound(const InboundPacket& p, uint32_t now)
         break;
     case wire::K_CUTSCENE:
         if (Cfg().cutscene_sync) OnCutscene(r, now);
+        break;
+    case wire::K_ENEMY_SPAWN:
+        // The owner named the class of a key it holds and this machine may not exist at
+        // all.  Constructing the copy is the receiver's own call, so this is not gated on
+        // ownership; `MirrorSpawn` is the switch.
+        OnEnemySpawn(r, now);
         break;
     case wire::K_MOVERS:
         if (Cfg().mover_sync) OnMovers(r, now);
@@ -12074,8 +13054,14 @@ void DevHitGuidLever(uint32_t now)
     g_devHitGuidPoll = now;
     char want[48];
     if (!DevRigText("QDCOOP_TEST_HITGUID", "qd.hitguid", want, sizeof(want))) return;
-    if (!want[0] || strcmp(want, g_devHitGuidApplied) == 0) return;
-    lstrcpynA(g_devHitGuidApplied, want, sizeof(g_devHitGuidApplied));
+    if (!want[0]) return;
+    // `#<nonce>`: the same hit twice in one run is a legitimate scenario (both players
+    // hitting the same boss), and the lever's "already applied" rule is on the whole string.
+    char unique[48];
+    lstrcpynA(unique, want, sizeof(unique));
+    for (int i = 0; want[i]; ++i) if (want[i] == '#') { want[i] = 0; break; }
+    if (!want[0] || strcmp(unique, g_devHitGuidApplied) == 0) return;
+    lstrcpynA(g_devHitGuidApplied, unique, sizeof(g_devHitGuidApplied));
 
     uint32_t key = 0;
     int digits = 0;
@@ -12443,6 +13429,10 @@ void DevEnemyDumpNow(uint32_t now)
     int alive = 0, dead = 0;
     int ledgerLive = g_remoteDead.Count(now);
     int killLive = g_killLog.Count();
+    int mirrorLive = 0;
+    for (int i = 0; i < g_enN; ++i) {
+        if (g_en[i].haveGuid && g_en[i].mirror) ++mirrorLive;
+    }
     for (int i = 0; i < g_enN; ++i) {
         EnemyRec& r = g_en[i];
         if (!r.haveGuid) continue;
@@ -12467,6 +13457,7 @@ void DevEnemyDumpNow(uint32_t now)
         QDLOG(LOG_INFO, "enemykey ", hex32(r.guid[0]), (isDead ? " DEAD" : " ALIVE"),
               " local=", dec(g_own.Running(r.guid) ? 1 : 0), " src=", dec((int)r.src),
               " hp=", (haveHp ? flt(rhp, 1) : flt(-1.0f, 1)),
+              (r.mirror ? " mirrored=1" : ""),
               " cls=", (cls[0] ? cls : "?"));
         if (isDead) ++dead; else ++alive;
     }
@@ -12491,7 +13482,14 @@ void DevEnemyDumpNow(uint32_t now)
         ++dead;
     }
     QDLOG(LOG_INFO, "enemykey n=", dec(alive + dead), " alive=", dec(alive), " dead=",
-          dec(dead), " killlog=", dec(killLive), " ledger=", dec(ledgerLive));
+          dec(dead), " killlog=", dec(killLive), " ledger=", dec(ledgerLive),
+          " mirrors=", dec(g_mirrorN));
+    // The mirror lane's own state, so a run can tell "the peer constructed nothing" from
+    // "the peer constructed it and lost it again".
+    int pendingN = 0;
+    for (int i = 0; i < kPendingMirrorMax; ++i) pendingN += g_pendingMirror[i].used ? 1 : 0;
+    QDLOG(LOG_INFO, "enemymirror constructed=", dec(g_mirrorN), " pending=", dec(pendingN),
+          " in-record-table=", dec(mirrorLive), " records=", dec(g_enN));
 }
 
 void DevEnemyDump(uint32_t now)
@@ -12528,7 +13526,11 @@ void DevEnemyDump(uint32_t now)
 // (qdsequence.h).  Playing the sequence is the game's own action, not a fabricated state --
 // `SequencePlayingNow` reads the same `IsPlaying()` the detector trusts.
 //
-// The control holds a substring of the sequence actor's name, or "first".
+// The control holds a substring of the sequence actor's name, or "first".  A trajectory of
+// the same instruction is a NEW instruction: `Play`, then `Stop`, then `Play` again is a
+// legitimate scenario, and a lever that ignores a repeated string cannot express it.  A
+// trailing `#<anything>` is a nonce the name match stops at, so the caller can repeat an
+// instruction without the harness having to invent different names.
 char     g_devSeqApplied[64] = "";
 uint32_t g_devSeqPoll = 0;
 
@@ -12545,14 +13547,53 @@ void DevSequenceLever(uint32_t now)
     if (!on) return;
     if (now - g_devSeqPoll < 500) return;
     g_devSeqPoll = now;
+    char raw[64];
+    if (!DevRigText("QDCOOP_TEST_SEQUENCE", "qd.sequence", raw, sizeof(raw))) return;
+    if (!raw[0]) return;
+    // `#<nonce>` makes a repeat a NEW instruction ("Play", then "Stop", then "Play" again is
+    // a legitimate scenario), so the nonce is stripped from the name to match but kept as
+    // the "already applied" key.
     char want[64];
-    if (!DevRigText("QDCOOP_TEST_SEQUENCE", "qd.sequence", want, sizeof(want))) return;
-    if (!want[0] || strcmp(want, g_devSeqApplied) == 0) return;
-    lstrcpynA(g_devSeqApplied, want, sizeof(g_devSeqApplied));
+    lstrcpynA(want, raw, sizeof(want));
+    for (int i = 0; want[i]; ++i) if (want[i] == '#') { want[i] = 0; break; }
+    if (!want[0] || strcmp(raw, g_devSeqApplied) == 0) return;
+    lstrcpynA(g_devSeqApplied, raw, sizeof(g_devSeqApplied));
 
     SequenceScan(now);
     if (g_seqActorN == 0) {
         QDLOG(LOG_WARN, "rig: sequence lever -- this world places no LevelSequenceActor");
+        return;
+    }
+    // "stop" is decided BEFORE the name match: it is an instruction about the sequence
+    // that is PLAYING, not a substring of an actor's name, and the first version ran it
+    // through the name loop and reported `no LevelSequenceActor matches 'stop'` while the
+    // sequence it was asked to end was still playing.
+    bool stopping = (want[0] == 's' && want[1] == 't' && want[2] == 'o' && want[3] == 'p');
+    if (stopping) {
+        // Any playing sequence, whichever actor holds it: the instruction is "end the
+        // cutscene", not "end the one called X".
+        static Fn fStop = {};
+        int ended = 0;
+        for (int i = 0; i < g_seqActorN; ++i) {
+            void* a = g_seqActors[i];
+            if (!a || !ObjectIsLive(a)) continue;
+            void* player = ObjPropC(a, "SequencePlayer");
+            if (!player || !ObjectIsLive(player)) continue;
+            char nm[96] = "";
+            FNameToString(ObjNameRaw(a), nm, sizeof(nm));
+            bool ran = CallNoArgs(player, fStop, "Stop");
+            if (!ran) ran = CallNoArgs(player, fStop, "StopLooping");
+            if (ran) {
+                ++ended;
+                QDLOG(LOG_INFO, "rig: sequence lever -> ", nm,
+                      " Stop ran on its own SequencePlayer (the sequence is ended)");
+            }
+        }
+        if (ended == 0)
+            QDLOG(LOG_WARN, "rig: sequence lever -> stop did not resolve or run on any "
+                            "placed SequencePlayer");
+        else
+            QDLOG(LOG_INFO, "rig: sequence lever -> stop ended ", dec(ended), " sequence(s)");
         return;
     }
     int best = -1;
@@ -12583,8 +13624,13 @@ void DevSequenceLever(uint32_t now)
         QDLOG(LOG_WARN, "rig: sequence lever -- '", nm, "' has no SequencePlayer");
         return;
     }
-    static Fn fPlay = {}, fLoop = {};
-    bool ran = CallNoArgs(player, fPlay, "Play");
+    static Fn fPlay = {}, fLoop = {}, fStop = {};
+    // "stop:<name>" ends the sequence instead of starting it.  Session 15 could not prove
+    // the joint resume because `SecretSwordGetSequence` was still playing when the run
+    // ended, so the end has to be reachable on purpose rather than only by waiting out the
+    // content's own length.  `Stop` is handled above, before the name match.
+    bool ran;
+    ran = CallNoArgs(player, fPlay, "Play");
     if (!ran) ran = CallNoArgs(player, fLoop, "PlayLooping");
     QDLOG(ran ? LOG_INFO : LOG_WARN, "rig: sequence lever -> ", nm,
           (ran ? " Play ran on its own SequencePlayer (the call the altar Blueprint makes)"
@@ -13924,6 +14970,17 @@ void HK_StoreEnemySaveState(void* self, const QdGuid* guid, float respawn, float
     // GUID (D5 closed live: a kill is hp 0).
     if (!Cfg().enemy_sync || !guid || !g_net.Connected()) return;
     uint32_t g[4] = {guid->a, guid->b, guid->c, guid->d};
+    // A MIRRORED copy must never reach the save.  The key belongs to an enemy the other
+    // machine runs, and that machine's own spawner records the persistence fact; writing it
+    // here would put a death into THIS machine's save for an enemy it never ran, and a rest
+    // or a reload would then disagree with the owner.  Refused before the game's writer, and
+    // only for the mirror's OWN key -- a record arriving from the other machine is applied
+    // through the same hook and must still land.
+    EnemyRec* mr = EnemyByGuid(g);
+    if (mr && mr->mirror) {
+        QDLOG(LOG_DEBUG, "enemy record refused for a mirrored copy guid=", hex32(g[0]));
+        return;
+    }
     // A NEGATIVE hp is the game saying "this spawner has no record" -- measured at level
     // load as -1 on every spawner with no live enemy, which is most of them.  Treating
     // that as a death recorded 123 kills in one frame and forwarded them as records, so

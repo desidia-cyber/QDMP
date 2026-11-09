@@ -49,6 +49,7 @@ enum Kind {
     K_SUSPEND     = 0x28,
     K_BOSS        = 0x29,
     K_OBJECTS     = 0x2A,
+    K_ENEMY_SPAWN = 0x2B,
     K_LOG         = 0x30,
 };
 
@@ -78,7 +79,7 @@ inline bool IsReliableKind(uint8_t kind)
     return kind == K_HELLO || kind == K_WELCOME || kind == K_INTENT ||
            kind == K_EFFECT || kind == K_ENEMY_DETAIL || kind == K_TRAVEL ||
            kind == K_DAMAGE || kind == K_SUSPEND || kind == K_BOSS ||
-           kind == K_OBJECTS;
+           kind == K_OBJECTS || kind == K_ENEMY_SPAWN;
 }
 
 // --------------------------------------------------------------------------
@@ -608,6 +609,75 @@ inline bool ReadBoss(Reader& r, BossBody* b)
     b->phase = r.U8();
     b->hp = r.U16();
     return r.ok;
+}
+
+// ---- enemy spawn: the CLASS for a key the receiver holds no actor for (WIRE.md 3.9c) --
+// THE GAP THIS CLOSES (Session 16)
+// --------------------------------
+// An enemy's identity is its spawner's authored GUID, and a spawner only spawns while ITS
+// LOCAL player is inside its activation range.  So an enemy whose spawner activated on one
+// machine exists there and NOT AT ALL on the other: measured in 780_SZ_Depths, the Green
+// Dragon (`Dragon_Green_BP_C`, key 17181166) is a live actor on the owner and the peer
+// "holds no copy of this GUID".  Every lane that follows an enemy -- rows, detail, boss,
+// damage -- is addressed to a COPY, so on the machine with no actor there is nothing to
+// follow, nothing to hit and nothing to see.
+//
+// The rows already say a key is alive and where it is.  What is missing is the one thing a
+// row cannot carry: WHICH CLASS to construct.  It cannot be derived -- a summon's key is a
+// hash of its summoner and a spawn point, and a placed key is a hash of a path, so neither
+// names a package -- so it rides the wire, as an asset path like ENEMY_DETAIL's montage and
+// for the same reason: both machines load the same cooked assets and an index would select
+// a different class on each side.
+//
+// Body: guid(16, the enemy's key), flags(u8, see kSpawn*), px/py/pz(i32, 1/8 cm, the same
+// quantization an ENEMY row uses), yaw(i16), hp(u16, 0..65535 like a row), path(str, the
+// actor's class asset path).
+//
+// Sent RELIABLE and on change: a missing copy that never appears because a datagram was lost
+// is a partner fighting an invisible boss.  It is only ever sent by the machine that RUNS the
+// enemy, so a receiver can never be told to spawn a copy of something the sender does not
+// hold; and only when the key is ALIVE, because a dead key's residue is the DeadLedger's job.
+static const int kSpawnPathCap = 200;
+
+// The copy exists because the owner's row named a class this machine had none for.  Cleared
+// for ordinary owners: a flag byte with one meaning would be a spare field pretending to be
+// a state machine.
+static const uint8_t kSpawnMirror = 0x01;
+
+struct EnemySpawnBody {
+    uint32_t guid[4];
+    uint8_t  flags;
+    int32_t  px, py, pz;
+    int16_t  yaw;
+    uint16_t hp;
+    char     path[kSpawnPathCap];
+};
+
+inline void WriteEnemySpawn(Writer& w, const EnemySpawnBody& s)
+{
+    w.Guid(s.guid);
+    w.U8(s.flags);
+    w.I32(s.px);
+    w.I32(s.py);
+    w.I32(s.pz);
+    w.I16(s.yaw);
+    w.U16(s.hp);
+    w.Str(s.path);
+}
+
+inline bool ReadEnemySpawn(Reader& r, EnemySpawnBody* s)
+{
+    r.Guid(s->guid);
+    s->flags = r.U8();
+    s->px = r.I32();
+    s->py = r.I32();
+    s->pz = r.I32();
+    s->yaw = r.I16();
+    s->hp = r.U16();
+    if (r.Str(s->path, sizeof(s->path)) >= (int)sizeof(s->path)) return false;
+    // An empty path is not a class: refuse it here rather than at the spawn attempt, so a
+    // malformed body costs a datagram and not an engine call.
+    return r.ok && s->path[0] != 0;
 }
 
 // ---- placed world objects (WIRE.md 3.20) ----------------------------------

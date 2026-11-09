@@ -106,6 +106,8 @@ pub enum Kind {
     Boss = 0x29,
     /// Placed world objects that are not `SavableActorStates` entries (WIRE.md §3.20).
     Objects = 0x2A,
+    /// The class for an enemy key the receiver holds no actor for (WIRE.md §3.9c).
+    EnemySpawn = 0x2B,
     Log = 0x30,
 }
 
@@ -138,6 +140,7 @@ impl Kind {
             0x28 => Suspend,
             0x29 => Boss,
             0x2A => Objects,
+            0x2B => EnemySpawn,
             0x30 => Log,
             other => return Err(Error::UnknownKind(other)),
         })
@@ -175,6 +178,7 @@ impl Kind {
             Suspend => "suspend",
             Boss => "boss",
             Objects => "objects",
+            EnemySpawn => "enemy_spawn",
             Log => "log",
         }
     }
@@ -193,6 +197,7 @@ impl Kind {
                 | Kind::Suspend
                 | Kind::Boss
                 | Kind::Objects
+                | Kind::EnemySpawn
         )
     }
 
@@ -966,6 +971,39 @@ pub mod object_shape {
 /// header, 18-byte rows.
 pub const MAX_OBJECT_ROWS: usize = 66;
 
+/// `ENEMY_SPAWN` body (WIRE.md §3.9c).
+///
+/// A spawner only spawns while *its own* machine's player is inside its activation range,
+/// so an enemy whose spawner activated on one machine does not exist at all on the other.
+/// Every other enemy lane is addressed to a *copy* — rows, detail, boss, damage — so on the
+/// machine with no actor there is nothing to follow and nothing to hit. The rows already
+/// say a key is alive and where; what a row cannot carry is which CLASS to construct, and it
+/// cannot be derived (a summon's key hashes its summoner and a spawn point, a placed key
+/// hashes a path), so the class asset path rides the wire.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct EnemySpawn {
+    /// The enemy's key, the same one an `ENEMY` row carries.
+    pub id: Guid,
+    /// See [`enemy_spawn_flags`].
+    pub flags: u8,
+    /// Position in the same 1/8 cm quantization an `ENEMY` row uses.
+    pub px: i32,
+    pub py: i32,
+    pub pz: i32,
+    pub yaw: i16,
+    /// HP as a 0..65535 fraction of max, like a row.
+    pub hp: u16,
+    /// The enemy actor's class asset path, `"<package>.<object>"`.
+    pub class_path: String,
+}
+
+/// `ENEMY_SPAWN.flags`.
+pub mod enemy_spawn_flags {
+    /// The receiver should hold this as a mirrored copy: AI disabled, driven by the owner's
+    /// rows, never persisted by the local spawner or save.
+    pub const MIRROR: u8 = 0x01;
+}
+
 /// A decoded body, tagged by its kind.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Body {
@@ -994,6 +1032,7 @@ pub enum Body {
     Suspend(Suspend),
     Boss(Boss),
     Objects(Objects),
+    EnemySpawn(EnemySpawn),
     Log(Log),
 }
 
@@ -1025,6 +1064,7 @@ impl Body {
             Body::Suspend(_) => Kind::Suspend,
             Body::Boss(_) => Kind::Boss,
             Body::Objects(_) => Kind::Objects,
+            Body::EnemySpawn(_) => Kind::EnemySpawn,
             Body::Log(_) => Kind::Log,
         }
     }
@@ -1499,6 +1539,16 @@ pub fn encode_body(body: &Body) -> Result<Vec<u8>> {
                 w.write_u8(e.state)?;
             }
         }
+        Body::EnemySpawn(s) => {
+            write_guid(&mut w, &s.id)?;
+            w.write_u8(s.flags)?;
+            w.write_i32(s.px)?;
+            w.write_i32(s.py)?;
+            w.write_i32(s.pz)?;
+            w.write_i16(s.yaw)?;
+            w.write_u16(s.hp)?;
+            write_str(&mut w, &s.class_path)?;
+        }
     }
 
     if !w.is_byte_aligned() {
@@ -1895,6 +1945,25 @@ pub fn decode_body(kind: Kind, bytes: &[u8]) -> Result<Body> {
             }
             Body::Objects(Objects { rev, entries })
         }
+        Kind::EnemySpawn => {
+            let id = read_guid(&mut r)?;
+            let flags = r.read_u8()?;
+            if flags & !enemy_spawn_flags::MIRROR != 0 {
+                return Err(Error::OutOfRange { what: "enemy spawn flags", value: i64::from(flags) });
+            }
+            let px = r.read_i32()?;
+            let py = r.read_i32()?;
+            let pz = r.read_i32()?;
+            let yaw = r.read_i16()?;
+            let hp = r.read_u16()?;
+            let class_path = read_str(&mut r)?;
+            if class_path.is_empty() {
+                // An empty path is not a class: refuse it here rather than at the spawn,
+                // so a malformed body costs a datagram and not an engine call.
+                return Err(Error::OutOfRange { what: "enemy spawn class path", value: 0 });
+            }
+            Body::EnemySpawn(EnemySpawn { id, flags, px, py, pz, yaw, hp, class_path })
+        }
         Kind::Log => {
             // The whole body is the message; nothing to parse.
             Body::Log(Log { bytes: bytes.to_vec() })
@@ -2166,6 +2235,16 @@ mod tests {
                     shape: object_shape::CHEST,
                     state: 1,
                 }],
+            }),
+            Body::EnemySpawn(EnemySpawn {
+                id: sample_guid(),
+                flags: enemy_spawn_flags::MIRROR,
+                px: 100,
+                py: -200,
+                pz: 50,
+                yaw: 16384,
+                hp: 40_000,
+                class_path: "/Game/Enemies/Dragon/Dragon_Green_BP.Dragon_Green_BP_C".into(),
             }),
             Body::Log(Log { bytes: b"hello from host".to_vec() }),
         ]
@@ -2620,6 +2699,46 @@ mod tests {
         // reliable -- and therefore must not also be in the superseded lane.
         assert!(Kind::Boss.is_reliable());
         assert!(!Kind::Boss.is_latest_wins());
+    }
+
+    #[test]
+    fn enemy_spawn_field_order_is_id_flags_pos_yaw_hp_path() {
+        // The class path is the only thing a row cannot carry, so its position and its
+        // length prefix are what a receiver depends on: a shifted field would construct a
+        // copy of the wrong class at the wrong place, which reads as "the partner sees a
+        // different enemy" rather than as a framing bug.
+        let s = EnemySpawn {
+            id: sample_guid(),
+            flags: enemy_spawn_flags::MIRROR,
+            px: 0x1122_3344,
+            py: -2,
+            pz: 3,
+            yaw: 0x0102,
+            hp: 0x0304,
+            class_path: "P.C".into(),
+        };
+        let bytes = encode_body(&Body::EnemySpawn(s.clone())).unwrap();
+        // 16 id + 1 flags + 12 pos + 2 yaw + 2 hp + 2 len + 3 path
+        assert_eq!(bytes.len(), 38);
+        assert_eq!(bytes[0..16], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+        assert_eq!(bytes[16], enemy_spawn_flags::MIRROR);
+        assert_eq!(bytes[17..21], [0x44, 0x33, 0x22, 0x11]);
+        assert_eq!(bytes[29..31], [0x02, 0x01]);          // yaw, little endian
+        assert_eq!(bytes[31..33], [0x04, 0x03]);          // hp, little endian
+        assert_eq!(bytes[33..35], [3, 0]);                // path length
+        assert_eq!(&bytes[35..38], b"P.C");
+        assert_eq!(decode_body(Kind::EnemySpawn, &bytes).unwrap(), Body::EnemySpawn(s));
+    }
+
+    #[test]
+    fn enemy_spawn_is_reliable_and_rejects_an_empty_class_path() {
+        assert!(Kind::EnemySpawn.is_reliable());
+        assert!(!Kind::EnemySpawn.is_latest_wins());
+        // An empty path is not a class: refusing it at the decoder keeps a malformed body
+        // from reaching an engine call.
+        let s = EnemySpawn { class_path: String::new(), ..EnemySpawn::default() };
+        let bytes = encode_body(&Body::EnemySpawn(s)).unwrap();
+        assert!(decode_body(Kind::EnemySpawn, &bytes).is_err());
     }
 
     #[test]
