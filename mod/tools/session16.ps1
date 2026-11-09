@@ -287,18 +287,18 @@ function Install-And-Configure {
     Say "installed $built -> $dst"
 
     $ini = Join-Path $gameDir 'qdcoop.ini'
-    # MirrorSpawn is ON here and only here: it constructs a full gameplay enemy Blueprint,
-    # so its default stays OFF until this run proves it (qdconfig.h).
+    # MirrorSpawn is NOT written here: Session 16 proved it, so it is the compiled default
+    # (qdconfig.h).  Leaving it out of the ini means these runs exercise the shipped default
+    # rather than a rig-only setting -- which is what a real pair of players gets.
     $lines = @('[Local]', 'Enabled=1', 'LogLevel=3', '', '[Net]',
                'RelayHost=127.0.0.1', 'RelayPort=47800', '', '[Rules]',
                'FlagSync=1', 'InventorySync=1', 'ActorStateSync=1', 'EnemySync=1',
-               'MirrorSpawn=1',
                'PuppetSync=1', 'PlayerBody=1', 'DialogueSync=1', 'StreamUnion=1',
                'TravelSync=1', 'CutsceneSync=1', 'MoverSync=1', 'LootSync=1',
                'SuspendGuard=1', 'ObjectSync=1', 'SuppressMenuPause=1', 'HostAuthoritative=1',
                '', '[Tuning]', 'PlayerHz=30', 'EnemyRowsPerTick=20', 'SpawnAttemptsMax=5')
     $lines | Set-Content -LiteralPath $ini
-    Say "wrote $ini (every write path on, MirrorSpawn on, LogLevel=3)"
+    Say "wrote $ini (every write path on, LogLevel=3; MirrorSpawn is the compiled default)"
 }
 function Seed-FreshPair {
     Say 're-seeding both instances from the pristine pre-live save'
