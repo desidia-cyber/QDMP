@@ -162,6 +162,14 @@ function Show-Since([int]$i, [string]$pattern, [int]$mark, [int]$n) {
     if ($m.Count -eq 0) { Note "  [$i] (no line matches '$pattern' since the step started)"; return }
     $m | Select-Object -Last $n | ForEach-Object { Note "  [$i] $_" }
 }
+function Get-LastPos([int]$i) {
+    $m = Get-Matches $i 'scan: local at '
+    if ($m.Count -eq 0) { return $null }
+    if ($m[-1] -match 'local at (-?[0-9.]+),(-?[0-9.]+),(-?[0-9.]+)') {
+        return @([double]$Matches[1], [double]$Matches[2], [double]$Matches[3])
+    }
+    return $null
+}
 function Invoke-ActNear([int]$i, [string]$name) {
     Set-Control $i 'qd.act' ('near:' + $name)
     Say "  act[$i] -> near:$name"
@@ -220,6 +228,7 @@ $ini = Join-Path $gameDir 'qdcoop.ini'
     'MoverSync=1'
     'LootSync=1'
     'SuspendGuard=1'
+    'ObjectSync=1'
     "SuppressMenuPause=$SuppressMenuPause"
     'HostAuthoritative=1'
     ''
@@ -327,27 +336,48 @@ Step 'ITEM 1 -- peer applies the host K_ACTOR_STATES body; confirmed=1; refresh 
 Note '  The relay''s decoder treated the absolute-container header `n` as "entries in this'
 Note '  datagram"; a 117-entry set is 3 datagrams, so every chunk failed validation and'
 Note '  was dropped. Fixed in qd-core/protocol.rs (decode the prefix). This is the proof.'
-$m1P = Get-Mark $P
+# The host half FIRST, because a pure host->peer apply needs a value the peer has never
+# seen: the host opens a savable the peer's container still holds at 0.  The peer then
+# shows `actor states applied=1` (a value it did not produce) and its own actor refresh.
+# The peer half SECOND, because `confirmed=1` needs a pending intent of the peer's own.
+foreach ($i in 1, 2) { Show-Log $i 'actor states (sent|applied)|actor-state' 4 }
 $m1H = Get-Mark $H
-foreach ($i in 1, 2) { Show-Log $i 'actor states (sent|applied)|actor-state' 6 }
-Say "  peer=inst$P walks to a savable actor and changes it through the game's own verb"
-Invoke-Go $P 'key' 140
-Start-Sleep -Seconds 6
-Invoke-ActNear $P 'key'
-Check 'item1' $P 'dev interact: resolved .key. -> ' 20 'a savable actor resolved' $m1P | Out-Null
-Check 'item1' $P 'dev state: .* savable=yes' 12 'the target is a SavableActor (has a GUID)' $m1P | Out-Null
-Check 'item1' $P 'actor-state local change' 25 'the peer container changed locally' $m1P | Out-Null
-Check 'item1' $P 'actor-state intent sent' 25 'the peer offers the change' $m1P | Out-Null
-Check 'item1' $H 'actor-state intent applied' 25 'the host applies the intent' $m1H | Out-Null
-Check 'item1' $H 'actor-state refresh ok' 45 'the host refreshes its own actor' $m1H | Out-Null
-# The residual itself: the peer applies the host's ABSOLUTE body, confirms its own intent,
-# and refreshes its own actor on the frame the value crossed.
-Check 'item1' $P 'actor states applied=[1-9]' 45 'the peer applies the host absolute body' $m1P | Out-Null
-Check 'item1' $P 'actor states applied=.*confirmed=1' 45 'the peer confirms its own intent' $m1P | Out-Null
-Check 'item1' $P 'actor-state refresh ok' 45 'the peer refreshes its own actor' $m1P | Out-Null
+$m1P = Get-Mark $P
+# The target is chosen from the PEER'S OWN scan: a savable it reports at value=0.  That is
+# the only way the apply is guaranteed to be an apply -- two instances seeded from one
+# save have converged over previous sessions, so "the host opened its nearest coin" can
+# easily be a value the peer already holds, and then `applied=0` is correct and proves
+# nothing.
+$zeroName = ''
+[void](Wait-Pattern $P 'scan: savable [0-9] ' 45)
+$peerScans = @(Get-Matches $P 'scan: savable [0-9] ')
+foreach ($line in $peerScans) {
+    if ($line -match 'scan: savable \d+ (\S+) at .* value=0') { $zeroName = $Matches[1] }
+}
+if ($zeroName) { Say "  HOST=inst$H opens '$zeroName' (the peer's own scan says value=0)" }
+else { $zeroName = 'coin'; Say "  HOST=inst$H opens the nearest coin (the peer's scan named no zero)" }
+Invoke-Go $H $zeroName 140
+Start-Sleep -Seconds 8
+Invoke-ActNear $H $zeroName
+Check 'item1' $H 'dev state: .* savable=yes' 20 'the host pick is a SavableActor (has a GUID)' $m1H | Out-Null
+Check 'item1' $H 'actor-state host set ' 25 'the host container changed' $m1H | Out-Null
+Check 'item1' $P 'actor states applied=[1-9]' 60 'the peer APPLIES the host absolute body' $m1P | Out-Null
+Check 'item1' $P 'actor-state refresh ok' 60 'the peer refreshes its own actor' $m1P | Out-Null
 Check 'item1' $P 'actor-state refresh INCOMPLETE|actor-state refresh failed' 5 'NO INCOMPLETE/failed refresh' $m1P -Absent | Out-Null
-Show-Since $P 'dev interact:|dev state:|actor-state|actor states' $m1P 20
-Show-Since $H 'actor-state' $m1H 10
+$m1bP = Get-Mark $P
+$m1bH = Get-Mark $H
+Say "  PEER=inst$P opens a savable that is still 0; the host applies and the peer confirms"
+Invoke-Go $P 'coin' 200
+Start-Sleep -Seconds 6
+Invoke-ActNear $P 'coin'
+Check 'item1' $P 'actor-state local change' 25 'the peer container changed locally' $m1bP | Out-Null
+Check 'item1' $P 'actor-state intent sent' 25 'the peer offers the change' $m1bP | Out-Null
+Check 'item1' $H 'actor-state intent applied' 25 'the host applies the intent' $m1bH | Out-Null
+Check 'item1' $H 'actor-state refresh ok' 45 'the host refreshes its own actor' $m1bH | Out-Null
+Check 'item1' $P 'actor states applied=.*confirmed=1' 60 'the peer CONFIRMS its own intent' $m1bP | Out-Null
+Check 'item1' $P 'actor-state refresh ok' 60 'the peer refreshes its own actor' $m1bP | Out-Null
+Show-Since $P 'dev interact:|dev state:|actor-state|actor states' $m1P 24
+Show-Since $H 'dev interact:|dev state:|actor-state' $m1H 14
 foreach ($i in 1, 2) { Show-Log $i 'actor states applied=|actor states sent' 3 }
 
 # ===========================================================================
@@ -375,9 +405,23 @@ Note '  Both players stand by the SAME enemy, the peer nearer: ownership stays w
 Note '  (800 cm margin) while TargetPlayer flips to the proxy (200 cm margin).'
 $m3H = Get-Mark $H
 $m3P = Get-Mark $P
-Invoke-Go $H 'enemy' 700
-Start-Sleep -Seconds 4
-Invoke-Go $P 'enemy' 250
+# `near:enemy` on each machine picks THAT machine's nearest enemy, so the two players can
+# end up kilometres apart (measured: 4 km, and every swing refused on range).  The host is
+# standing on ground known to be standable, so the peer is put on the host's own
+# coordinates and the host then steps back -- which is exactly the geometry the lane wants:
+# the proxy inside the enemy's reach, the owner's own player outside it.
+Invoke-Go $H 'enemy' 400
+Start-Sleep -Seconds 10
+$hp = Get-LastPos $H
+if ($hp) {
+    Set-Control $P 'qd.near' 200
+    Set-Control $P 'qd.tp' ("{0},{1},{2},90" -f $hp[0], $hp[1], $hp[2])
+    Say ("  peer moved onto the host's ground: {0:N0},{1:N0},{2:N0}" -f $hp[0], $hp[1], $hp[2])
+} else {
+    Say '  -- host position unreadable; the peer stays where it is'
+}
+Start-Sleep -Seconds 10
+Invoke-Go $H 'enemy' 900
 Start-Sleep -Seconds 8
 foreach ($i in 1, 2) {
     Set-Control $i 'qd.efunc' '1'
@@ -405,15 +449,16 @@ Step 'ITEM 4 -- loot: a drop taken on one machine is tombstoned on the other'
 $m4P = Get-Mark $P
 $m4H = Get-Mark $H
 foreach ($i in 1, 2) { Set-Control $i 'qd.drops' '1' }
-Say "  peer=inst$P kills the nearest locally-run enemy so the game rolls a drop"
-Set-Control $P 'qd.near' '300'
-Invoke-Go $P 'enemy'
-Start-Sleep -Seconds 6
-Set-Control $P 'qd.hit' '400'
-Start-Sleep -Seconds 30
-Set-Control $P 'qd.hit' $null
-Show-Since $P 'rig: drop probe|loot: |rig: hit enemy' $m4P 14
-Show-Since $H 'rig: drop probe|loot: ' $m4H 14
+Say '  BOTH machines kill the same enemy: each rolls its own drop at the same place, so the'
+Say '  derived keys agree and each machine holds an actor to hide.'
+foreach ($i in 1, 2) { Set-Control $i 'qd.near' '250'; Invoke-Go $i 'enemy' }
+Start-Sleep -Seconds 8
+foreach ($i in 1, 2) { Set-Control $i 'qd.hit' '400' }
+Start-Sleep -Seconds 35
+foreach ($i in 1, 2) { Set-Control $i 'qd.hit' $null }
+Start-Sleep -Seconds 3
+Show-Since $P 'rig: drop probe|loot: |rig: hit' $m4P 16
+Show-Since $H 'rig: drop probe|loot: |rig: hit' $m4H 16
 Check 'item4' $P 'loot: drop ' 30 'the killer ledger learns a drop' $m4P | Out-Null
 Check 'item4' $H 'loot: merged ' 30 'the other machine merges the drop set' $m4H | Out-Null
 Say "  peer=inst$P walks to the ledger drop and takes it"
@@ -492,6 +537,74 @@ Invoke-Go $H 'boss' 400
 Start-Sleep -Seconds 15
 Show-Since $H 'scan: loose (boss|whale)|boss:' $m5eH 14
 Check 'item5' $H 'boss: guid=.* is a boss|scan: loose (boss|whale)' 20 'a boss was found (or the scan says none)' $m5eH | Out-Null
+
+# ===========================================================================
+# ITEM 6 -- the OBJECTS lane (0x2A): a placed chest, and a placed pickup
+# ===========================================================================
+Step 'ITEM 6 -- OBJECTS: a placed chest opens on the partner, and a placed pickup disappears'
+Note '  The chest is not a SavableActor (R67: SG_Chest_BP2 savable=no guid=-), so it is the'
+Note '  objects lane that has to carry it; the two lanes skip each other by the GUIDs array.'
+foreach ($i in 1, 2) { Show-Log $i 'object sync: tracking|objects sent' 8 }
+$m6H = Get-Mark $H
+$m6P = Get-Mark $P
+Invoke-Go $H 'closedchest' 200
+Start-Sleep -Seconds 6
+$haveChest = @(Get-Since $H $m6H | Where-Object { $_ -match 'dev interact: resolved' }).Count
+if ($haveChest -eq 0) {
+    Say '  no chest in reach of this world; streaming 200_AQ (where Session 8 found one)'
+    foreach ($i in 1, 2) { Set-Control $i 'qd.level' '200_AQ' }
+    Start-Sleep -Seconds 45
+    Invoke-Go $H 'closedchest' 200
+    Start-Sleep -Seconds 8
+}
+Invoke-ActNear $H 'closedchest'
+Check 'item6' $H 'object sync: tracking chest ' 20 'the chest is classified by the objects lane' $m6H | Out-Null
+Check 'item6' $P 'object sync: tracking chest ' 20 'the partner names the same chest' $m6P | Out-Null
+Check 'item6' $H 'object local change' 25 'the host chest changed locally' $m6H | Out-Null
+Check 'item6' $H 'object intent sent key=' 25 'the host announces the intent' $m6H | Out-Null
+Check 'item6' $P 'object intent applied: ' 30 'the partner applies the intent' $m6P | Out-Null
+Check 'item6' $P 'objects applied=[1-9].*confirmed=1' 30 'the partner confirms the round trip' $m6P | Out-Null
+Check 'item6' $H 'object intent confirmed' 30 'the host settles the intent' $m6H | Out-Null
+# The state and the visual on the partner, the same probe R67 used to show it CLOSED.
+Say '  the partner now probes the same chest: it must read opened=1'
+Invoke-Go $P 'closedchest' 200
+Start-Sleep -Seconds 6
+Invoke-ActNear $P 'ClosedChest'
+Start-Sleep -Seconds 8
+Check 'item6' $P 'dev state: .* opened=1|dev state: .* isOpen=1|object apply: chest .* prop=Opened 0->1' 25 'the partner chest reads OPEN' $m6P | Out-Null
+$againH = @(Get-Since $H $m6H | Where-Object { $_ -match 'object intent sent key=' })
+$againP = @(Get-Since $P $m6P | Where-Object { $_ -match 'object intent sent key=' })
+$okAgain = ($againH.Count -le 1 -and $againP.Count -eq 0)
+$script:verdicts.Add([pscustomobject]@{ Step = 'item6'; Inst = $P; What = 'a second open is not a second intent'; Ok = $okAgain; Line = "host open intents=$($againH.Count) peer second-act intents=$($againP.Count)" }) | Out-Null
+Note "  $(if ($okAgain) { 'PASS' } else { '--  ' }) intents for the chest: host=$($againH.Count) peer=$($againP.Count) (one per side is the open itself)"
+foreach ($i in 1, 2) {
+    $dup = @(Get-Matches $i 'flag CHANGE TotalChestsOpened : ([0-9]+) -> ([0-9]+)' | Where-Object { $_ -match ': 2 -> 3|: 3 -> 4' })
+    $script:verdicts.Add([pscustomobject]@{ Step = 'item6'; Inst = $i; What = 'TotalChestsOpened is not double-counted'; Ok = ($dup.Count -eq 0); Line = ($dup | Select-Object -First 1) }) | Out-Null
+    Note "  $(if ($dup.Count -eq 0) { 'PASS' } else { 'FAIL' }) [$i] TotalChestsOpened not bumped twice"
+}
+Show-Since $H 'object sync: tracking|object local change|object intent|dev interact|dev state:|objects sent' $m6H 18
+Show-Since $P 'object sync: tracking|object intent applied|objects applied|object apply:|dev state:' $m6P 18
+
+Step 'ITEM 6b -- a placed pickup taken on the host disappears on the partner'
+$m6bH = Get-Mark $H
+$m6bP = Get-Mark $P
+$pickName = ''
+foreach ($line in @(Get-Matches $H 'object sync: tracking pickup ')) {
+    if ($line -match 'tracking pickup (\S+) \[') { $pickName = $Matches[1] }
+}
+if ($pickName) {
+    Say "  host walks to the objects-lane pickup '$pickName' and takes it"
+    Invoke-Go $H $pickName 120
+    Start-Sleep -Seconds 6
+    Invoke-ActNear $H $pickName
+    Check 'item6' $H 'object local change|object intent sent key=' 30 'the pickup change is announced' $m6bH | Out-Null
+    Check 'item6' $P 'object apply: pickup |object intent applied: ' 35 'the partner applies the pickup' $m6bP | Out-Null
+} else {
+    Note '  -- item6b: the objects lane tracks no placed pickup in this world (NOT-REACHED)'
+    $script:verdicts.Add([pscustomobject]@{ Step = 'item6'; Inst = $H; What = 'a placed pickup is tracked by the objects lane'; Ok = $false; Line = '' }) | Out-Null
+}
+Show-Since $H 'object sync: tracking pickup|object local change|object intent|dev interact' $m6bH 12
+Show-Since $P 'object apply:|object intent applied|objects applied' $m6bP 9
 
 # ===========================================================================
 # survival and teardown

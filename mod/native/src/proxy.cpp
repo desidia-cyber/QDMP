@@ -5513,10 +5513,18 @@ void TrySendEnemyDamage(EnemyRec& r, uint32_t seq, uint8_t anim, uint32_t now)
     c.peer_in_world = g_peerInGameplay;
     c.worlds_agree  = g_map.PeerStateApplies(now);
 
-    // The peer's drawn body, exactly as the player lane maintains it.  A frozen body is
-    // no position at all (qdmotion.h), and a hit cannot be decided against it.
+    // The victim of this swing is the PROXY BODY, so the distance that decides "was the
+    // partner inside the reach" is measured to that body.  It used to be measured to the
+    // interpolated player position, which is a prediction: when the partner's rows stop
+    // arriving for a moment the sample is frozen and the whole lane refuses
+    // (`havePos=0`, R74/session 9), even though the body is standing right there and is
+    // exactly the actor the game would hit.  The interpolation stays as the fallback for a
+    // machine that has no body (PlayerBody=0), where it is the only position there is.
     motion::MoveOut m = g_peerInterp.Sample(now);
-    c.have_peer_pos = m.valid && !m.frozen && !m.should_hide;
+    ActorXform px = {};
+    bool haveProxyXf = (g_puppetActor && ObjectIsLive(g_puppetActor)) &&
+                       ReadActorXform(g_puppetActor, &px);
+    c.have_peer_pos = haveProxyXf || (m.valid && !m.frozen && !m.should_hide);
 
     ActorXform x = {};
     bool haveEnemy = ReadActorXform(r.actor, &x);
@@ -5528,10 +5536,13 @@ void TrySendEnemyDamage(EnemyRec& r, uint32_t seq, uint8_t anim, uint32_t now)
     c.range_cm = range;
 
     float ex[3] = {x.px, x.py, x.pz};
-    float peer[3] = {m.px, m.py, m.pz};
+    float peer[3] = { haveProxyXf ? px.px : m.px, haveProxyXf ? px.py : m.py,
+                      haveProxyXf ? px.pz : m.pz };
     if (!enemydmg::ShouldSend(c, ex, peer)) {
         // Debug level and rate-limited: an out-of-range swing is the normal case and
-        // must not fill the log of a fight that is working.
+        // must not fill the log of a fight that is working.  The interpolation's own
+        // verdict rides along: `havePos=0` alone does not say whether the partner is in a
+        // menu, frozen, or never sent a row, and those are three different fixes.
         static uint32_t lastRefusal = 0;
         if (now - lastRefusal > 5000) {
             lastRefusal = now;
@@ -5540,6 +5551,8 @@ void TrySendEnemyDamage(EnemyRec& r, uint32_t seq, uint8_t anim, uint32_t now)
                   " peerInWorld=", dec(c.peer_in_world ? 1 : 0),
                   " worldsAgree=", dec(c.worlds_agree ? 1 : 0),
                   " havePos=", dec((c.have_enemy_pos && c.have_peer_pos) ? 1 : 0),
+                  " interp=", (!m.valid ? "none" : m.should_hide ? "hidden"
+                              : m.frozen ? "frozen" : "ok"),
                   " range=", flt(range, 0), " (", rangeSrc, ")");
         }
         return;
@@ -6303,11 +6316,10 @@ void EnemyTargetPump(uint32_t now)
     (void)now;
 
     bool proxyOk = (g_puppetActor != nullptr && ObjectIsLive(g_puppetActor));
-    // The same "the partner is reachable" test the damage lane uses: a frozen sample means
-    // the body has not moved for seconds and a hidden one means the peer is gone, and
-    // neither is a target worth walking to.
-    { motion::MoveOut m = g_peerInterp.Sample(now);
-      if (!m.valid || m.frozen || m.should_hide) proxyOk = false; }
+    // The steer target is the body the AI can see, so its own transform is the fact: the
+    // interpolated player position is a prediction and a stale one must not make the
+    // steering stop.  (Session 9: a frozen sample made this pump return early for the
+    // whole fight -- `havePos=0` in every damage refusal.)
     ActorXform lx = {};
     if (!ReadActorXform(g_localPawn, &lx)) return;
     ActorXform px = {};
@@ -10756,7 +10768,18 @@ void DevKillNearest(uint32_t now)
     static int amount = 0;
     static uint32_t lastPoll = 0, last = 0;
     if (now - lastPoll >= 500) { lastPoll = now; amount = DevLever("QDCOOP_TEST_HIT", "qd.hit", 200, 200); }
-    if (!amount || !IsGameplayPawn(g_localPawn)) return;
+    // Armed but not running is the failure a scenario needs named: no gameplay pawn and an
+    // unreadable transform both look identical from outside (no line at all).
+    if (amount && !IsGameplayPawn(g_localPawn)) {
+        static uint32_t lastWhy = 0;
+        if (now - lastWhy > 5000) {
+            lastWhy = now;
+            QDLOG(LOG_WARN, "rig: hit armed (", dec(amount),
+                  ") but this machine has no gameplay pawn; not hitting");
+        }
+        return;
+    }
+    if (!amount) return;
     int gap = DevEnvInt("QDCOOP_TEST_HITMS", 3000);
     if (last && now - last < (uint32_t)gap) return;
     last = now;
@@ -11015,6 +11038,13 @@ void DevTravelLever(uint32_t now)
     // search had just returned, so the origin's own trip reported "no live actor named
     // Teleporter_GR" and the partner never heard a destination to follow.
     bool ok = FollowTravelActor(actor, nm, g_localPawn, err, sizeof(err), true);
+    // Announce it.  TravelPump publishes whatever the PAWN says it is travelling to, and
+    // the game's own verb clears that state as soon as it has moved the player: the pump
+    // then reads "(none)" and the partner never hears a destination (measured Session 9:
+    // `Teleporter_GR.Interact ran` on the origin and no announcement at all).  Seeding the
+    // lane with the destination this lever just drove is the same fact the game would have
+    // published, one tick earlier.
+    if (ok) g_travel.NoteLocal(dest, true, Net::Now());
     QDLOG(ok ? LOG_INFO : LOG_WARN, "rig: travel lever -> ", dest,
           " (LocationData resolved, dest field ", used, ") TeleportToLocation ran=",
           dec(ok ? 1 : 0), (ok ? "" : ": "), (ok ? "" : err));
@@ -11397,8 +11427,16 @@ void DevDropProbeBody()
 
 void DevDropProbe(uint32_t now)
 {
-    static int on = -1;
-    if (on < 0) on = DevLever("QDCOOP_TEST_DROPS", "qd.drops", 1, 1);
+    // POLLED, like the kill lever next door.  `DevLever` answers 0 when the file does not
+    // exist yet, so a latch read at the first pump would leave this lever off for the whole
+    // session -- and a scenario arms it for one step, minutes in.  Measured Session 9: the
+    // probe never printed a line even though the scenario had written qd.drops.
+    static uint32_t lastPoll = 0;
+    static int on = 0;
+    if (now - lastPoll >= 500) {
+        lastPoll = now;
+        on = DevLever("QDCOOP_TEST_DROPS", "qd.drops", 1, 1);
+    }
     if (!on || !IsGameplayPawn(g_localPawn)) return;
     if (now - g_devDropLast < 3000) return;
     g_devDropLast = now;
