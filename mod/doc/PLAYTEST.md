@@ -90,6 +90,13 @@ unauthenticated in this version: it is for a LAN.  Over the internet, set
 etc. default to **0** in the shipped file, because each one was enabled only after it was
 proven on a live run.  For a play session, turn on this set:
 
+**This is the set Session 17 used for its ten-minute soak with both players in
+`780_SZ_Depths`.**  It is the set that works; it is **not yet stable for a long session** — read
+the last-but-one bullet of section 8 before planning a marathon.  `MirrorSpawn` is deliberately
+absent — it is a compiled default (on), so a real pair of players gets it without an entry here.
+The three lines marked *proven* are the ones Session 17 closed; the one marked *not proven* is
+still safe to leave on (it is a read path and a refusal), but do not expect its second half.
+
 ```ini
 [Local]
 Enabled=1
@@ -102,17 +109,17 @@ RelayPort=47800
 [Rules]
 FlagSync=1
 InventorySync=1
-ActorStateSync=1
-ObjectSync=1
+ActorStateSync=1      ; proven: a door/chest opened by one player opens for the other
+ObjectSync=1          ; proven: the same for placed objects that carry no save GUID
 EnemySync=1
 PuppetSync=1          ; the partner's body
 PlayerBody=1          ; spawn it as the game's own player class (needs the two above)
 DialogueSync=1
 StreamUnion=1
 TravelSync=1
-CutsceneSync=1
+CutsceneSync=1        ; proven: play on one machine, hold on the other, resume together
 MoverSync=1
-LootSync=1
+LootSync=1            ; not proven: the drop hides only if the tombstone converges
 SuspendGuard=1
 SuppressMenuPause=1   ; a paused host looks like a hang to the partner
 HostAuthoritative=1   ; do not set this to 0
@@ -165,6 +172,26 @@ again; the chest's counter does not go up twice.
 `actor-state refresh ok … opened=1`; the opener `actor states applied=… confirmed=1`.
 A door opened by the other player shows `actor-state host set` on their machine and
 `actor states applied=1` on yours.
+
+**This is the one proven most recently (Session 17), so it is the best one to try:** open a
+**chest** in the hub or in `780_SZ_Depths` with the partner watching.  You should see it open
+on both screens, and the partner must NOT be able to loot it again.  The lines to expect,
+verbatim:
+
+```
+<opener>  actor-state intent sent guid=... value=1
+<other>   actor-state intent applied: guid=... value=1
+<other>   actor-state refresh ok Chest5 [Chest_C] index=0 value=1 ... opened=1
+```
+
+Two things a tester should know, because they look like failures and are not:
+* A chest's own `opened` flag can read 0 on a chest that IS open — this content keeps the real
+  state in the save container's value.  If the object visually opened and cannot be looted
+  again, the lane worked.
+* The two machines do not hold the same *set* of world objects at every instant (the level
+  manager streams one level at a time), so a chest you can see may have no counterpart on the
+  partner's machine yet.  Opening it converges once both hold it; opening a chest that lives
+  in a level the partner has not streamed in is the case that does nothing.
 
 **4. Enemies.**  Fight a normal enemy with both players nearby.
 *You should see* one enemy, attacking the player who is actually near it, and its health
@@ -248,17 +275,45 @@ The lines that answer most questions, verbatim:
 
 ## 8. Known rough edges (read before reporting)
 
-- **Loot hiding** needs both machines to hold their own copy of the drop.  If only the
-  killer ever rolls it, the other player has a ledger entry and nothing to hide; the drop
-  is still removed from the world on both screens, but the `hiding local drop` line may
-  not appear.  This is the half still being measured.
+- **A long session at the play set is not yet safe — read this first.**  Ten minutes with both
+  players in a busy hub still ended in a crash, at about **eight minutes**, always inside the
+  mod and always the same shape (a pointer read out of an object the hub's streaming had just
+  replaced).  Session 17 added three guards and the survival window went from 256 s to 499 s, so
+  it is moving in the right direction but it is not fixed.  In practice: play in shorter
+  stretches, and if the game vanishes, look in `<user dir>\Saved\Crashes\` — a `WINMM` module in
+  the stack means this bug and not the game.  The shipped defaults (every write path off) DO
+  survive the full ten minutes, but they also do nothing, so that is a control and not a
+  workaround.
+- **Loot hiding** needs both machines to hold their own copy of the drop.  Session 17 measured
+  that the drop often rolls on the machine that did NOT kill the enemy (`loot: drop
+  90A52CF3#0 = …/Herb_Item_BP_C` appeared on the peer for a host kill), so the `loot: drop` line
+  should be expected on either machine.  The `loot: hiding local drop` half still did not fire in
+  any run: the tombstone needs the taker's ledger to reach the machine holding the visible copy,
+  and that convergence was not observed inside the window.  The drop still disappears from the
+  world on both screens; the *line* is what is missing.
+- **Hit reactions for mod-applied damage are blocked on an API, not a lane.**  Session 17 called
+  `ApplyDamageToHitboxTarget` — the entry Session 16 named as the next target — and its signature
+  settles the question: `Target`, `Hit`, `PositionOverride`, `UseOverride`.  That is the entry an
+  *attacker* calls to deal damage, not one a victim implements to take it, so calling it on a
+  victim runs and applies nothing (correctly).  This build exposes no take-damage entry that
+  carries an amount: `TryApplyDamage` refuses a module-built payload, `DamageHP` is out-only.  HP
+  still converges through the documented clamped write, so a shared enemy's health is right on
+  both screens — only the *reaction animation* is missing.
 - **Cutscenes** are ideal when the game starts them through a cutscene *manager*: the
   partner plays the same sequence.  A sequence started directly by an altar/egg Blueprint
   has no manager to hand over, so the partner is **held consistently** (input locked) for
   the same interval instead of playing it.  You get the same beat, not the same camera.
-- **Boss bars** are raised per machine from the game's own `Enemy_IsPartOfBossEncounter`
-  predicate.  An enemy the game does not call a boss never gets a bar on either machine,
-  however dangerous it is.
+  (Play, hold and joint resume are all proven — Session 17, `Dek_Egg_Activation`.)
+- **Boss bars** are raised per machine from the content's own `EnemyData.Boss` flag; the
+  `Enemy_IsPartOfBossEncounter` predicate is NOT implemented on this build's enemy classes.  An
+  enemy the content does not call a boss never gets a bar on either machine, however dangerous
+  it is.
+- **Some bosses will not appear even with both players in the arena.**  The `ROSDragon_Spawner`
+  in `760_SZ_AUT` did not fire in four minutes of Session 17 with both players at its exact
+  radius, while the level reported `engineVisible=0` — a spawner's own
+  `PlayerIsInActivationRange` reads player 0 of *its* machine, and the area's level manager had
+  the level loaded but not shown.  If a boss you are expecting is not there, that is the shape of
+  this failure; walking away and back is the workaround.
 - **The relay is plaintext.**  LAN only unless you set `AllowPlaintextInternet=1` and
   accept that anyone on the path can read and forge the traffic.
 - **One writer.**  `HostAuthoritative=1` is not optional.  Two writers on one progression
@@ -277,12 +332,13 @@ The lines that answer most questions, verbatim:
   `IsInteractible=1`, the real interact event runs, its own `Interact` runs, and
   `opened=0` stays — even with `GiveAllKeys`.  The lane is fine (a pickup's
   `actor-state refresh ok` lands on the host); the door's own handler is the open question.
+  **`IsInteractible=0` is not the same as "this cannot be opened"**: the area chests say 0 and
+  open normally when pressed.  Report what the *object* did, not what the gate said.
 - **Loot hiding needs the SAME enemy on both machines.**  In `900_SipehaWorld` both
   machines hold the same `Sipeha_BP_C` (`guid=BB49E51D`), but that enemy drops nothing.  In
-  the hub each machine's spawner enemy has a different authored GUID
-  (`Mossy_Fighter_BP_C A8D5C9E1` vs `186F6D14`), so the drop keys cannot match and
-  `loot: hiding local drop` will not fire.  If you see the drop vanish on both screens but
-  no hiding line, this is why.
+  the hub the two machines' spawner enemies may have different authored GUIDs, so the drop keys
+  cannot match and `loot: hiding local drop` will not fire.  If you see the drop vanish on both
+  screens but no hiding line, this is one of the reasons.
 - **Kill lists diverge in the hub, by design.**  In a 5-minute soak the host recorded 104
   deaths and the peer 49 (105 unique GUIDs): each machine runs its own spawner enemies.
   This is not a lost row — both processes survived with zero errors and the only warnings

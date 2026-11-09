@@ -72,7 +72,7 @@ static constexpr float kFallbackDamage  = 50.0f;
 static const int      kMaxPerSec   = 30;
 static const uint32_t kRateWindowMs = 1000;
 static const uint32_t kRecycleMs   = 60000;
-static const int      kMaxRecords  = 256;   // the enemy table's own cap (g_en[256])
+static const int      kMaxRecords  = 1024;  // the enemy table's own cap (g_en[1024])
 static const int32_t  kMaxCenti    = 1000000;   // 10000 game units: a sanity clamp
 
 inline bool ZeroGuid(const uint32_t g[4]) { return (g[0] | g[1] | g[2] | g[3]) == 0; }

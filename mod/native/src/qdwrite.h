@@ -1890,35 +1890,49 @@ struct ActorStateOwner {
 
 inline int BuildActorStateOwnersGuarded(void* base, ActorStateOwner* out, int cap)
 {
+    if (!out || cap <= 0 || !base) return 0;
     int n = 0;
+    // THE WHOLE SWEEP IS FAULT-CONTAINED, not just the class test.
+    //
+    // MEASURED (Session 17): a run died at 24 s with `EXCEPTION_ACCESS_VIOLATION reading
+    // 0x0000000000000000` inside this function, before the scenario had asked for anything.
+    // The per-object `IsSubclassOf` test had its own `__try`, but `ObjectAt(i)`,
+    // `LooksLikeUObject`, `ObjClass` and the `GUIDs` array read did not -- and each of them
+    // dereferences a slot the engine may be tearing down during a load or a stream.  A walk
+    // that admits unguarded reads is a crash waiting for the one frame where the object array
+    // disagrees with itself, so the loop body is guarded as a unit and a fault costs the rest
+    // of that pass (the caller re-runs it a second later).
     int count = ObjectCount();
-    for (int i = 0; i < count && n < cap; ++i) {
-        void* o = ObjectAt(i);
-        if (!o) continue;
-        __try {
-            void* cls = ObjClass(o);
-            if (!cls || !IsSubclassOf(cls, base)) continue;
-        }
-        __except (EXCEPTION_EXECUTE_HANDLER) {
-            continue;
-        }
-        int sz = 0;
-        int off = FindPropertyOffsetIn(ObjClass(o), "GUIDs", &sz);
-        (void)sz;
-        if (off < 0) continue;
-        __try {
-            const uint8_t* arr = *(const uint8_t* const*)((const uint8_t*)o + off);
-            int32_t num = *(const int32_t*)((const uint8_t*)o + off + 8);
-            if (!arr || num <= 0 || num > 64) continue;
-            for (int32_t k = 0; k < num && n < cap; ++k) {
-                memcpy(&out[n].guid, arr + (size_t)k * 16, sizeof(QdGuid));
-                out[n].actor = o;
-                out[n].index = (int)k;
-                ++n;
+    __try {
+        for (int i = 0; i < count && n < cap; ++i) {
+            void* o = ObjectAt(i);
+            if (!o) continue;
+            __try {
+                void* cls = ObjClass(o);
+                if (!cls || !IsSubclassOf(cls, base)) continue;
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER) {
+                continue;
+            }
+            int sz = 0;
+            int off = FindPropertyOffsetIn(ObjClass(o), "GUIDs", &sz);
+            (void)sz;
+            if (off < 0) continue;
+            __try {
+                const uint8_t* arr = *(const uint8_t* const*)((const uint8_t*)o + off);
+                int32_t num = *(const int32_t*)((const uint8_t*)o + off + 8);
+                if (!arr || num <= 0 || num > 64) continue;
+                for (int32_t k = 0; k < num && n < cap; ++k) {
+                    memcpy(&out[n].guid, arr + (size_t)k * 16, sizeof(QdGuid));
+                    out[n].actor = o;
+                    out[n].index = (int)k;
+                    ++n;
+                }
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER) {
             }
         }
-        __except (EXCEPTION_EXECUTE_HANDLER) {
-        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
     return n;
 }
