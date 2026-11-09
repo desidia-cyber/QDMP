@@ -280,6 +280,7 @@ static const int kUObjectArrayObjectsOff   = 0x10;
 static const int kUObjectArrayNumOff       = 0x24;
 static const int kUObjectArrayNumChunksOff = 0x2C;
 static const int kFUObjectItemStride       = 0x18;
+static const int kFUObjectItemSerialOff    = 0x10;
 static const int kObjectsPerChunk          = 65536;
 
 inline uint8_t** ObjectChunks()
@@ -311,11 +312,43 @@ inline void* ObjectAt(int i)
     return *(void**)(chunk + (size_t)(i % kObjectsPerChunk) * kFUObjectItemStride);
 }
 
+// The serial number of a SLOT.  The engine bumps it every time the slot is reused, which
+// is what makes a {slot, serial} pair identify one object for its lifetime even after the
+// object is freed -- the basis of qdweak.h.  FUObjectItem is
+// { UObject* Object; int32 Flags; int32 ClusterRootIndex; int32 SerialNumber } at a 0x18
+// stride, so the serial is item+0x10.
+inline int32_t ObjectSerialAt(int i)
+{
+    if (i < 0 || i >= ObjectCount()) return 0;
+    int c = i / kObjectsPerChunk;
+    if (c >= ObjectChunkCount()) return 0;
+    uint8_t** chunks = ObjectChunks();
+    if (!chunks) return 0;
+    uint8_t* chunk = chunks[c];
+    if (!chunk) return 0;
+    return *(int32_t*)(chunk + (size_t)(i % kObjectsPerChunk) * kFUObjectItemStride +
+                       kFUObjectItemSerialOff);
+}
+
 // Liveness: the object's InternalIndex must lead back to the object itself.
+//
+// THIS IS NOT A GUARD FOR A CACHED POINTER.  It reads the object's own InternalIndex to
+// find the slot, so it dereferences the very allocation that may be freed -- measured as
+// Session 17's `EXCEPTION_ACCESS_VIOLATION reading 0x0000000100000017`.  It is only
+// meaningful for a pointer obtained THIS frame from the engine.  Anything held across
+// frames goes through qdweak.h (`weak::Ref`), which stores the slot instead of the
+// address.  The __try keeps a stale call from killing the process, but callers must not
+// rely on the answer being "no": a freed block can hold a plausible index.
 inline bool ObjectIsLive(const void* o)
 {
     if (!o) return false;
-    return ObjectAt(ObjInternalIndex(o)) == o;
+    __try {
+        int i = ObjInternalIndex(o);
+        if (i < 0) return false;
+        return ObjectAt(i) == o;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
 }
 
 // ---------------------------------------------------------------------------

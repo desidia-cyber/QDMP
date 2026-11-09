@@ -70,6 +70,9 @@
 #include "qdsequence.h"
 #include "qdmover.h"
 #include "qdloot.h"
+// Weak handles: every cached actor/object pointer in this file is a weak::Ref, so a
+// pointer the engine freed is never dereferenced.  See qdweak.h for the crash it fixes.
+#include "qdweak.h"
 #include "qdsuspend.h"
 #include "qdenemy.h"
 #include "qdenemyown.h"
@@ -134,9 +137,15 @@ uint32_t          g_lastTickMs = 0;
 uint32_t          g_frame = 0;
 
 // The local player and the remote body.
-void*             g_localPawn = nullptr;
-void*             g_puppetActor = nullptr;
-void*             g_puppetClass = nullptr;
+//
+// WEAK, not raw (Session 18, R132).  A raw pointer here was re-read every frame and
+// validated with ObjectIsLive(), which reads the pointer to learn its slot -- so once
+// the engine freed the actor the check was itself a read of freed memory, and the hub's
+// streaming churn does exactly that.  weak::Ref stores {slot, serial} and resolves
+// through GUObjectArray, so a stale pointer resolves to null rather than faulting.
+weak::Ref         g_localPawn;
+weak::Ref         g_puppetActor;
+weak::Ref         g_puppetClass;
 
 // Sub-system state.
 motion::Interp    g_peerInterp;
@@ -221,13 +230,13 @@ bool                      g_actorHaveSnapshot = false;
 // the ledger, the pending intent and the mirror together (`ObjectsReset`).
 struct ObjectActorRec {
     uint32_t key[4];
-    void*    actor;
+    weak::Ref actor;
     uint8_t  shape;
 };
 ObjectActorRec            g_objActors[objects::kMaxEntries];
 int                       g_objActorN = 0;
 int                       g_objScanCursor = 0;
-void*                     g_objTableWorld = nullptr;
+weak::Ref                 g_objTableWorld;
 int                       g_objSkippedSavable = 0;   // a savable: the GUID lane owns it
 int                       g_objNoProp = 0;           // a class with no readable state prop
 uint32_t                  g_lastObjObserveMs = 0;
@@ -1351,9 +1360,9 @@ float CapsuleHalfHeight()
 // The unproven part is the engine constructing a full gameplay Blueprint: its
 // ReceiveBeginPlay runs, and this game's player Blueprint is not a passive object.  That
 // is why it sits behind `PlayerBody=1`, default OFF (`API-GAPS` section 5, B7).
-void* g_proxyCls = nullptr;      // FS_PlayerChar_C (or FS_Full_PlayerChar_C)
+weak::Ref g_proxyCls;            // FS_PlayerChar_C (or FS_Full_PlayerChar_C)
 bool  g_proxyClsTried = false;
-void* g_proxySeen = nullptr;     // the last proxy actor: recognises a target we set
+weak::Ref g_proxySeen;           // the last proxy actor: recognises a target we set
 // Measured capability, not an assumption: the game's own hit path reaches the proxy only
 // if the enemy's attack resolves the body.  Until a hit has actually landed the described
 // lane keeps describing (qdplayerbody.h SwingAlreadyReal), because a swing that is
@@ -1577,7 +1586,7 @@ void* LocalArmsMontage()
         if (armsOff < 0) QDLOG(LOG_WARN, "action sync: the pawn has no Arms mesh property");
     }
     if (armsOff < 0) return nullptr;
-    void* arms = *(void**)((uint8_t*)g_localPawn + armsOff);
+    void* arms = *(void**)((uint8_t*)g_localPawn.Get() + armsOff);
     if (!arms || !fAnim.Resolve(arms, "GetAnimInstance")) return nullptr;
     Call c(fAnim);
     if (!c.Run(arms) || !c.Ret()) return nullptr;
@@ -1595,7 +1604,7 @@ uint8_t LocalMovementMode()
     if (!IsGameplayPawn(g_localPawn)) return 0;
     if (cmcOff == -2) cmcOff = FindPropertyOffsetIn(ObjClass(g_localPawn), "CharacterMovement");
     if (cmcOff < 0) return 0;
-    void* cmc = *(void**)((uint8_t*)g_localPawn + cmcOff);
+    void* cmc = *(void**)((uint8_t*)g_localPawn.Get() + cmcOff);
     if (!cmc) return 0;
     if (modeOff == -2) {
         modeOff = FindPropertyOffsetIn(ObjClass(cmc), "MovementMode");
@@ -1712,7 +1721,7 @@ void ApplyEquip(avatar::Body* b, const wire::EquipBody& e)
 // the pawn, filtered to visible components of WeaponVisuals-derived actors.
 struct EquipScan {
     bool    init;
-    void*   wvClass;         // WeaponVisuals_C
+    weak::Ref wvClass;         // WeaponVisuals_C
     int32_t smcName;         // FName comparison index of "StaticMeshComponent"
     int32_t skcName;         // ... and of "SkeletalMeshComponent"
     int     relLoc, relRot, relScale, staticMesh, skelMesh;
@@ -2018,10 +2027,10 @@ bool EnemyShotIsOwned(void* shooter);
 void* volatile g_fxRing[64];
 volatile long g_fxHead = 0;
 long g_fxTail = 0;
-void* g_fxOurs[32];                  // copies spawned here: never sent back
+weak::Ref g_fxOurs[32];              // copies spawned here: never sent back
 int g_fxOursN = 0;
-void* g_fxLastLocal = nullptr;     // dev read-back: the last local projectile ...
-void* g_fxLastCopy = nullptr;      // ... and the last copy spawned
+weak::Ref g_fxLastLocal;           // dev read-back: the last local projectile ...
+weak::Ref g_fxLastCopy;            // ... and the last copy spawned
 
 void FxObserve(void* self, void* func)
 {
@@ -2118,7 +2127,7 @@ void* SpawnVisualCopy(void* cls, const wire::EffectBody& e, float offX, float of
     return actor;
 }
 
-struct FxCopy { uint16_t id; void* actor; };
+struct FxCopy { uint16_t id; weak::Ref actor; };
 FxCopy g_fxCopies[16];
 int g_fxCopyNext = 0;
 
@@ -2193,7 +2202,7 @@ void DevMirrorEffect(const wire::EffectBody& e);
 // Game thread: look at what began play since last frame; send the local player's
 // projectiles.  Read one frame late on purpose -- a thrower may set the velocity
 // after SpawnActor returns.
-struct FxTrack { void* actor; uint16_t id; float x, y, z; };
+struct FxTrack { weak::Ref actor; uint16_t id; float x, y, z; };
 FxTrack g_fxTrack[8];
 uint16_t g_fxNextId = 1;
 
@@ -2440,7 +2449,7 @@ int NiagaraUserParams(void* comp, NiagaraParam* out, int cap)
 // four values = a LinearColor, one = a float); id = pitch, pitch = roll, yaw = yaw
 // (quantized degrees, relative to the arms); positions and velocities unused.
 
-void* g_arcSeen[16];
+weak::Ref g_arcSeen[16];
 int g_arcSeenN = 0;
 
 void ArcObservePump(uint32_t now)
@@ -2467,7 +2476,7 @@ void ArcObservePump(uint32_t now)
         ncName = FNameFromAnsi("NiagaraComponent", &n) ? (int32_t)n.comparison_index : -1;
     }
     if (armsOff < 0 || kids < 0 || ncName < 0 || g_eqs.relRot < 0) return;
-    void* arms = *(void**)((uint8_t*)g_localPawn + armsOff);
+    void* arms = *(void**)((uint8_t*)g_localPawn.Get() + armsOff);
     if (!arms) return;
     void** ch = *(void***)((uint8_t*)arms + kids);
     int nch = *(int*)((uint8_t*)arms + kids + 8);
@@ -2888,7 +2897,7 @@ struct LevelRec {
 };
 LevelRec g_levels[96];
 int      g_levelN = 0;
-void*    g_levelWorld = nullptr;
+weak::Ref g_levelWorld;
 bool     g_ownVisCall = false;
 uint32_t g_vetoCount = 0;
 
@@ -4649,8 +4658,12 @@ void OnTravel(wire::Reader& r, uint32_t now)
 // 6b. Enemies (qdenemy.h holds the model and the reasons)
 // ===========================================================================
 struct EnemyRec {
-    void*    actor;
-    void*    spawner;
+    // WEAK (Session 18).  `actor` is read by EnemySpawnPump on every 100 ms pass over
+    // up to 1024 records, and the hub frees actors underneath that walk -- that is crash
+    // address WINMM+0x3b357.  A weak::Ref resolves through GUObjectArray instead of
+    // trusting the address, so a freed enemy reads as gone, not as a fault.
+    weak::Ref actor;
+    weak::Ref spawner;
     uint32_t guid[4];
     bool     haveGuid;
     // What produced `guid` (qdenemyid.h).  An enemy used to have identity ONLY when a
@@ -4734,12 +4747,15 @@ int             g_enN = 0;
 // [obj+0x0C] and faults on unmapped memory.  Measured Session 12: the follower died at
 // AdoptUnknownKey+0x12E (reading 0x0000020212904d8c) from OnEnemyRows from DispatchInbound
 // from HK_Tick, 116 s in, in the frame the world changed.
-void*           g_enWorld = nullptr;
+weak::Ref       g_enWorld;
 bool EnemyRecordsTrustworthy()
 {
     void* w = GWorldPtr();
     return w && g_enWorld == w;
 }
+// The enemy base class is a UCLASS, held raw on purpose: it is a class object that lives
+// as long as the package is loaded, it is compared by pointer against `ObjClass(o)` for
+// objects read fresh from GObjects this pass, and the cache is dropped with the world.
 void*           g_enemyBaseCls = nullptr;
 uint32_t        g_enPass = 1;
 int             g_enCursor = 0;
@@ -5068,6 +5084,12 @@ void EnemyScanStep()
         if (!g_enemyBaseCls) { QDLOG(LOG_DEBUG, "enemy sync: FS_EnemyCharacterBase not loaded yet"); return; }
         QDLOG(LOG_INFO, "enemy sync: FS_EnemyCharacterBase found");
     }
+    // The class cache is raw `void*`, deliberately.  These hold UClass objects identified
+    // by pointer inside a bounded array that is reset whenever the world changes, and the
+    // classes they name are loaded for the life of the process -- so there is nothing here
+    // for a weak handle to protect against that `ObjectIsLive` did not already cover.  A
+    // weak::Ref would also break the array comparisons below, which are pointer equality
+    // against a class read fresh from GObjects this frame.
     void** clsYes = g_clsYes; int& nYes = g_clsYesN;
     void** clsNo = g_clsNo;   int& nNo = g_clsNoN;
     int total = ObjectCount();
@@ -6593,7 +6615,7 @@ static const uint32_t kMirrorStaleMs = 30000;
 static const uint32_t kMirrorMinGapMs = 400;    // one construction per this interval
 static const int      kMirrorMax = 64;          // bounded: a mirror is a repair, not a mode
 
-void* g_mirrorActor[kMirrorMax];
+weak::Ref g_mirrorActor[kMirrorMax];
 uint32_t g_mirrorGuid[kMirrorMax][4];
 uint32_t g_mirrorAt[kMirrorMax];
 int      g_mirrorN = 0;
@@ -8483,14 +8505,14 @@ struct DlgLocal {
     uint32_t lastSend;
 } g_dlg = {};
 bool    g_dlgConflictSaid = false;
-void*   g_blockedNpc = nullptr;
+weak::Ref g_blockedNpc;
 uint8_t g_blockedId[16];
 // The world the blocked NPC was found in.  A UObject pointer from the previous world
 // cannot be tested with ObjectIsLive: that reads InternalIndex at [obj+0x0C], and the
 // freed slot is an access violation, not a false.  MEASURED (Session 9 R83, the crash
 // dump): winmm+0x29b2a `mov ecx,[rdi+0Ch]` with rdi=0x281b0df84d0 inside DialoguePump
 // on the first frame after a suspend LoadSaveSlot.  Compare the world FIRST.
-void*   g_blockedWorld = nullptr;
+weak::Ref g_blockedWorld;
 
 void NpcIdOf(void* npc, uint8_t out[16])
 {
@@ -8816,9 +8838,9 @@ bool CallFlag1(void* obj, Fn& f, const char* name, bool v)
 //
 // The list is rebuilt on a world change and every 10 s; `IsPlaying` is asked of the
 // sequence player each call, because that is the value that changes.
-void* g_seqActors[16];
+weak::Ref g_seqActors[16];
 int      g_seqActorN = 0;
-void*    g_seqWorld = nullptr;
+weak::Ref g_seqWorld;
 uint32_t g_seqScanAt = 0;
 
 void SequenceScan(uint32_t now)
@@ -9030,7 +9052,7 @@ void OnCutscene(wire::Reader& r, uint32_t now)
 // Moving world objects (owner-authoritative)
 // ---------------------------------------------------------------------------
 struct MoverActorRec {
-    void*    actor;
+    weak::Ref actor;
     uint8_t  id[mover::kIdLen];
 };
 MoverActorRec g_moverActors[64];
@@ -9205,7 +9227,7 @@ void OnMovers(wire::Reader& r, uint32_t now)
 // Loot drops (one shared set)
 // ---------------------------------------------------------------------------
 struct LootActorRec {
-    void*    actor;
+    weak::Ref actor;
     uint32_t source_hash;
     int32_t  drop_index;
     char     path[loot::kMaxPathLen];
@@ -9229,7 +9251,7 @@ bool         g_lootSaidUnrepresented = false;
 // touched were not the same one in time").  Remembering the key per actor is the fix,
 // which also makes the probe's `lootKey=` line agree with the ledger.
 struct LootKeyMemoRec {
-    void*    actor;
+    weak::Ref actor;
     uint32_t hash;
     int32_t  index;
     char     path[loot::kMaxPathLen];
@@ -9713,7 +9735,7 @@ void OnSuspend(wire::Reader& r, uint32_t now)
 static const int kInvCache = 256;
 struct InvCached {
     char  path[inventory::kMaxPath];
-    void* obj;
+    weak::Ref obj;
 };
 InvCached g_invCache[kInvCache];
 int       g_invCacheNext = 0;
@@ -11183,6 +11205,10 @@ bool ValidateSubstrateOnGameThread()
         return false;
     }
     g_substrateReady = true;
+    // The weak-handle resolver now points at the real GUObjectArray.  Before this line
+    // every weak::Ref resolves to null, which is why the source is INJECTED rather than
+    // hard-coded: a test binary installs its own table instead of reading this RVA.
+    weak::SetSource(&ObjectAt, &ObjectSerialAt);
     { QdName bp; if (FNameFromAnsi("ReceiveBeginPlay", &bp)) g_beginPlayIdx = bp.comparison_index; }
     return true;
 }
@@ -11580,7 +11606,7 @@ void* RigNearestOfClass(const char* clsName, const char* sub, const ActorXform& 
 // Session 6, a checkpoint in an unloaded area resolved 31 km away and the pawn fell
 // there, which is worse than the origin.
 struct ArrivalMarker {
-    void*  actor;
+    weak::Ref actor;
     ActorXform xf;
     char   cls[64];
 };
@@ -11650,7 +11676,7 @@ bool          g_arriveAnchorSaid = false;
 // player", and never placed it.  It is recorded by HK_Tick at the moment the world pointer
 // changes -- NOT when the map name is noticed, because by then a fast load can already have
 // spawned the new pawn, and a guard that names it would ignore the only pawn there is.
-void*         g_arrivePrevPawn = nullptr;
+weak::Ref     g_arrivePrevPawn;
 
 void ArrivalArm(const char* map, uint32_t now)
 {
@@ -14889,12 +14915,19 @@ void ProbeLogArcs(const char* tag)
     QDLOG(LOG_INFO, "probe2 ", tag, " fx shown: ", dec(shown));
 }
 
-void* g_devPokeComp[4]; int g_devPokeOff[4]; uint32_t g_devPokeUntil[4]; int g_devPokeN = 0;
+// A pending byte-poke into a component, expressed as a weak handle.  This used to hold a
+// raw `void*` and write through it from a LATER frame (`*((uint8_t*)g_devPokeComp[i] +
+// off) = 0`), which is the same freed-object write that killed the soak: the component
+// belongs to an actor a dev lever touched seconds ago.
+weak::Ref g_devPokeComp[4]; int g_devPokeOff[4]; uint32_t g_devPokeUntil[4]; int g_devPokeN = 0;
 void DevProbe2(uint32_t now)
 {
     for (int i = 0; i < 4; ++i)
         if (g_devPokeComp[i] && (int32_t)(now - g_devPokeUntil[i]) > 0) {
-            if (ObjectIsLive(g_devPokeComp[i])) *((uint8_t*)g_devPokeComp[i] + g_devPokeOff[i]) = 0;
+            // Resolve NOW: the object may have been freed between the lever and this frame,
+            // and the write below is the kind that faults on a dead component.
+            void* comp = g_devPokeComp[i];
+            if (comp) *((uint8_t*)comp + g_devPokeOff[i]) = 0;
             g_devPokeComp[i] = nullptr;
         }
     static int on = DevEnvInt("QDCOOP_PROBE2", 0);
@@ -14938,7 +14971,7 @@ void DevProbe2(uint32_t now)
                     !ContainsCI(nm, "equip"))
                     continue;
                 uint32_t v = 0;
-                memcpy(&v, (uint8_t*)g_localPawn + r.p[i].offset, 4);
+                memcpy(&v, (uint8_t*)g_localPawn.Get() + r.p[i].offset, 4);
                 QDLOG(LOG_INFO, "probe2 pawn ", nm, " : ", r.p[i].type, " @", dec(r.p[i].offset),
                       " size=", dec(r.p[i].size), " first4=", hex32(v));
             }

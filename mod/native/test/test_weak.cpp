@@ -105,6 +105,14 @@ int main()
     weak::SetSource(FakeAt, FakeSerial);
     CHECK(weak::SourceReady(), "installing the source makes it ready");
 
+    // ---- the drop-in contract ---------------------------------------------
+    // A converted cached pointer must not grow the record it lives in, so `Ref` is
+    // exactly one pointer wide.  Asserted at compile time (a runtime CHECK of a constant
+    // is an unused conditional, which /W4 rightly warns about) because a future field
+    // addition would silently inflate every EnemyRec/loot/mover table in the module.
+    static_assert(sizeof(weak::Ref) == sizeof(void*), "a Ref is exactly one pointer wide");
+    static_assert(sizeof(weak::Handle) == sizeof(void*), "a Handle is exactly one pointer wide");
+
     // ---- an empty handle resolves to null ---------------------------------
     {
         weak::Ref r;
@@ -121,9 +129,8 @@ int main()
         weak::Ref r = (void*)&g_objs[0];
         CHECK(r.Valid(), "a live object resolves");
         CHECK(r.Get() == &g_objs[0], "a live object resolves to itself");
-        CHECK(r.Captured() == &g_objs[0], "the captured address is reported for logs");
         weak::Handle h = r.Raw();
-        CHECK(h.index == 3, "the handle names the slot, not the address");
+        CHECK(h.index == 4, "the handle names the slot (biased by one), not the address");
         CHECK(h.serial == 1, "the handle carries the slot's serial");
     }
 
@@ -142,7 +149,7 @@ int main()
         // handle refuses on the SERIAL and never touches g_objs[0] at all.
         Spawn(1, 3);
         CHECK(r.Get() == nullptr, "a reused slot is refused: the serial moved");
-        CHECK(r.Raw().index == 3, "the handle still names the old slot, for diagnostics");
+        CHECK(r.Raw().index == 4, "the handle still names the old slot, for diagnostics");
         CHECK((void*)r != (void*)&g_objs[1], "the recycled slot is never mistaken for the old object");
         // The object that DID take the slot resolves fine through its own handle.
         weak::Ref fresh = (void*)&g_objs[1];
@@ -187,10 +194,10 @@ int main()
         CHECK(r.Get() == &g_objs[5], "assigned to the first object");
         r = (void*)&g_objs[6];
         CHECK(r.Get() == &g_objs[6], "reassignment follows the new object");
-        CHECK(r.Raw().index == 4, "and names its slot");
+        CHECK(r.Raw().index == 5, "and names its slot");
         r = nullptr;
         CHECK(r.Get() == nullptr, "assigning null empties the handle");
-        CHECK(r.Raw().index == -1, "an emptied handle holds no index");
+        CHECK(r.Raw().index == 0, "an emptied handle holds no index");
         r.Reset();
         CHECK(r.Get() == nullptr, "Reset on an empty handle is harmless");
     }
@@ -202,7 +209,7 @@ int main()
         g_objs[7].index = -1;
         weak::Ref r = (void*)&g_objs[7];
         CHECK(!r.Valid(), "an object whose slot is already released is not captured");
-        CHECK(r.Raw().index == -1, "and the handle stays empty");
+        CHECK(r.Raw().index == 0, "and the handle stays empty");
     }
 
     // ---- the slot must still name the captured object --------------------
@@ -234,7 +241,36 @@ int main()
         ResetTable();
         weak::Ref r = (void*)nullptr;
         CHECK(r.Get() == nullptr, "capturing null is empty");
-        CHECK(r.Raw().index == -1, "and holds no index");
+        CHECK(r.Raw().index == 0, "and holds no index");
+    }
+
+    // ---- A ZEROED RECORD IS EMPTY, NOT SLOT 0 ----------------------------
+    // These tables are static arrays and several are memset, so the empty state must be
+    // all-zero bytes.  If the encoding stored the raw index, a wiped record would claim
+    // GUObjectArray slot 0 -- a real slot -- and resolve to some unrelated object, which
+    // is a silent wrong-actor write rather than a crash.
+    {
+        ResetTable();
+        Spawn(0, 0);                       // slot 0 is genuinely occupied
+        weak::Ref wiped;
+        memset(&wiped, 0, sizeof(wiped));
+        CHECK(wiped.Get() == nullptr, "a zeroed handle resolves to nothing, not to slot 0");
+        CHECK(!wiped.Valid(), "a zeroed handle is not valid");
+        CHECK(wiped.IsEmpty(), "a zeroed handle reports itself empty");
+        CHECK(wiped.Raw().index == 0, "a zeroed handle stores index 0");
+        // And the object that really is in slot 0 still resolves through its own handle.
+        weak::Ref real = (void*)&g_objs[0];
+        CHECK(real.Get() == &g_objs[0], "slot 0's real occupant still resolves");
+        CHECK(!real.IsEmpty(), "and is not reported empty");
+    }
+
+    // ---- a memset Ref array behaves like a fresh one ---------------------
+    {
+        ResetTable();
+        weak::Ref table[4];
+        memset(table, 0, sizeof(table));
+        for (int i = 0; i < 4; ++i)
+            CHECK(table[i].Get() == nullptr, "a wiped table entry is empty");
     }
 
     printf("=== %d passed, %d failed ===\n", g_pass, g_fail);
