@@ -1774,3 +1774,180 @@ own open gate reads the interaction component's trace target, and the only enemy
 machines and exposes a real mover; it does not expose a cutscene manager or a boss predicate in
 these maps. The next run's first job is the interaction component's `Current Interact Actor`,
 which is the one field both R86 and the door half are waiting on.
+
+---
+
+## Session 11 — 2026-11-09 (the interaction gate, and the wall behind it)
+
+This branch is `sync-fix` at `4dfe9af` plus the Session 11 fixes. Every write path is on
+(`ObjectSync=1`), `LogLevel=3`, `PlayerBody=1`. `tools/session11.ps1` is the whole run in
+one process (`-Phase item1|item2|item3|all`); it reads the roles from `session established`:
+**host=inst1, peer=inst2**. Fresh pairs are seeded from `analysis/save-backup-before-live`
+with `make_test_instance.ps1 -Force`.
+
+### R90. The interaction gate is now driven the way a key press drives it — and the object still does not open
+
+R86 said the rig calls the verb but never fills the field the Blueprint gate reads. The
+lever now does the whole press:
+
+1. stands beside the target and **faces it** (`SetActorXform` + `ControlRotation`, because
+   the interact trace is a forward trace from the view);
+2. writes the interaction component's **`Current Interact Actor`** and reads it back;
+3. resolves and dispatches the player's own compiled input event — by PREFIX, because the
+   suffix is compiler-generated: `InpActEvt_Interact_K2Node_InputActionEvent`
+   (`DefaultInput.ini` binds action `Interact` to `E`);
+4. asks the game's own gate (`GetInteractInfo`) and reports `IsInteractible`;
+5. only if the object did not change, falls back to the target's own verb.
+
+Measured, peer, one press on the hub's checkpoint:
+
+```
+dev teleport near 'Checkpoint17' -> Checkpoint17 at 3871,-1723,51 dist=252; standing at 4010,-1735,51 offset=140
+dev interact: faced Checkpoint17 at 4010,-1735,51 yaw -95 dist=252
+dev interact: the game's own gate says IsInteractible=1 distanceOverride=0 override=0
+dev interact: component target set (read back ok) -- the field the Blueprint open gate reads
+dev interact: the player's Interact input event InpActEvt_Interact_K2Node_InputActionEvent ran -- a key press runs exactly this
+dev interact: the input event ran and the object did not change (state 0); driving the target's own verb
+```
+
+So the three things R86 asked for are all on the record, on an object the game itself calls
+interactible, with the pawn standing where it says to stand — and nothing changes. **The
+gate is filled and the real input event runs; the interaction still does not happen.** What
+that leaves is a narrower question than R86's: the Blueprint's interact handler is not
+"read `Current Interact Actor`, call `Interact` on it". The component's trace target is also
+*intermittent* — one scan named `Checkpoint17`, and a press ten seconds later read
+`target=-` before the field was written — so the handler very likely consults state the
+component's own `Update` maintains (and which the rig cannot fake by writing one pointer).
+
+Two content facts are now measured rather than assumed, and each prints its own verdict:
+
+```
+[2] dev interact: the game's own gate says IsInteractible=0 ... -- a key press cannot open this object either   (Chest_Merchant2, 900_SipehaWorld)
+[1] dev interact: the game's own gate says IsInteractible=1 distanceOverride=0 override=200                       (Shop_Door_00_SM, 900_SipehaWorld)
+```
+
+The chest Session 10 could not open is one the GAME refuses. The door that IS interactible
+lives in a map the rig cannot stand in (R91).
+
+### R91. A hard map load leaves the player at the origin, falling — so no press can land in those maps
+
+`LoadMapWithLoadingScreen 900_SipehaWorld` succeeds on both machines (`ran=1`), and then:
+
+```
+3:44:53 scan: local at 4106,-1744,140 yaw 174        <- last hub position
+3:45:03 scan: local at 0,0,16 yaw 0                  <- after the load
+3:45:13 scan: local at 0,0,-2711 yaw 0
+3:45:23 scan: local at 0,0,-1346 yaw 0
+3:45:24 dev teleport near 'Chest_Merchant2' -> ... standing at -7139,-658,2920 offset=140
+3:45:33 scan: local at 0,0,-422 yaw 0                <- the teleport did not stick
+```
+
+The map has no `PlayerStart`, so the game gives the player a default pawn at the origin;
+it falls, dies on the kill-Z, respawns, and repeats. Every teleport written into that pawn is
+undone by the next respawn. **Only `Ruins_Level_00` (the hub) has a `PlayerStart`**, which is
+why the hub is the one world where the rig can stand next to an object and press — and the
+hub carries no closed chest or door (its GUID'd one-shots are `2Coins_Item_BP`, `Herb_Item_BP`
+and similar: overlap pickups, not E-interactables).
+
+### R92. The rig can fault the GAME by hard-loading the map it is already in
+
+The first `all` run died at 214 s: `[2] process alive=False`, and the peer left
+
+```
+UE4CC-Windows-C2CD747E42D60934B1E8BD9F5B147B36_0000
+<ErrorMessage>Unhandled Exception: EXCEPTION_ACCESS_VIOLATION reading address 0x00000001e3050060</ErrorMessage>
+<SecondsSinceStart>214</SecondsSinceStart>
+QueensDomain-Win64-Shipping 0x00007ff643770000 + 1145580
+QueensDomain-Win64-Shipping 0x00007ff643770000 + 1066134
+QueensDomain-Win64-Shipping 0x00007ff643770000 + 10662c3
+```
+
+No `WINMM` frame anywhere in the stack: this is the game tearing a world down while it is the
+current world, not the mod. The harness was asking both machines to `LoadMapWithLoadingScreen`
+the map they were already standing in. The scenario now skips that load, and the final run
+kept both processes alive to the end.
+
+### R93. Loot hiding: the ledger crosses; the two machines still do not hold the same enemy
+
+The hub drops are carried — peer:
+
+```
+[2] 4:27:49 loot: drop BB7FB743#0 = /Game/Items/Consumables/Herb/Herb_Item_BP.Herb_Item_BP_C
+[2] 4:27:49 loot: drop 7A6931CE#0 = /Game/Items/Treasure/Coins/Coin_Item_BP.Coin_Item_BP_C
+[2] 4:31:46 loot: merged 15 entries rev=2
+```
+
+but the two machines never held the same enemy, which is the setup item 3 needs:
+
+```
+host scan enemy: Mossy_Fighter_BP_C guid=A8D5C9E1 local-run=1 dist=77
+peer scan enemy: Mossy_Fighter_BP_C guid=186F6D14 local-run=0
+```
+
+Each machine's own spawner created its own copy with its own key, so "kill it on the owner"
+kills one machine's enemy and the other machine's ledger entry is for a different key. The
+hiding half therefore stays NOT-REACHED, and the reason is now the identity of the copies
+rather than the lane: **the enemy-parity lane (R66: three identity sources, the same key) did
+not fire for these spawner enemies in the hub this run** (`local-run=0` on the peer with a
+different GUID means no adoption happened).
+
+### R94. Cutscene detection now sees a placed `LevelSequenceActor` — but 780's world never loaded for the scan
+
+The detector only read `FS_PlayerChar.CurrentCutsceneManager`, which the sequences in
+`780_SZ_Depths` (`SecretSwordGetSequence`), `760_SZ_AUT` and the cinematic maps never set:
+they are started directly by altar/egg Blueprints. It now also asks each placed
+`LevelSequenceActor`'s own `SequencePlayer.IsPlaying()` — the game's own state, not a guess —
+and the sequencer branch no longer requires a gameplay pawn (the cinematic maps hand the
+player a default pawn, which is exactly where a cutscene is due).
+
+Measured in the final run: `780_SZ_Depths` loaded on both machines, and then
+
+```
+[1] 4:31:39 scan: local at 5412,-1675,947 yaw 36        <- still the HUB position
+[1] 4:31:39 scan: loose cutscene none in this world
+[1] 4:31:39 scan: loose sequence none in this world
+[1] 4:31:39 scan: loose boss none in this world
+[1] (no line matches 'boss:|enemy id: spawner|scan: kind enemy' since the step started)
+```
+
+The scan is still reading the pre-load world and then stops (R91's stranded pawn), so neither
+the sequence nor the boss predicate was ever evaluated in 780. **Boss bar and cutscene sync
+remain NOT-REACHED, and the blocker is R91, not the lanes.**
+
+### Bugs fixed this session
+
+* **The interaction lever does the whole press** (R90): face + `Current Interact Actor` write
+  with read-back + the compiled `InpActEvt_Interact*` input event, with the target's verb as
+  the fallback and a state fingerprint so a successful press is not driven twice.
+* **`GetInteractInfo` is asked, once per target** (R90): `IsInteractible` / distance override
+  are printed, so "the game refuses this object" is a measurement instead of an inference.
+* **`near:<name>` falls back to any placed actor whose name or class matches** — needed for
+  altars, sequence actors and spawners that the curated sets cannot name.
+* **Cutscene detection includes a playing `LevelSequenceActor`** and does not require a
+  gameplay pawn for that branch (R94).
+* **`tools/session11.ps1`** — the whole run in one process, per item or all three in one boot,
+  with a `$pid` collision, a report-on-trap and a `GetInteractInfo` fix found by running it.
+
+### Verdicts, item by item
+
+| Item | Verdict | Key line |
+|---|---|---|
+| 1. Peer opens a chest/door, both ways | **FAIL — mechanism PASS, effect NOT-REACHED** | `component target set (read back ok)` + `InpActEvt_Interact_K2Node_InputActionEvent ran` then `the input event ran and the object did not change (state 0)` |
+| 1b. Chest content is openable at all | **FAIL (content)** | `the game's own gate says IsInteractible=0 ... -- a key press cannot open this object either` |
+| 1c. A door that IS interactible | **NOT-REACHED (R91)** | `IsInteractible=1 distanceOverride=0 override=200` — in `900_SipehaWorld`, where the pawn cannot stand |
+| 2. Loot hides on the other machine | **PARTIAL** | ledger crosses (`loot: merged 15 entries rev=2`); the two machines hold different enemies (`guid=A8D5C9E1` vs `guid=186F6D14`) |
+| 3a. Cutscene | **NOT-REACHED (R91)** | `scan: loose sequence none in this world` after the 780 load |
+| 3b. Boss bar | **NOT-REACHED (R91)** | no `boss:` line; the scan stopped with the stranded pawn |
+| Session survival | **PASS** | both processes alive at the end of the final run; no `ERR`/fault lines |
+
+### What this session settled
+
+The interaction gate is no longer a mystery about which field to write: the field is written,
+read back, and the same input event a key press runs is dispatched — and the game still does
+not open the object. That moves the question from "did the rig fill the right field" to "what
+else does the handler read", which is the next measurement. Behind it sits a harder fact:
+**the rig can only drive a player that can stand somewhere, and after a hard map load the game
+gives it a pawn at the origin that cannot**. Every remaining item — the door, the boss, the
+sequence — is behind that one. The next session's first job is a map load that leaves a
+`PlayerStart`, or a lever that spawns the player class into the loaded world the way
+`PlayerBody` already spawns the partner's body.
