@@ -2210,3 +2210,221 @@ Still open, and unchanged by this session: the chest in `900_SipehaWorld` is ref
 game's own `GetInteractInfo` (`IsInteractible=0`), so a press still cannot open it — R90's
 question is about the handler, not about standing. And the boss/cutscene items that were
 behind R91 can now be attempted in a hard map, because the player can stand there.
+
+---
+
+## Session 13 — 2026-11-09 (the real lever on real content, and what the content refuses)
+
+This branch is `sync-fix` at `036c6db` plus the Session 13 fix. Every write path is on
+(`ObjectSync=1`), `LogLevel=3`, `PlayerBody=1`; `tools/session13.ps1` is the whole run in
+one process, one phase per boot (`-Phase tp|hub|door|lootMossy|world900|items900|soakHub`).
+It reads the roles from `session established`: **host=inst1, peer=inst2**. Fresh pairs are
+seeded from `analysis/save-backup-before-live` with `make_test_instance.ps1 -Force`.
+
+Session 12 closed R91 for `900_SipehaWorld` and `990_B33sment`. This session tried to use
+that reachability on content: the door, the loot, the boss and the sequence.
+
+### R102. A hard load of a streaming area spawns NO pawn — not even the identity pawn
+
+`210_AQ_underground` has a `PlayerTeleportTargetPos` (`WhaleKingSuspendLocation`) and a
+`WhaleKing_Spawner`, so it looked like the reachable boss world. A hard load of it leaves
+both machines with **no pawn at all**:
+
+```
+[1] arrive: armed for 210_AQ_underground -- a hard transition just landed here
+[1] arrive: 210_AQ_underground places the arrival marker PlayerTeleportTargetPos_C at -2469,-9502,-4247
+[1] arrive: 210_AQ_underground ended with no pawn to place
+[2] arrive: 210_AQ_underground ended with no pawn to place
+```
+
+`780_SZ_Depths` is the same:
+
+```
+[1] arrive: 780_SZ_Depths places no arrival marker of its own (...); waiting for the partner's position
+[1] arrive: 780_SZ_Depths ended with no pawn to place
+[2] arrive: 780_SZ_Depths ended with no pawn to place
+```
+
+No `scan: local at` line appears after the load on either machine. These maps are not
+standalone worlds: loading their package starts a `UWorld` whose GameMode never spawns a
+`DefaultPawnClass`, so the mod has nothing to place. `900_SipehaWorld` is different — it
+does spawn the identity pawn and ArrivalPump places it at the marker. Session 11's "pawn
+at the origin" was 900's behaviour; 210/780 do not even have that.
+
+**Consequence:** the two worlds that carry a boss **and** a `LevelSequenceActor`
+(`780_SZ_Depths`: GreenDragon/Josami spawners + `SecretSwordGetSequence`; `760_SZ_AUT`:
+`ROSDragon_Spawner` + `Dek_Egg_Activation`) are unreachable by the hard lane, which is the
+only world-load lane the rig has. The cinematic maps (997/998/999) place sequences and hand
+a default pawn, but carry no boss enemy.
+
+### R103. The teleporter gate is 0 at the hub nodes — distance 1, after UnlockAllTeleporters
+
+The task's named route is the real E press on a `Teleporter_C`. It is refused by the
+object's own gate, not by the rig:
+
+```
+dev interact: resolved 'TEMPTELEPORTER' -> TempTeleporter at 0,0,-110000 dist=32450
+dev interact: faced TempTeleporter at 128,-54,-142450 yaw -66 dist=140
+dev interact: the game's own gate says IsInteractible=0 distanceOverride=1 override=300 -- a key press cannot open this object either
+PE new: Interact  on TempTeleporter [Teleporter_C]
+```
+
+and the same on `Teleporter_GR`, standing at its exact root (`dist=1` horizontally):
+
+```
+rig: cheat UnlockAllTeleporters ran=1
+dev interact: faced Teleporter_GR at 13415,-1320,3325 yaw -90 dist=1
+dev interact: the game's own gate says IsInteractible=0 distanceOverride=1 override=300
+```
+
+The `Interact` verb runs and no travel verb follows — no `travel verb:`, no
+`travel: local destination`, no hard transition on either machine. `UnlockAllTeleporters`
+changes neither node. The mod's own travel lever on the same node does run the game's
+verb, but to the node's own location in the same world:
+
+```
+rig: travel lever -> Teleporter_GR/Ruins_Level_00 (LocationData resolved, dest field CurrentTeleporterTarget) TeleportToLocation ran=1
+travel: local destination (none) seq=5
+```
+
+So the real-travel route is blocked by the teleporter's own state in this save. The node's
+root is 9 m above the ground the player lands on, and the gate is a bool the Blueprint sets,
+not the distance override.
+
+### R104. BUG (fixed) — `near:<Name>` was resolved by KIND before NAME
+
+`near:TempTeleporter` contains the word "teleport", so the curated `teleport` class walk
+ran first and drove `Teleporter_GR` — a different actor 923 cm away. A scenario asking for
+one named actor was silently given the nearest actor of that kind, and its gate was read as
+if it belonged to the requested one. The resolver now tries an **exact instance name**
+(case-insensitive) before every curated kind/class walk; the kind walks stay the fallback
+for "some chest/door/teleporter". Measured after the fix:
+
+```
+rig: near 'TEMPTELEPORTER' matched the actor by exact name
+dev interact: resolved 'TEMPTELEPORTER' -> TempTeleporter
+```
+
+Rebuilt, unit tests green, reinstalled, re-ran.
+
+### R105. The shop door is interactible=1 and the real press runs — the handler still does not open it
+
+`Shop_Door_00_SM` (`Shop_Door_00_BP_C`, GUID `e487497d-…`) is the one closed one-shot the
+game itself calls interactible in the reachable worlds. The peer, after `GiveAllKeys` and
+an exact-root placement, runs the whole press:
+
+```
+dev interact: the game's own gate says IsInteractible=1 distanceOverride=0 override=200
+InpActEvt_Interact_K2Node_InputActionEvent ran -- a key press runs exactly this
+dev interact: the input event ran and the object did not change (state 0); driving the target's own verb
+dev interact: target=Shop_Door_00_SM [Shop_Door_00_BP_C] component=found verb=Interact
+dev state: Shop_Door_00_SM [Shop_Door_00_BP_C] savable=yes guid=e487497d-... value=0 opened=0
+```
+
+and no `actor-state intent sent` follows. The host's press is identical. `GiveAllKeys`
+(`rig: cheat GiveAllKeys ran=1`) and `ForceOpenDoor` (`ran=1`) change neither the door nor
+the container. **R90's wall is unchanged: the gate is filled, the real input event runs,
+the verb runs, and the Blueprint's handler still reads something the rig cannot fake.**
+
+The lane itself is not the problem: the same run's pickup did cross and land —
+
+```
+actor-state intent applied: guid=C2275436-4310D7B1-C789EF93-2E4E56EB value=1
+actor-state refresh ok Panacea_Pickup_Bp8 [Panacea_Pickup_Bp_C] index=0 ... opened=n/a
+```
+
+and the door's own gate and `opened=0` are the same before and after. A `TotalChestsOpened`
+line never appears: opening a door does not touch the chest counter, and no chest the game
+calls interactible was reachable.
+
+### R106. Loot hiding: the shared enemy exists, but it drops nothing; the hub's enemies are per-machine
+
+`900_SipehaWorld` is the one world where both machines hold the **same** enemy key:
+
+```
+[1] scan: kind enemy Sipeha_BP_C guid=BB49E51D ... local-run=1
+[2] scan: kind enemy Sipeha_BP_C guid=BB49E51D ... local-run=0
+[1] rig: hit enemy guid=BB49E51D amount=100000 ran=1 hp 9999.0 -> -90001.0 (local-run)
+[1] enemy death recorded guid=BB49E51D respawn=0.0
+```
+
+and no `loot: drop` line appears on either machine — this enemy has no drop. In the hub
+the two machines' nearest fighters are **different authored actors**:
+
+```
+[1] scan: kind enemy Mossy_Fighter_BP_C guid=A8D5C9E1 at 5552,-1668,961 local-run=1
+[2] scan: kind enemy Mossy_Fighter_BP_C guid=186F6D14 at 5780,-1997,962 local-run=1
+```
+
+Targeting the class name on both (`near:Mossy_Fighter_BP_C`) still lands each machine
+beside its own copy. A drop taken on the peer has no local actor on the host with that key,
+so `loot: hiding local drop` cannot fire. The hiding half therefore remains NOT-REACHED,
+and the reason is now two measured facts rather than one: the shared enemy has no drop,
+and the hub's spawner enemies have different authored GUIDs per machine (R93, unchanged).
+
+### R107. A 5-minute hub soak: no crash, no errors, and kill lists that diverge by design
+
+Both machines hit the nearest locally-run enemy every 3 s for 300 s, re-teleported to the
+nearest enemy every 20 s:
+
+```
+PASS [1] host alive at the end of the soak
+PASS [2] peer alive at the end of the soak
+host deaths: 104; peer deaths: 49
+host-only: 0089DD85,05E77BA8,... (55 GUIDs)
+peer-only: 30ED41A1
+FAIL the two kill lists agree (105 unique GUIDs) -- host=104 peer=49
+[1] error/fault lines=0
+[2] error/fault lines=0
+[1] WARN lines=43 classes=rig=38 (unlabelled)=5
+[2] WARN lines=37 classes=rig=35 (unlabelled)=2
+```
+
+The divergence is R93's identity, not a lost row: the host runs its own 104 enemies and
+records their deaths; the peer only holds the subset whose authored GUIDs match, so it
+records 49. The only desync-shaped lines are the lanes' own self-healing ones:
+
+```
+actor-state intent refused (stale): based_on=242 last_sent=243
+enemy own pump: a stale actor was skipped guid=467FE528; the record is dropped and the scan re-adds it
+```
+
+Both processes survived the full five minutes; no `ERR`, `EXCEPTION`, `ACCESS_VIOLATION`
+or fault line.
+
+### Bugs fixed this session
+
+* **`RigFindNear` prefers an exact instance name** (R104): a named actor is no longer
+  silently replaced by the nearest actor of a kind the name happens to contain. Rebuilt,
+  `run_tests.bat` green, reinstalled, re-ran.
+* **`tools/session13.ps1`** — the whole run in one process, one phase per boot, with three
+  harness bugs found by running it: the standing check read a scan line from *before* the
+  load (now a per-press mark); the loot step used `near:drop` (a placed pickup) instead of
+  `near:loot` (the ledger drop); the exact-root press had to bypass the `near:` offset.
+
+### Verdicts, item by item
+
+| Item | Verdict | Key line |
+|---|---|---|
+| 1. Peer opens a chest/door, host applies, both ways | **FAIL (content handler)** | `IsInteractible=1` → `InpActEvt_Interact… ran` → `verb=Interact` → `opened=0`, no `actor-state intent sent`; `GiveAllKeys`/`ForceOpenDoor` change nothing |
+| 1b. The lane itself | **PASS** | `actor-state refresh ok Panacea_Pickup_Bp8 … opened=n/a` after `actor-state intent applied: …` |
+| 1c. `TotalChestsOpened` double count | **N/A (measured)** | no such line: a door does not touch the chest counter; no interactible chest was reachable |
+| 2. Loot hides on the other machine | **NOT-REACHED** | shared 900 enemy `guid=BB49E51D` drops nothing; hub copies differ (`A8D5C9E1` vs `186F6D14`) |
+| 3a. Boss bar on both | **NOT-REACHED (R102/R103)** | 210/780 `ended with no pawn to place`; teleporter `IsInteractible=0` at `dist=1` |
+| 3b. Cutscene play/hold + joint resume | **NOT-REACHED (R102)** | same; the sequence worlds are the ones with no pawn |
+| 4. 5-minute combat soak | **PARTIAL** | both alive, 0 errors; `host=104 peer=49` deaths, 105 unique, 2 self-healing stale lines |
+| Session survival | **PASS** | both processes alive at the end; 0 `ERR`/fault lines |
+
+### What this session settled
+
+The interaction lever is not the missing piece for the door: the game's own gate says the
+door is interactible, the same compiled input event a key press runs is dispatched, the
+target's own `Interact` runs, and the door still does not change. That is R90's handler
+question, now measured with the key in hand and the pawn at the door's exact root.
+
+Two reachability facts are new and narrow the next session: a hard load of a streaming
+area (210, 780) produces **no pawn at all**, and the game's teleporter refuses the E press
+at both hub nodes even after `UnlockAllTeleporters`. The boss+sequence worlds are exactly
+the ones behind those two walls. The next job is one of: a real `QueueTeleportLevelLoad`
+route into 780/760 (the game's own travel), or a local-pawn spawn/possess lever for a world
+that starts without a GameMode — Session 11's closing note, still the right one.
