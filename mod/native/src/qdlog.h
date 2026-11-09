@@ -1,4 +1,4 @@
-﻿// qdlog.h -- the co-op mod's log sink.
+// qdlog.h -- the co-op mod's log sink.
 //
 // WHY THIS IS NOT printf
 // ----------------------
@@ -41,6 +41,10 @@ namespace detail {
 inline HANDLE& LogHandle()      { static HANDLE h = INVALID_HANDLE_VALUE; return h; }
 inline SRWLOCK& LogLock()       { static SRWLOCK l = SRWLOCK_INIT; return l; }
 inline int&     LogThreshold()  { static int t = LOG_INFO; return t; }
+// Lines written since the last FlushFileBuffers.  R83's `no log line` was not a lost
+// write -- the dump proved the thread faulted -- but a crash must not also cost the
+// tail of the record, so WARN/ERROR and every 64th line are flushed through the OS.
+inline unsigned& LogUnflushed() { static unsigned n = 0; return n; }
 inline char     g_logPath[MAX_PATH];
 
 // --- bounded formatting -----------------------------------------------------
@@ -128,12 +132,15 @@ inline const char* LevelName(int lv)
 // (level filtered) is a compare and a return.
 inline void Emit(int level, const char* msg, int len)
 {
-    (void)level;   // filtering happens in Log(); Emit only ever receives an accepted line
     HANDLE h = LogHandle();
     if (h == INVALID_HANDLE_VALUE) return;
     AcquireSRWLockExclusive(&LogLock());
     DWORD wrote = 0;
     (void)WriteFile(h, msg, (DWORD)len, &wrote, nullptr);
+    if (level <= LOG_WARN || ++LogUnflushed() >= 64) {
+        LogUnflushed() = 0;
+        (void)FlushFileBuffers(h);
+    }
     ReleaseSRWLockExclusive(&LogLock());
 }
 

@@ -1576,3 +1576,201 @@ failures of the code: both maps in this run load no cutscene manager, no mover, 
 the only chests they expose are savables — the objects lane had nothing to carry, which the
 scan says out loud.
 
+
+---
+
+## Session 10 — 2026-11-09 (the silent exit, the controlled change, and the content that is not there)
+
+This branch is `sync-fix` at `8f51926` plus the Session 10 fixes. Every write path is on
+(`ObjectSync=1`), `LogLevel=3`, `PlayerBody=1`; `tools/session10.ps1` is the whole run in one
+process. It reads the roles from `session established`: **host=inst1, peer=inst2**. Fresh
+pairs are seeded from `analysis/save-backup-before-live` with
+`make_test_instance.ps1 -Force -Suffix qd1|qd2`.
+
+### R84. R83's host exit was a stale NPC pointer in DialoguePump, and the dump proves it
+
+The Session 9 run *did* leave a UE crash report even though no WER event existed:
+`_test/inst1/Saved_qd1/Crashes/UE4CC-Windows-69152…/`. Its `CrashContext.runtime-xml`:
+
+```
+<ErrorMessage>Unhandled Exception: EXCEPTION_ACCESS_VIOLATION reading address 0x00000281b0df84dc</ErrorMessage>
+<SecondsSinceStart>791</SecondsSinceStart>
+ThreadName GameThread
+WINMM 0x00007ffc29bc0000 + 29b2a
+WINMM + 37bd0
+```
+
+`winmm.map` resolves `+0x29b2a` to `DialoguePump+0x66A`; cdb `.ecxr` gives the faulting
+instruction:
+
+```
+winmm+0x29b2a: mov ecx,dword ptr [rdi+0Ch]   ds:00000281`b0df84dc=????????
+```
+
+`[obj+0x0C]` is `UObjectBase::InternalIndex` (`qdsubstrate.h kObjInternalIndex`). The pointer
+`rdi=0x281b0df84d0` is `g_blockedNpc`, cached when the peer started a dialogue before the
+suspend load. The new world replaced the object graph, so `ObjectIsLive(g_blockedNpc)` read a
+freed object — exactly the trap `PuppetPump` already guards against.
+
+**Fix.** `g_blockedWorld` is recorded with `g_blockedNpc`; `DialoguePump` compares
+`GWorldPtr()` first and, on a change, drops the pointer and clears the id **without a read**
+(`dialogue: blocked NPC dropped with its world (the old pointer is not read)`). `qdlog.h` also
+flushes WARN/ERROR and every 64th line, so a crash cannot also cost the tail of the record.
+
+Measured on the fixed build, fresh pairs, two full boots of the same scenario:
+
+```
+[1] 2:32:13.593 INFO dialogue: blocked NPC dropped with its world (the old pointer is not read)
+[1] 2:32:13.382 INFO save layer re-initialised (new active save)
+PASS [1] alive after the suspend reload
+```
+
+and the same four lines on the second boot; the two earlier boots of the same pair produced the
+same result. Memory and handles are flat across the reload:
+
+```
+[1] pre-scenario: working=2856.8 MB private=3867.8 MB handles=2662
+[1] before reload: working=2862.0 MB private=3872.7 MB handles=2662
+[1] after reload:  working=2798.0 MB private=3888.2 MB handles=2670
+[2] pre-scenario: working=2783.5 MB private=3795.2 MB handles=2662
+[2] after reload:  working=2811.9 MB private=3823.2 MB handles=2662
+```
+
+No new crash report and no WER dump for these runs.
+
+### R85. A second stale-UObject crash: `g_localPawn` across a hard map load
+
+The 990_B33sment load after a deferred 900 transition killed the host in one run
+(`UE4CC-Windows-11FA…`, 02:25:46):
+
+```
+EXCEPTION_ACCESS_VIOLATION reading address 0x00000234cdf0aacc
+WINMM + 3b2b7   -> IsGameplayPawn+0x27
+WINMM + 3cc96   -> LocalActionPump+0x36
+WINMM + 36efe   -> HK_Tick+0x29E
+```
+
+`SendLocalPlayer` refreshed `g_localPawn`, but `LocalActionPump` runs **before** it and tested
+the previous world's pawn. **Fix.** `HK_Tick` now clears `g_localPawn` on a `GWorldPtr()`
+change and re-reads `LocalPawn()` before any pump. The final run survived four hard loads
+(990, 997, 998, 999) with both machines alive.
+
+### R86. The controlled value change: the lane is right, the content's verb is not
+
+A fresh pair has `Chest_Merchant2` and `Shop_Door_00_SM` at `value=0 opened=0` in
+`900_SipehaWorld`. The peer was placed on the door and the game's own door path was driven:
+
+```
+[2] 2:56:38.872 INFO rig: cheat FindDoorOpenTarget ran=1
+[2] 2:56:40.878 INFO rig: cheat ForceOpenDoor ran=1
+```
+
+Neither `actor-state local change` nor `actor-state intent sent` followed, and `dev state:`
+still read `opened=0`. The chest's own `Interact` is the same: `dev interact: target=
+Chest_Merchant2 [Chest_Merchant_C] ... verb=Interact` runs and `opened=0` stays. The
+interaction component's trace target is `-` (`scan: interact target - (component=found)`), so
+the Blueprint's own open gate is not satisfied by the rig's direct verb call. The lane itself
+is proven on the receive side: `actor states applied=0 ... confirmed=1 ... n=40`, and the
+actor-state refresh prints `opened=1` for the entries the game itself changes (R75). **The
+controlled chest/door open is NOT-REACHED; the next probe is the interaction component's
+`Current Interact Actor` (the rig must set the same field the engine's trace fills), not
+another verb name.**
+
+Lane assignment is measured: the host sent `objects sent rev=… objects=0` for the whole run
+(116 lines, last `objects=0`), the OBJECTS tracking set was empty on both machines, while the
+same run's scan named 53 chest lines with GUIDs. The rule holds: a chest/door with a GUIDs
+array belongs to ACTOR_STATES; OBJECTS carries none of them; nothing was carried by both. No
+`TotalChestsOpened` double count appeared (`PASS` on both).
+
+### R87. Loot hiding: both kills land, the boss has no drop
+
+The fresh pair's `900_SipehaWorld` enemy is `Sipeha_BP_C` (`guid=BB49E51D`, hp 9999): both
+machines landed local hits (`rig: hit enemy guid=BB49E51D ... ran=1 hp 9198.8 -> 8798.8`), and
+the peer's copy is frozen (`FROZEN copy: its HP belongs to the host`), but a 9999-HP boss is
+not killed by the 12 s window and rolls no item drop, so neither ledger learned a drop and
+`loot: hiding local drop` was not reached. The hub's ordinary enemies do roll (the earlier runs
+show `loot: drop …` and `loot: merged N entries`), but there the owner's copy is already dead
+when the non-owner hits — R79's structural limit. **The hiding half remains NOT-REACHED; the
+scenario needs a normal enemy both machines kill while both copies are alive.**
+
+### R88. Content: the hard maps load on both machines; the mover is real; cutscene/boss are not
+
+`LoadMapWithLoadingScreen` reaches each map on both machines (the peer's own lever plus the
+HARD follow):
+
+```
+[1] 3:10:52 INFO rig: hard lever -> 997_FinalZoneCutscene LoadMapWithLoadingScreen ran=1
+[2] travel: hard transition: loading 997_FinalZoneCutscene through GameInstance.LoadMapWithLoadingScreen
+[2] travel: hard phase 2 map=997_FinalZoneCutscene
+```
+
+The same for `990_B33sment`, `998_QueenCutscenes` and `999_SipehaCutscenes`. 997 carries real
+movers:
+
+```
+[1] 3:10:57.285 INFO movers: tracking FS_Light_Activatable372/PersistentLevel/997_FinalZoneCutscene/... id=F9587D01
+```
+
+so a mover exists and is tracked; the peer tracked it too in the same run, but no `movers:
+applied N` row was produced because the actors are lights, not moving platforms. The
+`scan: loose cutscene/sequence/boss/whale` lines are `none in this world` in every map, and no
+`cutscene: local started` or `boss: guid=… is a boss` appeared. The Sipeha `FightStartTrigger`
+(`SipehaFightStartTrigger`, savable value=0) accepted the `Interact` call and changed nothing.
+**Cutscene sync and the boss bar are NOT-REACHED on this content; the mover lane is the one
+feature these maps expose.**
+
+### R89. Dialogue ends on death: PASS with the player class' own Kill
+
+The host's `qd.pdmg` was refused by the receiver:
+
+```
+damage dropped: attacker guid=3A2DCA7E does not resolve on this machine
+```
+
+so the conversation stayed open and the peer's hard follow was deferred forever
+(`travel: hard BEGIN ... deferred; the local player is busy (RunningDialogue)`). The rig now
+has `qd.kill`, which calls the player class' own `FS_PlayerChar_C:Kill(false)`. Measured:
+
+```
+[2] 2:56:09.100 INFO rig: kill -> FS_PlayerChar_C.Kill ran=1
+[2] 2:56:09.119 INFO dialogue: local death ended the conversation (end=1 ended=1); lock released
+[1] 2:56:09.203 INFO dialogue: unblock Librarian_Ghost_NPC_BP [Librarian_Ghost_NPC_BP_C] BlockInteract= reenabled
+```
+
+**PASS** on every half: the conversation ends, the lock is released, and the partner's NPC is
+re-enabled.
+
+### Bugs fixed this session
+
+* **R83** — `DialoguePump` drops `g_blockedNpc` on a world change without a read (the dump's
+  `DialoguePump+0x66A`, `[obj+0x0C]`).
+* **R85** — `HK_Tick` clears/re-reads `g_localPawn` on a world change before any pump
+  (`IsGameplayPawn` called from `LocalActionPump`).
+* **`qd.kill`** — the player class' own `Kill` lever, added for the dialogue-on-death lane.
+* **Log flush** — WARN/ERROR and every 64th line are flushed (`qdlog.h`).
+* **`tools/session10.ps1`** — the whole run in one process (R83 twice, items, WER LocalDumps,
+  abslog, memory/handle samples).
+
+### Verdicts, item by item
+
+| Item | Verdict | Key line |
+|---|---|---|
+| 1. Host survives the suspend reload (R83) | **PASS** | `dialogue: blocked NPC dropped with its world (the old pointer is not read)` -> `PASS [1] alive after the suspend reload`, twice + the final build |
+| 2. Controlled chest/door change both ways | **FAIL (NOT-REACHED)** | `rig: cheat ForceOpenDoor ran=1` then `dev state: … opened=0`; the interaction component's target is `-` |
+| 2c. Lane assignment | **PASS** | `objects sent rev=… objects=0` (116 lines) with 53 GUID'd chest lines; OBJECTS tracking 0 |
+| 3. Loot hides on the other machine | **PARTIAL** | both `rig: hit … ran=1`, but `Sipeha_BP_C` is a 9999-HP boss with no drop; no `loot: hiding local drop` |
+| 4. Cutscene / mover / boss | **PARTIAL** | hard loads on both PASS; `movers: tracking FS_Light_Activatable372 … id=F9587D01` on 997; `scan: loose cutscene/boss none` in every map |
+| 5. Dialogue ends on death | **PASS** | `rig: kill -> FS_PlayerChar_C.Kill ran=1` -> `dialogue: local death ended the conversation (end=1 ended=1); lock released` -> host `dialogue: unblock … reenabled` |
+| Session survival | **PASS** | both processes alive at the end of the final run; no `ERR`/fault lines |
+
+### What this session settled
+
+R83 is closed and the dump names it: a stale NPC pointer, not the reliable table and not the
+250 enemies. Fixing it exposed the same class one layer lower, `g_localPawn` across a hard
+load, which the final run's four map switches survive. The controlled value change and the
+loot hiding half are now blocked by *content* facts rather than by the lanes: the chest/door's
+own open gate reads the interaction component's trace target, and the only enemy in the fresh
+900 world is a 9999-HP boss that drops nothing. The hard-map content is reachable on both
+machines and exposes a real mover; it does not expose a cutscene manager or a boss predicate in
+these maps. The next run's first job is the interaction component's `Current Interact Actor`,
+which is the one field both R86 and the door half are waiting on.

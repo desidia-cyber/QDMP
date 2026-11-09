@@ -6969,6 +6969,12 @@ struct DlgLocal {
 bool    g_dlgConflictSaid = false;
 void*   g_blockedNpc = nullptr;
 uint8_t g_blockedId[16];
+// The world the blocked NPC was found in.  A UObject pointer from the previous world
+// cannot be tested with ObjectIsLive: that reads InternalIndex at [obj+0x0C], and the
+// freed slot is an access violation, not a false.  MEASURED (Session 9 R83, the crash
+// dump): winmm+0x29b2a `mov ecx,[rdi+0Ch]` with rdi=0x281b0df84d0 inside DialoguePump
+// on the first frame after a suspend LoadSaveSlot.  Compare the world FIRST.
+void*   g_blockedWorld = nullptr;
 
 void NpcIdOf(void* npc, uint8_t out[16])
 {
@@ -7045,6 +7051,17 @@ void DialoguePump(uint32_t now)
     if (now - last < 100) return;
     last = now;
     const uint8_t slot = (uint8_t)LocalSlot();
+
+    // A saved NPC belongs to the world it was found in.  A suspend load replaces the
+    // world, so the cached pointer is dead: drop it without a read, exactly like the
+    // puppet body above (R83's measured crash).
+    void* worldNow = GWorldPtr();
+    if (g_blockedNpc && worldNow != g_blockedWorld) {
+        QDLOG(LOG_INFO, "dialogue: blocked NPC dropped with its world (the old pointer is not read)");
+        g_blockedNpc = nullptr;
+        memset(g_blockedId, 0, sizeof(g_blockedId));
+    }
+    g_blockedWorld = worldNow;
 
     // ---- local state ---------------------------------------------------------
     bool talking = false;
@@ -7162,6 +7179,7 @@ void DialoguePump(uint32_t now)
     if (!n) return;
     NpcSetBlocked(n, true);
     g_blockedNpc = n;
+    g_blockedWorld = worldNow;
     memcpy(g_blockedId, want, 16);
 }
 
@@ -10975,6 +10993,39 @@ bool DevRigText(const char* envName, const char* leaf, char* out, int cap)
 char     g_devTravelApplied[128] = "";
 uint32_t g_devTravelPoll = 0;
 
+// QDCOOP_TEST_KILL (<UserDir>\qd.kill): TEST INSTANCES ONLY -- call the local player
+// class' own `FS_PlayerChar_C:Kill(B33smentDeath=false)`.  This is the game's death
+// entry, not a health write, and it cannot be refused because an attacker GUID does not
+// resolve on the partner (the measured failure of `qd.pdmg` for the dialogue-on-death
+// lane: `damage dropped: attacker guid=... does not resolve on this machine`).
+char     g_devKillApplied[16] = "";
+uint32_t g_devKillPoll = 0;
+
+void DevKill(uint32_t now)
+{
+    static int on = -1;
+    if (on < 0) {
+        char p[MAX_PATH];
+        DevRigPath("QDCOOP_TEST_KILL", "qd.kill", p, sizeof(p));
+        on = p[0] != 0;
+        if (on) QDLOG(LOG_INFO, "rig: kill control '", p, "' enabled exists=",
+                      (GetFileAttributesA(p) != INVALID_FILE_ATTRIBUTES ? "yes" : "no"));
+    }
+    if (!on) return;
+    if (now - g_devKillPoll < 500) return;
+    g_devKillPoll = now;
+    char spec[16];
+    if (!DevRigText("QDCOOP_TEST_KILL", "qd.kill", spec, sizeof(spec))) return;
+    if (strcmp(spec, g_devKillApplied) == 0) return;
+    lstrcpynA(g_devKillApplied, spec, sizeof(g_devKillApplied));
+    if (!IsGameplayPawn(g_localPawn)) {
+        QDLOG(LOG_WARN, "rig: kill -- no gameplay pawn");
+        return;
+    }
+    bool ran = CallPlayerDeath(g_localPawn);
+    QDLOG(ran ? LOG_INFO : LOG_WARN, "rig: kill -> FS_PlayerChar_C.Kill ran=", dec(ran ? 1 : 0));
+}
+
 void DevTravelLever(uint32_t now)
 {
     static char path[MAX_PATH];
@@ -12210,6 +12261,21 @@ bool HK_Tick(void* engineLoop)
     // has a container to read.
     TryInitSaveLayer(now);
     if (tracing) QDLOG(LOG_DEBUG, "  frame ", dec(g_frame), " save layer done");
+    // The local pawn is a UObject and dies with its world.  SendLocalPlayer refreshes it,
+    // but LocalActionPump (and every pump before it) reads the cache FIRST: on the frame a
+    // hardware load finishes, the cache still held the previous world's pawn and
+    // IsGameplayPawn read its freed class.  MEASURED (Session 10): WINMM+0x3b2b7 inside
+    // IsGameplayPawn, called by LocalActionPump, ip 0x234cdf0aacc, on the 990_B33sment
+    // load after a deferred 900 transition.  Clear on the WORLD change, then take the
+    // live world's pawn; a load frame with no pawn clears the cache instead of testing it.
+    {
+        void* w = GWorldPtr();
+        static void* pawnWorld = nullptr;
+        if (w != pawnWorld) { pawnWorld = w; g_localPawn = nullptr; }
+        void* p = LocalPawn();
+        if (p == g_puppetActor) p = nullptr;
+        g_localPawn = p;
+    }
     MirrorPump(now);
     if (tracing) QDLOG(LOG_DEBUG, "  frame ", dec(g_frame), " mirror done");
     LocalActionPump(now);
@@ -12247,6 +12313,7 @@ bool HK_Tick(void* engineLoop)
     DevGod(now);
     DevKillNearest(now);
     DevCheat(now);
+    DevKill(now);
     DevTravelLever(now);
     DevHardLever(now);
     DevLevelLever(now);
