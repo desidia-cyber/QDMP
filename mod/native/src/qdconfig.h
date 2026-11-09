@@ -83,11 +83,15 @@ inline void ConfigDefaults()
     // for the `object apply:` line (`SYNC-GAPS` section 5.5).
     c.object_sync      = 0;
     c.enemy_sync       = 0;
-    // OFF, like every other write path that CONSTRUCTS something.  This one asks the engine
-    // to spawn a full gameplay enemy Blueprint (`Dragon_Green_BP_C` and friends) whose own
-    // BeginPlay and spawner wiring then run, so it is proven on a live session before it is
-    // allowed to default on (LIVE-TEST-LOG Session 16 is the run that proves it).
-    c.mirror_spawn     = 0;
+    // ON: proven live in 780_SZ_Depths (LIVE-TEST-LOG Session 16).  This is the one write
+    // path that CONSTRUCTS a full gameplay enemy Blueprint -- `Dragon_Green_BP_C` and friends
+    // -- whose own BeginPlay runs, so the rule above ("off until a live session has shown it")
+    // is what it was measured against: the partner now holds a copy of an enemy its own
+    // spawner never created (item1 15/15, boss 25/25 in that run), it never publishes, it is
+    // refused by the save hook, and it is removed when the owner says dead or the world
+    // changes.  It stays a switch so one broken mirror can be turned off without losing the
+    // rest of the enemy lane.
+    c.mirror_spawn     = 1;
     c.puppet_sync      = 0;
     // OFF, like every other write path.  This one asks the engine to CONSTRUCT a full
     // gameplay Blueprint (`FS_PlayerChar_C`), whose ReceiveBeginPlay runs; enable it only

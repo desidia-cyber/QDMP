@@ -388,7 +388,9 @@ Rules that keep this a repair rather than a second simulation:
 - It is **destroyed** when the owner's row says dead, when that row stops (the owner left
   the area), or on a world change / session end.
 - Receiver-side switch: `MirrorSpawn`. It constructs a full gameplay enemy Blueprint whose
-  own `BeginPlay` runs, so it is OFF until a live session has proven it.
+  own `BeginPlay` runs, so it was OFF until a live session proved it; **Session 16 proved it**
+  (`item1` 15/15, `boss` 25/25 in `780_SZ_Depths`) and the compiled default is now 1. It stays
+  a switch so a broken mirror can be turned off without losing the rest of the enemy lane.
 
 ### 3.10 `INTENT` (0x20)
 
