@@ -1010,13 +1010,21 @@ inline bool ReadLoot(Reader& r, LootBody* b)
     b->rev = r.U32();
     b->n_sent = r.U16();
     b->n = 0;
-    for (int i = 0; i < b->n_sent && r.ok; ++i) {
+    // `n_sent` is the size of the sender's LEDGER, not the number of entries in this
+    // datagram: a ledger of 68 drops is several datagrams (a path is 40-90 bytes), and the
+    // sender writes a prefix with a cursor, exactly as the flag and actor-state
+    // containers do (WIRE.md 3.6).  Reading `n_sent` entries is what made every big loot
+    // body undecodable -- the relay refused it as malformed AND the native receiver here
+    // refused it, so the lane's merge and tombstone never crossed at all.
+    while (r.ok && r.pos < r.len && b->n_sent > 0) {
         LootEntry tmp;
         tmp.source_hash = r.U32();
         tmp.drop_index = r.I32();
         tmp.taken = r.U8();
         if (r.Str(tmp.item_path, sizeof(tmp.item_path)) >= (int)sizeof(tmp.item_path)) return false;
         if (b->n < kLootMax) b->entry[b->n++] = tmp;
+        if (!r.ok) return false;
+        // A body cut inside an entry is a framing error, not a short read.
     }
     return r.ok;
 }

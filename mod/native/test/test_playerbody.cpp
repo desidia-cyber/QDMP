@@ -112,16 +112,21 @@ static void TestDeadBodyIsRepaired()
 // ---------------------------------------------------------------------------
 static void TestSwingIsNotDescribedTwice()
 {
-    CHECK(playerbody::SwingAlreadyReal(true, true),
+    CHECK(playerbody::SwingAlreadyReal(true, true, true),
           "double/a swing aimed at the proxy is not described again");
-    CHECK(!playerbody::SwingAlreadyReal(true, false),
+    CHECK(!playerbody::SwingAlreadyReal(true, false, true),
           "double/a swing at the local player is still described");
-    CHECK(!playerbody::SwingAlreadyReal(false, false),
+    CHECK(!playerbody::SwingAlreadyReal(false, false, true),
           "double/with no proxy the old lane is the only lane");
     // A stale target bit with no live body cannot suppress the described lane: the
     // partner would then be hit by nothing at all.
-    CHECK(!playerbody::SwingAlreadyReal(false, true),
+    CHECK(!playerbody::SwingAlreadyReal(false, true, true),
           "double/a target on a dead body does not suppress the description");
+    // R74: the enemy aimed at the proxy and the game's own hit path never landed a hit on
+    // it (collision off, a trace-based melee).  Suppressing the description here is the
+    // exact bug that left the partner hit by nothing, so it takes one landed hit first.
+    CHECK(!playerbody::SwingAlreadyReal(true, true, false),
+          "double/a real path that has never landed does not suppress the description");
 }
 
 // ---------------------------------------------------------------------------

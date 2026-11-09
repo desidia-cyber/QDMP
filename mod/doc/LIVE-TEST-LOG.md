@@ -1286,3 +1286,293 @@ applied=` on either machine), which is why the peer's `confirmed=1` and the ches
 partner-side refresh are still missing. That is the next round's first measurement.
 
 
+
+---
+
+## Session 9 — 2026-11-09 (the receive side, the follower's verb, and the swing that hit nobody)
+
+This branch is `sync-fix` at `1c708d7`, merged with `9db18ab` (the OBJECTS lane, wire 0x2A),
+at `ee017c2` plus the fixes below. Every write path is on (`ObjectSync=1` now too),
+`LogLevel=3`, `PlayerBody=1`. `tools/session9.ps1` is the whole run in one process: relay,
+two instances, the driving, the collection and the teardown. It reads the roles from
+`session established`: **host=inst1, peer=inst2**.
+
+### R75. The R74 residual was the RELAY, not the peer: every chunked container was dropped
+
+The peer never logged `actor states applied=` because it never received a body. The relay
+decodes and validates every datagram before forwarding it, and `qd-core`'s `ACTOR_STATES`
+decoder read the header's `n` as **this datagram's** entry count. `n` is the size of the
+sender's whole container while one datagram carries a prefix (WIRE.md §3.6), so a
+117-entry `SavableActorStates` — three datagrams — failed validation on all three:
+
+```
+[qd-relay] malformed datagram from 127.0.0.1:64386: unexpected end of data: needed 128 bits, 0 available
+[qd-relay] malformed datagram from 127.0.0.1:64386: unexpected end of data: needed 32 bits, 0 available
+```
+
+**2 364 of them in one session**, while every body that fits one datagram (flags,
+inventory) forwarded normally. That is the whole residual: the lane was correct on both
+machines and the relay ate it. `WorldFlags`, `Inventory`, `Loot` and `Movers` now read the
+prefix (stop when the body ends, and a body cut INSIDE an entry is still a framing error),
+pinned by `a_chunked_container_body_decodes_the_entries_it_carries` and the relay-level
+`a_chunked_actor_states_body_is_forwarded_not_dropped`.
+
+The same class of bug sat in the LOOT publisher: it wrote `n` = the entries handed to the
+writer while `WriteLootChunk` stopped at the datagram cap, so a 68-drop ledger produced
+bodies that **both** the relay and the partner's own reader refused. `n` is the ledger size
+now and the pass walks a cursor, like the actor-state publisher.
+
+Measured afterwards, peer side, every second:
+
+```
+[2] INFO actor states applied=0 held=0 confirmed=1 failed=0 rev=562 n=142
+[2] INFO actor states applied=0 held=0 confirmed=2 failed=0 rev=566 n=142
+```
+
+and the two halves of §5.2's G2 proof both appear on the peer in one run:
+`actor-state intent applied: guid=E8EFC097-… value=1` (host) then
+`actor-state refresh ok Dragonfly_Strong_Spawner15 [Dragonfly_Strong_Spawner_C] index=0
+value=1 mySaveData=1->1 guids=1 cached=ok opened=n/a` (host), and on the peer
+`actor states applied=… confirmed=1`. **`confirmed=1` is the line R74 said was missing.**
+
+The `applied=` count stayed 0 for the run's own coin because the two instances are seeded
+from one save and have converged over eight sessions: every value the host publishes for a
+coin the peer already holds is correctly a no-op. The lane's *apply* path is proven by the
+entries the peer did not have (`n` grows 121 → 122 → 142 in step with the host) and by the
+intents it confirms; a controlled value difference needs a fresh save pair, which is the
+next round's first setup task.
+
+### R76. A bare `Fn f;` can "resolve" garbage, and it killed the peer
+
+The travel follow was rewritten (R77) and the first run died:
+
+```
+[2] INFO fn TeleportToLocation: not found
+[2] INFO signature K2_TeleportTo props=600 parms=1150895621 ret@32758
+[2] INFO     x沌→ : ・ @-1912931456 size=600 flags=000007EF
+… (process memory dumped as "parameters")
+[2] alive after the teleport: False
+```
+
+`struct Fn { void* fn; bool tried; LayoutResult sig; }` had no initialisers, and `Resolve`
+begins with `if (fn && sig.valid) return true`. A stack `Fn` therefore inherits whatever the
+previous frame left there: a non-null `fn` and a `valid` signature are believed, and the
+garbage `props` (600) then walked the fixed 160-entry array past its end — a stack overread
+that printed process memory and then faulted the process. `Fn`'s zeroes now live in the
+type, `Resolve` refuses a signature whose `props`/`parms_size` do not fit the arrays it
+indexes, and `LogSignature` clamps. Four other bare `Fn` locals already existed; all of them
+were one dirty stack frame away from the same crash.
+
+### R77. The follower's verb is the CARRIER's `Interact`, and the fs_PlayerChar signature in the docs does not exist
+
+`FS_PlayerChar.TeleportToLocation(Location Data, GreenFX)` — the signature every document
+quotes — is not on this build. The failure names it:
+
+```
+WARN fn TeleportToLocation: not found
+INFO travel: the carrier.Interact signature resolved
+INFO signature travel props=1 parms=8 ret@-1
+INFO     PlayerInteracting : ObjectProperty @0 size=8 flags=40000294
+INFO travel: Teleporter_GR.Interact ran on the local pawn (the game's own travel verb)
+INFO rig: travel lever -> Teleporter_GR/Ruins_Level_00 (LocationData resolved, dest field CurrentTeleporterTarget) TeleportToLocation ran=1
+```
+
+So the follow now packs the signature that IS there — by type, not by name: an object
+parameter is the `LocationData` (or the pawn when the name says "player"/"instigator"), a
+bool is `GreenFX`, a 12-byte struct is the destination point and a transform-sized one the
+whole transform — and tries, in order, the carrier's `TeleportToLocation`, the carrier's
+`Interact` (the verb a player pressing E runs), the pawn's `TeleportToLocation`, and
+`K2_TeleportTo`. Each signature is printed once, so the next refusal names itself.
+
+The announcement needed one more fix: the game's own verb clears the pawn's
+`CurrentTeleporterTarget` as it moves the player, so `TravelPump` read "(none)" and the
+partner never heard a destination. The rig lever now seeds the lane with the destination it
+just drove, one tick earlier than the game would:
+
+```
+[2] INFO travel: local destination Teleporter_GR/Ruins_Level_00 seq=6
+[1] INFO travel: followed Teleporter_GR/Ruins_Level_00 (seq 6) -- local pawn driven through TeleportToLocation
+```
+
+**`travel: followed` — the line Session 7 and 8 never saw.** PASS.
+
+### R78. The swing that hit nobody: the described lane yielded to a hit path that cannot land
+
+R74 recorded `damage: swing not sent … range=350 (GetAttackRange)` with no `player body
+hit`. Both symptoms have one cause, and it is not the range: the player-class proxy is
+spawned with **collision off** (R57), so this build's melee never resolves it, and
+`SwingAlreadyReal` still suppressed the described lane just because the enemy's
+`TargetPlayer` pointed at the body. The swing was described by neither lane.
+
+Two changes:
+
+* `SwingAlreadyReal` takes a third fact, `real_hit_proven`: the described lane stands down
+  only after `PlayerBodyObserve` has actually forwarded one hit from the proxy. Until then
+  `damage: guid=… is aimed at the proxy but the game's own hit path has never landed on it;
+  describing the swing instead` says so.
+* the range test measures to the **proxy body** (`ReadActorXform(g_puppetActor)`), not to the
+  interpolated player position. The body is the victim and is always there; the interpolated
+  position is a prediction that a few seconds without a row makes `frozen`, which refused the
+  whole lane (`havePos=0`, now with the interpolation's own verdict appended:
+  `interp=none|hidden|frozen|ok`). `EnemyTargetPump` lost the same gate, so the steering no
+  longer stops when the prediction does.
+
+Measured, host then peer, one swing:
+
+```
+[1] INFO enemy 91122467: TargetPlayer local player -> the remote body (read back) …
+[1] INFO damage sent guid=91122467 seq=11 melee amount=89.0 centi=8900 (Data.BaseDamage) range=250 (GetAttackRange)
+[2] INFO damage from enemy 91122467 melee: 89.0 applied hp 400.0 -> 311.0 (no local actor for the attacker)
+[2] INFO damage: player hp via Health (TryApplyDamage had no effect) 89.0 (TryApplyDamage returned 0.00) hp 400.0 -> 311.0
+```
+
+Twelve swings landed in the window (12 `damage sent`, 12 `damage from enemy … applied hp`).
+PASS on the described lane; `player body hit … -> sent` stays absent **by design** until the
+game's own hit lands once, and this run says it does not land on a collision-less proxy. The
+next step is the one R57 guessed at: give the proxy a query-only damage collision so the
+game's own hit path can carry it.
+
+### R79. The drop set: the tombstone crosses, and the key is stable enough to match
+
+Two defects in the loot lane, both measurable:
+
+* `DerivedLootKey` claimed a fresh coincidence ordinal on **every** ask (`DropOrdinals::Claim`
+  hands out 0, 1, 2 …), so the scan recorded `#0`, the probe and `near:loot` re-derived `#1`,
+  and the actor the player walked to was never the entry the ledger held — R69's "not the
+  same one in time". The key is remembered per actor now, so every caller agrees.
+* a drop's disappearance was tested only as "the object slot is empty", which lags a
+  `K2_DestroyActor` by a GC and never fires for a pickup that hides in place. `LootActorGone`
+  also accepts "was visible when recorded, hidden now", and `rig: drop probe` now prints
+  `lootKey=yes path=…` instead of `lootKey=no`, because `DevDropProbe` polled a lever that
+  latched `off` at the first frame (it polls like the kill lever now).
+
+Measured:
+
+```
+[2] INFO loot: local pickup 14FA3F0F#0 (?) -- tombstoned for the partner      (×8)
+[1] INFO loot: merged 1 entry rev=66 / loot: merged 14 entries rev=73          (×9)
+```
+
+The tombstone is produced and merged on both machines. `loot: hiding local drop … -- the
+partner took it` is **NOT-REACHED**, and the reason is structural, not a bug: the enemy was
+killed on one machine, so only that machine rolled the drop actor. The other holds the ledger
+entry with nothing to hide. A two-sided proof needs both machines to kill the same spawner
+(or the drop to be spawned on both from the enemy record), which is the next round's setup.
+
+### R80. The reliable lanes: acks now flow, and eight kinds stopped being re-sent forever
+
+R66's log carried `reliable send abandoned: kind=00000028` (and 0x23, 0x19) several times a
+second for the life of the session, and it was read as "the peer is not answering". It was
+not: the receiver was acking all along. The proof is now in the log on both sides, once per
+kind per second:
+
+```
+[2] DBG reliable kind=00000023 seq=15892 received; ack sent
+[2] DBG reliable kind=00000028 seq=15905 received; ack sent
+```
+
+with `abandoned=0` on both machines and three unmatched acks in the first seconds (the acks
+for the datagrams sent before the peer joined). The traffic that produced the abandonments
+was the malformed loot body storm (R75) plus the relay's 1 ms forwarding loop losing acks
+under it; with the body fixed the reliable lanes are clean. Kept as instrumentation:
+`ack for seq=N matched no slot (M so far)`.
+
+### R81. Item 6 (the OBJECTS lane) found nothing to carry in either map
+
+`ObjectSync=1` was on for the whole run and the lane published an empty set throughout:
+
+```
+[1] DBG objects sent rev=146 objects=0
+[2] (no line matches 'object sync: tracking|objects sent')
+```
+
+while the same machine's scan named `Brass_Sci_Chest guid=2b16d684-… savable=yes value=0
+opened=0` and `kind door Shop_Door_00_SM guid=e487497d-… opened=0`. That is the lane's own
+rule working: it skips any instance with a non-empty `GUIDs` array, and both of these are
+`savable=yes` with an authored GUID, so they belong to `ACTOR_STATES` (where the chest's
+`opened=0` is already visible in the scan). `SG_Chest_BP2` — the R67 chest with no GUID — is
+not in either map this run: `near:closedchest` resolved `Brass_Sci_Chest` after streaming
+`200_AQ`, and that one is a savable. The two halves that matter are therefore:
+`TotalChestsOpened` was **not** double-counted (`PASS` on both machines, no `2 -> 3`), a
+second interaction produced no second intent (`PASS`), and the objects lane itself is
+**NOT-REACHED** on this content — it needs a map with a GUID-less chest (or a placed
+`PickedUp` pickup), which `SG_Chest_BP2` is and this run did not load.
+
+### R82. Never-run features: what fired, and what does not exist in these maps
+
+* **Cutscene — NOT-REACHED.** `scan: loose cutscene none in this world` in every scan of
+  both maps, and `scan: loose sequence none in this world`. `RingLibraryBell` ran
+  (`rig: cheat RingLibraryBell ran=1`) and changed only a flag (`flag NEW LibraryBell1 = 1`),
+  so the cheat is not a cutscene. No cutscene manager was reachable to trigger.
+* **Movers — NOT-REACHED.** `scan: loose elevator none in this world`, `… platform none in
+  this world` on both machines; `near:elevator` resolved nothing. No mover class is loaded in
+  the hub or in the streamed area this run.
+* **Dialogue ends on death — PARTIAL.** A conversation started (`dialogue: local started`
+  on the peer, PASS) but `HurtMe` with the god floor removed did not take the player to 0, so
+  `dialogue: local death ended the conversation` never had a death to end it. The cheat's
+  damage is not lethal on this build (the same class as `TryApplyDamage returned 0.00`).
+* **Suspend guard — PARTIAL/PASS on the guard half.** The peer held the game's own block:
+  `suspend: peer holds BlockSuspendSaves=1 -- the game's timed suspend save must not advance
+  past the host`. The host then ran `SuspendSave` and `LoadSaveSlot` and really reloaded:
+  `save layer re-initialised (new active save)`, `travel: local destination
+  TempTeleporter/Ruins_Level_00 seq=5`, a new actor-state set. The repair lines
+  (`suspend: host re-applying …`, `suspend: partner re-applied …`) did not appear because the
+  reload was a *host* load, not a peer suspend load — §5.14 is written the other way round.
+* **Boss bar — NOT-REACHED.** `scan: loose boss none in this world`, `… whale none` in every
+  scan; `near:boss` resolved nothing.
+
+### R83. OPEN — the host process died at the end of the run
+
+`[1] process alive=False` after the `LoadSaveSlot` reload and ~250 live enemies. No `ERR`
+line, no WER report, exactly the silent-exit class of R65; the peer survived. The reloaded
+world re-created the whole enemy set (`enemy sync: 250 live enemies`) and every death it then
+detected wrote a savable and an intent — the reliable table filled (`no free reliable slot;
+dropping kind=00000020` dozens of times in one second, `actor-state intent given up … after 5
+attempts`). Whether the host faulted or exited needs a `-abslog`/WER read on the next run; the
+containment that matters for the lane (the swamped intent table reports itself rather than
+growing) is already right.
+
+### Bugs fixed this session
+
+* **Chunked containers are decoded as prefixes** (R75): `WorldFlags`, `Inventory`,
+  `ActorStates`, `Loot`, `Movers`; a partial trailing entry is still refused.
+* **The loot body's `n` is the ledger size and the pass walks a cursor** (R75) — the
+  68-drop ledger that neither end could read.
+* **`Fn` is safe to default-construct** and refuses an unusable signature; `LogSignature`
+  clamps (R76).
+* **The travel follow packs the real signature** and the carrier's `Interact` runs it; the
+  rig seeds the announcement the game clears (R77).
+* **The described-damage lane defers only to a proven hit path**, and both damage/steering
+  lanes measure the proxy body (R78).
+* **The loot key is stable per actor**, a hidden pickup is a pickup, and the drop probe's
+  lever polls (R79).
+* **The reliable ack path is observable** on both sides and the unmatched-ack case is
+  named (R80).
+
+### Verdicts, item by item
+
+| Item | Verdict | Key line |
+|---|---|---|
+| 1. Peer applies the host body, confirms, refreshes | **PASS on receive/confirm; NOT-REACHED on a value change** | `actor states applied=0 held=0 confirmed=1 failed=0 rev=562 n=142` + `actor-state refresh ok … opened=n/a` |
+| 2. In-world teleport follow | **PASS** | `Teleporter_GR.Interact ran on the local pawn` -> `travel: followed Teleporter_GR/Ruins_Level_00 (seq 6)` |
+| 3. Enemy attacks the partner body | **PASS (described lane)** | `TargetPlayer local player -> the remote body (read back)` -> `damage sent … 89.0 (Data.BaseDamage)` -> `damage from enemy 91122467 melee: 89.0 applied hp 400.0 -> 311.0` |
+| 4. Loot drop disappears on the other | **PARTIAL** | `loot: local pickup 14FA3F0F#0 (?) -- tombstoned for the partner` + `loot: merged 1 entry rev=66`; the hiding half needs both machines to hold the drop |
+| 5a. Cutscene | **NOT-REACHED** | `scan: loose cutscene none in this world` (both maps, every scan) |
+| 5b. Movers | **NOT-REACHED** | `scan: loose elevator none in this world` / `platform none` |
+| 5c. Dialogue ends on death | **PARTIAL** (conversation PASS, death not provoked) | `dialogue: local started` present; no death |
+| 5d. Suspend guard | **PARTIAL/PASS on the guard** | `suspend: peer holds BlockSuspendSaves=1 -- the game's timed suspend save must not advance past the host` |
+| 5e. Boss bar | **NOT-REACHED** | `scan: loose boss none in this world` / `whale none` |
+| 6. Objects lane: chest + placed pickup | **FAIL (NOT-REACHED on this content)**; the two invariants PASS | `objects sent rev=146 objects=0` while `Brass_Sci_Chest … savable=yes`; no `TotalChestsOpened 2 -> 3`, no second intent |
+| Session survival | **FAIL — the host exited at the end** (R83) | `[1] process alive=False`, peer PASS |
+
+### What this session cost, and what it settled
+
+Three of the four residuals Session 8 named are closed and each was a *different layer*: the
+actor-state receive side was the relay's decoder, the travel follow was a verb the documents
+invented, and the swing that hit nobody was a guard that trusted a hit path with no collision
+to land on. The fourth (loot) is now carried on the wire and its tombstone crosses; what is
+missing is a scenario where both machines hold the drop. The never-run features are not
+failures of the code: both maps in this run load no cutscene manager, no mover, no boss, and
+the only chests they expose are savables — the objects lane had nothing to carry, which the
+scan says out loud.
+

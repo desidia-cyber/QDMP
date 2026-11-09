@@ -138,6 +138,10 @@ struct LayoutResult {
     char     note[160];
 };
 
+// The parameter frame `Call` owns.  Named here because `Fn::Resolve` validates
+// `parms_size` against it before the call site is compiled.
+static const int kMaxFrameBytes = 1024;
+
 // Walk the FField chain of a struct with a given candidate layout.  `parmsOnly` keeps
 // only CPF_Parm properties (a Blueprint function also carries its locals as
 // properties).  Fault-contained: a wrong candidate offset must cost a candidate, not
@@ -512,7 +516,7 @@ inline bool Invoke(void* obj, void* function, const LayoutResult& sig,
     if (!obj || !function) { ErrSet(err, errCap, "null object or function"); return false; }
     if (!sig.valid) { ErrSet(err, errCap, "no validated signature: ", sig.note); return false; }
 
-    alignas(16) uint8_t buf[1024];
+    alignas(16) uint8_t buf[kMaxFrameBytes];
     int need = sig.parms_size;
     if (need < 0 || need > (int)sizeof(buf)) { ErrSet(err, errCap, "param block size out of range"); return false; }
     memset(buf, 0, sizeof(buf));
@@ -581,10 +585,18 @@ inline bool Invoke(void* obj, void* function, const LayoutResult& sig,
 // For calls made every frame (bone posing) the signature walk must happen once, and
 // for parameters wider than ArgList's raw slots (FTransform, FSoftObjectPtr) the caller
 // writes the block directly.  Fields are still located BY NAME from the signature.
+//
+// DEFAULT-INITIALISED, DELIBERATELY.  `Resolve` starts with `if (fn && sig.valid) return
+// true`, so an uninitialised `Fn` on the stack could "already be resolved": the garbage
+// `fn` was handed to `Call`/`LogSignature` and the garbage `props` walked the signature
+// array past its end.  Measured (Session 9): a bare `Fn f;` in the travel follow printed
+// `signature K2_TeleportTo props=600 parms=1150895621` -- a stack overread -- and the
+// peer process died.  A type that must be zeroed by the caller is a trap, so the zeroes
+// live here.
 struct Fn {
-    void*        fn;
-    bool         tried;
-    LayoutResult sig;
+    void*        fn = nullptr;
+    bool         tried = false;
+    LayoutResult sig = {};
 
     bool Resolve(void* objOrNull, const char* name, const void* cls = nullptr)
     {
@@ -599,6 +611,17 @@ struct Fn {
             fn = nullptr;
             return false;
         }
+        // A signature the type walk produced must also be USABLE: `props` indexes a fixed
+        // array and `parms_size` a fixed frame.  Anything outside those bounds is a decode
+        // of the wrong object, not a function this module may call.
+        if (sig.props < 0 || sig.props > kMaxProps || sig.parms_size < 0 ||
+            sig.parms_size > kMaxFrameBytes) {
+            QDLOG(LOG_WARN, "fn ", name, ": signature is not usable (props=", dec(sig.props),
+                  " parms=", dec(sig.parms_size), "); refusing to call it");
+            fn = nullptr;
+            sig.valid = false;
+            return false;
+        }
         return true;
     }
     int Off(const char* param) const
@@ -611,10 +634,10 @@ struct Fn {
 };
 
 struct Call {
-    alignas(16) uint8_t buf[1024];
+    alignas(16) uint8_t buf[kMaxFrameBytes];
     const Fn& f;
     bool bad;
-    explicit Call(const Fn& fn) : f(fn), bad(!fn.fn || !fn.sig.valid || fn.sig.parms_size > 1024)
+    explicit Call(const Fn& fn) : f(fn), bad(!fn.fn || !fn.sig.valid || fn.sig.parms_size > kMaxFrameBytes)
     {
         memset(buf, 0, sizeof(buf));
     }
@@ -659,7 +682,11 @@ inline void LogSignature(const char* label, const LayoutResult& l)
 {
     QDLOG(LOG_INFO, "signature ", label, " props=", dec(l.props), " parms=", dec(l.parms_size),
           " ret@", dec(l.ret_offset == 0xFFFF ? -1 : l.ret_offset));
-    for (int i = 0; i < l.props; ++i) {
+    // Clamped: this is the one place a signature is printed, and walking `props` entries of
+    // a signature that is NOT trusted is how a stack overread reached the log (Session 9:
+    // props=600 printed process memory, then the process died).
+    const int shown = (l.props < 0) ? 0 : (l.props > kMaxProps ? kMaxProps : l.props);
+    for (int i = 0; i < shown; ++i) {
         QDLOG(LOG_INFO, "    ", l.p[i].name, " : ", l.p[i].type, " @", dec(l.p[i].offset),
               " size=", dec(l.p[i].size), " flags=", hex32((uint32_t)l.p[i].flags));
     }

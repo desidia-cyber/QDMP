@@ -449,6 +449,12 @@ pub struct FlagEntry {
 }
 
 /// `WORLD_FLAGS` body (WIRE.md §3.6). The complete set, ordered by key.
+///
+/// `entries` is what THIS datagram carried. The header's `n` is the size of the
+/// sender's whole container, which can be larger: the body is chunked across ticks
+/// (WIRE.md §3.6) and `decode_body` stops when the body ends. The relay only
+/// validates and forwards the bytes, so the container size is not kept; `encode`
+/// writes a whole-container body (`n = entries.len()`).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct WorldFlags {
     pub rev: u32,
@@ -462,7 +468,9 @@ pub struct ActorEntry {
     pub value: i32,
 }
 
-/// `ACTOR_STATES` body (WIRE.md §3.7).
+/// `ACTOR_STATES` body (WIRE.md §3.7). Same chunking rule as [`WorldFlags`]: `entries`
+/// is this datagram's prefix of the container, which is why a 117-entry set arrives as
+/// several bodies that each decode on their own.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ActorStates {
     pub rev: u32,
@@ -478,7 +486,7 @@ pub struct ItemEntry {
     pub count: i32,
 }
 
-/// `INVENTORY` body (WIRE.md §3.8).
+/// `INVENTORY` body (WIRE.md §3.8). Chunked like [`WorldFlags`].
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Inventory {
     pub rev: u32,
@@ -1576,11 +1584,24 @@ pub fn decode_body(kind: Kind, bytes: &[u8]) -> Result<Body> {
                 flags: r.read_u8()?,
             })
         }
+        // The three absolute containers below are CHUNKED (WIRE.md §3.6): the header's
+        // `n` is the size of the sender's whole container, while one datagram carries a
+        // PREFIX of it and the rest follows on later ticks.  So the loop stops when the
+        // body ends, not at `n` -- reading `n` entries is the bug this fix removes: the
+        // everyday 117-entry SavableActorStates on this build is three datagrams, and
+        // every one of them was dropped here as "unexpected end of data", which is why
+        // no peer ever logged `actor states applied=`.
+        //
+        // A body that ends in the MIDDLE of an entry is still a framing error: the
+        // sender never splits an entry across datagrams.
         Kind::WorldFlags => {
             let rev = r.read_u32()?;
             let n = r.read_u16()? as usize;
             let mut entries = Vec::new();
             for _ in 0..n {
+                if r.is_empty() {
+                    break;
+                }
                 let name = read_str(&mut r)?;
                 let value = r.read_i32()?;
                 entries.push(FlagEntry { name, value });
@@ -1592,6 +1613,9 @@ pub fn decode_body(kind: Kind, bytes: &[u8]) -> Result<Body> {
             let n = r.read_u16()? as usize;
             let mut entries = Vec::new();
             for _ in 0..n {
+                if r.is_empty() {
+                    break;
+                }
                 let actor = read_guid(&mut r)?;
                 let value = r.read_i32()?;
                 entries.push(ActorEntry { actor, value });
@@ -1603,6 +1627,9 @@ pub fn decode_body(kind: Kind, bytes: &[u8]) -> Result<Body> {
             let n = r.read_u16()? as usize;
             let mut entries = Vec::new();
             for _ in 0..n {
+                if r.is_empty() {
+                    break;
+                }
                 let item_path = read_str(&mut r)?;
                 let count = r.read_i32()?;
                 entries.push(ItemEntry { item_path, count });
@@ -1799,7 +1826,11 @@ pub fn decode_body(kind: Kind, bytes: &[u8]) -> Result<Body> {
             let rev = r.read_u32()?;
             let n = r.read_u16()? as usize;
             let mut rows = Vec::with_capacity(n.min(MAX_ENEMY_ROWS));
+            // Same prefix rule as the other absolute containers (WIRE.md 3.6/3.17).
             for _ in 0..n {
+                if r.is_empty() {
+                    break;
+                }
                 rows.push(MoverRow {
                     id: read_guid(&mut r)?,
                     x: r.read_i32()?,
@@ -1816,7 +1847,13 @@ pub fn decode_body(kind: Kind, bytes: &[u8]) -> Result<Body> {
             let rev = r.read_u32()?;
             let n = r.read_u16()? as usize;
             let mut entries = Vec::with_capacity(n.min(MAX_ENEMY_ROWS));
+            // `n` is the sender's LEDGER size; the datagram carries a prefix (WIRE.md 3.6).
+            // Measured Session 9: a 68-entry ledger is 5 datagrams, and reading `n` entries
+            // made every one of them "malformed" -- the lane's tombstones never crossed.
             for _ in 0..n {
+                if r.is_empty() {
+                    break;
+                }
                 entries.push(LootEntry {
                     source_hash: r.read_u32()?,
                     drop_index: r.read_i32()?,
@@ -2286,6 +2323,61 @@ mod tests {
         let mut bytes = encode_body(&Body::Ack(Ack { seq: 1 })).unwrap();
         bytes.push(0xFF);
         assert!(matches!(decode_body(Kind::Ack, &bytes), Err(Error::TrailingBytes { .. })));
+    }
+
+    /// WIRE.md §3.6: `n` is the size of the sender's container, and one datagram carries
+    /// a PREFIX of it. Reading `n` entries unconditionally was measured on the rig: a
+    /// 117-entry SavableActorStates is two or three datagrams, and every one of them was
+    /// refused here as "unexpected end of data", so the relay dropped the whole
+    /// actor-state lane while every other body forwarded. This pins the prefix rule and
+    /// the fact that a body cut INSIDE an entry is still a framing error.
+    #[test]
+    fn a_chunked_container_body_decodes_the_entries_it_carries() {
+        // n = 117 (the whole container), two entries present.
+        let mut b: Vec<u8> = Vec::new();
+        b.extend_from_slice(&9u32.to_le_bytes());
+        b.extend_from_slice(&117u16.to_le_bytes());
+        for i in 0..2u32 {
+            b.extend_from_slice(sample_guid().as_bytes());
+            b.extend_from_slice(&(i as i32).to_le_bytes());
+        }
+        let body = decode_body(Kind::ActorStates, &b).expect("a chunk must decode");
+        match body {
+            Body::ActorStates(s) => {
+                assert_eq!(s.rev, 9);
+                assert_eq!(s.entries.len(), 2);
+                assert_eq!(s.entries[1].value, 1);
+            }
+            other => panic!("expected actor states, got {other:?}"),
+        }
+
+        // The same rule for the other two chunked containers.
+        let mut f: Vec<u8> = Vec::new();
+        f.extend_from_slice(&5u32.to_le_bytes());
+        f.extend_from_slice(&40u16.to_le_bytes());
+        f.extend_from_slice(&1u16.to_le_bytes());
+        f.extend_from_slice(b"A");
+        f.extend_from_slice(&7i32.to_le_bytes());
+        match decode_body(Kind::WorldFlags, &f).expect("a flags chunk must decode") {
+            Body::WorldFlags(w) => assert_eq!(w.entries.len(), 1),
+            other => panic!("expected world flags, got {other:?}"),
+        }
+
+        let mut i: Vec<u8> = Vec::new();
+        i.extend_from_slice(&3u32.to_le_bytes());
+        i.extend_from_slice(&9u16.to_le_bytes());
+        i.extend_from_slice(&9u16.to_le_bytes());
+        i.extend_from_slice(b"/Game/A.B");
+        i.extend_from_slice(&2i32.to_le_bytes());
+        match decode_body(Kind::Inventory, &i).expect("an inventory chunk must decode") {
+            Body::Inventory(v) => assert_eq!(v.entries.len(), 1),
+            other => panic!("expected inventory, got {other:?}"),
+        }
+
+        // Cut in the MIDDLE of the second entry: still malformed, not a silent short read.
+        let mut truncated = b;
+        truncated.truncate(truncated.len() - 3);
+        assert!(decode_body(Kind::ActorStates, &truncated).is_err());
     }
 
     #[test]

@@ -212,10 +212,21 @@ public:
     void Ack(uint32_t seq)
     {
         AcquireSRWLockExclusive(&lock_);
+        bool hit = false;
         for (int i = 0; i < kReliableSlots; ++i) {
-            if (rel_[i].used && rel_[i].seq == seq) { rel_[i].used = false; break; }
+            if (rel_[i].used && rel_[i].seq == seq) { rel_[i].used = false; hit = true; break; }
         }
         ReleaseSRWLockExclusive(&lock_);
+        if (!hit) {
+            // A stale or unmatched ack is not an error, but four kinds losing every ack is:
+            // the count is what separates "the receiver never answered" from "we never
+            // matched the answer".
+            static volatile LONG miss = 0;
+            LONG n = InterlockedIncrement(&miss);
+            if (n <= 3 || (n % 200) == 0) {
+                QDLOG(LOG_DEBUG, "ack for seq=", dec(seq), " matched no slot (", dec(n), " so far)");
+            }
+        }
     }
 
     // ---- receiving --------------------------------------------------------
@@ -384,6 +395,12 @@ private:
                 wire::Writer aw(ack, sizeof(ack));
                 aw.U32(e.seq);
                 SendUnreliableRaw(wire::K_ACK, ack, aw.len);
+                // The receiver's half of the reliable handshake, once per kind per second:
+                // without it a sender that abandons every copy cannot be told apart from a
+                // receiver that never saw the datagram (measured Session 9: host->peer
+                // TRAVEL/SUSPEND/ENEMY_DETAIL never acked while every unreliable lane
+                // arrived).
+                AckProbe(e.kind, e.seq);
                 if (SeenReliable(e.seq)) break;
                 QueuePacket(e, r);
                 break;
@@ -395,7 +412,21 @@ private:
         }
     }
 
+    // One DEBUG line per reliable kind per second on the RECEIVING side.  A sender that
+    // abandons every copy of a kind cannot tell "the datagram never arrived" from "the ack
+    // never came back" without this, and the two are different bugs.
+    void AckProbe(uint8_t kind, uint32_t seq)
+    {
+        uint32_t now = Now();
+        static uint32_t lastMs[256] = {0};
+        if ((uint32_t)(now - lastMs[kind]) < 1000) return;
+        lastMs[kind] = now;
+        QDLOG(LOG_DEBUG, "reliable kind=", hex32(kind), " seq=", dec(seq),
+              " received; ack sent");
+    }
+
     // Duplicate suppression for reliable kinds: the last 64 seqs delivered.  The seq
+    // space is per sender and there is one remote sender per session.  The seq
     // space is per sender and there is one remote sender per session.
     bool SeenReliable(uint32_t seq)
     {
