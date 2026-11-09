@@ -263,3 +263,28 @@ The lines that answer most questions, verbatim:
   accept that anyone on the path can read and forge the traffic.
 - **One writer.**  `HostAuthoritative=1` is not optional.  Two writers on one progression
   container is how both saves become wrong instead of one becoming stale.
+- **A hard map load only lands you in a real world.**  `900_SipehaWorld` and
+  `990_B33sment` place the arriving player (marker, then partner).  A streaming area such as
+  `210_AQ_underground` or `780_SZ_Depths` starts no GameMode when its package is loaded on
+  its own, so the game spawns **no pawn at all** and the mod reports
+  `arrive: <map> ended with no pawn to place`.  Do not use the hard-load path to reach
+  those areas; a human should walk/teleport in-game instead.
+- **The hub teleporter does not take the E press in this save.**  Both `TempTeleporter`
+  and `Teleporter_GR` answer `IsInteractible=0` even at point-blank range and after
+  `UnlockAllTeleporters`; the `Interact` event runs but no travel verb follows.  Fast travel
+  therefore has to be done from the game's own UI, not by asking the mod to press the node.
+- **The shop door is interactible but does not open on a press.**  `Shop_Door_00_SM` says
+  `IsInteractible=1`, the real interact event runs, its own `Interact` runs, and
+  `opened=0` stays — even with `GiveAllKeys`.  The lane is fine (a pickup's
+  `actor-state refresh ok` lands on the host); the door's own handler is the open question.
+- **Loot hiding needs the SAME enemy on both machines.**  In `900_SipehaWorld` both
+  machines hold the same `Sipeha_BP_C` (`guid=BB49E51D`), but that enemy drops nothing.  In
+  the hub each machine's spawner enemy has a different authored GUID
+  (`Mossy_Fighter_BP_C A8D5C9E1` vs `186F6D14`), so the drop keys cannot match and
+  `loot: hiding local drop` will not fire.  If you see the drop vanish on both screens but
+  no hiding line, this is why.
+- **Kill lists diverge in the hub, by design.**  In a 5-minute soak the host recorded 104
+  deaths and the peer 49 (105 unique GUIDs): each machine runs its own spawner enemies.
+  This is not a lost row — both processes survived with zero errors and the only warnings
+  were the lanes' own stale-actor self-heals.  Compare kill lists only in a world where the
+  two machines hold the same authored enemy GUID.

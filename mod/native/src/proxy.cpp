@@ -10270,6 +10270,44 @@ void* RigFindNear(const char* sub, float* distOut, ActorXform* xfOut, char* name
     ActorXform me;
     if (!ReadActorXform(g_localPawn, &me)) return nullptr;
 
+    // AN EXACT INSTANCE NAME IS AN INSTRUCTION ABOUT ONE ACTOR, and it must be honoured
+    // before the curated KIND walks.  Session 13 measured the failure this prevents:
+    // `near:TempTeleporter` contains "teleport", so the curated `teleport` class walk ran
+    // first and returned the nearest `Teleporter_C` -- `Teleporter_GR`, a different actor.
+    // The press then drove the wrong object and its gate was read as if it belonged to the
+    // requested one.  Exact (case-insensitive) instance name first; the kind walks stay the
+    // fallback for "some chest/door/teleporter".
+    {
+        void* actorBase = FindClassByName("Actor");
+        void* world = GWorldPtr();
+        if (actorBase && world) {
+            int count = ObjectCount();
+            for (int i = 0; i < count; ++i) {
+                void* o = ObjectAt(i);
+                if (!o || !LooksLikeUObject(o)) continue;
+                char nm[64] = "";
+                if (FNameToString(ObjNameRaw(o), nm, sizeof(nm)) <= 0) continue;
+                if (_stricmp(nm, sub) != 0) continue;
+                bool member = false;
+                __try {
+                    member = IsSubclassOf(ObjClass(o), actorBase) &&
+                             ActorOuterReachesWorld(o, world);
+                } __except (EXCEPTION_EXECUTE_HANDLER) { member = false; }
+                if (!member) continue;
+                ActorXform x;
+                if (!ReadActorXform(o, &x)) continue;
+                if (distOut) {
+                    float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
+                    *distOut = sqrtf(dx * dx + dy * dy + dz * dz);
+                }
+                if (xfOut) *xfOut = x;
+                if (nameOut && nameCap > 0) lstrcpynA(nameOut, nm, nameCap);
+                QDLOG(LOG_INFO, "rig: near '", sub, "' matched the actor by exact name");
+                return o;
+            }
+        }
+    }
+
     void* best = nullptr;
     float bestD = -1.0f;
     ActorXform bestXf = {};
