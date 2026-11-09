@@ -151,6 +151,11 @@ travel::Board      g_travel;
 // in-world follow and a world switch have different memory (one remembers a
 // destination actor, the other a map load and an arrival).
 travel::HardBoard  g_hard;
+// Where the player STANDS after a hard transition (qdtravel.h ArrivalBoard).  A third
+// board, because a load that succeeded and a player that arrived are two different
+// facts: the load completes when the world changes, while the pawn the engine gives a
+// PlayerStart-less world has to be placed on the world's own arrival marker.
+travel::ArrivalBoard g_arrival;
 uint32_t           g_travelSeq = 0;
 dialogue::DialogueLock g_dialogue;
 
@@ -1255,6 +1260,9 @@ bool g_peerInGameplay = false;   // from the peer's row flags (bit5 = menu)
 // object follows the nearer player, and the partner has no pawn here, so its own row is
 // the only position available.
 float g_peerPos[3] = {0, 0, 0};
+// When that row arrived.  A hard transition makes every earlier row a position in
+// ANOTHER world, so the arrival placement only uses a row it can date to after the load.
+uint32_t g_peerPosMs = 0;
 
 // The engine spawn pair (B7: the game has no character-construction path of its own).
 typedef void* (*FnBeginDeferred)(void* worldContext, void* actorClass, const void* transform,
@@ -3863,12 +3871,30 @@ void MapPackagePath(const char* map, char* out, int cap)
 // A world load tears down the actors the enemy records point at; see EnemyDetectDeaths.
 uint32_t g_enDeathSuppressUntil = 0;
 
+// The arrival half (qdtravel.h ArrivalBoard).  Defined with the other actor walks, below
+// `RigNearestOfClass`: the destination world's arrival marker is found the same way the
+// rig finds a checkpoint, so it lives with that code and these are the two entry points.
+void ArrivalArm(const char* map, uint32_t now);
+void ArrivalPump(uint32_t now);
+
 bool FollowHardTravel(const char* map, char* err, int errCap)
 {
     if (err && errCap > 0) err[0] = 0;
     if (!map || !map[0] || !stream::PlausibleLevelName(map)) {
         ErrSet(err, errCap, "not a plausible map name: ", map ? map : "?");
         return false;
+    }
+    // The one refusal that protects the GAME, not the session: see
+    // qd::travel::RefuseCurrentWorld (Session 11 R92 -- a fault with no WINMM frame in
+    // the stack).  Checked here rather than in each caller so a new caller cannot add a
+    // third way to fault the game.
+    {
+        char here[stream::kMaxNameLen];
+        LocalMapName(here, sizeof(here));
+        if (travel::RefuseCurrentWorld(map, here)) {
+            ErrSet(err, errCap, "already in ", map);
+            return false;
+        }
     }
     if (!ReflectionReady()) {
         ErrSet(err, errCap, "property layout not validated: ", Lay().note);
@@ -3969,6 +3995,19 @@ void TravelPump(uint32_t now)
 
     char local[stream::kMaxNameLen];
     LocalMapName(local, sizeof(local));
+    // A hard transition is over for the world-load half the moment the name changes; the
+    // player half -- whether the engine gave the arriving player a place to stand -- is
+    // decided by ArrivalPump, which is armed here.  It is armed from the map NAME, not
+    // from the hard board's verdict, because the game's own transitions (OpenLevel from a
+    // menu, a death, a cheat) never pass through the board and strand the player the
+    // same way.
+    {
+        static char arrivalMap[stream::kMaxNameLen] = "";
+        if (!travel::SameText(local, arrivalMap)) {
+            travel::CopyText(arrivalMap, sizeof(arrivalMap), local);
+            if (local[0]) ArrivalArm(local, now);
+        }
+    }
     bool changed = g_map.OnLocal(local, now);
     if (Cfg().travel_sync && g_hard.OnLocalMap(local, now)) {
         ++g_travelSeq;
@@ -4274,6 +4313,20 @@ struct EnemyRec {
 };
 EnemyRec        g_en[256];
 int             g_enN = 0;
+// The world the enemy records were built in; EnemyPump sets it when it purges them.
+//
+// DispatchInbound runs BEFORE the pumps (the same ordering that made OnTravel read the
+// world itself), so the frame after a hard load can deliver rows for a world whose actors
+// the records still name.  `ObjectIsLive` on a FREED UObject is not a guard -- it reads
+// [obj+0x0C] and faults on unmapped memory.  Measured Session 12: the follower died at
+// AdoptUnknownKey+0x12E (reading 0x0000020212904d8c) from OnEnemyRows from DispatchInbound
+// from HK_Tick, 116 s in, in the frame the world changed.
+void*           g_enWorld = nullptr;
+bool EnemyRecordsTrustworthy()
+{
+    void* w = GWorldPtr();
+    return w && g_enWorld == w;
+}
 void*           g_enemyBaseCls = nullptr;
 uint32_t        g_enPass = 1;
 int             g_enCursor = 0;
@@ -5807,6 +5860,10 @@ void EnemyDetailPump(uint32_t now)
 // The follower applies the owner's animation and status to its frozen copy.
 void OnEnemyDetail(wire::Reader& r, uint32_t now)
 {
+    // The records below name the PREVIOUS world's actors until EnemyPump purges them; a
+    // detail for a key from that world must not be dereferenced (Session 12).  The lane is
+    // state-plus-change, so dropping this frame costs nothing.
+    if (!EnemyRecordsTrustworthy()) return;
     wire::EnemyDetailBody d;
     if (!wire::ReadEnemyDetail(r, &d)) return;
     EnemyRec* er = EnemyByGuid(d.guid);
@@ -6142,6 +6199,7 @@ void BossPump(uint32_t now)
 void OnBoss(wire::Reader& r, uint32_t now)
 {
     if (!Cfg().enemy_sync) return;
+    if (!EnemyRecordsTrustworthy()) return;    // the bars below belong to the previous world
     wire::BossBody b;
     if (!wire::ReadBoss(r, &b)) return;
 
@@ -6514,6 +6572,11 @@ bool AdoptUnknownKey(const wire::EnemyRow& e, uint32_t now)
 
 void OnEnemyRows(wire::Reader& r, uint32_t now)
 {
+    // Same guard as OnEnemyDetail, and this is the path the crash was measured on: a row
+    // for a key this machine does not know sends AdoptUnknownKey over every local record,
+    // and those records still name the world that just went away.  Rows are unreliable and
+    // repeated, so a dropped packet costs one tick of freshness and no state.
+    if (!EnemyRecordsTrustworthy()) return;
     uint16_t n = 0;
     if (!wire::ReadEnemyHeader(r, &n)) return;
     for (int i = 0; i < n && i < 32; ++i) {
@@ -6548,6 +6611,7 @@ void OnEnemyRows(wire::Reader& r, uint32_t now)
 void ApplyEnemyHitIntent(const wire::IntentBody& b)
 {
     if (!Cfg().enemy_sync) return;
+    if (!EnemyRecordsTrustworthy()) return;    // a hit for the previous world's actor
     EnemyRec* r = EnemyByGuid(b.guid);
     if (!r || !ObjectIsLive(r->actor) || EnemyDead(r->actor)) return;
     float hp = 0, mx = 0;
@@ -6563,6 +6627,7 @@ void ApplyEnemyHitIntent(const wire::IntentBody& b)
 void ApplyEnemyRecordIntent(const wire::IntentBody& b)
 {
     if (!Cfg().enemy_sync) return;
+    if (!EnemyRecordsTrustworthy()) return;    // the record names the previous world's enemy
     EnemyRec* r = EnemyByGuid(b.guid);
     QdGuid g = {b.guid[0], b.guid[1], b.guid[2], b.guid[3]};
     float respawn = (float)b.value / 100.0f, hp = (float)b.value2 / 100.0f;
@@ -6902,6 +6967,7 @@ void EnemyPump(uint32_t now)
         // death out of a half-built world.
         g_enDeathSuppressUntil = now + 3000;
         g_enN = 0; g_enCursor = 0;
+        g_enWorld = world;          // the records below name THIS world from now on
         g_propCacheN = 0;           // classes reload with the world
         g_enemyBaseCls = nullptr;
         g_clsYesN = g_clsNoN = 0;
@@ -9380,6 +9446,7 @@ void DispatchInbound(const InboundPacket& p, uint32_t now)
         g_peerPos[0] = s.px;
         g_peerPos[1] = s.py;
         g_peerPos[2] = s.pz;
+        g_peerPosMs = now;
         bool inGame = (row.flags & 0x20) == 0;
         if (inGame != g_peerInGameplay) {
             g_peerInGameplay = inGame;
@@ -9979,11 +10046,225 @@ void* RigNearestOfClass(const char* clsName, const char* sub, const ActorXform& 
     return best;
 }
 
+// ---------------------------------------------------------------------------
+// The arrival: where the player stands in a world that places no PlayerStart
+// ---------------------------------------------------------------------------
+// qdtravel.h's ArrivalBoard owns the decision and says why it exists; this half only
+// answers the questions the decision needs -- is the local pawn still at the identity
+// spawn, where is the partner, and does the destination world place an arrival marker --
+// and performs ONE placement.
+//
+// The marker classes are the game's own, in the order `FS_PlayerChar` resolves them:
+// `PlayerTeleportTargetPos` (900_SipehaWorld) and `B33smentTeleportPoint` (990_B33sment).
+// `PlayerStart` is included because an engine world that DOES place one never needs this
+// path, while a world whose only start is a subclass this build names differently would
+// otherwise be called "no anchor".  A `Checkpoint_C` is deliberately NOT used: measured
+// Session 6, a checkpoint in an unloaded area resolved 31 km away and the pawn fell
+// there, which is worse than the origin.
+struct ArrivalMarker {
+    void*  actor;
+    ActorXform xf;
+    char   cls[64];
+};
+
+bool FindArrivalMarker(ArrivalMarker* out)
+{
+    // The game's own arrival markers, in the order `FS_PlayerChar` resolves them: one
+    // `PlayerTeleportTargetPos` in `900_SipehaWorld`, one `B33smentTeleportPoint` in
+    // `990_B33sment` (cooked export tables).  `PlayerStart` is the engine's own, included
+    // for a world whose start is a subclass this build names differently.
+    static const char* const kClasses[] = {
+        "PlayerTeleportTargetPos_C", "B33smentTeleportPoint_C", "PlayerStart"
+    };
+    void* world = GWorldPtr();
+    if (!world || !out) return false;
+
+    // Nearest to the IDENTITY spawn, so both machines pick the same actor: the local pawn
+    // is at the origin in exactly the case this runs.  Written as its own walk rather than
+    // `RigNearestOfClass` because that returns ONE actor and the class default object sits
+    // at the origin -- distance 0, so it always wins, and the world test below (which is
+    // what rejects it) would then discard the class instead of the candidate.  Measured
+    // Session 12: that is exactly why the leader was never placed.
+    int count = ObjectCount();
+    for (unsigned k = 0; k < sizeof(kClasses) / sizeof(kClasses[0]); ++k) {
+        void* base = FindClassByName(kClasses[k]);
+        if (!base) continue;
+        void*   best = nullptr;
+        float   bestD = -1.0f;
+        ActorXform bestX = {};
+        for (int i = 0; i < count; ++i) {
+            void* o = ObjectAt(i);
+            if (!o || !LooksLikeUObject(o)) continue;
+            bool member = false;
+            __try { member = IsSubclassOf(ObjClass(o), base); }
+            __except (EXCEPTION_EXECUTE_HANDLER) { continue; }
+            if (!member) continue;
+            if (!ActorOuterReachesWorld(o, world)) continue;   // a CDO / another world
+            ActorXform x;
+            if (!ReadActorXform(o, &x)) continue;
+            float d = sqrtf(x.px * x.px + x.py * x.py + x.pz * x.pz);
+            if (!(d == d)) continue;
+            if (bestD >= 0.0f && d >= bestD) continue;
+            bestD = d; best = o; bestX = x;
+        }
+        if (!best) continue;
+        out->actor = best;
+        out->xf = bestX;
+        travel::CopyText(out->cls, sizeof(out->cls), kClasses[k]);
+        return true;
+    }
+    return false;
+}
+
+// The marker is searched again on this period rather than once: a world load is
+// asynchronous, and the placed actors are not in the object graph at the instant the map
+// name becomes readable.  Measured Session 12: a one-shot search latched its failure on the
+// first poll and the leader was never placed.
+static const uint32_t kArrivalMarkerRetryMs = 3000;
+ArrivalMarker g_arriveAnchor;
+uint32_t      g_arriveAnchorTryMs = 0;
+bool          g_arriveAnchorOk = false;
+bool          g_arriveAnchorSaid = false;
+// The pawn this machine had BEFORE the transition.  An arriving player is always a NEW
+// object (the world it belonged to was destroyed), so seeing the previous one is "no pawn
+// yet", whatever its outer chain says.  Measured Session 12: the leader's first poll after
+// the map name changed read the HUB pawn at 4106,-1744, concluded "the world placed the
+// player", and never placed it.  It is recorded by HK_Tick at the moment the world pointer
+// changes -- NOT when the map name is noticed, because by then a fast load can already have
+// spawned the new pawn, and a guard that names it would ignore the only pawn there is.
+void*         g_arrivePrevPawn = nullptr;
+
+void ArrivalArm(const char* map, uint32_t now)
+{
+    if (!Cfg().travel_sync) return;
+    if (!map || !map[0]) return;
+    // The first observation of a world (a boot, a title screen) is not a transition this
+    // machine made; the board's own "pawn is standing" test ends it either way, but
+    // arming on every boot would let a stale window outlive the transition.
+    g_arriveAnchorTryMs = 0;
+    g_arriveAnchorOk = false;
+    g_arriveAnchorSaid = false;
+    g_arrival.Arm(map, now);
+    QDLOG(LOG_INFO, "arrive: armed for ", map, " -- a hard transition just landed here");
+}
+
+void ArrivalPump(uint32_t now)
+{
+    if (!Cfg().travel_sync) return;
+    if (!g_arrival.Armed()) return;
+    static uint32_t lastPoll = 0;
+    if (now - lastPoll < 1000) return;
+    lastPoll = now;
+
+    // A world load clears the pawn; the board waits rather than deciding on a null.  The
+    // pawn must also belong to the world we are in NOW: for a moment after the swap, the
+    // LocalPlayer chain can still resolve the PREVIOUS world's pawn, and its position (far
+    // from the origin, because it is where the player was standing before the load) reads
+    // as "the game placed the player somewhere" and ends the arrival before it starts.
+    // Measured Session 12: that is why the LEADER was never placed while the follower was.
+    void* pawn = g_localPawn;
+    if (pawn && pawn == g_puppetActor) pawn = nullptr;
+    if (pawn && pawn == g_arrivePrevPawn) pawn = nullptr;    // the previous world's player
+    void* worldNow = GWorldPtr();
+
+    travel::ArrivalInput in;
+    memset(&in, 0, sizeof(in));
+    in.havePawn = pawn && IsGameplayPawn(pawn) && ActorOuterReachesWorld(pawn, worldNow);
+    char map[stream::kMaxNameLen];
+    LocalMapName(map, sizeof(map));
+    in.localMap = map;
+    in.peerMap = g_map.Peer();
+
+    ActorXform me = {};
+    if (in.havePawn) {
+        if (!ReadActorXform(pawn, &me)) in.havePawn = false;
+        else { in.px = me.px; in.py = me.py; in.pz = me.pz; }
+    }
+
+    // The partner's row: same world, fresh, and standing somewhere real.  Offset 90 cm on
+    // +X so two capsules do not share one point; a co-op follower arriving BESIDE the
+    // partner is the point of the lane.
+    in.havePeer = g_peerInGameplay && g_peerPosMs != 0;
+    if (in.havePeer) {
+        in.peerAgeMs = (uint32_t)(now - g_peerPosMs);
+        in.peerRowMs = g_peerPosMs;
+        in.peerX = g_peerPos[0] + 90.0f;
+        in.peerY = g_peerPos[1];
+    }
+
+    // Decide with no marker first: the common arrival has a partner to stand beside, and
+    // then no actor walk happens at all.  AR_WAIT is the only verdict a marker can change.
+    travel::ArriveVerdict v = g_arrival.Decide(now, in);
+    if (v == travel::AR_WAIT) {
+        if (!g_arriveAnchorOk &&
+            (g_arriveAnchorTryMs == 0 || now - g_arriveAnchorTryMs >= kArrivalMarkerRetryMs)) {
+            g_arriveAnchorTryMs = now;
+            memset(&g_arriveAnchor, 0, sizeof(g_arriveAnchor));
+            g_arriveAnchorOk = FindArrivalMarker(&g_arriveAnchor);
+            if (g_arriveAnchorOk) {
+                QDLOG(LOG_INFO, "arrive: ", map, " places the arrival marker ", g_arriveAnchor.cls,
+                      " at ", flt(g_arriveAnchor.xf.px, 0), ",", flt(g_arriveAnchor.xf.py, 0), ",",
+                      flt(g_arriveAnchor.xf.pz, 0));
+            } else if (!g_arriveAnchorSaid) {
+                g_arriveAnchorSaid = true;
+                QDLOG(LOG_INFO, "arrive: ", map, " places no arrival marker of its own "
+                      "(PlayerTeleportTargetPos / B33smentTeleportPoint / PlayerStart); "
+                      "waiting for the partner's position");
+            }
+        }
+        if (g_arriveAnchorOk) {
+            in.haveAnchor = true;
+            in.anchorX = g_arriveAnchor.xf.px;
+            in.anchorY = g_arriveAnchor.xf.py;
+            in.anchorWhy = g_arriveAnchor.cls;
+            v = g_arrival.Decide(now, in);
+        }
+    }
+    if (v == travel::AR_WAIT) return;
+    if (v == travel::AR_NONE) return;
+    if (v == travel::AR_DONE) {
+        // Never silent: "no placement" has two very different causes (the world has a
+        // PlayerStart and placed the player, or the window closed with nothing to aim at)
+        // and the position says which world the pawn belonged to.
+        if (g_arrival.MarkSaid()) {
+            if (g_arrival.Tries() > 0)
+                QDLOG(LOG_INFO, "arrive: ", map, " settled (", dec(g_arrival.Tries()),
+                      " placement(s))");
+            else if (in.havePawn)
+                QDLOG(LOG_INFO, "arrive: ", map, " needs no placement (the world placed the "
+                      "player at ", flt(in.px, 0), ",", flt(in.py, 0), ")");
+            else
+                QDLOG(LOG_INFO, "arrive: ", map, " ended with no pawn to place");
+        }
+        return;
+    }
+
+    float tx = g_arrival.TargetX(), ty = g_arrival.TargetY(), tz = 0.0f;
+    const char* why = g_arrival.Why();
+    if (v == travel::AR_PLACE_PEER) {
+        // The partner's row is its capsule CENTRE, the same measurement this pawn's
+        // transform is, so Y and Z carry over directly.
+        tz = g_peerPos[2];
+    } else {
+        tz = g_arriveAnchor.xf.pz;
+    }
+
+    bool ok = SetActorXform(pawn, tx, ty, tz, me.yaw);
+    g_arrival.Applied(ok, now);
+    if (ok && g_arrival.MarkSaid()) {
+        QDLOG(LOG_INFO, "arrive: ", map, " placed the player at ", why, " ",
+              flt(tx, 0), ",", flt(ty, 0), ",", flt(tz, 0),
+              " (the engine spawned it at the origin: this world places no PlayerStart)");
+    } else if (!ok && g_arrival.MarkSaid()) {
+        QDLOG(LOG_WARN, "arrive: could not place the player at ", why, " in ", map,
+              " (attempt ", dec(g_arrival.Tries()), " of ", dec(travel::kArrivalMaxTries), ")");
+    }
+}
+
 // The nearest live actor of any kind whose name matches, out of the two sets a scenario
 // can actually use: the save's savable actors (doors, chests, barricades, keys, pickups)
 // and the enemies this machine knows about.
-void* RigFindNear(const char* sub, float* distOut, ActorXform* xfOut, char* nameOut, int nameCap)
-{
+void* RigFindNear(const char* sub, float* distOut, ActorXform* xfOut, char* nameOut, int nameCap){
     if (distOut) *distOut = -1.0f;
     if (!sub || !sub[0]) return nullptr;
     ActorXform me;
@@ -11924,6 +12205,40 @@ void PeTraceObserve(void* self, void* func)
     QDLOG(LOG_INFO, "PE new: ", fn, "  on ", ob);
 }
 
+// A live lever for the trace above, because the question it answers is "what does THIS
+// press run": `qd.petrace` 1 = start a silent baseline from now, 2 = log every new
+// (object, function) pair from the baseline (3 = also every call on the local pawn in
+// the 1.5 s after one of its input events), 0 = off.  Measured Session 12: the game's
+// own teleport path is only observable this way, since a key press runs Blueprint
+// functions no document names.
+void DevPeTraceLever(uint32_t now)
+{
+    static uint32_t lastPoll = 0;
+    static int last = -1;
+    if (now - lastPoll < 1000) return;
+    lastPoll = now;
+    int v = DevLever("QDCOOP_TEST_PETRACE", "qd.petrace", 0, 1);
+    if (v == last) return;
+    last = v;
+    if (v <= 0) {
+        g_peTraceState = 0;
+        QDLOG(LOG_INFO, "PE trace: off");
+        return;
+    }
+    if (v == 1) {
+        memset(g_peSeen, 0, sizeof(g_peSeen));
+        g_peSeenCount = 0;
+        g_peWide = false;
+        g_peTraceState = 1;
+        QDLOG(LOG_INFO, "PE trace: silent baseline from now; set qd.petrace=2 to log new pairs");
+        return;
+    }
+    g_peWide = (v >= 3);
+    g_peTraceState = 2;
+    QDLOG(LOG_INFO, "PE trace: logging new pairs from a baseline of ",
+          dec((int)g_peSeenCount), (g_peWide ? " (wide: local pawn calls after an input)" : ""));
+}
+
 void DevProbe(uint32_t now)
 {
     static int on = DevEnvInt("QDCOOP_PROBE", 0);
@@ -12541,7 +12856,9 @@ bool HK_Tick(void* engineLoop)
     {
         void* w = GWorldPtr();
         static void* pawnWorld = nullptr;
-        if (w != pawnWorld) { pawnWorld = w; g_localPawn = nullptr; }
+        // The pawn from the world being replaced is remembered BEFORE it is dropped: the
+        // arrival board treats it as "not the arriving player" (see g_arrivePrevPawn).
+        if (w != pawnWorld) { pawnWorld = w; g_arrivePrevPawn = g_localPawn; g_localPawn = nullptr; }
         void* p = LocalPawn();
         if (p == g_puppetActor) p = nullptr;
         g_localPawn = p;
@@ -12568,6 +12885,7 @@ bool HK_Tick(void* engineLoop)
     DevAutoLoad(now);
     LocalEquipPump(now);
     DevAvatarTest(now);
+    DevPeTraceLever(now);
     DevProbe(now);
     DevProbe2(now);
     DevGive(now);
@@ -12592,6 +12910,7 @@ bool HK_Tick(void* engineLoop)
     DevUseLever(now);
     DevDropProbe(now);
     TravelPump(now);
+    ArrivalPump(now);
     StreamPump(now);
     EnemyPump(now);
     ActorStatePump(now);
@@ -12712,11 +13031,43 @@ void UseObserve(void* self, void* func)
     if (armedAt && t - armedAt < 400) { g_localUsed = true; armedAt = 0; }
 }
 
+// The GAME's own travel half, observed once per verb (Session 12).  `LoadMapWithLoading-
+// Screen` has no Blueprint importer and no native caller, so if the game ever performs a
+// cross-world travel it must be through one of the player's own verbs -- and the design
+// needs to know which one, because that is the only place a spawn could be captured.
+// One line per verb, on the local pawn only, so it costs nothing when it never runs.
+void TravelVerbObserve(void* self, void* func)
+{
+    if (!self || self != g_localPawn || !func) return;
+    static void* seen[8] = {nullptr};
+    static int   seenN = 0;
+    for (int i = 0; i < seenN; ++i) if (seen[i] == func) return;
+    if (seenN >= (int)(sizeof(seen) / sizeof(seen[0]))) return;
+    char fn[96];
+    if (FNameToString(ObjNameRaw(func), fn, sizeof(fn)) <= 0) return;
+    static const char* const kVerbs[] = {
+        "BeginTeleport", "QueueTeleportLevelLoad", "TeleportToTeleporterData",
+        "TeleportToLocation", "FinishTeleport", "SuperFastTeleport",
+        "MovePlayerToTempTeleporter", "TeleportToSipehaArena"
+    };
+    for (unsigned k = 0; k < sizeof(kVerbs) / sizeof(kVerbs[0]); ++k) {
+        if (strcmp(fn, kVerbs[k]) != 0) continue;
+        seen[seenN++] = func;
+        char map[stream::kMaxNameLen];
+        LocalMapName(map, sizeof(map));
+        QDLOG(LOG_INFO, "travel verb: the game's own ", fn, " ran on the local player in ",
+              (map[0] ? map : "?"), " -- if this is a cross-world travel, this is where a "
+              "spawn parameter would be");
+        return;
+    }
+}
+
 void HK_ProcessEvent(void* self, void* func, void* parms)
 {
     FxObserve(self, func);
     UseObserve(self, func);
     RestObserve(self, func);
+    TravelVerbObserve(self, func);
     PeTraceObserve(self, func);
     // The proxy body reports rather than absorbs: false means the game's own hit has been
     // described to the machine that owns the player, so the local TryApplyDamage must not

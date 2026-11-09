@@ -1951,3 +1951,262 @@ gives it a pawn at the origin that cannot**. Every remaining item — the door, 
 sequence — is behind that one. The next session's first job is a map load that leaves a
 `PlayerStart`, or a lever that spawns the player class into the loaded world the way
 `PlayerBody` already spawns the partner's body.
+
+---
+
+## Session 12 — 2026-11-09 (where the arriving player stands)
+
+This branch is `sync-fix` at `fbd27e4` plus the Session 12 fixes. Every write path is on
+(`ObjectSync=1`), `LogLevel=3`, `PlayerBody=1`; `tools/session12.ps1` is the whole run in one
+process. It reads the roles from `session established`: **host=inst1, peer=inst2**. Fresh
+pairs are seeded from `analysis/save-backup-before-live` with `make_test_instance.ps1 -Force`.
+
+Session 11 ended on R91: after a hard map load the player is a pawn at the origin, falling,
+and every teleport is undone by the game's own respawn. That is exactly what the co-op
+follower produced when the partner crossed, and it also blocked every other item.
+
+### R95. The hard-load entry carries no spawn, and the game never calls it
+
+`LoadMapWithLoadingScreen` is two parameters, and they are the whole story:
+
+```
+signature LoadMapWithLoadingScreen props=2 parms=24 ret@-1  Map: NameProperty  MapPackage: StrProperty
+```
+
+Its exec thunk (`0x00E58F70`) marshals exactly those two into the body (`0x00E34F30`), which
+sets `bLoadingMap`, records `CurrentlyLoadingMapPackage` and starts the asynchronous world
+load. Measured from the shipped image and the cooked pak:
+
+* **no cooked package names it** — not one of 19,213;
+* the only caller of the body is its own exec thunk (`site 00E5906F`), so **the game never
+  performs this load at all**: the mod's follower is its only user;
+* the game's own cross-world path is `OpenLevel`, imported by exactly seven packages
+  (`FS_GameInstance`, `QueensDomain_GameMode`, `PauseMenu`, `DieUI`, `TitleScreenUI`,
+  `DemoEndSplash`, `FS_Cheats`), i.e. menus, death and cheats — not a teleporter.
+
+So there is no "what the leader's own travel passed" to capture. The question becomes what
+the game puts in the destination world for the player to arrive at.
+
+### R96. A world with no `PlayerStart` spawns the player at the identity transform
+
+Measured over the pak's own export tables (`analysis/pak/code/probes/spawn_path.py`):
+
+```
+Ruins_Level_00             PlayerStart exports=1
+900_SipehaWorld            PlayerStart exports=0
+990_B33sment               PlayerStart exports=0
+780_SZ_Depths              PlayerStart exports=0
+760_SZ_AUT                 PlayerStart exports=0
+100_GR                     PlayerStart exports=0
+997_FinalZoneCutscene      PlayerStart exports=0
+```
+
+`AGameModeBase::RestartPlayer` therefore finds no start and spawns `DefaultPawnClass` at the
+identity transform: the pawn at the origin, inside no geometry, which falls, dies on the kill
+Z and respawns at the origin again. Measured on both machines, one line per 10 s:
+
+```
+[1] scan: local at 0,0,-1063 yaw 0
+[1] scan: local at 0,0,-207 yaw 0
+[1] scan: local at 0,0,93 yaw 0
+[1] scan: local at 0,0,-1896 yaw 0
+```
+
+The `x,y` never move: the respawn writes the identity transform back every few seconds. That
+is also why `dev teleport near 'Chest_Merchant2'` "did not stick" in Session 11 — the
+teleport worked, and the next respawn undid it.
+
+### R97. The spawn point for those worlds is CONTENT: the arrival-marker pair
+
+The game's own arrival point is a placed actor, resolved by class with
+`GetAllActorsOfClass` inside `FS_PlayerChar` (the class imports both markers):
+
+```
+900_SipehaWorld   PlayerTeleportTargetPos_C=1   at -3431,-5705,-1016
+990_B33sment      B33smentTeleportPoint_C=1
+```
+
+`FS_PlayerChar` also carries `Array:B33smentTeleportPoint` (a cache of them) and the travel
+verbs (`BeginTeleport`, `TeleportToTeleporterData`, `QueueTeleportLevelLoad(Location: Object)`,
+`TeleportToSipehaArena`) — but **the press does not run any of them** (R100a). So both
+machines resolve the marker locally from the world they just loaded; nothing about it needs
+to be on the wire, and a wire field would only add a way for the two machines to disagree.
+
+### R98. Both players now arrive standing — at the world's own marker
+
+`qd::travel::ArrivalBoard` (pure, in `qdtravel.h`) decides; `ArrivalPump` (proxy.cpp)
+answers its questions and performs one placement. Measured, the leader crossing and the
+follower following:
+
+```
+[1] arrive: armed for 900_SipehaWorld -- a hard transition just landed here
+[1] arrive: 900_SipehaWorld places the arrival marker PlayerTeleportTargetPos_C at -3431,-5705,-1016
+[1] arrive: 900_SipehaWorld placed the player at PlayerTeleportTargetPos_C -3431,-5705,-1016 (the engine spawned it at the origin: this world places no PlayerStart)
+[1] arrive: 900_SipehaWorld placed the player at partner -3347,-5703,-918 (the engine spawned it at the origin: this world places no PlayerStart)
+[2] arrive: 900_SipehaWorld placed the player at PlayerTeleportTargetPos_C -3431,-5705,-1016 (...)
+
+host at -3,347,-5,703,-912
+peer at -3,437,-5,703,-918
+PASS the two players are close: 90 cm
+[1] scan: local at -3347,-5703,-912 yaw 0      (repeated every 10 s)
+[1] scan: health 400.0
+[2] scan: local at -3437,-5703,-918 yaw 0      (repeated every 10 s)
+[2] scan: health 400.0
+```
+
+The position holds for the rest of the run (`drift over 22 s: 0 cm`), both processes are
+alive, the handshake completes (`travel: both machines arrived in 900_SipehaWorld; host
+releasing the pair to resume`), and the rig presses from there (`the game's own gate says
+IsInteractible=0` — the chest's own verdict, Session 11's content fact, unchanged).
+
+`Ruins_Level_00` is untouched: it places its own `PlayerStart`, the restored save position
+stands there, and the board says so and stops:
+
+```
+[1] arrive: Ruins_Level_00 needs no placement (the world placed the player at 4106,-1744)
+```
+
+### R99. R92's crash is now refused at the one place that loads
+
+Session 11's fault (a stack with **no** `WINMM` frame: the game tearing down its current
+world) is reachable from three paths, so the guard is in `FollowHardTravel` itself:
+
+```
+[2] WARN rig: hard lever -> Ruins_Level_00 LoadMapWithLoadingScreen ran=0: already in Ruins_Level_00
+[1] WARN rig: hard lever -> Ruins_Level_00 LoadMapWithLoadingScreen ran=0: already in Ruins_Level_00
+PASS [2] process alive after being asked to reload its own world
+PASS [1] process alive=True
+PASS [2] process alive=True
+```
+
+Both machines refused, both survived, and the follower's own paths (`HARD_BEGIN`, the
+in-world `wrong world` fallback) go through the same function.
+
+### R100. Three ways the arrival silently did nothing, each fixed by a measured rule
+
+The first four runs of this session arrived at a *worse* place than Session 11, and each
+cause is a rule the code now carries with a comment naming it:
+
+1. **The leader was never placed.** Its first poll after the map name changed read the pawn
+   it had *before* the load — the hub position, `4106,-1744` — and concluded "the world
+   placed the player". Two fixes: the previous world's pawn is remembered at the moment the
+   world pointer changes (`g_arrivePrevPawn`), and a far position only counts once it has
+   **held** for 2 s (`kPlacedSettleMs`).
+2. **The far position can still be the void.** In `900_SipehaWorld` the player keeps the
+   transform it had and drops out of it: `4106,-1744` is not a place in that world. The rule
+   that separates the two worlds is the game's own behaviour, not a distance: a pawn that
+   **falls** between two one-second polls has not been placed (`kFallCmPerPoll`). The hub
+   restores the saved position and stands there; the void drops.
+3. **The follower placed itself at the partner's pre-transition coordinates**, with the new
+   world's Z (`placed the player at partner 4196,-1744,-612`), and stood in the void. A row
+   from before the load is not a position in the new world: the partner anchor now requires
+   the row to have arrived at least 3 s after *our* arrival (`kPeerSettleMs`).
+
+### R100a. The press runs no travel verb — the game's own entry is the actor's `Interact`
+
+SYNC-RESEARCH 7 left open which of the player's travel verbs the fast-travel UI takes. The
+answer is none of them. The real interact lever, on the hub's `Teleporter_GR`, with
+`qd.petrace` recording every new (object, function) pair:
+
+```
+dev interact: the game's own gate says IsInteractible=0 distanceOverride=1 override=300
+dev interact: component target set (read back ok) -- the field the Blueprint open gate reads
+PE new: InpActEvt_Interact_K2Node_InputActionEvent  on FS_Full_PlayerChar_C
+dev interact: the player's Interact input event InpActEvt_Interact_K2Node_InputActionEvent ran
+PE new: Interact  on Teleporter_GR [Teleporter_C]
+dev interact: target=Teleporter_GR [Teleporter_C] component=found verb=Interact
+```
+
+and **no `travel verb:` line at all** — `BeginTeleport`, `TeleportToLocation`,
+`TeleportToTeleporterData` and `QueueTeleportLevelLoad` never ran. So the teleporter branch is
+the actor's own `Interact` (which opens `TeleporterUI` and, in this state, does nothing: the
+game's own gate says the object is not interactible here). There is no player-side travel
+half to capture on this path either, which closes §7's question rather than deferring it.
+
+### R100b. The follower died in the enemy-record adoption during the load
+
+The second run of this session lost the follower 116 s in, one second after its hard load:
+
+```
+<ErrorMessage>Unhandled Exception: EXCEPTION_ACCESS_VIOLATION reading address 0x0000020212904d8c</ErrorMessage>
+<SecondsSinceStart>116</SecondsSinceStart>
+WINMM 0x00007ffc29bb0000 + b52e      -> AdoptUnknownKey+0x12E
+WINMM + 4ae9b                        -> OnEnemyRows+0x1CB
+WINMM + 2c2eb                        -> DispatchInbound+0xF2B
+WINMM + 39334                        -> HK_Tick+0x1C4
+```
+
+`AdoptUnknownKey` walks every local enemy record and calls `ObjectIsLive(c.actor)`. On a
+*freed* UObject that is not a guard — it reads `[obj+0x0C]` and faults — and `DispatchInbound`
+runs **before** the pumps, so the frame after a load delivers rows for a world whose actors the
+records still name. This is R85's class (a stale `UObject` across a load), one lane over.
+**Fix.** `g_enWorld` is recorded by `EnemyPump` when it purges the records, and the inbound
+enemy paths (`OnEnemyRows`, `OnEnemyDetail`, `OnBoss`, the two enemy intents) refuse until the
+records' world is the current one. Rows are repeated, so a dropped packet costs a tick.
+
+### R101. Two harness bugs, both of which reported "the machine never connected"
+
+* **The role line was parsed as its last character.** With exactly one match, PowerShell
+  returns the *string*, and `$m[-1]` on a string is its last character, so `role=HOST` never
+  matched and the script drove the wrong instance as the leader. Two runs were spent on it;
+  the read now goes through `@()`.
+* **`Get-Content` cannot read the live log.** The mod holds its handle with
+  `FILE_SHARE_READ|FILE_SHARE_WRITE`; `Get-Content` asks for `FileShare.Read`, which the
+  writer's access denies, and `-ErrorAction SilentlyContinue` turned the sharing violation
+  into "no lines". The script now opens the file itself with the same sharing, and a mark is a
+  **time of day** rather than a line count, so a read that disagrees by a line cannot move a
+  verdict.
+
+Both were caught by refusing to guess: a boot with no host/peer pair now says what it read
+and exits instead of driving instance 1 as the host.
+
+### Bugs fixed this session
+
+* **The arriving player is placed** (R98): `ArrivalBoard`/`ArrivalPump`, armed by the map-name
+  change itself, so the game's own transitions (which never pass through the handshake) are
+  covered too. Marker first-class (`PlayerTeleportTargetPos_C`, `B33smentTeleportPoint_C`,
+  `PlayerStart`), partner as the fallback, both bounded to 45 s / 5 placements.
+* **A hard load of the current world is refused** (R99) — one guard in `FollowHardTravel`,
+  reached by every caller (R92).
+* **The enemy records are world-tagged** (R100b): the row, detail, boss and intent lanes do
+  not touch an actor from the previous world.
+* **`travel verb:` observation** (R100a): the game's own travel verbs are reported once each,
+  so "the game took this path" is a measurement rather than an assumption.
+* **`qd.petrace`** — the live lever for the ProcessEvent trace (baseline, then log new pairs).
+* **`tools/session12.ps1`** — the whole run in one process, four items, with the two harness
+  bugs above found by running it.
+
+### Verdicts, item by item
+
+| Item | Verdict | Key line |
+|---|---|---|
+| 1. The game's own travel half on an E press | **PASS (measured: none runs)** | `PE new: Interact on Teleporter_GR [Teleporter_C]` and no `travel verb:` line |
+| 2. R92's crash on reloading the current world | **PASS** | `ran=0: already in Ruins_Level_00` on both machines, both alive |
+| 3a. The leader arrives standing in `900_SipehaWorld` | **PASS** | `arrive: 900_SipehaWorld placed the player at PlayerTeleportTargetPos_C -3431,-5705,-1016` |
+| 3b. The follower arrives beside it | **PASS** | `placed the player at partner -3347,-5703,-918`; `PASS the two players are close: 90 cm` |
+| 3c. Both alive, session continues | **PASS** | `travel: both machines arrived ...; host releasing the pair to resume`; both processes alive |
+| 4. Content reachable in the non-hub map | **PASS (standing)** | `drift over 22 s: 0 cm`; the press then runs from there (`IsInteractible=0` is the chest's verdict) |
+| Session survival | **PASS** | both alive at the end; 0 error/fault lines |
+
+25 of 25 recorded verdicts PASS in the final run.
+
+### What this session settled
+
+R91 is closed, and not by making the game place the player: by noticing that it never could.
+`LoadMapWithLoadingScreen` carries no spawn, no cooked package calls it, and the worlds the
+hard lane targets place no `PlayerStart` — so the engine's identity spawn was the whole of the
+old behaviour, and the spawn point for those worlds is content, not protocol: one
+`PlayerTeleportTargetPos` in `900_SipehaWorld`, one `B33smentTeleportPoint` in `990_B33sment`.
+Each machine resolves it from the world it just loaded, which is why nothing had to be added
+to the wire, and the two players now stand 90 cm apart on the game's own arrival point with
+the position holding instead of being respawned to the origin.
+
+The three ways the first attempts failed are worth keeping: a pawn from the previous world
+looks like a placed player, a *far* pawn can be falling out of the void rather than standing
+somewhere, and a position row can arrive after the arrival while still describing the world
+before it. Each is a one-line rule now, and each names the run that found it.
+
+Still open, and unchanged by this session: the chest in `900_SipehaWorld` is refused by the
+game's own `GetInteractInfo` (`IsInteractible=0`), so a press still cannot open it — R90's
+question is about the handler, not about standing. And the boss/cutscene items that were
+behind R91 can now be attempted in a hard map, because the player can stand there.

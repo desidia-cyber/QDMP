@@ -492,15 +492,15 @@ static void TestWorldBodies()
 
     // MOVERS: an owner-authoritative transform.
     {
-        MoverRow rows[2];
-        memset(rows, 0, sizeof(rows));
-        rows[0].id[0] = 0xAABBCCDDu; rows[0].px = 100; rows[0].py = -200;
-        rows[0].pz = 50; rows[0].yaw = 16384; rows[0].pitch = -4096;
-        rows[0].flags = kMoverMoving | kMoverOwner;
-        rows[1].id[3] = 3; rows[1].pz = -25;
+        MoverRow mrows[2];
+        memset(mrows, 0, sizeof(mrows));
+        mrows[0].id[0] = 0xAABBCCDDu; mrows[0].px = 100; mrows[0].py = -200;
+        mrows[0].pz = 50; mrows[0].yaw = 16384; mrows[0].pitch = -4096;
+        mrows[0].flags = kMoverMoving | kMoverOwner;
+        mrows[1].id[3] = 3; mrows[1].pz = -25;
         Writer w(buf, sizeof(buf));
         WriteMoversHeader(w, 5, 2);
-        WriteMoversChunk(w, rows, 2, 0);
+        WriteMoversChunk(w, mrows, 2, 0);
         CHECK(w.ok && w.len == 4 + 2 + 2 * 33, "movers body size");
         MoversBody got;
         Reader r(buf, w.len);
