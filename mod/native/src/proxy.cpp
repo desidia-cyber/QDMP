@@ -2916,6 +2916,25 @@ bool LevelLoaded(void* ls)
     return ls && LevelLoadBitGuarded(ls, &v) && v;
 }
 
+// The ENGINE's own state, not our flag: `ULevelStreaming::LoadedLevel` at +0x128, and the
+// predicate the manager waits on reads `bIsVisible` at LoadedLevel+0x1F4 bit 0x20
+// (`analysis/22-close-out.md` 4, 0x029A4310).  R109's failure was `bShouldBeLoaded=1`
+// with no package; these two make that difference a number in the log.
+uintptr_t LevelLoadedLevel(void* ls)
+{
+    __try { return (uintptr_t)(*(void**)((uint8_t*)ls + 0x128)); }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+}
+
+bool LevelActuallyVisible(void* ls)
+{
+    __try {
+        void* lvl = *(void**)((uint8_t*)ls + 0x128);
+        if (!lvl) return false;
+        return (*(uint8_t*)((uint8_t*)lvl + 0x1F4) & 0x20) != 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
 // Write the engine's own `bShouldBeLoaded` bit.  MEASURED (Session 14): showing a sublevel
 // by calling `SetShouldBeLoaded` through ProcessEvent produced
 // `bShouldBeVisible=1` and NOT ONE ACTOR in the world 90 s later, because several
@@ -3080,6 +3099,145 @@ void* LevelManager()
     }
 }
 
+// ---------------------------------------------------------------------------
+// The game's OWN way into a streamed area: a level list on the manager's stack
+// ---------------------------------------------------------------------------
+// R109 measured that writing `ULevelStreaming`'s flags is NOT the same as the engine
+// streaming the package: `visible=1 loaded=1` and not one actor in the world.  The game
+// never pokes those flags.  It pushes a `UFS_LevelList` data asset onto
+// `FS_LevelManager`'s stack with `AddLevelListToStack`, and the manager's own per-frame
+// pass resolves the stack, loads the level and SHOWS it (`analysis/22-close-out.md` 4).
+//
+// WHICH LIST, MEASURED FROM THE SHIPPED PAK
+// ----------------------------------------
+// The list that carries an area is content.  Read out of the cooked `.uexp` of the
+// `/Game/RuinsLevel/Maps/LevelLists/*` assets (2026-11-09), the SZ list is
+//
+//     SZ_Depths = 070_UpperShell 710_SZ_AQ 740_SZ_Prison 750_SZ_MAUS2 760_SZ_AUT
+//                 770_SZ_Swamp 775_JigekiTemple 780_SZ_Depths 790_SG 060_Ocean_Shadow
+//                 000_Shared_Base_Lighting
+//
+// and it is the list the area's own trigger sets (`LevelManagerTrigger10` sets only
+// `SZ_Depths`).  Session 14 named `GreenRuins_SZ`; measured, that list does NOT contain
+// 780 (it carries `700_SZ_GR` / `740_SZ_Prison` instead).  The correction is part of the
+// fix: a list that does not contain the area can never make its actors exist.
+// The level list's short name for an area comes from `stream::LevelListForArea`
+// (qdstream.h), where the pak-read mapping and its unit test live.  An area with no
+// entry is refused with the reason in the log rather than pushed onto an unrelated list
+// -- that would union extra levels and still not load the one asked for.
+static const char* kLevelListDir = "/Game/RuinsLevel/Maps/LevelLists/";
+
+// Load a `UFS_LevelList` data asset by short name through the same `LoadAsset_Blocking`
+// path every other asset in this module uses.
+void* LoadLevelListAsset(const char* name, char* err, int errCap)
+{
+    if (!name || !name[0]) { ErrSet(err, errCap, "empty level-list name"); return nullptr; }
+    char path[192];
+    int w = 0;
+    for (const char* s = kLevelListDir; *s && w < 170; ++s) path[w++] = *s;
+    for (int i = 0; name[i] && w < 170; ++i) path[w++] = name[i];
+    if (w < 180) path[w++] = '.';
+    for (int i = 0; name[i] && w < 180; ++i) path[w++] = name[i];
+    path[w] = 0;
+    void* a = avatar::LoadAsset(path);
+    if (!a) ErrSet(err, errCap, "could not load level list ", path);
+    return a;
+}
+
+// Drive `FS_LevelManager.AddLevelListToStack` through ProcessEvent with the parameter
+// order the Blueprint declares.  OFFSET order, not linked-list order, is declaration
+// order: UE links a struct's properties in reverse, so `ChildProperties` walks the pins
+// backwards, while `Offset_Internal` still increases with the declaration.
+//
+//   (WorldContextObject : Object, LevelList : Object,
+//    Selector : byte/int 0, bUsePriority : bool 1, Priority : int 100)
+//
+// The working call is the one `22-close-out.md` 4 recorded from a live driver:
+// `AddLevelListToStack(worldctx, list, 0, 1, 100)`.  Nothing here flushes: the manager's
+// per-frame pass is what applies the stack, and `FlushLevelManagerActions` REPLACES the
+// visible set (measured 21 -> 11), which would drop the player through the hub.
+bool AddLevelListToStackLive(void* list, char* err, int errCap)
+{
+    if (!list) { ErrSet(err, errCap, "no level list"); return false; }
+    void* world = GWorldPtr();
+    void* mgr = LevelManager();
+    if (!mgr && world) {
+        // The manager is created lazily by its own accessor, which takes a world context.
+        typedef void* (*FnGetMgr)(void* worldctx);
+        FnGetMgr gm = (FnGetMgr)Ptr<void*>(0x00E2EE50u);
+        if (gm) {
+            __try { mgr = gm(world); } __except (EXCEPTION_EXECUTE_HANDLER) { mgr = nullptr; }
+        }
+    }
+    if (!mgr) { ErrSet(err, errCap, "no level manager in this world"); return false; }
+
+    Fn f;
+    if (!f.Resolve(mgr, "AddLevelListToStack")) {
+        ErrSet(err, errCap, "FS_LevelManager.AddLevelListToStack not found");
+        return false;
+    }
+    static bool logged = false;
+    if (!logged) { logged = true; LogSignature("AddLevelListToStack", f.sig); }
+
+    const PropDesc* p[16];
+    int np = 0;
+    for (int k = 0; k < f.sig.props && np < 16; ++k) {
+        const PropDesc& d = f.sig.p[k];
+        if (d.flags & (CPF_OutParm | CPF_ReturnParm)) continue;
+        p[np++] = &d;
+    }
+    for (int i = 1; i < np; ++i) {           // insertion sort by Offset_Internal
+        const PropDesc* k = p[i];
+        int j = i - 1;
+        while (j >= 0 && p[j]->offset > k->offset) { p[j + 1] = p[j]; --j; }
+        p[j + 1] = k;
+    }
+    if (np < 2) { ErrSet(err, errCap, "signature has fewer than two parameters"); return false; }
+
+    Call c(f);
+    bool haveWorld = false, haveList = false;
+    for (int i = 0; i < np; ++i) {
+        const PropDesc& d = *p[i];
+        uint8_t* dst = c.buf + d.offset;    // bounds proven by SignatureMatchesFunction
+        const bool isObj = NameEquals(d.type, "ObjectProperty") ||
+                           NameEquals(d.type, "ClassProperty");
+        if (i == 0 && isObj) { *(void**)dst = world ? world : mgr; haveWorld = true; continue; }
+        if (i == 1 && isObj) { *(void**)dst = list; haveList = true; continue; }
+        if (i == 2) { if (d.size >= 4) *(int32_t*)dst = 0;   else *(uint8_t*)dst = 0;   continue; }
+        if (i == 3) { if (d.size >= 4) *(int32_t*)dst = 1;   else *(uint8_t*)dst = 1;   continue; }
+        if (i == 4) { if (d.size >= 4) *(int32_t*)dst = 100; else *(uint8_t*)dst = 100; continue; }
+    }
+    (void)haveWorld;
+    if (!haveList) { ErrSet(err, errCap, "no level-list object parameter"); return false; }
+    if (!c.Run(mgr)) { ErrSet(err, errCap, "AddLevelListToStack faulted"); return false; }
+    return true;
+}
+
+// The one call the rig's streamed travel makes: push the list that carries `area` onto the
+// manager's stack.  Rate-limited per list, because the stack de-duplicates by
+// {list, priority} anyway and re-running the manager's merge every second (the per-second
+// re-assert) is churn with no new fact.
+bool PushAreaLevelList(const char* area, char** used, char* err, int errCap)
+{
+    if (used) *used = nullptr;
+    const char* listName = stream::LevelListForArea(area);
+    if (!listName) { ErrSet(err, errCap, "no level list known for '", area); return false; }
+    static char     lastList[64];
+    static uint32_t lastAt = 0;
+    uint32_t now = Net::Now();
+    if (SameNameText(lastList, listName) && (uint32_t)(now - lastAt) < 30000) {
+        if (used) *used = (char*)listName;
+        return true;
+    }
+    void* list = LoadLevelListAsset(listName, err, errCap);
+    if (!list) return false;
+    if (!AddLevelListToStackLive(list, err, errCap)) return false;
+    lstrcpynA(lastList, listName, sizeof(lastList));
+    lastAt = now;
+    if (used) *used = (char*)listName;
+    return true;
+}
+
 // The veto's other half (see above).  True if the manager's pending entry was this
 // level's hide and is now a show.
 bool FlipPendingHideGuarded(void* mgr, void* ls)
@@ -3105,6 +3263,38 @@ bool StreamVetoes(const LevelRec* r)
     return g_map.PeerStateApplies(now) && g_stream.PeerWants(r->name, now);
 }
 
+// A veto must never STALL the manager's queue.  MEASURED (Session 15): the manager applies
+// one level per frame and waits for that level's real visibility to match what it asked,
+// so a vetoed hide never completes and no later entry is ever applied.  The live log
+// showed `BLOCK hide of 125_GR_CubeHall` 28,000 times in ten minutes while 780_SZ_Depths
+// -- whose list had just been pushed -- was never applied.
+//
+// So a REPEATED veto for the same level is allowed through after a few tries: the manager
+// advances, and StreamPump re-shows the level on its next pass (the level is never kept
+// from loading here, so this costs a re-show, not a re-stream).  A burst is COUNTED rather
+// than timed, so a manager that asks once and moves on is still vetoed every time.
+bool VetoWouldStall(void* ls, uint32_t now)
+{
+    static struct { void* ls; uint32_t lastMs; int n; bool allowed; } rec[16];
+    static int n = 0;
+    int slot = -1;
+    for (int i = 0; i < n; ++i) if (rec[i].ls == ls) { slot = i; break; }
+    if (slot < 0) {
+        slot = (n < 16) ? n++ : 0;
+        rec[slot].ls = ls; rec[slot].lastMs = now; rec[slot].n = 0; rec[slot].allowed = false;
+    }
+    if ((uint32_t)(now - rec[slot].lastMs) > 1000) rec[slot].n = 0;   // a new burst
+    rec[slot].lastMs = now;
+    ++rec[slot].n;
+    // ONE allow per level, ever.  Measured Session 15: allowing repeatedly turned the
+    // union into a hide/show churn that ended with a process death.  One allow is enough
+    // to move the manager past the entry it was waiting on; after that the veto holds the
+    // level the way it is meant to.
+    if (rec[slot].allowed) return false;
+    if (rec[slot].n > 3) { rec[slot].allowed = true; return true; }
+    return false;
+}
+
 void HK_SetShouldBeVisible(void* ls, bool visible)
 {
     if (!g_ownVisCall && ls && g_engineReady) {
@@ -3121,20 +3311,31 @@ void HK_SetShouldBeVisible(void* ls, bool visible)
             const bool pinned = (r->name[0] && g_rigLevelPin[0] &&
                                  SameNameText(r->name, g_rigLevelPin));
             if (!visible && (StreamVetoes(r) || pinned) && LevelVisible(ls)) {
-                void* mgr = LevelManager();
-                if (mgr && FlipPendingHideGuarded(mgr, ls)) r->skipNextShow = true;
-                ++g_vetoCount;
-                static uint32_t lastLog = 0;
                 uint32_t now = Net::Now();
-                if (now - lastLog > 1000) {
-                    lastLog = now;
-                    QDLOG(LOG_INFO, "BLOCK hide of ", r->name,
-                          (pinned ? " (pinned: this machine is standing in it)"
-                                  : " (the partner is in it)"),
-                          "; vetoes=", dec((int)g_vetoCount),
-                          (r->skipNextShow ? " queue entry flipped" : ""));
+                if (VetoWouldStall(ls, now)) {
+                    // Let this hide through so the queue advances; the pump re-shows it.
+                    static uint32_t lastAllow = 0;
+                    if ((uint32_t)(now - lastAllow) > 5000) {
+                        lastAllow = now;
+                        QDLOG(LOG_INFO, "ALLOW hide of ", r->name,
+                              " (repeated veto was stalling the manager's queue; the "
+                              "union re-shows it on the next pump)");
+                    }
+                } else {
+                    void* mgr = LevelManager();
+                    if (mgr && FlipPendingHideGuarded(mgr, ls)) r->skipNextShow = true;
+                    ++g_vetoCount;
+                    static uint32_t lastLog = 0;
+                    if ((uint32_t)(now - lastLog) > 1000) {
+                        lastLog = now;
+                        QDLOG(LOG_INFO, "BLOCK hide of ", r->name,
+                              (pinned ? " (pinned: this machine is standing in it)"
+                                      : " (the partner is in it)"),
+                              "; vetoes=", dec((int)g_vetoCount),
+                              (r->skipNextShow ? " queue entry flipped" : ""));
+                    }
+                    return;
                 }
-                return;
             }
         }
     }
@@ -3154,20 +3355,31 @@ void HK_SetShouldBeLoaded(void* ls, bool loaded)
         const bool pinned = r && r->name[0] && g_rigLevelPin[0] &&
                             SameNameText(r->name, g_rigLevelPin);
         if (r && (StreamVetoes(r) || pinned) && LevelLoaded(ls)) {
-            void* mgr = LevelManager();
-            bool flipped = mgr && FlipPendingHideGuarded(mgr, ls);
-            if (flipped) r->skipNextShow = true;
-            ++g_vetoCount;
-            static uint32_t lastLog = 0;
             uint32_t now = Net::Now();
-            if (now - lastLog > 1000) {
-                lastLog = now;
-                QDLOG(LOG_INFO, "BLOCK unload of ", r->name,
-                      (pinned ? " (pinned: this machine is standing in it)"
-                              : " (the partner is in it)"),
-                      "; vetoes=", dec((int)g_vetoCount), (flipped ? " queue entry flipped" : ""));
+            if (VetoWouldStall(ls, now)) {
+                // Same stall breaker as the hide path: let one unload through so the
+                // queue advances, and let the pump reload/show the level.
+                static uint32_t lastAllow = 0;
+                if ((uint32_t)(now - lastAllow) > 5000) {
+                    lastAllow = now;
+                    QDLOG(LOG_INFO, "ALLOW unload of ", r->name,
+                          " (repeated veto was stalling the manager's queue)");
+                }
+            } else {
+                void* mgr = LevelManager();
+                bool flipped = mgr && FlipPendingHideGuarded(mgr, ls);
+                if (flipped) r->skipNextShow = true;
+                ++g_vetoCount;
+                static uint32_t lastLog = 0;
+                if ((uint32_t)(now - lastLog) > 1000) {
+                    lastLog = now;
+                    QDLOG(LOG_INFO, "BLOCK unload of ", r->name,
+                          (pinned ? " (pinned: this machine is standing in it)"
+                                  : " (the partner is in it)"),
+                          "; vetoes=", dec((int)g_vetoCount), (flipped ? " queue entry flipped" : ""));
+                }
+                return;
             }
-            return;
         }
     }
     if (g_oSetLoaded) g_oSetLoaded(ls, loaded);
@@ -3348,6 +3560,13 @@ void StreamPump(uint32_t now)
                     }
                 } else {
                     --budget;
+                    // The union's job for the partner's set is RESIDENCY, and the flag path
+                    // is what provides it.  The game's own entry (a level list on the
+                    // manager's stack) is performed by the machine that ENTERS an area --
+                    // `StreamTravelTo`/`qd.level` on the rig -- not once per level the
+                    // partner happens to be showing.  MEASURED (Session 15): pushing a list
+                    // per wanted level loaded the whole world (union 24) and a process
+                    // died; the entry is per AREA, not per level.
                     ForceLevel(r, true);
                 }
             }
@@ -3527,6 +3746,39 @@ bool ActorOuterReachesWorld(void* actor, void* world)
     return false;
 }
 
+// The identity test for an actor: is its ULevel one of THIS world's levels?
+//
+// WHY THE OUTER WALK IS NOT ENOUGH (measured Session 15): 780_SZ_Depths was loaded and
+// visible -- `LoadedLevel=1 actuallyVisible=1` -- and a scan of the fully streamed area
+// still found nothing, because a streamed sublevel's actors do not hang off a chain that
+// reaches the UWorld object.  `FindTravelActor` already carries a special fallback for
+// exactly this ("its level is streamed, not the world"), which is the same fact from the
+// travel side.
+//
+// `UWorld::Levels` is the reflected list the engine itself keeps (the persistent level plus
+// every streamed-in one), so "the actor's level is in it" is the engine's own answer and
+// needs no engine call -- which matters because this runs once per object in a scan over a
+// world with 90k+ objects.
+bool ActorInThisWorld(void* actor, void* world)
+{
+    if (!actor || !world) return false;
+    if (ActorOuterReachesWorld(actor, world)) return true;
+    static int worldLevelsOff = -2;
+    if (worldLevelsOff == -2) worldLevelsOff = PropOff(ObjClass(world), "Levels");
+    if (worldLevelsOff < 0) return false;
+    __try {
+        void** data = *(void***)((uint8_t*)world + worldLevelsOff);
+        int32_t num = *(int32_t*)((uint8_t*)world + worldLevelsOff + 8);
+        if (!data || num <= 0 || num > 8192) return false;
+        void* p = ObjOuter(actor);
+        for (int depth = 0; p && depth < 8; p = ObjOuter(p), ++depth) {
+            for (int i = 0; i < num; ++i) if (data[i] == p) return true;
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    return false;
+}
+
 // The receiver's half of the identity: the same short actor name, alive in OUR world.
 // Both machines run the same cooked world, so a placed actor has the same object name
 // on both; the outer-chain test is what separates it from a CDO, an asset, or an actor
@@ -3548,7 +3800,7 @@ void* FindTravelActor(const char* name, void* world)
             if (!ObjectIsLive(o) || !ObjNameIs(o, name)) continue;
             void* c = ObjClass(o);
             if (!c || !IsSubclassOf(c, actorBase)) continue;
-            if (ActorOuterReachesWorld(o, world)) return o;
+            if (ActorInThisWorld(o, world)) return o;
         }
         __except (EXCEPTION_EXECUTE_HANDLER) {
             // An unreadable slot is skipped; a follow must never die for one.
@@ -3956,11 +4208,30 @@ bool StreamTravelTo(const char* name)
         if (!SameNameText(g_levels[i].name, name)) continue;
         if (!ObjectIsLive(g_levels[i].ls)) continue;
         lstrcpynA(g_rigLevelPin, name, sizeof(g_rigLevelPin));
+
+        // The game's own entry FIRST: push the list that carries this area onto the
+        // manager's stack.  Its per-frame pass then resolves the stack, loads the level
+        // and shows it -- which is what makes the level's ACTORS exist (R109: setting the
+        // ULevelStreaming flags produced `visible=1 loaded=1` and not one actor).
+        char lerr[192] = "";
+        char* used = nullptr;
+        bool pushed = PushAreaLevelList(name, &used, lerr, sizeof(lerr));
+
+        // Then the engine bit + the one body that honours it.  That is the guard this
+        // page already proved keeps a level from being hidden or unloaded underneath the
+        // player; it is not the load, the list is.
         ForceLevel(g_levels[i], true, true);
-        QDLOG(LOG_INFO, "stream travel: ", name, " is a sublevel of this world -- loaded and "
-              "SHOWN (visible=", dec(LevelVisible(g_levels[i].ls) ? 1 : 0),
+
+        QDLOG(LOG_INFO, "stream travel: ", name, " is a sublevel of this world -- ",
+              (pushed ? "level list '" : "NO level list pushed ("),
+              (pushed ? (used ? used : "?") : lerr),
+              (pushed ? "' added to the manager's stack (AddLevelListToStack ran); the "
+                        "manager's own pass loads and shows it"
+                      : "); flags forced instead"),
+              " visible=", dec(LevelVisible(g_levels[i].ls) ? 1 : 0),
               " loaded=", dec(LevelLoaded(g_levels[i].ls) ? 1 : 0),
-              "); the game enters it this way, not by loading its package as a world");
+              " engineLoaded=", dec(LevelLoadedLevel(g_levels[i].ls) ? 1 : 0),
+              " engineVisible=", dec(LevelActuallyVisible(g_levels[i].ls) ? 1 : 0));
         return true;
     }
     return false;
@@ -6088,22 +6359,61 @@ bool ResolvePerClass(Fn& f, void** missCls, void* owner, const char* name)
 }
 
 // The per-enemy boss predicates.
-bool EnemyIsBoss(void* actor)
+// The per-object boss predicates.  Returns 1 = yes, 0 = the predicate ran and said no,
+// -1 = neither predicate exists on this object.
+int BossProbe(void* obj)
 {
+    if (!obj || !ObjectIsLive(obj)) return -1;
     static Fn fPart = {}, fInfo = {};
     static void* partMiss = nullptr, *infoMiss = nullptr;
-    // `Enemy_IsPartOfBossEncounter` is the measured predicate.  Both are bool-returning
-    // Blueprint functions, and a miss is silent by design: an enemy that cannot be
-    // classified is simply not treated as a boss.
-    if (ResolvePerClass(fPart, &partMiss, actor, "Enemy_IsPartOfBossEncounter")) {
+    int res = -1;
+    if (ResolvePerClass(fPart, &partMiss, obj, "Enemy_IsPartOfBossEncounter")) {
         Call c(fPart);
-        if (c.Run(actor) && c.Ret()) return *(uint8_t*)c.Ret() != 0;
+        if (c.Run(obj) && c.Ret()) res = (*(uint8_t*)c.Ret() != 0) ? 1 : 0;
     }
-    if (ResolvePerClass(fInfo, &infoMiss, actor, "Enemy_GetBossInfo")) {
+    if (res != 1 && ResolvePerClass(fInfo, &infoMiss, obj, "Enemy_GetBossInfo")) {
         Call c(fInfo);
-        if (c.Run(actor) && c.Ret()) return *(uint8_t*)c.Ret() != 0;
+        if (c.Run(obj) && c.Ret()) {
+            int v = (*(uint8_t*)c.Ret() != 0) ? 1 : 0;
+            if (v == 1) res = 1;
+            else if (res < 0) res = 0;
+        }
     }
-    return false;
+    return res;
+}
+
+// Boss membership, asked of the ENEMY and then of its SPAWNER.
+//
+// MEASURED (Session 15): neither `Enemy_IsPartOfBossEncounter` nor `Enemy_GetBossInfo`
+// exists on the enemy classes at all -- the probe reports `part=-1 info=-1` for every
+// enemy Blueprint in the world, including `Dragon_Green_BP_C`.  They do exist on the
+// spawner side (`GreenDragon_Spawner`), which is where the encounter is authored, so the
+// question is asked of the spawner when the enemy itself cannot answer.  Nothing is
+// inferred: if neither object has the predicate, the answer stays "not a boss".
+bool EnemyIsBoss(void* actor, void* spawner)
+{
+    int partR = BossProbe(actor);
+    bool boss = (partR == 1);
+    int spawnR = -1;
+    if (!boss && spawner && ObjectIsLive(spawner)) {
+        spawnR = BossProbe(spawner);
+        if (spawnR == 1) boss = true;
+    }
+    // One line per class (a 64-entry table: the first 16 classes in a world are all
+    // ordinary enemies, and the dragon was the 17th).
+    static void* seen[64];
+    static int seenN = 0;
+    void* cls = ObjClass(actor);
+    bool logged = false;
+    for (int i = 0; i < seenN; ++i) if (seen[i] == cls) { logged = true; break; }
+    if (!logged && seenN < 64) {
+        seen[seenN++] = cls;
+        char cn[64] = "";
+        FNameToString(ObjNameRaw(cls), cn, sizeof(cn));
+        QDLOG(LOG_INFO, "boss probe: ", (cn[0] ? cn : "?"), " enemy=", dec(partR),
+              " spawner=", dec(spawnR), " -> boss=", dec(boss ? 1 : 0));
+    }
+    return boss;
 }
 
 // The one per-boss ordinal the shipped build can expose to a sync layer.  There is no
@@ -6240,9 +6550,14 @@ void BossPump(uint32_t now)
     for (int i = 0; i < g_enN; ++i) {
         EnemyRec& r = g_en[i];
         if (!r.haveGuid || !ObjectIsLive(r.actor)) continue;
-        if (g_own.State(r.guid) != enemyown::O_LOCAL) continue;
+        // The boss lane belongs to the machine that RUNS the enemy.  `Running()` is exactly
+        // that (O_LOCAL, or O_HANDOFF where this machine still simulates until the partner
+        // confirms); requiring O_LOCAL alone skipped the dragon for a whole hand-off
+        // window -- measured Session 15: a live, owned dragon scanned as `local-run=1`
+        // and the boss lane never ran.
+        if (g_own.State(r.guid) == enemyown::O_FROZEN) continue;
 
-        bool boss = EnemyIsBoss(r.actor);
+        bool boss = EnemyIsBoss(r.actor, r.spawner);
         if (boss != r.isBoss) {
             r.isBoss = boss;
             // A newly identified boss has published nothing: force the first body even if
@@ -7565,7 +7880,7 @@ void SequenceScan(uint32_t now)
         if (!c) continue;
         bool ours = false;
         __try {
-            if (IsSubclassOf(c, cls) && ActorOuterReachesWorld(o, world)) ours = true;
+            if (IsSubclassOf(c, cls) && ActorInThisWorld(o, world)) ours = true;
         } __except (EXCEPTION_EXECUTE_HANDLER) { ours = false; }
         if (ours) g_seqActors[g_seqActorN++] = o;
     }
@@ -7733,7 +8048,7 @@ void MoverScanStep()
         void* c = ObjClass(o);
         if (!c || !IsMoverClass(c)) continue;
         __try {
-            if (!IsSubclassOf(c, actorBase) || !ActorOuterReachesWorld(o, world)) continue;
+            if (!IsSubclassOf(c, actorBase) || !ActorInThisWorld(o, world)) continue;
         } __except (EXCEPTION_EXECUTE_HANDLER) { continue; }
         bool have = false;
         for (int i = 0; i < g_moverActorN; ++i) if (g_moverActors[i].actor == o) { have = true; break; }
@@ -8072,7 +8387,7 @@ void LootScanStep()
         void* c = ObjClass(o);
         if (!c || !IsDropClass(c)) continue;
         __try {
-            if (!IsSubclassOf(c, actorBase) || !ActorOuterReachesWorld(o, world)) continue;
+            if (!IsSubclassOf(c, actorBase) || !ActorInThisWorld(o, world)) continue;
             if (!LooksLikeADrop(o)) continue;
         } __except (EXCEPTION_EXECUTE_HANDLER) { continue; }
         bool have = false;
@@ -9334,7 +9649,7 @@ void ObjectsScanStep()
         objects::Shape sh = objects::ShapeOfClass(cn);
         if (sh == objects::SH_NONE) continue;
         __try {
-            if (!IsSubclassOf(c, actorBase) || !ActorOuterReachesWorld(o, world)) continue;
+            if (!IsSubclassOf(c, actorBase) || !ActorInThisWorld(o, world)) continue;
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             continue;
         }
@@ -10275,7 +10590,7 @@ bool FindArrivalMarker(ArrivalMarker* out)
             __try { member = IsSubclassOf(ObjClass(o), base); }
             __except (EXCEPTION_EXECUTE_HANDLER) { continue; }
             if (!member) continue;
-            if (!ActorOuterReachesWorld(o, world)) continue;   // a CDO / another world
+            if (!ActorInThisWorld(o, world)) continue;   // a CDO / another world
             ActorXform x;
             if (!ReadActorXform(o, &x)) continue;
             float d = sqrtf(x.px * x.px + x.py * x.py + x.pz * x.pz);
@@ -10467,7 +10782,7 @@ void* RigFindNear(const char* sub, float* distOut, ActorXform* xfOut, char* name
                 bool member = false;
                 __try {
                     member = IsSubclassOf(ObjClass(o), actorBase) &&
-                             ActorOuterReachesWorld(o, world);
+                             ActorInThisWorld(o, world);
                 } __except (EXCEPTION_EXECUTE_HANDLER) { member = false; }
                 if (!member) continue;
                 ActorXform x;
@@ -10608,7 +10923,7 @@ void* RigFindNear(const char* sub, float* distOut, ActorXform* xfOut, char* name
                 if (!o || !LooksLikeUObject(o)) continue;
                 bool member = false;
                 __try {
-                    member = IsSubclassOf(ObjClass(o), actorBase) && ActorOuterReachesWorld(o, world)
+                    member = IsSubclassOf(ObjClass(o), actorBase) && ActorInThisWorld(o, world)
                              && RigNameMatches(o, sub);
                 } __except (EXCEPTION_EXECUTE_HANDLER) { member = false; }
                 if (!member) continue;
@@ -10836,7 +11151,7 @@ void RigScanLooseKinds(const ActorXform& me)
             for (int k = 0; k < nKinds; ++k)
                 if (enemyown::HasCI(cl, kinds[k])) { hit = k; break; }
             if (hit < 0) continue;
-            if (!ActorOuterReachesWorld(o, world)) continue;
+            if (!ActorInThisWorld(o, world)) continue;
             ActorXform x;
             if (!ReadActorXform(o, &x)) continue;
             float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
@@ -11728,6 +12043,87 @@ void DevEnemyKill(uint32_t now)
     QDLOG(LOG_INFO, "rig: enemykill -> key=", hex32(key), " the enemy's own Kill ran");
 }
 
+// QDCOOP_TEST_HITGUID (<UserDir>\qd.hitguid = "<8 hex>[:amount]"): TEST INSTANCES ONLY --
+// land ONE hit on a named enemy FROM THIS MACHINE'S PLAYER, by key.
+//
+// The boss requirement is "damage from both players reducing the same HP", and the two
+// machines hold the boss differently: the owner runs it, the other holds a frozen copy
+// whose rows carry the owner's HP.  So the hit is applied where each machine CAN apply it,
+// and the lane is the game's own in both cases:
+//   * this machine runs the enemy -> `ApplyDamageToActor` on the actor (the owner's HP);
+//   * this machine holds a frozen copy (or no copy) -> the existing `I_ENEMY_HIT` intent
+//     (`SendEnemyIntentHit`), which the OWNER applies through the same damage path and
+//     logs as `hit on enemy <guid> from the other player`.
+// A nearest-enemy lever cannot do this: `near:` and "nearest" resolve to each machine's
+// own copy, and the copy a non-owner holds is a follower, not a target.
+char     g_devHitGuidApplied[48] = "";
+uint32_t g_devHitGuidPoll = 0;
+
+void DevHitGuidLever(uint32_t now)
+{
+    static char path[MAX_PATH];
+    static int on = -1;
+    if (on < 0) {
+        DevRigPath("QDCOOP_TEST_HITGUID", "qd.hitguid", path, sizeof(path));
+        on = path[0] != 0;
+        if (on) QDLOG(LOG_INFO, "rig: hitguid control '", path, "' enabled exists=",
+                      (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES ? "yes" : "no"));
+    }
+    if (!on) return;
+    if (now - g_devHitGuidPoll < 500) return;
+    g_devHitGuidPoll = now;
+    char want[48];
+    if (!DevRigText("QDCOOP_TEST_HITGUID", "qd.hitguid", want, sizeof(want))) return;
+    if (!want[0] || strcmp(want, g_devHitGuidApplied) == 0) return;
+    lstrcpynA(g_devHitGuidApplied, want, sizeof(g_devHitGuidApplied));
+
+    uint32_t key = 0;
+    int digits = 0;
+    for (int i = 0; want[i] && digits < 8; ++i, ++digits) {
+        char c = want[i];
+        uint32_t v;
+        if (c >= '0' && c <= '9') v = (uint32_t)(c - '0');
+        else if (c >= 'a' && c <= 'f') v = (uint32_t)(c - 'a' + 10);
+        else if (c >= 'A' && c <= 'F') v = (uint32_t)(c - 'A' + 10);
+        else break;
+        key = (key << 4) | v;
+    }
+    if (digits == 0) { QDLOG(LOG_WARN, "rig: hitguid -- '", want, "' is not a hex key"); return; }
+    float amount = 50.0f;
+    {
+        const char* colon = strchr(want, ':');
+        if (colon) { float a = (float)atof(colon + 1); if (a > 0.0f) amount = a; }
+    }
+
+    EnemyRec* r = nullptr;
+    for (int i = 0; i < g_enN; ++i)
+        if (g_en[i].haveGuid && g_en[i].guid[0] == key) { r = &g_en[i]; break; }
+
+    if (r && ObjectIsLive(r->actor) && g_own.Running(r->guid)) {
+        float before = 0, after = 0;
+        bool haveHp = false;
+        bool ok = ApplyDamageToActor(r->actor, amount, g_localPawn, false, &before, &after, &haveHp);
+        QDLOG(LOG_INFO, "rig: hitguid -> key=", hex32(key), " LOCAL hit amount=", flt(amount, 1),
+              " ran=", dec(ok ? 1 : 0),
+              " hp ", (haveHp ? flt(before, 1) : flt(-1.0f, 1)), " -> ",
+              (haveHp ? flt(after, 1) : flt(-1.0f, 1)), " (this machine's player)");
+        return;
+    }
+
+    uint32_t g[4] = {key, 0, 0, 0};
+    float mx = 0, hp = 0;
+    int32_t frac = 65535;
+    if (r && ObjectIsLive(r->actor) && EnemyHp(r->actor, &hp, &mx) && mx > 0.0f) {
+        memcpy(g, r->guid, sizeof(g));
+        frac = (int32_t)((amount / mx) * 65535.0f);
+    }
+    if (frac < 1) frac = 1;
+    SendEnemyIntentHit(g, frac);
+    QDLOG(LOG_INFO, "rig: hitguid -> key=", hex32(key),
+          " the other player's hit sent amount=", flt(amount, 1), " frac=", dec(frac),
+          (r ? " (this machine holds a frozen copy)" : " (no local copy; the owner applies it)"));
+}
+
 // QDCOOP_TEST_CHEAT=<function> (<UserDir>\qd.cheat, argument in qd.cheatarg): TEST
 // INSTANCES ONLY -- call one of the game's own `FS_Cheats_C` UFUNCTIONs on this machine.
 //
@@ -12225,11 +12621,35 @@ void DevLevelLever(uint32_t now)
     for (int i = 0; i < g_levelN; ++i) {
         if (!SameNameText(g_levels[i].name, g_rigLevelPin)) continue;
         static bool said = false;
+        // The game's own entry, every time this lever re-asserts the pin: the manager
+        // de-duplicates the stack by {list, priority}, and a list the game removed when a
+        // trigger changed has to be put back or the level unloads again.
+        char lerr[192] = "";
+        char* used = nullptr;
+        bool pushed = PushAreaLevelList(g_rigLevelPin, &used, lerr, sizeof(lerr));
         ForceLevel(g_levels[i], true, said);
+        // The engine's own state, logged whenever it changes: `bShouldBeLoaded` (our bit)
+        // and `LoadedLevel` (the package) are different questions, and R109's failure was
+        // the first being 1 while the second stayed 0.
+        {
+            static int lastState = -1;
+            uintptr_t ll = LevelLoadedLevel(g_levels[i].ls);
+            bool av = LevelActuallyVisible(g_levels[i].ls);
+            int st = (ll ? 1 : 0) | (av ? 2 : 0);
+            if (st != lastState) {
+                lastState = st;
+                QDLOG(LOG_INFO, "rig: level engine state ", g_rigLevelPin,
+                      " LoadedLevel=", dec(ll ? 1 : 0),
+                      " actuallyVisible=", dec(av ? 1 : 0));
+            }
+        }
         if (!said) {
             said = true;
             QDLOG(LOG_INFO, "rig: level lever -> ", g_rigLevelPin,
-                  " forced loaded and visible (pinned; the manager may hide it again)");
+                  " forced loaded and visible (pinned)",
+                  (pushed ? "; list '" : "; NO list pushed ("),
+                  (pushed ? (used ? used : "?") : lerr),
+                  (pushed ? "' on the manager's stack" : ")"));
         }
         return;
     }
@@ -12241,6 +12661,41 @@ void DevLevelLever(uint32_t now)
                   "' in this world (", dec(g_levelN), " listed)");
         }
     }
+}
+
+// QDCOOP_TEST_LIST: TEST INSTANCES ONLY -- push a named `UFS_LevelList` onto the level
+// manager's stack, exactly as the area's own trigger does.  This is the raw lever that
+// separates "the area's list is wrong" from "the manager ignored the list": it accepts
+// any list name, while `qd.level` maps an area to the list the pak says carries it.
+char     g_devListApplied[64] = "";
+uint32_t g_devListPoll = 0;
+
+void DevListLever(uint32_t now)
+{
+    static char path[MAX_PATH];
+    static int on = -1;
+    if (on < 0) {
+        DevRigPath("QDCOOP_TEST_LIST", "qd.list", path, sizeof(path));
+        on = path[0] != 0;
+        if (on) QDLOG(LOG_INFO, "rig: list control '", path, "' enabled exists=",
+                      (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES ? "yes" : "no"));
+    }
+    if (!on) return;
+    if (now - g_devListPoll < 1000) return;
+    g_devListPoll = now;
+
+    char name[64];
+    if (!DevRigText("QDCOOP_TEST_LIST", "qd.list", name, sizeof(name))) return;
+    if (!name[0] || strcmp(name, g_devListApplied) == 0) return;
+    lstrcpynA(g_devListApplied, name, sizeof(g_devListApplied));
+
+    char err[192] = "";
+    void* list = LoadLevelListAsset(name, err, sizeof(err));
+    bool ok = list && AddLevelListToStackLive(list, err, sizeof(err));
+    QDLOG(ok ? LOG_INFO : LOG_WARN, "rig: list lever -> '", name,
+          (ok ? "' loaded and added to the manager's stack (AddLevelListToStack ran)"
+              : "' NOT pushed: "),
+          (ok ? "" : err));
 }
 
 // Defined with the menu-time-dilation block below; the rig lever that drives the game's
@@ -12489,7 +12944,7 @@ void DevDropProbeBody()
         void* world = GWorldPtr();
         if (!world) return;
         __try {
-            if (!IsSubclassOf(c, actorCls) || !ActorOuterReachesWorld(o, world)) continue;
+            if (!IsSubclassOf(c, actorCls) || !ActorInThisWorld(o, world)) continue;
         } __except (EXCEPTION_EXECUTE_HANDLER) { continue; }
         ActorXform x;
         if (!ReadActorXform(o, &x)) continue;
@@ -13410,11 +13865,13 @@ bool HK_Tick(void* engineLoop)
     DevGod(now);
     DevKillNearest(now);
     DevEnemyKill(now);
+    DevHitGuidLever(now);
     DevCheat(now);
     DevKill(now);
     DevTravelLever(now);
     DevHardLever(now);
     DevLevelLever(now);
+    DevListLever(now);
     DevSequenceLever(now);
     DevMenuLever(now);
     DevEFuncLever(now);

@@ -2646,3 +2646,215 @@ can put both players on one enemy and the kill lands on both. What stops the hid
 content: the shared classes neither take damage nor drop. So the remaining work there is to
 find an enemy class with a drop table — not to fix a lane.
 
+
+## Session 15 — 2026-11-09 (the game's own level list carries the area; its actors arrive)
+
+This branch is `sync-fix` at `20c7ad4`. Every write path is on (`ObjectSync=1`), `LogLevel=3`,
+`PlayerBody=1`; `tools/session15.ps1` is the whole run in one process, one phase per boot
+(`-Phase item1|boss|item4|all`). Roles are read from `session established`: **host=inst1,
+peer=inst2**. Fresh pairs are seeded from `analysis/save-backup-before-live`.
+
+Session 14 ended on a sharp question: 780_SZ_Depths was `loaded=1 visible=1` and had no
+actors. R109 named the next lever — the game's own `AddLevelListToStack` — and named the
+list to push, `GreenRuins_SZ`. This session took that lever, and the first thing it did was
+check the list against the content.
+
+### R111. The list that carries 780 is `SZ_Depths`, not `GreenRuins_SZ` (corrected fact)
+
+Read out of the shipped pak — the ASCII level names in each `UFS_LevelList` `.uexp` — the
+`Greenruins_SZ` asset does **not** contain 780 at all (it carries `700_SZ_GR` and
+`740_SZ_Prison`). The list the area's own trigger sets does:
+
+```
+SZ_Depths = 070_UpperShell 710_SZ_AQ 740_SZ_Prison 750_SZ_MAUS2 760_SZ_AUT
+            770_SZ_Swamp 775_JigekiTemple 780_SZ_Depths 790_SG 060_Ocean_Shadow
+            000_Shared_Base_Lighting
+```
+and `LevelManagerTrigger10` sets only `SZ_Depths`. Session 14's list would have been a call
+that succeeds and changes nothing. The mapping is now **derived from membership**
+(`qdstream.h LevelListForArea`), so a list that does not contain the area can never be
+returned, and `test_stream.cpp` holds that invariant.
+
+### R112. `AddLevelListToStack` runs with the real signature, and the engine loads the level
+
+The function is a UFUNCTION on `FS_LevelManager` (confirmed from the Blueprint import table:
+`LevelManagerTrigger_C` and `Checkpoint_C` both import it with outer `FS_LevelManager`). The
+live signature, logged by the module, is exactly the five parameters the module fills:
+
+```
+signature AddLevelListToStack props=5 parms=24 ret@-1
+    WorldContextObject : ObjectProperty @0
+    List               : ObjectProperty @8
+    bTrigger           : BoolProperty   @16
+    bOverridePriority  : BoolProperty   @17
+    PriorityOverride   : IntProperty    @20
+```
+
+Before the fix, both machines reported `visible=1 loaded=1` and nothing else. After it:
+
+```
+[1] stream travel: 780_SZ_Depths is a sublevel of this world -- level list 'SZ_Depths'
+    added to the manager's stack (AddLevelListToStack ran); the manager's own pass loads
+    and shows it visible=1 loaded=1 engineLoaded=1 engineVisible=1
+[1] rig: level engine state 780_SZ_Depths LoadedLevel=1 actuallyVisible=1
+```
+
+`LoadedLevel`/`actuallyVisible` are the engine's own `ULevelStreaming+0x128` and
+`ULevel+0x1F4 bit 0x20`, not our flag: the package is streamed and the level is in the world.
+
+### R113. The union veto livelocked the manager's queue (fixed)
+
+The first run with the push still showed no actors — and the log said why: the manager
+applies **one level per frame and waits for that level's real visibility to match what it
+asked**, so a vetoed hide never completes and no later entry is ever applied.
+
+```
+BLOCK hide of 125_GR_CubeHall (the partner is in it); vetoes=19 ... vetoes=28935
+```
+
+28,000 vetoes in ten minutes and 780 never applied. The veto now allows ONE hide through per
+level after a repeated burst (`VetoWouldStall`), which is enough to move the manager past the
+entry it was waiting on; the pump re-shows the level on its next pass.
+
+### R114. Streamed-level actors hang off a chain the outer walk does not reach (fixed)
+
+With the level genuinely loaded and visible, the scan still reported `none`, because
+`ActorOuterReachesWorld` walks Outer for the `UWorld` object and a streamed sublevel's actors
+do not reach it — the same fact `FindTravelActor` already carries a special fallback for.
+The scans now ask `UWorld::Levels` (the engine's own list of the persistent level plus every
+streamed-in one) whether the actor's level is in this world. Measured consequence:
+
+```
+[1] dev teleport near 'SecretSword_Altar_BP' -> SecretSword_Altar_BP at -41053,13231,-15552
+    dist=50099; standing at -40920,13187,-15552 offset=140
+[2] dev teleport near 'SecretSword_Altar_BP' -> SecretSword_Altar_BP at -41053,13231,-15552
+    dist=50099; standing at -40920,13187,-15552 offset=140
+[1] scan: loose sequence SecretSwordGetSequence [sequence] at -41032,13211,-15502 dist=123
+[2] scan: loose sequence SecretSwordGetSequence [sequence] at -41032,13211,-15502 dist=123
+[1] dev teleport near 'GreenDragon_Spawner' -> GreenDragon_Spawner at -28573,754,-13118
+[2] dev teleport near 'GreenDragon_Spawner' -> GreenDragon_Spawner at -28573,754,-13118
+```
+
+**Both machines hold 780's own actors, at the same coordinates, with the players standing
+inside the area.** R109's content half is closed.
+
+One stability bug was found and fixed on the way: giving the friend a list for **every**
+level it published pushed both big lists, the union reached 24 sublevels, and a game process
+died. The entry is per AREA, not per level; the union's job for the rest is residency.
+
+### R115. The boss: the actor is there and owned, but this build's predicates cannot name it
+
+The Green Dragon materialises at the spawner without a proximity trigger:
+
+```
+[1] scan: kind enemy Dragon_Green_BP_C guid=17181166 at -28573,754,-13028 local-run=1
+[2] enemy 88744DC6 DRIVEN by owner (Paused ok=1, bIsAIDisabled ok, tick ok, controller yes)
+```
+
+but the boss lane never speaks, and the probe says why for every enemy class in the world:
+
+```
+boss probe: Looker_Base_BP_C part=-1 info=-1 -> boss=0 ... (every class)
+```
+
+Neither `Enemy_IsPartOfBossEncounter` nor `Enemy_GetBossInfo` exists on the enemy classes.
+The probe now asks the **spawner** as well (that is where the encounter is authored), and the
+lane runs for anything not frozen. It still does not report this dragon: on the spawner side
+the predicate is also absent in this build. So `boss: … is a boss` and
+`ActivateBossHPBar` remain **NOT-REACHED**, with the blocker now named as an API gap rather
+than a lane.
+
+The damage lane is content-blocked on the same class, exactly as R108 measured for the hub:
+
+```
+[1] rig: hitguid -> key=17181166 LOCAL hit amount=200.0 ran=0 hp 3500.0 -> 3500.0
+[2] rig: hitguid -> key=17181166 the other player's hit sent amount=200.0 frac=65535
+    (no local copy; the owner applies it)
+```
+
+`ApplyDamageToActor` cannot build its frame (`ran=0`), so HP does not move, and the peer holds
+no copy of this GUID (its spawner never activated there), so there is no shared HP to
+converge. The game's own death entry does work and is recorded on the owner:
+
+```
+[1] rig: enemykill -> key=17181166 the enemy's own Kill ran
+[1] enemy death recorded guid=17181166 respawn=0.0
+```
+
+The peer can only record that death when it has a copy or the death row reaches its ledger;
+it did not within this run.
+
+### R116. The cutscene: started on one machine, held on the other
+
+The real interact lever reaches the altar (`dev interact: the game's own gate says
+IsInteractible=1`) but the altar's own gate does not start the sequence (R90/R105). The
+sequencer's own `Play`, by name, does:
+
+```
+[2] rig: sequence lever -> SecretSwordGetSequence Play ran on its own SequencePlayer
+[2] cutscene: local started SecretSwordGetSequence
+[1] cutscene: holding the local player for the partner's cutscene (enter=1 lock=1)
+```
+
+The play + hold half of the cutscene requirement is proven. The joint resume did not occur
+inside the 220 s window: `SecretSwordGetSequence` was still playing when the run ended.
+
+### Bugs fixed this session
+
+* **`stream::LevelListForArea` + membership tables** (R111): the area → list answer is
+  derived from the pak-read `UFS_LevelList` membership, so `Greenruins_SZ` (which does not
+  contain 780) can never be selected; `test_stream.cpp` holds the invariant.
+* **`LoadLevelListAsset` + `AddLevelListToStackLive`** (R112): the game's own entry into a
+  streamed area, through ProcessEvent with the declaration-order parameters discovered from
+  the live signature; no `FlushLevelManagerActions` (it replaces the visible set).
+* **`StreamTravelTo` pushes the list** (R112) instead of only writing
+  `bShouldBeLoaded`/`bShouldBeVisible`, which R109 proved is not a load.
+* **`VetoWouldStall`** (R113): a one-shot allow per level, so a repeated veto can no longer
+  stall the manager's one-level-per-frame queue (28,000 vetoes measured).
+* **`ActorInThisWorld`** (R114): `UWorld::Levels` membership instead of the Outer walk, so a
+  streamed sublevel's actors are visible to the scans.
+* **The co-op list push is per AREA, not per level** (R114): pushing a list per published
+  level loaded the whole world (union 24) and killed a process.
+* **`EnemyIsBoss` asks the spawner too, and logs a probe per class** (R115); `BossPump`
+  now serves any machine that runs the enemy (`O_HANDOFF` included), not only `O_LOCAL`.
+* **`qd.hitguid`** (R115): one hit on a named enemy from the local player; on a frozen copy
+  it goes through the existing `I_ENEMY_HIT` intent so the OWNER applies it.
+* **`qd.list`** (R112): the raw level-list lever, so "the list is wrong" and "the manager
+  ignored the list" are separable in the log.
+* **`tools/session15.ps1`** (this run): one process per phase, with the boss probe and the
+  per-GUID HP diff; and **`test_stream.cpp`** (20 checks) beside the list mapping.
+
+### Verdicts, item by item
+
+| Item | Verdict | Key line |
+|---|---|---|
+| 1a. The area's own level list is pushed on both machines | **PASS** | `level list 'SZ_Depths' added to the manager's stack (AddLevelListToStack ran)` on inst1 and inst2 |
+| 1b. The engine loads/shows the sublevel | **PASS** | `rig: level engine state 780_SZ_Depths LoadedLevel=1 actuallyVisible=1` |
+| 1c. 780's actors exist on BOTH machines | **PASS** | `SecretSword_Altar_BP at -41053,13231,-15552` and `SecretSwordGetSequence [sequence]` on both |
+| 1d. Players standing inside the area, session alive | **PASS** | both at `-40920,13187,-15552`; both processes alive, 0 error lines |
+| 2a. Boss actor exists and is owned | **PASS** | `scan: kind enemy Dragon_Green_BP_C guid=17181166 local-run=1`; peer `DRIVEN by owner` |
+| 2b. `boss: … is a boss` + bar on both | **NOT-REACHED (API)** | `boss probe: … part=-1 info=-1 -> boss=0` for every class; no predicate on enemy or spawner |
+| 2c. Damage from both players on one HP | **NOT-REACHED (content)** | `rig: hitguid … LOCAL hit … ran=0 hp 3500.0 -> 3500.0`; the class has no `TryApplyDamage` |
+| 2d. Death recorded on both | **PARTIAL** | owner: `enemy death recorded guid=17181166`; the peer holds no copy of this GUID |
+| 3a. Sequence starts on one machine | **PASS** | `cutscene: local started SecretSwordGetSequence` |
+| 3b. The partner holds | **PASS** | `cutscene: holding the local player for the partner's cutscene (enter=1 lock=1)` |
+| 3c. Joint resume | **NOT OBSERVED** | still playing at the end of the 220 s window |
+| 4. 760_SZ_AUT (ROSDragon_Spawner, Dek_Egg_Activation) | **NOT-RUN** | same list (`SZ_Depths` carries 760), same lever |
+| Session survival | **PASS** | both processes alive at the end of every run; 0 `ERR`/fault lines |
+
+### What this session settled
+
+The content half of R109 is closed. A streamed area's actors arrive when the area's own level
+list is pushed onto the manager's stack — not when its `ULevelStreaming` flags are written —
+and the list that carries 780 is `SZ_Depths`, which the pak proves and the code now derives
+from membership. Both machines, at the same coordinates, standing inside 780: the altar, the
+`SecretSwordGetSequence` actor and the Green Dragon spawner all resolve, and the cutscene
+starts on one machine and is held by the other.
+
+Two new questions are named rather than left as silence. The first is the boss bar: this
+build exposes neither `Enemy_IsPartOfBossEncounter` nor `Enemy_GetBossInfo` on the enemy
+classes OR on the Green Dragon's spawner (`part=-1 info=-1`), so nothing this module can ask
+the game will say "this is a boss". The second is the damage lane on the dragon: the class
+does not implement `TryApplyDamage`, so `ApplyDamageToActor` returns `ran=0` and its HP
+cannot be moved by a hit — the same content property R108 measured for the hub's classes.
+Both are content/API facts, not lanes, and they are what the next session should attack.
