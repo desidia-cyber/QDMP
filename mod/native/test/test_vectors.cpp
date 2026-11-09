@@ -113,7 +113,7 @@ static void Compare(const char* name, const uint8_t* got, int gotLen)
     uint8_t kind = want[0];
     bool kindKnown = (kind >= 0x01 && kind <= 0x04) ||
                      (kind >= 0x10 && kind <= 0x19) ||
-                     (kind >= 0x20 && kind <= 0x2A) ||
+                     (kind >= 0x20 && kind <= 0x2B) ||
                      (kind == 0x30);
     if (!kindKnown) {
         ++g_fail;
@@ -349,6 +349,46 @@ static void TestAll()
         Writer w(buf, sizeof(buf));
         WriteBoss(w, b);
         Compare("boss", buf, w.len);
+    }
+
+    // enemy_spawn: guid, flags, position, yaw, hp fraction, the actor's class path
+    {
+        EnemySpawnBody s;
+        memset(&s, 0, sizeof(s));
+        s.guid[0] = 0x03020100u; s.guid[1] = 0x07060504u;
+        s.guid[2] = 0x0b0a0908u; s.guid[3] = 0x0f0e0d0cu;
+        s.flags = kSpawnMirror;
+        s.px = 100; s.py = -200; s.pz = 50;
+        s.yaw = 16384;
+        s.hp = 40000;
+        strcpy(s.path, "/Game/Enemies/Dragon/Dragon_Green_BP.Dragon_Green_BP_C");
+        Writer w(buf, sizeof(buf));
+        WriteEnemySpawn(w, s);
+        Compare("enemy_spawn", buf, w.len);
+
+        // And it reads back: the class path is the one field a row cannot carry, so a
+        // round-trip that loses it would construct a copy of nothing.
+        Reader r(buf, w.len);
+        EnemySpawnBody got;
+        CHECK(ReadEnemySpawn(r, &got), "enemy_spawn reads");
+        CHECK(memcmp(got.guid, s.guid, sizeof(s.guid)) == 0, "enemy_spawn guid round-trips");
+        CHECK(got.flags == kSpawnMirror, "enemy_spawn flags round-trip");
+        CHECK(got.px == 100 && got.py == -200 && got.pz == 50, "enemy_spawn position round-trips");
+        CHECK(got.yaw == 16384, "enemy_spawn yaw round-trips");
+        CHECK(got.hp == 40000, "enemy_spawn hp round-trips");
+        CHECK(strcmp(got.path, s.path) == 0, "enemy_spawn class path round-trips");
+        CHECK(r.pos == r.len, "enemy_spawn body fully consumed");
+
+        // An empty class path is refused, so a malformed body costs a datagram and never
+        // an engine spawn call.
+        EnemySpawnBody bad;
+        memset(&bad, 0, sizeof(bad));
+        bad.guid[0] = 1;
+        Writer w2(buf, sizeof(buf));
+        WriteEnemySpawn(w2, bad);
+        Reader r2(buf, w2.len);
+        EnemySpawnBody got2;
+        CHECK(!ReadEnemySpawn(r2, &got2), "enemy_spawn with no class path is refused");
     }
 
     // dialogue_state

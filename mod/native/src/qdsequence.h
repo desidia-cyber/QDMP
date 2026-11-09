@@ -72,6 +72,9 @@ public:
         }
         held_ = false;
         heldName_[0] = 0;
+        released_ = false;
+        releasedSlot_ = 0;
+        releasedSeq_ = 0;
     }
 
     // ---- remote publish ---------------------------------------------------
@@ -107,6 +110,14 @@ public:
     // `localPlaying` / `localName` are this machine's own observation.  The result is
     // what the caller should DO, not what is true: a hold must be acted on exactly
     // once, so `held_` is owned here.
+    //
+    // A FINISHED CUTSCENE IS NOT RE-PLAYED.  MEASURED (Session 16): the sequence ended on
+    // both machines, the holder released, and then each side's next publish still named the
+    // last sequence it played -- so `Decide` saw "the partner is playing X" and called
+    // `Play` again, and the two machines restarted each other's cutscene for as long as the
+    // lever kept publishing.  The board therefore remembers the (slot, seq) it released and
+    // refuses to act on that same publication twice; a genuine second cutscene is a NEW seq,
+    // which is what the sender bumps on every state change.
     Verdict Decide(uint8_t selfSlot, bool localPlaying, const char* localName,
                    uint32_t now_ms)
     {
@@ -118,8 +129,18 @@ public:
             if (held_) {
                 held_ = false;
                 heldName_[0] = 0;
+                // Record the publication that was released, so the same naming cannot start
+                // it again.  `releasedSeq_` is per-slot so the two directions do not collide.
+                releasedSlot_ = (uint8_t)other;
+                releasedSeq_ = p.seq;
+                released_ = true;
                 return CV_RELEASE;
             }
+            return CV_NONE;
+        }
+        // The partner is naming a cutscene whose publication this machine already released.
+        if (released_ && releasedSlot_ == (uint8_t)other && releasedSeq_ == p.seq) {
+            if (held_) { held_ = false; heldName_[0] = 0; return CV_RELEASE; }
             return CV_NONE;
         }
 
@@ -169,6 +190,19 @@ public:
     bool Held() const { return held_; }
     const char* HeldName() const { return heldName_; }
 
+    // Is the partner currently naming this exact sequence?  The caller uses it to decide
+    // whether it is the PLAYER of a cutscene or its HOLDER: a machine that is already playing
+    // what the partner names is not holding anything, and acting on that publication is what
+    // made two machines replay each other's sequence for ever (Session 16).
+    bool PeerNameIs(const char* name, uint32_t now_ms) const
+    {
+        for (int i = 0; i < kSlots; ++i) {
+            if (!s_[i].present || !s_[i].playing || Stale(s_[i], now_ms)) continue;
+            if (s_[i].name[0] && Same(s_[i].name, name)) return true;
+        }
+        return false;
+    }
+
     static bool Same(const char* a, const char* b)
     {
         int i = 0;
@@ -193,6 +227,10 @@ private:
     SlotState s_[kSlots];
     bool      held_;
     char      heldName_[kMaxNameLen];
+    // The (slot, seq) publication this machine already released (see Decide).
+    bool      released_;
+    uint8_t   releasedSlot_;
+    uint32_t  releasedSeq_;
 };
 
 } // namespace sequence
