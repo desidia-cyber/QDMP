@@ -4716,7 +4716,15 @@ struct EnemyRec {
     bool     mirrorHidden;     // silence hid the copy; a returning row shows it again
     uint32_t mirrorSpawnAt;
 };
-EnemyRec        g_en[256];
+// 1024, not 256.  MEASURED (Session 17's ten-minute soak at the documented play set): the hub
+// alone holds more live enemies than 256, so `RegisterMirror` had to evict a record for every
+// new mirror, and a mirrored copy whose record is evicted can never learn the owner's DEATH --
+// nothing re-adds a mirror, because its one body has already been acked.  The soak ended with
+// three keys dead on the peer and never on the host (`B55C570E`, `32548C19`, `44D6AA74`), each
+// preceded by `enemy mirror: record table full (256); evicting guid=...`.  The array is static
+// and the DLL is /MT, so this is a fixed allocation rather than a growth policy.
+EnemyRec        g_en[1024];
+static const int kEnemyRecMax = 1024;
 int             g_enN = 0;
 // The world the enemy records were built in; EnemyPump sets it when it purges them.
 //
@@ -6592,6 +6600,7 @@ int      g_mirrorN = 0;
 uint32_t g_lastMirrorSpawnMs = 0;
 
 static bool TryConstructMirror(const wire::EnemySpawnBody& s, uint32_t now);
+static bool TryConstructMirrorBody(const wire::EnemySpawnBody& s, uint32_t now);
 static void QueueMirror(const wire::EnemySpawnBody& s, uint32_t now);
 static void ClearPendingMirrors();
 
@@ -6736,6 +6745,27 @@ EnemyRec* RegisterMirror(void* actor, const uint32_t guid[4], uint32_t now)
 // was QUEUED (see PendingMirror) is constructed by the same code, not by a second copy of
 // it that can drift.
 static bool TryConstructMirror(const wire::EnemySpawnBody& s, uint32_t now)
+{
+    // FAULT-CONTAINED, LIKE THE PUMP.  This resolves a class out of a path, asks the engine to
+    // construct a gameplay Blueprint and then drives the result; each step follows a pointer the
+    // engine owns.  MEASURED (Session 17, three soaks): both processes died at ~256 s with
+    // `EXCEPTION_ACCESS_VIOLATION reading 0x000001951e4d50bc` inside this module -- the
+    // signature of a pointer read out of an object a level unload had just replaced.  A refused
+    // construction is already reported by the caller and the key stays queued; a fault is the
+    // same outcome, so it costs one copy rather than the session.
+    __try {
+        return TryConstructMirrorBody(s, now);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        static int said = 0;
+        if (said++ < 8)
+            QDLOG(LOG_WARN, "enemy spawn: a fault while constructing guid=", hex32(s.guid[0]),
+                  " (the class or the engine's spawn window is not usable this frame); the body "
+                  "stays queued");
+        return false;
+    }
+}
+
+static bool TryConstructMirrorBody(const wire::EnemySpawnBody& s, uint32_t now)
 {
     if (now - g_lastMirrorSpawnMs < kMirrorMinGapMs) {
         static uint32_t saw = 0;
@@ -7041,6 +7071,14 @@ void EnemyMirrorPump(uint32_t now)
     for (int i = 0; i < g_enN;) {
         EnemyRec& r = g_en[i];
         if (!r.mirror) { ++i; continue; }
+        // EVERY READ BELOW GOES THROUGH A POINTER THE ENGINE MAY HAVE FREED.  A mirror is a
+        // constructed gameplay actor, and a level unload or a GC between two pumps frees it;
+        // `ObjectIsLive` is an oracle, not a lock, because the object array and the actor can
+        // disagree for a frame.  MEASURED (Session 17's soak, twice): both processes died ~260 s
+        // in, inside this module, with `EXCEPTION_ACCESS_VIOLATION` on addresses that look like a
+        // freed object's memory read as a pointer.  A fault costs this one copy -- it is dropped
+        // and the owner's next row re-creates it -- never the session.
+        __try {
         bool gone = !ObjectIsLive(r.actor);
         const enemy::HostRow* row = r.haveGuid ? g_hostView.Get(r.guid) : nullptr;
 
@@ -7118,6 +7156,15 @@ void EnemyMirrorPump(uint32_t now)
         if (!gone) { ++i; continue; }
         if (r.actor) ForgetMirror(r.actor);
         g_en[i] = g_en[--g_enN];
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            // The copy's memory is not usable any more: drop the mirror and let the owner's rows
+            // build a new one.  `ForgetMirror` is idempotent and the record is removed.
+            QDLOG(LOG_WARN, "enemy mirror: a fault while servicing guid=", hex32(r.guid[0]),
+                  "; the copy is dropped (the owner's next row re-creates it)");
+            ForgetMirror(r.actor);
+            r.actor = nullptr;
+            g_en[i] = g_en[--g_enN];
+        }
     }
 }
 
@@ -11784,6 +11831,51 @@ void* RigFindNear(const char* sub, float* distOut, ActorXform* xfOut, char* name
     ActorXform bestXf = {};
     const bool wantEnemy = (enemyown::HasCI(sub, "enemy") || enemyown::HasCI("enemy", sub));
 
+    // `guid:<8 hex>`: the object is named by its SAVED IDENTITY, not by its instance name.
+    //
+    // Why this is not a convenience.  MEASURED (Session 17, first item-1 run): 780_SZ_Depths
+    // places ten `Chest_C` instances and the hub places chests from the SAME name series, so
+    // `near:Chest3` hit the hub's chest 56 km away and pressed that instead.  The exact-name
+    // rule cannot separate two actors that share a name across two levels, and a NAME is not
+    // what the ACTOR_STATES lane is keyed on: the GUID is.  There is deliberately NO world test
+    // here -- a saved GUID identifies exactly one actor in the process, and `ActorInThisWorld`
+    // was measured to answer false for every savable in a streamed sublevel.
+    if (!strncmp(sub, "guid:", 5)) {
+        uint32_t want = 0;
+        int digits = 0;
+        for (int i = 5; sub[i] && digits < 8; ++i, ++digits) {
+            char c = sub[i];
+            uint32_t v;
+            if (c >= '0' && c <= '9') v = (uint32_t)(c - '0');
+            else if (c >= 'a' && c <= 'f') v = (uint32_t)(c - 'a' + 10);
+            else if (c >= 'A' && c <= 'F') v = (uint32_t)(c - 'A' + 10);
+            else break;
+            want = (want << 4) | v;
+        }
+        if (digits > 0) {
+            static ActorStateOwner guidOwners[512];
+            int gn = BuildActorStateOwners(guidOwners, 512);
+            for (int i = 0; i < gn; ++i) {
+                if (guidOwners[i].guid.a != want) continue;
+                void* a = guidOwners[i].actor;
+                if (!a || !ObjectIsLive(a)) continue;
+                ActorXform x;
+                if (!ReadActorXform(a, &x)) continue;
+                if (distOut) {
+                    float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
+                    *distOut = sqrtf(dx * dx + dy * dy + dz * dz);
+                }
+                if (xfOut) *xfOut = x;
+                if (nameOut && nameCap > 0) {
+                    nameOut[0] = 0;
+                    FNameToString(ObjNameRaw(a), nameOut, nameCap);
+                }
+                QDLOG(LOG_INFO, "rig: near '", sub, "' matched the actor by SAVED GUID");
+                return a;
+            }
+        }
+    }
+
     // `near:loot` (or `near:lootdrop`): the nearest actor in the LOOT LEDGER, not the
     // nearest placed pickup.  Measured Session 8: the class walk matched a placed herb and
     // the pickup produced an item while never touching the spawned drop the ledger held.
@@ -12010,8 +12102,35 @@ bool DevTeleportToGuid(const char* hex8, float yawOverride, bool haveYaw)
               "hold, so both players arrive at the SAME enemy)");
         return true;
     }
-    QDLOG(LOG_WARN, "dev teleport guid: this machine holds no live enemy with key=",
-          hex32(want), " (", dec(g_enN), " record(s))");
+    // NOT AN ENEMY KEY: the same lever addresses a SAVED world object.  A chest or a door is
+    // keyed by a GUID into `SavableActorStates`, and that GUID is what the actor-state lane
+    // carries -- so `guid:<8 hex>` is the one handle that puts a player beside a particular
+    // chest instead of beside the nearest chest of some class (which is what a name match does,
+    // and it was measured to land 56 km away in another level).
+    {
+        static ActorStateOwner owners[512];
+        int n = BuildActorStateOwners(owners, 512);
+        for (int i = 0; i < n; ++i) {
+            if (owners[i].guid.a != want) continue;
+            void* a = owners[i].actor;
+            if (!a || !ObjectIsLive(a)) continue;
+            ActorXform t = {};
+            if (!ReadActorXform(a, &t)) continue;
+            float d = 0.0f;
+            { ActorXform me; if (ReadActorXform(g_localPawn, &me)) {
+                  float dx = me.px - t.px, dy = me.py - t.py, dz = me.pz - t.pz;
+                  d = sqrtf(dx * dx + dy * dy + dz * dz); } }
+            RigStandBeside(a, t, "guid", d, yawOverride, haveYaw);
+            char nm[64] = "?";
+            FNameToString(ObjNameRaw(a), nm, sizeof(nm));
+            QDLOG(LOG_INFO, "dev teleport: resolved guid=", hex32(want), " -> savable ", nm,
+                  " at ", flt(t.px, 0), ",", flt(t.py, 0), ",", flt(t.pz, 0),
+                  " (a world object, not an enemy)");
+            return true;
+        }
+    }
+    QDLOG(LOG_WARN, "dev teleport guid: this machine holds no live enemy or savable with key=",
+          hex32(want), " (", dec(g_enN), " enemy record(s))");
     return false;
 }
 
@@ -12047,6 +12166,13 @@ void DevTeleportFile(uint32_t now)
     if (buf[0] == 0 || strcmp(buf, applied) == 0) return;
     lstrcpynA(applied, buf, sizeof(applied));
 
+    // `#<nonce>`: going back to a place already visited is a legitimate instruction (the peer
+    // opens one chest, then the host opens another, then a check returns to the first), and this
+    // lever's "already applied" rule is on the whole string.  MEASURED (Session 17): without
+    // this, `guid:2ab59657#191528110` was parsed as a hex key and refused as "not hex", so the
+    // teleport silently never happened and the gate was read from 27 km away.
+    for (int i = 0; buf[i]; ++i) if (buf[i] == '#') { buf[i] = 0; break; }
+    if (buf[0] == 0) return;
     if (!strncmp(buf, "guid:", 5)) {
         // `guid:<8 hex>[,yaw]` -- stand beside the enemy with that KEY (see
         // DevTeleportToGuid).  Both machines given the same key arrive at the same enemy.
@@ -12763,6 +12889,15 @@ void DevInteract(uint32_t now)
     }
     if (buf[0] == 0 || strcmp(buf, g_devActApplied) == 0) return;
     lstrcpynA(g_devActApplied, buf, sizeof(g_devActApplied));
+
+    // `#<nonce>`: pressing the SAME object twice is the core of the co-op claim (the peer opens
+    // one, then the HOST opens another, then the peer must not be able to re-loot the first),
+    // and this lever's "already applied" rule is on the whole string.  MEASURED (Session 17):
+    // without this, `near:Chest3#173909658` was resolved as a NAME, missed the exact-instance
+    // match, fell through to the curated `chest` class walk and pressed the nearest chest of
+    // that CLASS instead -- a different actor 56 km away.
+    for (int i = 0; buf[i]; ++i) if (buf[i] == '#') { buf[i] = 0; break; }
+    if (buf[0] == 0) return;
 
     // `near:<name>`: interact with THAT actor.  The name is the instruction, so a
     // scenario can say which door, chest or NPC it means instead of hoping the engine's
@@ -13513,6 +13648,237 @@ void DevEnemyDump(uint32_t now)
           " (records ", dec(g_enN), ", ledger ", dec(g_remoteDead.Count(now)), ")");
     g_remoteDead.Expire(now);
     DevEnemyDumpNow(now);
+}
+
+// ---------------------------------------------------------------------------
+// Three READ-ONLY levers: the object inventory, one save flag, and the game's own gate
+// ---------------------------------------------------------------------------
+// The interaction lane's own lines could not answer "are the two machines now holding the same
+// state for this key", which IS the co-op claim for a chest or a door.  Each of these reads and
+// never presses, which is what makes it safe to point at a candidate before deciding to open it.
+//
+//   qd.obj  = "<tag>"     dump this machine's whole object inventory
+//   qd.flag = "<name>"|all  read one NamedSaveData flag out of this machine's bank
+//   qd.gate = "near:<name>"|"near:guid:<8hex>"  ask GetInteractInfo about ONE actor
+//
+// `qd.obj` reports BOTH halves of the inventory.  MEASURED (Session 17 smoke, in
+// 780_SZ_Depths): the object lane tracked eleven actors and every one was a lever, because the
+// area's chests and `SZ_BoringDoor` instances carry a `GUIDs` entry and `ObjectsScanStep`
+// deliberately hands those to the ACTOR_STATES lane (`ObjectIsSavableOwned`).  A dump of the
+// object lane alone therefore reports "no chests in this area" about a world full of them.
+int ObjectFindByKey(const uint32_t key[4]);
+void DevObjectDump(const char* tag, uint32_t now)
+{
+    (void)now;
+    QDLOG(LOG_INFO, "rig: object dump -- ", (tag && tag[0] ? tag : "-"),
+          " (tracked ", dec(g_objActorN), ", published ", dec(g_objNow.Count()),
+          ", skipped-savables ", dec(g_objSkippedSavable), ", no-state ", dec(g_objNoProp),
+          ", peer-rev ", dec(g_peerObjRev), ")");
+    for (int i = 0; i < g_objActorN; ++i) {
+        void* a = g_objActors[i].actor;
+        char nm[64] = "?";
+        char cls[64] = "?";
+        if (a && ObjectIsLive(a)) {
+            FNameToString(ObjNameRaw(a), nm, sizeof(nm));
+            FNameToString(ObjNameRaw(ObjClass(a)), cls, sizeof(cls));
+        }
+        uint8_t st = 0;
+        const char* used = nullptr;
+        bool have = a && ObjectIsLive(a) &&
+                    ObjectStateOf(a, (objects::Shape)g_objActors[i].shape, &st, &used);
+        QDLOG(LOG_INFO, "objkey ", hex32(g_objActors[i].key[0]), " ",
+              objects::ShapeName((objects::Shape)g_objActors[i].shape), " ", nm, " [", cls,
+              "] state=", dec(have ? (int64_t)st : (int64_t)-1), " prop=",
+              (used ? used : "-"),
+              (a && ObjectIsLive(a) ? "" : " NOT-LIVE"));
+    }
+    // FAULT-CONTAINED AS A WHOLE.  This walks the object graph, reads a name off an Outer chain
+    // and calls the game's own getter per actor; every one of those dereferences something a
+    // level unload can free between two candidates.  MEASURED (Session 17, the third item-1
+    // run): the peer died at `WINMM+0x6f357` with `EXCEPTION_ACCESS_VIOLATION reading
+    // 0x0000000100000017` during this dump.  A diagnostic that can kill the process is worse
+    // than no diagnostic, so a fault costs the dump, not the session.
+    __try {
+        static ActorStateOwner owners[512];
+        int n = BuildActorStateOwners(owners, 512);
+        int said = 0, closed = 0, here = 0;
+        void* world = GWorldPtr();
+        ActorXform me = {};
+        bool haveMe = g_localPawn && ReadActorXform(g_localPawn, &me);
+        for (int i = 0; i < n; ++i) {
+            void* a = owners[i].actor;
+            if (!a || !ObjectIsLive(a)) continue;
+            char nm[64] = "?";
+            char cls[64] = "?";
+            FNameToString(ObjNameRaw(a), nm, sizeof(nm));
+            FNameToString(ObjNameRaw(ObjClass(a)), cls, sizeof(cls));
+            objects::Shape sh = objects::ShapeOfClass(cls);
+            if (sh != objects::SH_CHEST && sh != objects::SH_DOOR &&
+                sh != objects::SH_BARRICADE && sh != objects::SH_ACTIVATABLE) continue;
+            int32_t v = 0;
+            bool isSet = false;
+            char gerr[128] = "";
+            bool haveV = ReadActorStateViaGetterGuarded(a, owners[i].index, &v, &isSet,
+                                                        gerr, sizeof(gerr));
+            bool opV = false;
+            bool haveOp = ReadActorBool(a, "Opened", &opV);
+            bool op = opV;
+            char gs[80] = "-";
+            EncodeGuidForLog(owners[i].guid, gs, sizeof(gs));
+            // WHICH PLACED ACTOR THIS IS, and how far away.  The instance NAME alone is not an
+            // identity: the content reuses names across levels (`Chest`/`Chest2`/`Chest4`/
+            // `Chest5` appear in BOTH 780_SZ_Depths and the hub with different GUIDs), and a
+            // streamed actor's outer chain does not reach a differently-named outer.  The
+            // placed path is the same string the OBJECT lane hashes for its key, so it is the
+            // one value that separates two same-named chests.  The distance is the fact a
+            // scenario needs: an object 50 km away in another level is not pressable, and
+            // teleporting to one blind is what faulted this rig.
+            char path[192] = "?";
+            ActorLevelPath(a, world, path, sizeof(path));
+            bool inWorld = false;
+            __try { inWorld = ActorInThisWorld(a, world); }
+            __except (EXCEPTION_EXECUTE_HANDLER) { inWorld = false; }
+            float dist = -1.0f;
+            ActorXform ax = {};
+            if (haveMe && ReadActorXform(a, &ax)) {
+                float dx = ax.px - me.px, dy = ax.py - me.py, dz = ax.pz - me.pz;
+                dist = sqrtf(dx * dx + dy * dy + dz * dz);
+            }
+            if (inWorld) ++here;
+            if (haveOp && !op) ++closed;
+            QDLOG(LOG_INFO, "savkey ", gs, " ", objects::ShapeName(sh), " ", nm, " [", cls,
+                  "] value=", dec(haveV ? (int64_t)v : (int64_t)-1),
+                  " isset=", (haveV ? (isSet ? "1" : "0") : "?"),
+                  " opened=", (haveOp ? (op ? "1" : "0") : "n/a"),
+                  " world=", (inWorld ? "1" : "0"), " dist=", flt(dist, 0),
+                  " at=", flt(ax.px, 0), ",", flt(ax.py, 0), ",", flt(ax.pz, 0),
+                  " path=", path);
+            ++said;
+        }
+        QDLOG(LOG_INFO, "rig: savable object inventory -- ", dec(said), " candidate(s), ",
+              dec(here), " in this world, ", dec(closed), " with opened=0");
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        QDLOG(LOG_WARN, "rig: savable object inventory faulted; the dump is incomplete "
+                        "(a level unloaded under the walk)");
+    }
+}
+
+char     g_devObjApplied[64] = "";
+uint32_t g_devObjPoll = 0;
+
+void DevObjectLever(uint32_t now)
+{
+    static char path[MAX_PATH];
+    static int on = -1;
+    if (on < 0) {
+        DevRigPath("QDCOOP_TEST_OBJS", "qd.obj", path, sizeof(path));
+        on = path[0] != 0;
+        if (on) QDLOG(LOG_INFO, "rig: obj control '", path, "' enabled exists=",
+                      (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES ? "yes" : "no"));
+    }
+    if (!on) return;
+    if (now - g_devObjPoll < 500) return;
+    g_devObjPoll = now;
+    char want[64];
+    if (!DevRigText("QDCOOP_TEST_OBJS", "qd.obj", want, sizeof(want))) return;
+    if (!want[0] || strcmp(want, g_devObjApplied) == 0) return;
+    lstrcpynA(g_devObjApplied, want, sizeof(g_devObjApplied));
+    DevObjectDump(want, now);
+}
+
+char     g_devGateApplied[64] = "";
+uint32_t g_devGatePoll = 0;
+
+// The gate probe: ask the game's own `GetInteractInfo` and READ the answer.  Nothing is pressed.
+// `DevInteractBody` is the only other caller of `RigLogInteractInfo`, and it presses as part of
+// the same body, so choosing WHICH object to test cost a press on every candidate.
+void DevGateLever(uint32_t now)
+{
+    static char path[MAX_PATH];
+    static int on = -1;
+    if (on < 0) {
+        DevRigPath("QDCOOP_TEST_GATE", "qd.gate", path, sizeof(path));
+        on = path[0] != 0;
+        if (on) QDLOG(LOG_INFO, "rig: gate control '", path, "' enabled exists=",
+                      (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES ? "yes" : "no"));
+    }
+    if (!on) return;
+    if (now - g_devGatePoll < 500) return;
+    g_devGatePoll = now;
+    char want[64];
+    if (!DevRigText("QDCOOP_TEST_GATE", "qd.gate", want, sizeof(want))) return;
+    if (!want[0]) return;
+    // `#<nonce>`: asking about the SAME object twice is legitimate (the other machine opened it
+    // in between), and the "already applied" rule is on the whole string.
+    char unique[64];
+    lstrcpynA(unique, want, sizeof(unique));
+    for (int i = 0; want[i]; ++i) if (want[i] == '#') { want[i] = 0; break; }
+    if (!want[0] || strcmp(unique, g_devGateApplied) == 0) return;
+    lstrcpynA(g_devGateApplied, unique, sizeof(g_devGateApplied));
+
+    const char* spec = want;
+    if (!strncmp(spec, "near:", 5)) spec += 5;
+    float d = 0.0f;
+    ActorXform xf = {};
+    char nm[64] = "";
+    void* tgt = RigFindNear(spec, &d, &xf, nm, sizeof(nm));
+    if (!tgt) {
+        QDLOG(LOG_WARN, "rig: gate -- no live actor matches '", spec, "'");
+        return;
+    }
+    QDLOG(LOG_INFO, "rig: gate -- resolved '", spec, "' -> ", nm, " at ", flt(xf.px, 0), ",",
+          flt(xf.py, 0), ",", flt(xf.pz, 0), " dist=", flt(d, 0));
+    __try { RigLogInteractInfo(tgt); }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        QDLOG(LOG_WARN, "rig: gate -- fault while asking the gate");
+        return;
+    }
+    DevActorStateDump(tgt);
+}
+
+char     g_devFlagApplied[64] = "";
+uint32_t g_devFlagPoll = 0;
+
+// One `NamedSaveData` flag, out of THIS machine's bank.  `TotalChestsOpened` rides WORLD_FLAGS
+// rather than either object lane (`qdobjectstate.h`'s header comment), so nothing on the rig
+// could read it back and "the counter did not go up twice" was unfalsifiable from a log.
+void DevFlagDump(uint32_t now)
+{
+    static char path[MAX_PATH];
+    static int on = -1;
+    if (on < 0) {
+        DevRigPath("QDCOOP_TEST_FLAG", "qd.flag", path, sizeof(path));
+        on = path[0] != 0;
+        if (on) QDLOG(LOG_INFO, "rig: flag control '", path, "' enabled exists=",
+                      (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES ? "yes" : "no"));
+    }
+    if (!on) return;
+    if (now - g_devFlagPoll < 500) return;
+    g_devFlagPoll = now;
+    char raw[64];
+    if (!DevRigText("QDCOOP_TEST_FLAG", "qd.flag", raw, sizeof(raw))) return;
+    if (!raw[0]) return;
+    char want[64];
+    lstrcpynA(want, raw, sizeof(want));
+    for (int i = 0; want[i]; ++i) if (want[i] == '#') { want[i] = 0; break; }
+    if (!want[0] || strcmp(raw, g_devFlagApplied) == 0) return;
+    lstrcpynA(g_devFlagApplied, raw, sizeof(g_devFlagApplied));
+
+    if (!strcmp(want, "all")) {
+        QDLOG(LOG_INFO, "rig: flag dump -- all (", dec(g_flags.Size()), " flag(s), rev ",
+              dec((int)g_flags.Revision()), ")");
+        for (int i = 0; i < g_flags.Size(); ++i) {
+            const char* name = nullptr;
+            int32_t v = 0;
+            if (g_flags.At(i, &name, &v))
+                QDLOG(LOG_INFO, "flag ", (name ? name : "?"), "=", dec((int)v));
+        }
+        return;
+    }
+    bool found = false;
+    int32_t v = g_flags.Get(want, &found);
+    QDLOG(LOG_INFO, "rig: flag dump -- ", want, " = ", dec((int)v),
+          (found ? "" : " (NOT IN THIS MACHINE'S BANK)"));
 }
 
 // QDCOOP_TEST_SEQUENCE: TEST INSTANCES ONLY -- start a placed `LevelSequenceActor`'s own
@@ -14907,6 +15273,9 @@ bool HK_Tick(void* engineLoop)
     DevTeleportFile(now);
     DevScanNearest(now);
     DevEnemyDump(now);
+    DevObjectLever(now);
+    DevGateLever(now);
+    DevFlagDump(now);
     DevInteract(now);
     DevGod(now);
     DevKillNearest(now);

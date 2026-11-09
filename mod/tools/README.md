@@ -286,6 +286,32 @@ the save is the intended path.
 
 ---
 
+## The live-session rig (`sessionN.ps1`) and its read-only levers
+
+Each session is ONE PowerShell process per scenario, because a launched game does not survive
+the command that started it.  `session17.ps1` is the current one:
+`-Phase smoke|item1|item2|item3|item4|soak`, one boot per phase, each phase in its own instance
+root under `_test/`.
+
+Every lever's control file takes a trailing `#<nonce>`, so that "press this again" is
+expressible: the needle is the whole string, and the nonce is what makes it new.  Measured the
+hard way — `qd.act` and `qd.tp` did not strip one, so a repeat press was resolved as a *name* and
+drove a different actor of that class 56 km away, while a repeat teleport was parsed as hex and
+silently refused.
+
+The three levers added in Session 17 only READ, which is why they can be pointed at candidates
+safely:
+
+| Control | What it does | Why it exists |
+|---|---|---|
+| `qd.obj` | dumps the whole object inventory: `objkey` for this lane's tracked set, `savkey` for the savables the lane hands to ACTOR_STATES, each with its container value, its own `Opened` bool, `world=`, `dist=`, `at=` and `path=` | the chests and doors this content places are SAVABLES, so a dump of the object lane alone reported "no chests" about a world full of them |
+| `qd.flag` | reads one `NamedSaveData` flag (or `all`) out of this machine's bank | `TotalChestsOpened` rides WORLD_FLAGS, so "not double-counted" was unfalsifiable from a log |
+| `qd.gate` | asks the game's own `GetInteractInfo` about one actor (`near:<name>` or `near:guid:<8hex>`) and presses nothing | `dev interact` was the only caller of that probe AND it pressed, so choosing a candidate cost a press |
+| `qd.tp guid:<8hex>` | stands beside a saved WORLD OBJECT, not only an enemy (Session 17) | `near:<name>` matched a same-named chest in a different level 56 km away |
+| `qd.act near:guid:<8hex>` | presses exactly the actor with that saved GUID | same reason; the GUID is the one handle that names one actor |
+
+---
+
 ## What this refuses to do
 
 * **Write outside `--root`.** Every read and write is resolved and bounded.

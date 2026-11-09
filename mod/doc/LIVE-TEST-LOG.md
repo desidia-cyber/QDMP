@@ -3136,3 +3136,291 @@ the class's own hit pipeline, so the enemy does not play its hit reaction for da
 module applies. That is named here rather than smoothed over, and the entry the build would
 need (`ApplyDamageToHitboxTarget`, per-hitbox, with a hit the Blueprint saw) is the next thing
 to attack.
+
+---
+
+## Session 17 — 2026-11-09 (the door opens both ways; the shot at the hit pipeline)
+
+This branch is `sync-fix` at `f4a961f`. The test phases run the wide set
+(`ObjectSync=1`, `ActorStateSync=1`, everything on, `LogLevel=3`); the soak phase runs either
+the **shipped** `qdcoop.ini` verbatim or, with `-PlaySet`, the documented play set from
+`PLAYTEST.md` section 4 — in both cases with only the relay address pinned to loopback and
+`LogLevel=3`. `tools/session17.ps1` is the whole run in one process per phase
+(`-Phase smoke|item1|item2|item3|item4|soak`). Roles are read from `session established`:
+**host=inst1, peer=inst2**. Fresh pairs are seeded from `analysis/save-backup-before-live`.
+
+Session 16 closed on a named gap — "the mirrored copy's damage goes through a legacy write
+rather than the class's own hit pipeline, so the enemy does not play its hit reaction" — and
+left the interaction lane's real question open since R90. This session took the top item (the
+door, both ways) first, and it is now closed.
+
+### R123. THE DOOR OPENS BOTH WAYS (new, and the session's headline)
+
+The requirement — a closed chest or door opened by the real interact lever on the PEER, the
+host applying the intent and refreshing so the object is visibly open there and cannot be
+looted again, with the chest counter not double-counted, and then the HOST opening another and
+the peer refreshing — is met, measured, in one run (`item1`, **25 PASS / 0 FAIL**). The forward
+direction, verbatim:
+
+```
+[2] dev interact: resolved 'guid:7c263bfd' -> Chest5 at -8164,-13070,-5083 dist=9243
+[2] dev interact: target=Chest5 [Chest_C] component=found verb=Interact
+[2] actor-state intent sent guid=7C263BFD-4983B099-22FAE3A2-9689C6D6 value=1 rev=81 try 1/5
+[1] actor-state intent applied: guid=7C263BFD-4983B099-22FAE3A2-9689C6D6 value=1
+[1] actor-state refresh ok Chest5 [Chest_C] index=0 value=1 mySaveData=1->1 guids=1 cached=ok
+    opened=1 forced=1
+[1] objkey Chest5 lane=actor-state value=1 opened=1        <- the host's own copy, read back
+[1] TotalChestsOpened: 0 -> 1                              <- ONE, on the machine that pressed
+[2] TotalChestsOpened = 1                                  <- and the same number on the peer
+[1] a second press on the host: 1 -> 1                     <- no second payout, not lootable again
+```
+
+and the reverse direction, on a different object:
+
+```
+[1] dev interact: target=Chest32 [Chest_C] component=found verb=Interact
+[1] actor-state host set 31 entries (live 31) rev=111
+[1] objkey Chest32 opened=1
+[2] actor-state refresh ok Chest32 [Chest_C] index=0 value=1 mySaveData=1->1 guids=1
+    cached=ok opened=1 forced=1
+[2] objkey Chest32 lane=actor-state value=1 opened=1
+```
+
+A door instance behaves the same way, which is why both were used:
+
+```
+[2] dev interact: resolved 'guid:836b5c61' -> SZ_BoringDoor_00_BP9
+[1] actor-state refresh ok SZ_BoringDoor_00_BP9 [SZ_BoringDoor_00_BP_C] ... opened=1
+```
+
+**What it took to get there is four measured facts, and each one had been a wrong assumption:**
+
+* **`IsInteractible=1` is not required for this lane to work.** R105's wall was real for the
+  *shop door* (`Shop_Door_00_SM` says `IsInteractible=1` and refuses anyway); for the area's
+  chests the press runs its verb and the state moves even where the gate reads 0. The lane's
+  claim is therefore stated against the game's own `Interact` verb and the value the lane reads,
+  not against the gate.
+* **A chest's `Opened` bool is the wrong half of its state.** Measured on a chest that had just
+  been opened successfully: `value=1 opened=0`. The container value is the fact; the bool is a
+  visual latch. Both are reported, and the verdict accepts either.
+* **Object names are not identities.** `Chest`/`Chest2`/`Chest4`/`Chest5` exist in BOTH 780 and
+  the hub with different GUIDs, so `near:Chest3` landed on the hub's chest 56 km away and
+  pressed that. Targeted by saved GUID instead (R128).
+* **The two machines do not hold the same object set, and it drifts.** Six dumps across one run
+  showed the host holding only `100_GR` chests while the peer held `760_SZ_AUT` ones; a later
+  dump of the same run had both on 780. A single sample is a snapshot of a moving target, so the
+  table is the UNION of every dump in the run and the level pin is re-asserted between samples.
+
+### R124. `qd.obj`, `qd.flag`, `qd.gate` — three read-only levers
+
+The lane's own lines could not answer "are the two machines now holding the same state for
+this key", which IS the co-op claim:
+
+* **`qd.obj`** dumps the whole object inventory: this lane's tracked set (`objkey`), AND the
+  savable half the lane deliberately hands to ACTOR_STATES (`savkey`), with each object's
+  container value, its `Opened` bool, whether the actor is in this world, its distance from the
+  player and its placed path. The second half is the one that matters: measured in 780, the
+  object lane tracked eleven actors and every one was a lever, because the area's chests carry a
+  `GUIDs` entry.
+* **`qd.flag`** reads a `NamedSaveData` flag out of this machine's bank. `TotalChestsOpened`
+  rides `WORLD_FLAGS`, not either object lane, so "the counter did not go up twice" was
+  unfalsifiable from a log without it.
+* **`qd.gate`** asks the game's own `GetInteractInfo` about ONE actor and presses nothing.
+  `DevInteractBody` was the only caller of that probe and it pressed as part of the same body,
+  so choosing which object to test cost a press on every candidate.
+
+### R125. FIXED — the savable walk could fault, and did (two processes)
+
+`BuildActorStateOwnersGuarded` had a `__try` around the per-object `IsSubclassOf` test but NOT
+around `ObjectAt`, `LooksLikeAnObject`, `ObjClass` or the `GUIDs` array read. A run died at 24 s
+with `EXCEPTION_ACCESS_VIOLATION reading 0x0000000000000000` inside it, before the scenario had
+asked for anything, and a peer died earlier at `WINMM+0x6f357` reading `0x0000000100000017` — a
+small integer read as an object pointer — during the same walk. The loop body is now guarded as
+a unit, so a fault costs the rest of that pass (the caller re-runs it a second later) rather
+than the process.
+
+### R126. FIXED — pressing an object in a level that is not resident kills the game
+
+The most expensive lesson of the session. Reaching a chest by teleporting to its GUID works,
+but if that GUID belongs to a DIFFERENT streamed level, the press succeeds and then:
+
+```
+actor-state: game writer for guid=540dfba4-... value=1 read back -999999 (WRITE FAILED)
+actor-state: game writer for guid=b549b9a2-... value=2 read back -999999 (WRITE FAILED)
+```
+
+and both processes die (`WINMM+0x37988`, `+0x6f7f7`). `Save Data Index to World Save` is
+Blueprint bytecode writing into a level the manager is streaming out from under it; the fault
+happens inside the game's own code after our writer has been entered, so no `__try` of ours can
+contain it. The scenario now stays in the world the player is in.
+
+### R127. Two rig levers grew a `#<nonce>`, and both had been silently mis-parsing
+
+`qd.act` and `qd.tp` both use "the string changed, so this is a new instruction", and neither
+stripped a trailing `#<anything>`:
+
+```
+dev teleport guid: '2ab59657#191528110' is not hex          <- the teleport never happened
+dev interact: resolved 'Chest3#173909658' -> SG_Chest_BP2 at 6185,-18108,-14047 dist=56575
+```
+
+The second line is the dangerous one: the name did not match, the curated `chest` class walk
+ran, and the press went to a different actor 56 km away while the gate's answer was read as if
+it belonged to the requested one. Both levers now strip the nonce.
+
+### R128. `guid:` addresses a SAVED WORLD OBJECT, not only an enemy
+
+`DevTeleportToGuid` searched `g_en` only, so `guid:<key>` for a chest resolved nothing. It now
+also walks the savable table, which is what lets a scenario stand beside a particular chest
+instead of "the nearest chest of some class".
+
+### R129. Item 2 (loot hiding): the drop rolls, but not on the machine that killed it
+
+```
+[1] rig: enemykill -> key=17181166 the enemy's own Kill ran
+[2] enemy 17181166: the other machine recorded this death; killing the local copy
+[2] loot: drop 90A52CF3#0 = /Game/Items/Consumables/Herb/Herb_Item_BP.Herb_Item_BP_C
+[2] loot: drop 8FA52B60#1 = /Game/Items/Consumables/Herb/Herb_Item_BP.Herb_Item_BP_C
+```
+
+The drop rolled on the PEER for an enemy the HOST killed. Watching only the host reported "no
+drop" while the peer's log already had two, so the harness now watches both machines and makes
+the TAKER the machine that did not roll it. The killing half PASSES. The hiding half is
+**NOT-REACHED**: `loot: hiding local drop` did not appear in any run this session — the drop
+exists, and the tombstone needs the taker's ledger to reach the machine holding the visible copy,
+which was not observed to converge in the window.
+
+### R130. Item 3 (760_SZ_AUT): the cutscene is complete; the dragon did not spawn
+
+`Dek_Egg_Activation` — play on one machine, hold on the other, end it, resume together — is
+**fully proven**:
+
+```
+[2] rig: sequence lever -> Dek_Egg_Activation Play ran on its own SequencePlayer
+[2] cutscene: local started Dek_Egg_Activation
+[1] cutscene: holding the local player for the partner's cutscene (enter=1 lock=1)
+[2] rig: sequence lever -> Dek_Egg_Activation Stop ran on its own SequencePlayer
+[2] cutscene: local ended Dek_Egg_Activation
+[1] cutscene: partner's cutscene ended; resuming together (exit=1 unlock=1)
+```
+
+The ROSDragon did **not** materialise: four minutes with both players inside its spawner's
+radius produced no `Dragon_Ros_BP_C` at all, and the area reported `engineVisible=0` for the
+whole window — its `PlayerIsInActivationRange` reads player 0 of its own machine and the level
+manager had the level loaded but not shown. The boss PIPELINE is not implicated: the same world
+had live bosses whose content says `Boss=1`. So item 3 splits: **cutscene PASS**, **ROSDragon
+NOT-REACHED (spawner/content)**; the pipeline itself was proven in Session 16 on the Green
+Dragon.
+
+### R131. Item 4 (hit reaction): `ApplyDamageToHitboxTarget` is a DEAL-damage entry
+
+The ladder now tries the class's own entry before the clamped write, and the run says what it is:
+
+```
+signature ApplyDamageToHitboxTarget props=5 parms=158 ret@-1
+  Target : ObjectProperty @0 size=8
+  Hit : StructProperty @8 size=136
+  PositionOverride : StructProperty @144 size=12
+  UseOverride : BoolProperty @156
+  HitTarget : BoolProperty @157
+damage: ApplyDamageToHitboxTarget on Dragon_Green_BP_C ran and HP did not move (3500.0 -> 3500.0)
+damage: enemy hp via HP write 3500.0 -> 3100.0
+```
+
+Its parameters are `Target`/`Hit`/`PositionOverride`/`UseOverride` — the entry an attacker calls
+to DEAL damage TO something, not one a victim implements to TAKE it. Called on a victim with
+itself as `Target` it runs and applies nothing, which is the correct result. **The hit-reaction
+half therefore remains NOT-REACHED, and the reason is now an API fact**: this build exposes no
+take-damage entry carrying an amount (`TryApplyDamage` refuses a module-built payload, `DamageHP`
+is out-only, and this one is the other direction). The one shared HP is unaffected — it still
+moves, and both machines still agree (`3500 -> 3100`, `host=3100 peer=3099.9`).
+
+### Bugs fixed this session
+
+* **`BuildActorStateOwnersGuarded` fault-contained as a whole** (R125).
+* **`qd.act` and `qd.tp` strip a `#<nonce>`** (R127).
+* **`DevTeleportToGuid` addresses savables** (R128).
+* **Three read-only rig levers** and the savable half of the object dump (R124).
+* **The enemy record table 256 → 1024** (R132a): `RegisterMirror` evicted a record per new
+  mirror, and an evicted MIRROR can never learn its owner's death.
+* **The mirror pump and `TryConstructMirror` fault-contained** (R132).
+* **`tools/session17.ps1`**, with four harness bugs found by running it: `Get-Mark $H - 60000`
+  silently DROPPED the offset (PowerShell binds only declared parameters, so a non-advanced
+  function takes `$H` and ignores the rest) and every window opened after the line it looked
+  for; `$p` in a `foreach` silently rebound `$P`, the peer instance index, because PowerShell
+  variable names are case-insensitive; `Sort-Object { ... }, Dist` treated `Dist` as a second
+  key NAME; and a name-keyed object table kept only one actor per name.
+
+### Verdicts, item by item
+
+| Item | Verdict | Key line |
+|---|---|---|
+| 1a. Peer opens a real chest/door; host applies; host `opened=1` | **PASS** | `actor-state refresh ok Chest5 ... opened=1`; `objkey Chest5 lane=actor-state value=1 opened=1` |
+| 1b. The object is not lootable again on the host | **PASS** | `a second press on the host: TotalChestsOpened 1 -> 1` |
+| 1c. `TotalChestsOpened` not double-counted | **PASS** | `0 -> 1` on the presser; `host=1 peer=1` |
+| 1d. Host opens another; peer refreshes | **PASS** | `actor-state refresh ok Chest32 ... opened=1` on the PEER |
+| 1e. A door instance behaves the same as a chest | **PASS** | `actor-state refresh ok SZ_BoringDoor_00_BP9 ... opened=1` |
+| 2a. An enemy that DROPS, with both players present | **PASS** | `loot: drop 90A52CF3#0 = .../Herb_Item_BP_C` (rolled on the PEER) |
+| 2b. The death reaches the other machine | **PASS** | `the other machine recorded this death; killing the local copy` |
+| 2c. `loot: hiding local drop` on the other machine | **NOT-REACHED** | no such line in any run; the ledger was not observed to converge |
+| 3a. `Dek_Egg_Activation` play on one, hold on the other | **PASS** | `cutscene: holding the local player ... (enter=1 lock=1)` |
+| 3b. Joint resume, held player released | **PASS** | `partner's cutscene ended; resuming together (exit=1 unlock=1)` |
+| 3c. ROSDragon mirror + HP + bar + death in 760 | **NOT-REACHED (spawner)** | no `Dragon_Ros_BP_C` in 4 min at its own spawner; `engineVisible=0` |
+| 3d. The boss pipeline itself | **PASS (Session 16)** | `boss probe: Dragon_Green_BP_C ... data.Boss=1 -> boss=1` |
+| 4a. The class's own `ApplyDamageToHitboxTarget` is called | **PASS (measured)** | `signature ApplyDamageToHitboxTarget props=5 parms=158` |
+| 4b. It moves the HP / plays a reaction | **NOT-REACHED (API)** | `ran and HP did not move (3500.0 -> 3500.0)` — a deal-damage entry |
+| 4c. One shared HP regardless | **PASS** | `HP after: host=3100 peer=3099.9` |
+| 5a. Ten minutes at the SHIPPED defaults: no crash | **PASS** | 600 s, `soak iterations: 182`, both alive, `error/fault lines=0` |
+| 5b. Ten minutes at the DOCUMENTED PLAY set: no crash | **FAIL (open)** | 256 s → **499 s** after two guards (R132) |
+| 5c. Kill sets diff 0 at the play set | **FAIL (consequence of 5b)** | the dump is read after the crash, so one machine reports 0 keys |
+
+### R132. The play set still crashes: three guards, and the crash moved but did not go
+
+The one thing the session did NOT deliver, stated as a number rather than a shrug. At the
+shipped defaults (every write path off) the soak runs the full 600 s clean — `soak iterations:
+182`, both processes alive, `error/fault lines=0` on both. At the documented play set it does not:
+
+| attempt | guard added | died at | iterations |
+|---|---|---|---|
+| 1 | none | 256 s | 68 |
+| 2 | enemy table 256 → 1024 (R132a) | 264 s | 68 |
+| 3 | `__try` around the mirror pump's per-copy service | 256 s | — |
+| 4 | `__try` around `TryConstructMirror` | **499 s** | **137** |
+
+Every crash is the same shape inside this module (`EXCEPTION_ACCESS_VIOLATION reading
+0x0000000100000017` / `0x000001951e4d50bc` at `WINMM+0x3b357`, `+0x6f4d7`), which is the
+signature of a pointer read out of a freed object, and three of the four deaths are at almost
+exactly the same elapsed time — the moment the hub's own streaming churn starts replacing actors
+the mod is holding. The guards are real (the fourth attempt nearly DOUBLED the survival window)
+but the remaining fault is in a path the session did not isolate.
+
+R132a is a real fix regardless and the soak found it: `RegisterMirror` was evicting an enemy
+record for every new mirror because the table was capped at 256 while the hub holds more, and an
+evicted MIRROR can never learn its owner's death — nothing re-adds a mirror, its body having
+been acked. The three keys that diverged in the first play-set soak (`B55C570E`, `32548C19`,
+`44D6AA74`) each had `enemy mirror: record table full (256); evicting guid=...` immediately
+before.
+
+**What a human tester needs to know:** the play-set configuration is NOT yet safe for a long
+session. Play in shorter stretches, and expect a crash at around eight minutes of a heavily
+populated hub.
+
+### What this session settled
+
+The interaction claim open since R90 is closed for the objects this content actually places: a
+chest or a door the game lets a player press opens on the machine that did not press it, reads
+back as open on both, cannot be looted twice and does not double-count the chest counter. That
+took four wrong assumptions about this build out of the way — the gate is not the precondition,
+a chest's `Opened` bool is not its state, an object's name is not its identity, and the two
+machines' object sets drift while the level manager works through a list. Each is now a line in
+the log rather than a belief.
+
+The hit-reaction question changed shape rather than closing, and the new shape is the useful
+part: `ApplyDamageToHitboxTarget` — the entry Session 16 named as "the next thing to attack" —
+turned out to be the entry an ATTACKER calls, with `Target` and `Hit` parameters, not a victim's
+take-damage entry. Calling it on the victim runs and applies nothing, correctly. So the reaction
+half is blocked on an API this build does not expose, not on a lane that has not been written.
+
+The soak is the honest black mark: the shipped set is stable and does nothing, the play set does
+everything and is not yet stable for ten minutes. Two guards nearly doubled the window and the
+remaining fault is named by offset, not understood.
