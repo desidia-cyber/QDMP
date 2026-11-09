@@ -490,6 +490,7 @@ public:
 
     HardVerdict OnPeerArrived(uint32_t seq, const char* map, const char* localMap)
     {
+        (void)seq;                            // the map is the identity; the seq is for logs
         if (!active_ || !SameText(map, target_)) return HV_IGNORED;
         peerArrived_ = true;
         if (localMap && localMap[0] && SameText(map, localMap)) localArrived_ = true;
@@ -498,6 +499,7 @@ public:
 
     HardVerdict OnPeerResume(uint32_t seq, const char* map)
     {
+        (void)seq;
         if (!SameText(map, target_)) return HV_IGNORED;
         if (!localArrived_) return HV_REFUSED;   // never resume into a map we are not in
         resuming_ = true;
@@ -606,6 +608,270 @@ private:
     char     gaveUp_[kHardMaxGaveUp][kDestCap];
     int      gaveUpN_;
     int      gaveUpNext_;
+};
+
+// ---------------------------------------------------------------------------
+// RefuseCurrentWorld -- never hard-load the world this machine is in.
+// ---------------------------------------------------------------------------
+// MEASURED (Session 11 R92): `LoadMapWithLoadingScreen(<the map we are already in>)`
+// tears down the current UWorld while it is the current world, and the GAME faults with
+// a stack entirely inside QueensDomain-Win64-Shipping (no WINMM frame, so it is not a
+// mod pointer): `UE4CC-Windows-C2CD747E…`, EXCEPTION_ACCESS_VIOLATION, 214 s in.
+//
+// The handshake already answers "we are already there" with an arrival instead of a
+// load, but two other paths reach the loader with a name they did not cross-check: the
+// `wrong world` half of an in-world announcement, and the rig's own `qd.hard` lever.
+// The guard belongs at the one place that performs the load, so no caller can add a
+// third path that faults the game.
+inline bool RefuseCurrentWorld(const char* target, const char* localMap)
+{
+    return target && target[0] && localMap && localMap[0] && SameText(target, localMap);
+}
+
+// ---------------------------------------------------------------------------
+// ArrivalBoard -- where the player STANDS after a hard transition (Session 12)
+// ---------------------------------------------------------------------------
+// THE BUG THIS BOARD EXISTS TO FIX
+// --------------------------------
+// After a hard load the follower was a pawn at the origin, falling, and every teleport
+// was undone by the game's own respawn (`scan: local at 0,0,-2729`).  Measured, and why
+// there is nothing to "pass through" from the leader:
+//
+//   * `LoadMapWithLoadingScreen` has exactly two parameters -- `Map: NameProperty`,
+//     `MapPackage: StrProperty` -- and its exec thunk (`0x00E58F70`) marshals those two
+//     into the body (`0x00E34F30`), which only sets `bLoadingMap`, records
+//     `CurrentlyLoadingMapPackage` and starts the async load.  No spawn travels in it.
+//   * No cooked package names it (all 19,213 of them), and the only native caller of the
+//     body is its own thunk.  The GAME never calls it, so there is no leader-side
+//     parameter to capture.
+//   * Only `Ruins_Level_00` places a `PlayerStart`.  `900_SipehaWorld`, `990_B33sment`,
+//     `780_SZ_Depths`, `760_SZ_AUT`, `100_GR` and `997_FinalZoneCutscene` place none, so
+//     `AGameModeBase::RestartPlayer` spawns DefaultPawnClass at the IDENTITY transform:
+//     the pawn at the origin, inside no geometry, which falls, dies on the kill Z and
+//     respawns there -- the loop Session 11 measured.
+//
+// WHAT THE GAME DOES INSTEAD, AND WHY THIS CAN USE IT
+// ---------------------------------------------------
+// The spawn point for those worlds is CONTENT in the destination world, resolved by
+// class: `900_SipehaWorld` places exactly one `PlayerTeleportTargetPos`, and
+// `990_B33sment` exactly one `B33smentTeleportPoint` (cooked export tables), and
+// `FS_PlayerChar` resolves both with `GetAllActorsOfClass`.  Both machines load the same
+// world, so both can find the same marker without a wire field -- and if the marker is
+// missing, the partner's streamed position is the next best answer, which is the
+// fallback the design names.
+//
+// THE RULES, AND WHY EACH ONE IS THERE
+// ------------------------------------
+//   * Only when the engine's own fallback happened.  A pawn at the origin is the exact
+//     signature of "no PlayerStart"; a pawn standing anywhere else was placed by the game
+//     and must not be moved.  (Both machines in `Ruins_Level_00` stand where the save put
+//     them, ~4 km from the origin, so the hub is untouched.)  "Anywhere else" has to be
+//     earned: the previous world's pawn reads at its old position for a second or two after
+//     the swap (`kPlacedSettleMs`), and the same position in a PlayerStart-less world is the
+//     VOID the player falls out of (`kFallCmPerPoll`).
+//   * Only inside a window.  The game respawns the stranded pawn every few seconds, so
+//     one placement is not enough and an unbounded one would fight the player forever.
+//   * The partner first, the world's own marker second.  A partner that is standing
+//     somewhere real is the most precise answer, and it is the design's named fallback;
+//     the marker is the deterministic answer when BOTH machines were stranded, and it
+//     is the same answer on both, which is what puts them next to each other.  A partner
+//     row only counts once the load has settled (`kPeerSettleMs`): before that it still
+//     describes the world we left.
+//   * Bounded, and it stops on its own.  A pawn that is standing, a window that expired,
+//     or `kArrivalMaxTries` placements end it, so a wrong guess costs a few seconds and
+//     never becomes a loop.
+static const uint32_t kArrivalWindowMs   = 45000;  // a respawn loop is ~5-10 s
+static const int      kArrivalMaxTries   = 5;
+static const float    kArrivalOriginRad  = 150.0f; // |x|,|y| of the identity spawn
+static const uint32_t kPeerFreshMs       = 1500;   // a row older than this is another world
+// How long after OUR arrival a partner row has to have arrived before it can be trusted as
+// a position in the new world.  A world load is asynchronous: the sender keeps sending rows
+// from the pawn it is destroying for a second or two after the map name changes, and those
+// rows carry a mix of the two worlds.  Measured Session 12: the follower placed itself at
+// the partner's HUB coordinates with the NEW world's Z, and stood in the void.
+static const uint32_t kPeerSettleMs      = 3000;
+// How long a pawn that is NOT at the origin has to stay there before it counts as "the
+// world placed the player".  A world swap leaves the previous world's player readable for a
+// frame or two, at the position it was standing in before the load; concluding from one poll
+// skips the placement entirely (measured Session 12: the leader was never placed for exactly
+// that reason, while the follower -- whose load finishes later -- was).
+static const uint32_t kPlacedSettleMs    = 2000;
+// A pawn that is falling is not standing, however far from the origin it is.  This is the
+// rule that separates the two worlds Session 12 measured: in the hub the game restores the
+// saved position and the player stands there (4106,-1744, unchanged for as long as you
+// look), while in a world with no PlayerStart the same position is the VOID -- the player
+// keeps the transform it had and drops out of it.  A drop of this many cm between two
+// one-second polls is a fall, not a step.
+static const float    kFallCmPerPoll     = 150.0f;
+static const int      kArrivalWhyCap     = 32;
+
+enum ArriveVerdict {
+    AR_NONE = 0,      // not armed: no hard transition is settling
+    AR_WAIT,          // armed, but nothing can be decided yet
+    AR_PLACE_PEER,    // place at the partner's streamed position
+    AR_PLACE_ANCHOR,  // place at the destination world's own arrival marker
+    AR_DONE           // the player is standing, or the window/tries ended
+};
+
+struct ArrivalInput {
+    bool     havePawn;
+    float    px, py, pz;    // the local pawn's own position
+    bool     havePeer;
+    const char* peerMap;    // the partner's announced world
+    const char* localMap;   // ours
+    uint32_t peerAgeMs;     // age of the partner's last position row
+    uint32_t peerRowMs;     // when that row ARRIVED (absolute, same clock as Arm)
+    float    peerX, peerY;  // where the partner is (already offset by the caller)
+    bool     haveAnchor;    // the world places an arrival marker
+    float    anchorX, anchorY;
+    const char* anchorWhy;  // its class, for the log
+};
+
+class ArrivalBoard {
+public:
+    ArrivalBoard() { Reset(); }
+
+    void Reset()
+    {
+        armed_ = false;
+        map_[0] = 0;
+        until_ = 0;
+        armedMs_ = 0;
+        lastMs_ = 0;
+        tries_ = 0;
+        farSinceMs_ = 0;
+        lastPz_ = 0.0f;
+        haveLastPz_ = false;
+        verdict_ = AR_NONE;
+        why_[0] = 0;
+        tx_ = ty_ = 0.0f;
+        said_ = false;
+    }
+
+    // A hard transition just put this machine in `map`.
+    void Arm(const char* map, uint32_t now)
+    {
+        armed_ = true;
+        CopyText(map_, kMapCap, map ? map : "");
+        until_ = now + kArrivalWindowMs;
+        armedMs_ = now;
+        tries_ = 0;
+        farSinceMs_ = 0;
+        lastPz_ = 0.0f;
+        haveLastPz_ = false;
+        verdict_ = AR_NONE;
+        why_[0] = 0;
+        tx_ = ty_ = 0.0f;
+        said_ = false;
+    }
+
+    void Disarm() { armed_ = false; }
+
+    // Called about once a second while a transition is settling.
+    ArriveVerdict Decide(uint32_t now, const ArrivalInput& in)
+    {
+        verdict_ = AR_NONE;
+        if (!armed_) return verdict_;
+        if ((int32_t)(now - until_) >= 0) { verdict_ = AR_DONE; armed_ = false; return verdict_; }
+        if (!in.havePawn) { haveLastPz_ = false; verdict_ = AR_WAIT; return verdict_; }
+        // A position that did not read is not a spawn: wait for the next poll rather than
+        // concluding the engine placed the player.
+        if (!(in.px == in.px) || !(in.py == in.py)) { verdict_ = AR_WAIT; return verdict_; }
+
+        // Falling is the game's own statement that the player has nowhere to stand.
+        bool falling = haveLastPz_ && (in.pz < lastPz_ - kFallCmPerPoll);
+        lastPz_ = in.pz;
+        haveLastPz_ = true;
+
+        // The engine placed the player somewhere real (a world WITH a PlayerStart, or the
+        // game restoring a saved position): the game has already answered, and moving the
+        // player here would be the mod pretending to be the spawn path.  It has to hold:
+        // one poll is not evidence (kPlacedSettleMs), and a fall disqualifies it whatever
+        // the coordinates say (kFallCmPerPoll).
+        if (!AtOrigin(in.px, in.py) && !falling) {
+            if (farSinceMs_ == 0) { farSinceMs_ = now ? now : 1; verdict_ = AR_WAIT; return verdict_; }
+            if ((uint32_t)(now - farSinceMs_) < kPlacedSettleMs) { verdict_ = AR_WAIT; return verdict_; }
+            verdict_ = AR_DONE;
+            armed_ = false;
+            return verdict_;
+        }
+        farSinceMs_ = 0;    // at the identity spawn, or falling out of the previous pose
+
+        // A partner standing somewhere real in THIS world is the most precise anchor and
+        // is the named fallback.  A partner that is itself at the identity spawn says
+        // nothing about where to stand, so it is not used.
+        //
+        // The row must also be a SETTLED one: at least `kPeerSettleMs` after this machine's
+        // own arrival.  The map and the position travel on different lanes, so a row can be
+        // "fresh" by arrival time and still describe the world we just left -- measured
+        // Session 12, where the follower placed itself at the partner's hub coordinates with
+        // the new world's Z and stood in the void.
+        if (in.havePeer && in.localMap && in.localMap[0] &&
+            SameText(in.peerMap, in.localMap) && in.peerAgeMs <= kPeerFreshMs &&
+            (int32_t)(in.peerRowMs - (armedMs_ + kPeerSettleMs)) >= 0 &&
+            !AtOrigin(in.peerX, in.peerY)) {
+            if (tries_ >= kArrivalMaxTries) { verdict_ = AR_DONE; armed_ = false; return verdict_; }
+            verdict_ = AR_PLACE_PEER;
+            CopyText(why_, kArrivalWhyCap, "partner");
+            tx_ = in.peerX; ty_ = in.peerY;
+            return verdict_;
+        }
+
+        if (in.haveAnchor) {
+            if (tries_ >= kArrivalMaxTries) { verdict_ = AR_DONE; armed_ = false; return verdict_; }
+            verdict_ = AR_PLACE_ANCHOR;
+            CopyText(why_, kArrivalWhyCap, in.anchorWhy ? in.anchorWhy : "marker");
+            tx_ = in.anchorX; ty_ = in.anchorY;
+            return verdict_;
+        }
+
+        verdict_ = AR_WAIT;   // the partner may still arrive in this world
+        return verdict_;
+    }
+
+    // The caller applied a placement.  `ok=false` also counts as an attempt: a marker the
+    // game refuses must not be retried for the rest of the window.
+    void Applied(bool ok, uint32_t now)
+    {
+        (void)ok;
+        ++tries_;
+        lastMs_ = now;
+        said_ = false;
+        haveLastPz_ = false;    // the placement moved the pawn: the fall check starts over
+    }
+
+    static bool AtOrigin(float x, float y)
+    {
+        if (!(x == x) || !(y == y)) return false;   // NaN: no measurement, not a spawn
+        return (x > -kArrivalOriginRad && x < kArrivalOriginRad &&
+                y > -kArrivalOriginRad && y < kArrivalOriginRad);
+    }
+
+    bool Armed() const { return armed_; }
+    const char* Map() const { return map_; }
+    const char* Why() const { return why_; }
+    float TargetX() const { return tx_; }
+    float TargetY() const { return ty_; }
+    int Tries() const { return tries_; }
+    // One line per decision, not one per pump.
+    bool MarkSaid() { if (said_) return false; said_ = true; return true; }
+    uint32_t Until() const { return until_; }
+    uint32_t LastMs() const { return lastMs_; }
+
+private:
+    bool     armed_;
+    char     map_[kMapCap];
+    uint32_t until_;
+    uint32_t armedMs_;
+    uint32_t lastMs_;
+    uint32_t farSinceMs_;   // when a non-origin pawn was first seen (0 = at the origin)
+    float    lastPz_;
+    bool     haveLastPz_;
+    int      tries_;
+    ArriveVerdict verdict_;
+    char     why_[kArrivalWhyCap];
+    float    tx_, ty_;
+    bool     said_;
 };
 
 } // namespace travel

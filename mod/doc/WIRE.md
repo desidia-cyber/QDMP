@@ -634,6 +634,25 @@ same instant): the host's `HARD_BEGIN` wins and the peer re-follows once. A hard
 transition is not gated on `StreamUnion`; travel coordination has its own switch
 (`TravelSync`) so it works with the streaming union disabled.
 
+Two things about this lane are deliberately **not** on the wire, because they were
+measured rather than assumed (`LIVE-TEST-LOG` Session 12):
+
+- **No spawn field.** `LoadMapWithLoadingScreen` takes exactly two parameters (`Map:
+  NameProperty`, `MapPackage: StrProperty`); its exec thunk marshals those two into the
+  body, which only sets `bLoadingMap`, records `CurrentlyLoadingMapPackage` and starts the
+  async load. No cooked package names it, and the only native caller of the body is its own
+  thunk — so the game never performs this load and there is no leader-side spawn parameter
+  to carry. A world without a `PlayerStart` therefore spawns the player at the origin, and
+  the spawn point for the hard maps is CONTENT in the destination world (one
+  `PlayerTeleportTargetPos` in `900_SipehaWorld`, one `B33smentTeleportPoint` in
+  `990_B33sment`). Each machine resolves that marker locally from the world it just loaded,
+  or stands beside the partner's streamed position — both machines hold the same world, so
+  neither needs to be told. See `qd::travel::ArrivalBoard`.
+- **A refusal, not a datagram.** A hard load of the map a machine is already in tears down
+  the current world and faults the GAME (Session 11 R92: a stack with no `WINMM` frame).
+  `FollowHardTravel` refuses it for every caller, so the handshake, the in-world fallback
+  and the rig's own lever cannot reach that fault.
+
 ### 3.15b `DAMAGE` (0x24)
 
 ```

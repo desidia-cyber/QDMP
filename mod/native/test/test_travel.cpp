@@ -18,6 +18,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 
 #include "qdtravel.h"
 
@@ -398,6 +399,201 @@ static void TestHardReturnHome()
     CHECK(!b.GaveUp("Ruins_Level_00"), "deadline/a transition to the map we are IN is not a failed load");
 }
 
+// ===========================================================================
+// Session 12 -- the world you are in, and where the player stands after a load
+// ===========================================================================
+static void TestRefuseCurrentWorld()
+{
+    // Session 11 R92: `LoadMapWithLoadingScreen` of the current world faults the GAME
+    // (no WINMM frame in the stack).  The refusal is the guard every caller goes through.
+    CHECK(RefuseCurrentWorld("900_SipehaWorld", "900_SipehaWorld"),
+          "reload/same map is refused");
+    CHECK(!RefuseCurrentWorld("900_SipehaWorld", "Ruins_Level_00"),
+          "reload/a different map is allowed");
+    CHECK(!RefuseCurrentWorld("", "900_SipehaWorld"), "reload/an empty target is not a load");
+    CHECK(!RefuseCurrentWorld("900_SipehaWorld", ""),
+          "reload/an unknown local world cannot be compared");
+    CHECK(!RefuseCurrentWorld(nullptr, "900_SipehaWorld"), "reload/null target is not a load");
+    // The comparison is exact: a prefix is a DIFFERENT world.
+    CHECK(!RefuseCurrentWorld("900_Sipeha", "900_SipehaWorld"), "reload/no prefix match");
+}
+
+static ArrivalInput ArrivalAt(float x, float y)
+{
+    ArrivalInput in;
+    memset(&in, 0, sizeof(in));
+    in.havePawn = true;
+    in.px = x; in.py = y;
+    in.localMap = "900_SipehaWorld";
+    return in;
+}
+
+static void TestArrivalNotArmed()
+{
+    ArrivalBoard b;
+    ArrivalInput in = ArrivalAt(0.0f, 0.0f);
+    CHECK(b.Decide(1000, in) == AR_NONE, "arrive/not armed does nothing");
+    CHECK(!b.Armed(), "arrive/and stays off");
+}
+
+static void TestArrivalWaitsForAPawn()
+{
+    ArrivalBoard b;
+    b.Arm("900_SipehaWorld", 1000);
+    ArrivalInput in = ArrivalAt(0.0f, 0.0f);
+    in.havePawn = false;
+    CHECK(b.Decide(1500, in) == AR_WAIT, "arrive/no pawn yet waits");
+
+    // A position that did not read must not be read as "the engine placed the player".
+    ArrivalInput nan = ArrivalAt(0.0f, 0.0f);
+    nan.px = nan.py = nanf("");
+    CHECK(b.Decide(2000, nan) == AR_WAIT, "arrive/a failed read waits");
+    CHECK(b.Armed(), "arrive/and does not disarm");
+}
+
+static void TestArrivalLeavesARealSpawnAlone()
+{
+    // A world WITH a PlayerStart (or a restored saved position) puts the pawn far from the
+    // origin and it STANDS there; moving it would be the mod pretending to be the spawn
+    // path.  One poll is not evidence: a world swap leaves the previous world's player
+    // readable for a frame or two (measured Session 12), so the position has to hold.
+    ArrivalBoard b;
+    b.Arm("Ruins_Level_00", 1000);
+    ArrivalInput in = ArrivalAt(4106.0f, -1744.0f);
+    in.localMap = "Ruins_Level_00";
+    in.pz = 140.0f;
+    CHECK(b.Decide(2000, in) == AR_WAIT, "arrive/a far pawn on the first poll is not evidence");
+    CHECK(b.Armed(), "arrive/and the board keeps waiting");
+    in.pz = 139.0f;                                   // standing: no fall
+    CHECK(b.Decide(2000 + kPlacedSettleMs - 1, in) == AR_WAIT, "arrive/not yet settled");
+    CHECK(b.Decide(2000 + kPlacedSettleMs, in) == AR_DONE, "arrive/a standing player ends it");
+    CHECK(!b.Armed(), "arrive/and disarms");
+    CHECK(b.Decide(9000, in) == AR_NONE, "arrive/no follow-up placement");
+}
+
+static void TestArrivalPlacesAPawnThatIsFalling()
+{
+    // The same far coordinates in a world with no PlayerStart are the VOID: the player keeps
+    // the transform it had and drops out of it.  A drop between polls is a fall, and a
+    // falling player has not been placed however far from the origin it is.
+    ArrivalBoard b;
+    b.Arm("900_SipehaWorld", 1000);
+    ArrivalInput in = ArrivalAt(4106.0f, -1744.0f);
+    in.pz = 140.0f;
+    in.haveAnchor = true; in.anchorX = -3431.0f; in.anchorY = -5705.0f; in.anchorWhy = "marker";
+    CHECK(b.Decide(2000, in) == AR_WAIT, "arrive/the first far poll only records the height");
+    in.pz = -400.0f;                                  // fell 540 cm in one poll
+    CHECK(b.Decide(3000, in) == AR_PLACE_ANCHOR, "arrive/a falling pawn IS placed");
+    CHECK(b.TargetX() == -3431.0f, "arrive/on the world's own marker");
+
+    // The identity spawn is placed the same way, and the settle clock restarts after a
+    // placement so a respawn gets corrected.
+    b.Applied(true, 3000);
+    ArrivalInput origin = ArrivalAt(0.0f, 0.0f);
+    origin.pz = 90.0f;
+    origin.haveAnchor = true; origin.anchorX = -3431.0f; origin.anchorY = -5705.0f;
+    origin.anchorWhy = "marker";
+    CHECK(b.Decide(4000, origin) == AR_PLACE_ANCHOR, "arrive/a respawn to the origin is placed again");
+}
+
+static void TestArrivalAtOriginWaitsForAnAnchor()
+{
+    ArrivalBoard b;
+    b.Arm("900_SipehaWorld", 1000);
+    ArrivalInput in = ArrivalAt(0.0f, 0.0f);
+    CHECK(b.Decide(2000, in) == AR_WAIT, "arrive/origin with nothing to aim at waits");
+}
+
+static void TestArrivalUsesThePartnerWhenItIsReal()
+{
+    ArrivalBoard b;
+    b.Arm("900_SipehaWorld", 1000);
+    ArrivalInput in = ArrivalAt(0.0f, 0.0f);
+    in.havePeer = true;
+    in.peerMap = "900_SipehaWorld";
+    in.peerAgeMs = 200;
+    in.peerRowMs = 1000 + kPeerSettleMs + 500;   // settled: well after this machine's arrival
+    in.peerX = -7139.0f; in.peerY = -658.0f;
+    in.haveAnchor = true; in.anchorX = 100.0f; in.anchorY = 100.0f; in.anchorWhy = "marker";
+    CHECK(b.Decide(6000, in) == AR_PLACE_PEER, "arrive/a standing partner wins over a marker");
+    CHECK(b.TargetX() == -7139.0f && b.TargetY() == -658.0f, "arrive/target is the partner");
+    CHECK(SameText(b.Why(), "partner"), "arrive/and the log says why");
+    b.Applied(true, 6000);
+    CHECK(b.Tries() == 1, "arrive/the attempt is counted");
+}
+
+static void TestArrivalIgnoresAPartnerThatSaysNothing()
+{
+    // Four ways the partner's row is not an answer: it arrived before the load had
+    // settled (the previous world -- measured Session 12, it put the follower in the
+    // void), it is old, it is in another world, or it is itself the identity spawn.
+    ArrivalBoard early;
+    early.Arm("900_SipehaWorld", 1000);
+    ArrivalInput in = ArrivalAt(0.0f, 0.0f);
+    in.havePeer = true; in.peerMap = "900_SipehaWorld"; in.peerAgeMs = 100;
+    in.peerRowMs = 1000 + kPeerSettleMs - 1;   // inside the settle window
+    in.peerX = 500.0f; in.peerY = 500.0f;
+    in.haveAnchor = true; in.anchorX = 10.0f; in.anchorY = 20.0f; in.anchorWhy = "marker";
+    CHECK(early.Decide(6000, in) == AR_PLACE_ANCHOR,
+          "arrive/a row from inside the settle window is not used");
+    CHECK(early.TargetX() == 10.0f && early.TargetY() == 20.0f, "arrive/the marker is");
+
+    ArrivalBoard stale;
+    stale.Arm("900_SipehaWorld", 1000);
+    in.peerRowMs = 1000 + kPeerSettleMs + 500;
+    in.peerAgeMs = kPeerFreshMs + 1;
+    CHECK(stale.Decide(6000, in) == AR_PLACE_ANCHOR, "arrive/a stale row is not used");
+
+    ArrivalBoard other = stale;
+    in.peerAgeMs = 100; in.peerMap = "Ruins_Level_00";
+    CHECK(other.Decide(6000, in) == AR_PLACE_ANCHOR, "arrive/another world's row is not used");
+
+    ArrivalBoard zero;
+    zero.Arm("900_SipehaWorld", 1000);
+    in.peerMap = "900_SipehaWorld"; in.peerX = 3.0f; in.peerY = -4.0f;
+    CHECK(zero.Decide(6000, in) == AR_PLACE_ANCHOR,
+          "arrive/a partner that is also at the origin is not an anchor");
+}
+
+static void TestArrivalUsesTheWorldsOwnMarker()
+{
+    // Both machines stranded: the destination world's marker is the same answer on both,
+    // which is what puts them next to each other.
+    ArrivalBoard b;
+    b.Arm("990_B33sment", 1000);
+    ArrivalInput in = ArrivalAt(0.0f, 0.0f);
+    in.localMap = "990_B33sment";
+    in.haveAnchor = true; in.anchorX = 12.0f; in.anchorY = -34.0f;
+    in.anchorWhy = "B33smentTeleportPoint_C";
+    CHECK(b.Decide(2000, in) == AR_PLACE_ANCHOR, "arrive/the world's marker is used");
+    CHECK(SameText(b.Why(), "B33smentTeleportPoint_C"), "arrive/and the class is named");
+}
+
+static void TestArrivalIsBounded()
+{
+    // The game respawns the stranded pawn every few seconds, so a placement has to be
+    // repeatable -- but not unbounded: a wrong anchor must cost seconds, not the session.
+    ArrivalBoard b;
+    b.Arm("900_SipehaWorld", 1000);
+    ArrivalInput in = ArrivalAt(0.0f, 0.0f);
+    in.haveAnchor = true; in.anchorX = 10.0f; in.anchorY = 10.0f; in.anchorWhy = "marker";
+    for (int i = 0; i < kArrivalMaxTries; ++i) {
+        CHECK(b.Decide(2000 + i * 1000, in) == AR_PLACE_ANCHOR, "arrive/each attempt decides");
+        b.Applied(true, 2000 + i * 1000);
+    }
+    CHECK(b.Decide(9000, in) == AR_DONE, "arrive/then it stops");
+    CHECK(!b.Armed(), "arrive/and disarms");
+
+    // The window ends it too (a load that never produced a pawn, a world we left).
+    ArrivalBoard w;
+    w.Arm("900_SipehaWorld", 1000);
+    ArrivalInput none = ArrivalAt(0.0f, 0.0f);
+    none.havePawn = false;
+    CHECK(w.Decide(1000 + kArrivalWindowMs - 1, none) == AR_WAIT, "arrive/not yet at the deadline");
+    CHECK(w.Decide(1000 + kArrivalWindowMs, none) == AR_DONE, "arrive/the deadline ends it");
+    CHECK(!w.Armed(), "arrive/and disarms");
+}
+
 int main()
 {
     printf("=== qd travel tests ===\n");
@@ -417,6 +613,16 @@ int main()
     TestHardRefusalsAndDeadline();
     TestHardResumeGuard();
     TestHardReturnHome();
+    TestRefuseCurrentWorld();
+    TestArrivalNotArmed();
+    TestArrivalWaitsForAPawn();
+    TestArrivalLeavesARealSpawnAlone();
+    TestArrivalPlacesAPawnThatIsFalling();
+    TestArrivalAtOriginWaitsForAnAnchor();
+    TestArrivalUsesThePartnerWhenItIsReal();
+    TestArrivalIgnoresAPartnerThatSaysNothing();
+    TestArrivalUsesTheWorldsOwnMarker();
+    TestArrivalIsBounded();
     printf("=== %d passed, %d failed ===\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

@@ -305,7 +305,7 @@ fn a_chunked_actor_states_body_is_forwarded_not_dropped() {
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut events = relay.poll_once();
     let mut buf = [0u8; 2048];
-    let mut bytes: Vec<u8> = Vec::new();
+    let bytes: Vec<u8>;
     loop {
         if let Ok((n, _)) = b.recv_from(&mut buf) {
             // The relay also forwards the host's HELLO/keepalive to this peer, so take the

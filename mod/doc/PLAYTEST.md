@@ -184,9 +184,16 @@ and on the other machine `loot: hiding local drop … -- the partner took it`.
 `dialogue: PREVENTED a concurrent start on the same NPC` if you both pick the same one.
 
 **7. Travel.**  Use a teleporter, then a map transition.
-*You should see* both players arrive in the same place.
+*You should see* both players arrive in the same place — including across a hard map
+switch, where each machine stands at the destination world's own arrival point.
 *Log:* `travel: local destination …` then on the partner `travel: followed …`; a hard map
-switch logs `travel: hard transition: loading …` and `travel: both machines arrived …`.
+switch logs `travel: hard transition: loading …`, `travel: both machines arrived …`, and
+then one `arrive: <map> placed the player at partner|PlayerTeleportTargetPos_C|…` line per
+machine.  If a world places no `PlayerStart` (every map except the hub does not), the
+engine drops the arriving player at the origin, and that `arrive:` line is the mod putting
+it where the game itself would have.  Asking a machine to load the map it is already in is
+**refused** by design (`already in <map>: a hard load of the current world tears it down`) —
+that request faults the game, not the session.
 
 **8. A cutscene.**  Trigger one (an altar, an egg, a boss intro).
 *You should see* the partner held for the same interval and both of you get control back
