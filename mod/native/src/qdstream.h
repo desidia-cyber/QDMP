@@ -356,6 +356,101 @@ inline bool PlausibleLevelName(const char* name)
 }
 
 // ---------------------------------------------------------------------------
+// Which level list carries an area (Session 15)
+// ---------------------------------------------------------------------------
+// A streamed area's actors only exist once the game's own level list for that area is on
+// `FS_LevelManager`'s stack: R109 measured that forcing `ULevelStreaming`'s flags leaves
+// `visible=1 loaded=1` and no actors at all.  Which list carries which area is CONTENT,
+// read out of the shipped pak's `UFS_LevelList` assets:
+//
+//     SZ_Depths     = 070_UpperShell 710_SZ_AQ 740_SZ_Prison 750_SZ_MAUS2 760_SZ_AUT
+//                     770_SZ_Swamp 775_JigiTemple 780_SZ_Depths 790_SG 060_Ocean_Shadow
+//                     000_Shared_Base_Lighting
+//     GreenRuins    = 050_Ocean 070_UpperShell 100_GR 110_GR_dungeon 120_GR_goldenroom
+//                     125_GR_CubeHall 130_GR_outerisles 140_GR_ShopIsleOnly 200_AQ
+//                     310_LIB_exterior 400_MAUS_entrance 700_SZ_GR 780_SZ_Depths
+//                     VideoConfigMap 000_Shared_Base_Lighting
+//     AutumnIsland  = 500_AUT 610_Castle_Ext 760_SZ_AUT 510_AUT_droptunnel
+//                     (AutumnIslandCastle: 500_AUT 600_Castle 610_Castle_Ext 998_QueenCutscenes)
+//
+// The map is here, not at the call site, so the fact is one table with a test beside it.
+// Session 14 named `GreenRuins_SZ` for 780; read from the pak, that list does not contain
+// 780 at all -- `SZ_Depths`, the area's own trigger list, does, and carries 760 too.
+inline bool LevelNameEq(const char* a, const char* b)
+{
+    if (!a || !b) return a == b;
+    for (int i = 0; a[i] || b[i]; ++i) if (a[i] != b[i]) return false;
+    return true;
+}
+
+// The membership of every list this module pushes, read out of the shipped pak's
+// `UFS_LevelList` `.uexp` (2026-11-09).  `LevelListForArea` is DERIVED from these arrays
+// rather than kept in a second hand-written table, so "the list we push contains the
+// area" is a property of one dataset, and `test_stream.cpp` checks it.
+struct LevelListDef {
+    const char*        name;
+    const char* const* levels;
+    int                n;
+};
+
+static const char* const kLevelsSZDepths[] = {
+    "070_UpperShell", "710_SZ_AQ", "740_SZ_Prison", "750_SZ_MAUS2", "760_SZ_AUT",
+    "770_SZ_Swamp", "775_JigekiTemple", "780_SZ_Depths", "790_SG", "060_Ocean_Shadow",
+    "000_Shared_Base_Lighting",
+};
+static const char* const kLevelsGreenRuins[] = {
+    "050_Ocean", "070_UpperShell", "100_GR", "110_GR_dungeon", "120_GR_goldenroom",
+    "125_GR_CubeHall", "130_GR_outerisles", "140_GR_ShopIsleOnly", "200_AQ",
+    "310_LIB_exterior", "400_MAUS_entrance", "700_SZ_GR", "780_SZ_Depths",
+    "VideoConfigMap", "000_Shared_Base_Lighting",
+};
+static const char* const kLevelsAutumnIsland[] = {
+    "500_AUT", "610_Castle_Ext", "760_SZ_AUT", "510_AUT_droptunnel",
+    "000_Shared_Base_Lighting",
+};
+static const char* const kLevelsAutumnIslandCastle[] = {
+    "500_AUT", "600_Castle", "610_Castle_Ext", "998_QueenCutscenes",
+    "000_Shared_Base_Lighting",
+};
+
+// The lists, in preference order for the areas both machines can enter.  SZ_Depths comes
+// first because it is the depths family's OWN trigger list (`LevelManagerTrigger10` sets
+// only `SZ_Depths`) and it carries 780 as well as 760.
+static const LevelListDef kLevelLists[] = {
+    { "SZ_Depths",            kLevelsSZDepths,           (int)(sizeof(kLevelsSZDepths) / sizeof(kLevelsSZDepths[0])) },
+    { "GreenRuins",           kLevelsGreenRuins,         (int)(sizeof(kLevelsGreenRuins) / sizeof(kLevelsGreenRuins[0])) },
+    { "AutumnIsland",         kLevelsAutumnIsland,       (int)(sizeof(kLevelsAutumnIsland) / sizeof(kLevelsAutumnIsland[0])) },
+    { "AutumnIslandCastle",   kLevelsAutumnIslandCastle, (int)(sizeof(kLevelsAutumnIslandCastle) / sizeof(kLevelsAutumnIslandCastle[0])) },
+};
+static const int kLevelListCount = (int)(sizeof(kLevelLists) / sizeof(kLevelLists[0]));
+
+inline bool LevelListContains(const char* list, const char* area)
+{
+    if (!list || !area || !area[0]) return false;
+    for (int i = 0; i < kLevelListCount; ++i) {
+        if (!LevelNameEq(kLevelLists[i].name, list)) continue;
+        for (int k = 0; k < kLevelLists[i].n; ++k)
+            if (LevelNameEq(kLevelLists[i].levels[k], area)) return true;
+        return false;
+    }
+    return false;
+}
+
+// The first list (in preference order) that contains `area`, or nullptr.  Session 14
+// named `GreenRuins_SZ` for 780; read from the pak, that list does not contain 780 at
+// all -- `SZ_Depths` does.  Deriving the answer from membership is what makes that class
+// of mistake impossible: a list that does not contain the area is never returned.
+inline const char* LevelListForArea(const char* area)
+{
+    if (!area || !area[0]) return nullptr;
+    for (int i = 0; i < kLevelListCount; ++i) {
+        for (int k = 0; k < kLevelLists[i].n; ++k)
+            if (LevelNameEq(kLevelLists[i].levels[k], area)) return kLevelLists[i].name;
+    }
+    return nullptr;
+}
+
+// ---------------------------------------------------------------------------
 // MapBoard -- which world each machine is in (SYNC-GAPS G6).
 // ---------------------------------------------------------------------------
 // A hard transition (a cutscene map, `900_SipehaWorld`, `990_B33sment`) loads a
