@@ -15246,10 +15246,11 @@ void HK_SetGlobalTimeDilation(void* worldContext, float dilation)
         // Measured Session 8: the peer's world reached dilation 0.00 with NO menu open (its
         // `unpaused` clock froze at 840.3 while the host kept running).  A stray local
         // dilation is the same hazard as a menu's, so the rule is now "no low dilation in
-        // a live session", with the Escape PauseMenu_C as the one named exception.
+        // a live session", with no exception.
+        // The Escape PauseMenu_C exception is gone (user report, 2026-11-10: "Escape pause
+        // menu still pauses").  In co-op no menu may stop the shared world.
         const char* menu = LocalOpenMenuName();
-        bool escapePause = menu && ContainsCI(menu, "PauseMenu");
-        if (!escapePause) {
+        {
             static uint32_t lastLog = 0;
             uint32_t now = Net::Now();
             if (now - lastLog > 1000) {
@@ -15271,9 +15272,8 @@ void MenuDilationPump(uint32_t now)
     if (now - last < 250) return;
     last = now;
     const char* menu = LocalOpenMenuName();
-    bool escapePause = menu && ContainsCI(menu, "PauseMenu");
     float d = GlobalDilation();
-    if (!escapePause && d < 0.5f) {
+    if (d < 0.5f) {
         // A direct AWorldSettings write bypasses the setter, and Session 8 measured a
         // stray 0.00 with no menu at all; the poll restores the world either way.
         if (g_oSetGlobalDilation) g_oSetGlobalDilation(GWorldPtr(), 1.0f);
