@@ -294,7 +294,10 @@ static void TestHpReporting()
           "a copy never seen alive has unknown HP (HP 0 is pre-activation)");
     CHECK(HpKnown(true, true, true), "a live copy seen alive reports its HP");
 
-    CHECK(EffectivelyDead(false, false, true, 100.0f, true), "no actor is dead");
+    CHECK(EffectivelyDead(false, false, true, 100.0f, true),
+          "no actor after being seen alive is dead (the R146 broadcast case)");
+    CHECK(!EffectivelyDead(false, false, false, 0.0f, false),
+          "a vanished copy never seen alive is NOT a corpse (the FA2FC279 false claim)");
     CHECK(EffectivelyDead(true, true, false, 0.0f, false), "the game's own dead flag is dead");
     CHECK(EffectivelyDead(true, false, true, 0.0f, true), "HP 0 after being seen alive is dead");
     CHECK(!EffectivelyDead(true, false, true, 0.0f, false),

@@ -593,6 +593,19 @@ static const uint8_t kBossBarOn    = 0x01;
 static const uint8_t kBossBarOff   = 0x02;
 // A player left the boss arena: the receiver raises its own spawner's exit event.
 static const uint8_t kBossArenaExit = 0x04;
+// R143/Session 20: the host ASKS whether the peer can show this key before raising the
+// one shared bar.  Measured failure: the host selected `03FDBC21`, which existed only on
+// the host (outside the 25 m mirror radius), and repaired a bar for it every 3 s while
+// the peer logged `no local copy` and showed nothing.  A bar the partner cannot show is
+// not a shared bar, so the selection is now negotiated:
+//   kBossAsk  host -> peer: "do you hold a live copy of this key?"  (no state change)
+//   kBossAck  peer -> host: yes -- the host may raise and publish this key.
+//   kBossNack peer -> host: no  -- the host must pick another candidate (or none).
+// The bits are mutually exclusive in a body; a body carries exactly one of them except a
+// bar-on, which is the steady state after an ACK.
+static const uint8_t kBossAsk     = 0x08;
+static const uint8_t kBossAck     = 0x10;
+static const uint8_t kBossNack    = 0x20;
 
 inline void WriteBoss(Writer& w, const BossBody& b)
 {
@@ -874,6 +887,17 @@ enum TravelPhase {
     TP_HARD_BEGIN = 1,
     TP_ARRIVED    = 2,
     TP_RESUME     = 3,
+    // Session 20, R147: the AREA one machine has entered by streaming a sublevel of the
+    // persistent world.  This is not a UWorld switch, so TP_HARD_BEGIN is the wrong
+    // instruction: a hard load of an area is the pawn-less path R102 measured.  The
+    // sender names the area in `dest` (and the UWorld in `map`, as in every phase, because
+    // the divergence board consumes `map` before the phase is read); the receiver streams
+    // it on its own machine (the
+    // game's own level-list mechanism) or refuses with a named error.  Measured failure
+    // it closes: one 600 s run ended with the host showing 780_SZ_Depths and the peer
+    // still in the hub area, because the area was only ever entered by a LOCAL lever on
+    // each machine and nothing carried it across.
+    TP_AREA       = 4,
 };
 
 inline void WriteTravel(Writer& w, const TravelBody& t)

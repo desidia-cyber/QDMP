@@ -7,6 +7,8 @@
 mod/rust/target/
 mod/native/build/
 mod/native/test/build/
+# build.bat's /Zi /DEBUG link leaves this beside the sources, not in build/.
+mod/native/vc140.pdb
 __pycache__/
 *.pyc
 

@@ -112,9 +112,14 @@ inline bool HpKnown(bool live, bool haveHp, bool seenAlive)
 // HP <= 0 counts only for a copy this machine has SEEN alive (EnemyPump's rule), so a
 // never-activated spawner is not a corpse and a respawned copy at HP 0 is not mistaken
 // for the death that the ledger will re-apply.
+// R146: `!live` is a death only for a record this machine SAW ALIVE.  An actor that
+// vanished before it was ever seen alive is a spawner that never activated or a level
+// unload (R140's rule, which EnemyDetectDeaths already used and this reporting function
+// did not).  Reporting it DEAD made the per-GUID diff claim a death the lane had never
+// broadcast -- the shape of the FA2FC279 residual.
 inline bool EffectivelyDead(bool live, bool gameDead, bool haveHp, float hp, bool seenAlive)
 {
-    if (!live) return true;
+    if (!live) return seenAlive;
     if (gameDead) return true;
     return haveHp && hp <= 0.0f && seenAlive;
 }

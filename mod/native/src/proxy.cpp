@@ -80,6 +80,7 @@
 #include "qdplayerbody.h"
 #include "qdenemyid.h"
 #include "qdenemybw.h"
+#include "qdboss.h"
 #include "qdflags.h"
 #include "qdpending.h"
 #include "qdinventory.h"
@@ -4631,6 +4632,57 @@ void TravelPump(uint32_t now)
         }
     }
 
+    // ---- the AREA this machine has entered (R147) --------------------------
+    // An area is a streamed sublevel, not a world: entering one changes no UWorld name,
+    // so the map heartbeat cannot carry it and a local lever only moves ONE machine.
+    // Measured: a 600 s run ended with the host in 780_SZ_Depths and the peer in the hub
+    // area.  The pin is therefore announced on the travel lane, and the receiver either
+    // streams the same area or says why it cannot -- "the partner must follow, or travel
+    // must be refused".  Re-announced while pinned so a reload or a lost datagram heals.
+    if (Cfg().travel_sync && g_rigLevelPin[0]) {
+        static char     lastArea[stream::kMaxNameLen] = "";
+        static uint32_t lastAreaAt = 0;
+        static uint32_t areaSeq = 0;
+        bool areaChanged = !travel::SameText(g_rigLevelPin, lastArea);
+        if (areaChanged) {
+            travel::CopyText(lastArea, sizeof(lastArea), g_rigLevelPin);
+            ++areaSeq;
+        }
+        if (areaChanged || (uint32_t)(now - lastAreaAt) >= 2000) {
+            wire::TravelBody t;
+            memset(&t, 0, sizeof(t));
+            t.seq = areaSeq;
+            t.role = g_net.IsHost() ? 1 : 2;
+            t.phase = wire::TP_AREA;
+            // `map` ALWAYS carries the UWorld, whichever phase this is: OnTravel feeds it
+            // to the divergence board before it looks at the phase, so an area name here
+            // made the board oscillate (measured: `world: partner=780_SZ_Depths` while
+            // both machines stood in Ruins_Level_00).  The AREA rides in `dest`.
+            travel::CopyText(t.map, sizeof(t.map), local);
+            travel::CopyText(t.dest, sizeof(t.dest), g_rigLevelPin);
+            uint8_t body[wire::kMaxBody];
+            wire::Writer w(body, sizeof(body));
+            wire::WriteTravel(w, t);
+            if (w.ok && g_net.SendReliable(wire::K_TRAVEL, body, w.len)) {
+                lastAreaAt = now;
+                if (areaChanged)
+                    QDLOG(LOG_INFO, "travel: area announcement ", g_rigLevelPin,
+                          " (the partner must enter it or refuse)");
+            }
+        }
+    }
+
+    // The world/area agreement line the soak is measured on.  The transition logs above
+    // only speak on a change; a soak needs a standing statement for the last sample.
+    static uint32_t lastWorldSay = 0;
+    if (local[0] && (uint32_t)(now - lastWorldSay) >= 10000) {
+        lastWorldSay = now;
+        QDLOG(LOG_INFO, "world: local=", local, " partner=",
+              (g_map.Peer()[0] ? g_map.Peer() : "?"),
+              " agree=", dec((g_map.BothKnown() && !g_map.Diverged(now)) ? 1 : 0),
+              " area=", (g_rigLevelPin[0] ? g_rigLevelPin : "-"));
+    }
+
     bool div = g_map.Diverged(now);
     if (div != wasDiverged) {
         wasDiverged = div;
@@ -4656,6 +4708,37 @@ void OnTravel(wire::Reader& r, uint32_t now)
     if (g_map.OnPeer(t.map, now))
         QDLOG(LOG_INFO, "travel: partner role ", dec((int)t.role), " is in ",
               (t.map[0] ? t.map : "(no map)"), " seq=", dec((int)t.seq));
+
+    // ---- the partner entered an AREA (R147) --------------------------------
+    // The area is in `dest`; `map` is the UWorld and was already given to the divergence
+    // board above.  Using `map` here would make the board compare a world against an area.
+    if (Cfg().travel_sync && t.phase == wire::TP_AREA) {
+        const char* area = t.dest;
+        if (!area[0] || !stream::PlausibleLevelName(area)) {
+            QDLOG(LOG_WARN, "travel: refused an implausible area name '", area, "'");
+            return;
+        }
+        if (travel::SameText(g_rigLevelPin, area)) {
+            static uint32_t lastSaid = 0;
+            if ((uint32_t)(now - lastSaid) > 10000) {
+                lastSaid = now;
+                QDLOG(LOG_INFO, "travel: area ", area, " is already pinned on this machine");
+            }
+            return;
+        }
+        char err[160];
+        bool streamed = false;
+        if (FollowHardTravel(area, err, sizeof(err), &streamed)) {
+            QDLOG(LOG_INFO, "travel: entered the partner's area ", area,
+                  (streamed ? " by streaming it (loaded and SHOWN here)"
+                            : " with a world switch"));
+        } else {
+            // A refusal is a named fact, never a silent divergence: the pair must not
+            // continue believing they are in the same place.
+            QDLOG(LOG_WARN, "travel: REFUSED the partner's area ", area, ": ", err);
+        }
+        return;
+    }
 
     // ---- hard transition handshake -----------------------------------------
     if (Cfg().travel_sync && t.phase != wire::TP_NONE) {
@@ -7093,7 +7176,14 @@ void EnemySpawnPump(uint32_t now)
         if (!g_own.Running(r.guid)) continue;      // only the machine that simulates it
         ActorXform x;
         if (!ReadActorXform(r.actor, &x)) continue;
-        if (havePeer) {
+        // NO AUDIENCE, NO BODY.  Measured in Session 20's second boss run: the peer's
+        // drawn position was not known yet, the relevance test was skipped, and the host
+        // described the Green Dragon 177 m away -- marking `mirrorPathSent` forever.  By
+        // the time the peer stood next to the dragon it had no copy, the boss lane NACKed,
+        // and nothing re-sent the class.  The kill still worked (the host owns it), but
+        // the peer's bar could not be raised.  An unknown audience is not "everyone".
+        if (!havePeer) continue;
+        {
             float dx = x.px - peer[0], dy = x.py - peer[1], dz = x.pz - peer[2];
             if (dx * dx + dy * dy + dz * dz > kMirrorRelevanceCm * kMirrorRelevanceCm) continue;
         }
@@ -7657,24 +7747,54 @@ bool BossArenaExitPending(void* spawner)
     return false;
 }
 
-// R143: ONE bar, ONE shared key.
+// R143/Session 20: ONE bar, ONE shared key, and the peer must be able to SHOW it.
 // The game has a single boss HP bar and `ActivateBossHPBar` binds it to the actor it is
-// given.  The old pump raised and published a bar for EVERY boss record, so a machine
-// with two boss records ended up bound to whichever it processed last, and the two
-// machines could bind DIFFERENT keys -- measured live: the host held `03FDBC21` at full
-// HP (repaired every 3 s) while the peer's dragon key `17181166` was dead and its bar was
-// down.  The HOST now selects the one active boss (the most-damaged live one, ties by
-// key), announces only that key, and both machines bind their own bar to the actor that
-// carries it.  A dead or stale key never holds the bar.
+// given.  Session 19 made the host the single selector; the pair still showed two
+// different bars because the host selected `03FDBC21`, a key the peer does not hold at
+// all (outside the mirror radius), while the peer's own `17181166` was a key the host
+// held as a standing death.  The selection is now negotiated and liveness is read from
+// the machine that RUNS the enemy (qdboss.h):
+//
+//   * the host ASKS the peer whether it holds a live copy, and raises nothing until the
+//     answer is ACK; NACK (or a 1.5 s timeout) makes that key ineligible for 5 s and the
+//     next candidate is tried.  Nothing showable on both -> no bar on either machine.
+//   * a follower's liveness is the OWNER'S row, not its local copy: a copy mid-respawn
+//     is not evidence, and an owner that says dead keeps the bar down here.
+//   * an explicit bar-on from the owner RETRACTS a stale local death (the owner is the
+//     authority for the key), so the peer cannot hold a key dead the owner is showing.
 static uint32_t g_bossKey[4] = {0, 0, 0, 0};
 static bool     g_bossKeyOn = false;
 static uint32_t g_bossKeyMs = 0;
+static boss::AckBoard g_bossAck;
+static uint32_t g_bossAskKey[4] = {0, 0, 0, 0};
+static bool     g_bossAskPending = false;
+static uint32_t g_bossAskAt = 0;
+static uint32_t g_bossSampleAt = 0;
+static uint32_t g_bossBoundAt = 0;
 
 bool BossKeyIs(const uint32_t g[4]) { return enemy::SameGuid(g_bossKey, g); }
-void BossKeyClear()
+void BossKeyClear(uint32_t now)
 {
+    if (g_bossKeyOn) g_bossAck.Clear(g_bossKey);
+    (void)now;
     g_bossKeyOn = false;
     g_bossKey[0] = g_bossKey[1] = g_bossKey[2] = g_bossKey[3] = 0;
+    g_bossAskPending = false;
+    g_bossAskKey[0] = g_bossAskKey[1] = g_bossAskKey[2] = g_bossAskKey[3] = 0;
+}
+
+bool BossSend(const uint32_t key[4], uint8_t flags, uint8_t phase, uint16_t hp)
+{
+    wire::BossBody b;
+    memset(&b, 0, sizeof(b));
+    memcpy(b.guid, key, 16);
+    b.flags = flags;
+    b.phase = phase;
+    b.hp = hp;
+    uint8_t body[64];
+    wire::Writer w(body, sizeof(body));
+    wire::WriteBoss(w, b);
+    return w.ok && g_net.SendReliable(wire::K_BOSS, body, w.len);
 }
 
 // Binding is a MOVE: lower the old actor's bar before raising the new one.  A record whose
@@ -7708,8 +7828,8 @@ void BossPump(uint32_t now)
     if (now - lastCheck < 250) return;
     lastCheck = now;
 
-    // 1. Boss flag and live HP for EVERY record, including mirrors and frozen copies: the
-    //    machine that does not RUN the boss still binds the bar it shows.
+    // 1. Boss membership, and liveness READ FROM THE OWNER (qdboss.h).  A follower's own
+    //    copy may be mid-respawn; only the machine that runs the enemy may say it is dead.
     static bool  alive[kEnemyRecMax];
     static float frac[kEnemyRecMax];
     for (int i = 0; i < g_enN; ++i) {
@@ -7727,52 +7847,120 @@ void BossPump(uint32_t now)
         if (!boss) continue;
         float hp = 0, mx = 0;
         bool haveHp = EnemyHp(r.actor, &hp, &mx) && mx > 0.0f;
-        bool dead = EnemyDead(r.actor) || (haveHp && hp <= 0.0f) ||
-                    g_remoteDead.Has(r.guid, now) || KillLogHas(r.guid);
-        alive[i] = !dead;
+        // A boss whose HP this machine cannot READ is not eligible for the one shared bar:
+        // measured in the first Session 20 run, `Whaleking_SZ_BP_C` (71 km away, its
+        // encounter not running) was acked, bound and then sampled hp=0 forever while the
+        // dragon being fought was never selected.  A bar with no number is not a bar.
+        // A mirrored copy has no ownership-table entry, and `OwnerSet::Running` answers
+        // O_LOCAL for an unknown key -- so the mirror flag must be consulted FIRST, or a
+        // constructed copy would be mistaken for the machine that runs the boss.
+        bool ownerHere = !r.mirror && g_own.Running(r.guid);
+        const enemy::HostRow* row = g_hostView.Get(r.guid);
+        uint32_t rowAge = row ? (uint32_t)(now - row->rx_ms) : 0xFFFFFFFFu;
+        bool haveRow = row && rowAge <= enemy::HostView::kDeadStaleMs;
+        bool rowAlive = haveRow && (row->flags & enemy::kAlive) != 0;
+        bool localAlive = !(EnemyDead(r.actor) || (haveHp && hp <= 0.0f) || KillLogHas(r.guid));
+        alive[i] = haveHp && boss::AliveByAuthority(ownerHere, localAlive, haveRow, rowAlive);
         if (haveHp) frac[i] = hp / mx;
     }
 
     if (g_net.IsHost()) {
-        // The host is the single selector, so both screens name the same key.
+        // The current bar's key died or left: say so at once, so the partner lowers its
+        // bar on the kill instead of waiting for the silence window.
+        if (g_bossKeyOn) {
+            int ci = -1;
+            for (int i = 0; i < g_enN; ++i)
+                if (g_en[i].haveGuid && BossKeyIs(g_en[i].guid)) { ci = i; break; }
+            if (ci < 0 || !alive[ci]) {
+                // The last value the shared bar carried: 0 is a kill, -1 is "gone before
+                // it could be read".  A scenario compares this number on both machines.
+                float lhp = 0, lmx = 0;
+                bool lhave = ci >= 0 && ObjectIsLive(g_en[ci].actor) &&
+                             EnemyHp(g_en[ci].actor, &lhp, &lmx) && lmx > 0.0f;
+                int lf = lhave ? (int)enemy::HpFrac(lhp, lmx) : -1;
+                // 0xFFFF on the wire means "unreadable", so the follower does not turn an
+                // unknown last value into a measured 0.
+                uint16_t wireHp = (lf < 0) ? (uint16_t)0xFFFF : (uint16_t)lf;
+                if (!BossSend(g_bossKey, wire::kBossBarOff, 0, wireHp))
+                    QDLOG(LOG_WARN, "boss: bar-off send failed for key=", hex32(g_bossKey[0]));
+                QDLOG(LOG_INFO, "boss: sent bar off key=", hex32(g_bossKey[0]), " hp=", dec(lf),
+                      " (the active boss died or left)");
+                BossKeyClear(now);
+            }
+        }
+
+        // The outstanding question is pinned first, so an answer is about the candidate
+        // it was asked for and the host does not spray asks at every boss in range.
         int best = -1;
-        for (int i = 0; i < g_enN; ++i) {
-            if (!g_en[i].haveGuid || !alive[i]) continue;
-            if (best < 0) { best = i; continue; }
-            float a = frac[i], b = frac[best];
-            if (a < b - 1e-4f) { best = i; continue; }
-            if (a > b + 1e-4f) continue;
-            for (int k = 0; k < 4; ++k) {
-                if (g_en[i].guid[k] < g_en[best].guid[k]) { best = i; break; }
-                if (g_en[i].guid[k] > g_en[best].guid[k]) break;
+        if (g_bossAskPending) {
+            for (int i = 0; i < g_enN; ++i)
+                if (g_en[i].haveGuid && alive[i] && boss::SameKey(g_en[i].guid, g_bossAskKey))
+                    { best = i; break; }
+            if (best < 0) g_bossAskPending = false;   // the asked key died while asked
+        }
+        if (best < 0) {
+            for (int i = 0; i < g_enN; ++i) {
+                if (!g_en[i].haveGuid || !alive[i]) continue;
+                if (g_bossAck.Refused(g_en[i].guid, now)) continue;
+                if (best < 0) { best = i; continue; }
+                // The bar follows the FIGHT: the most-damaged live boss, ties by key (the
+                // rule Session 19 measured as correct -- the host switched to the dragon
+                // the moment it was damaged).  An earlier "keep the key already bound"
+                // preference was wrong in a measured way: it held `17E153F4` (an untouched
+                // boss 8 km away) for the whole run while the dragon was being killed, so
+                // neither bar reached 0.  A tie by key is stable; a preference for the
+                // bound key is not the same thing.
+                float a = frac[i], b = frac[best];
+                if (a < b - 1e-4f) { best = i; continue; }
+                if (a > b + 1e-4f) continue;
+                for (int k = 0; k < 4; ++k) {
+                    if (g_en[i].guid[k] < g_en[best].guid[k]) { best = i; break; }
+                    if (g_en[i].guid[k] > g_en[best].guid[k]) break;
+                }
             }
         }
-        if (best >= 0) {
-            if (!g_bossKeyOn || !BossKeyIs(g_en[best].guid))
-                QDLOG(LOG_INFO, "boss: active key -> ", hex32(g_en[best].guid[0]),
-                      " (the most-damaged live boss)");
-            g_bossKeyOn = true;
-            memcpy(g_bossKey, g_en[best].guid, 16);
-            g_bossKeyMs = now;
+
+        if (best < 0) {
+            // Nothing showable on BOTH machines: no bar.  That is the honest agreement
+            // R143 asked for, not a bar on one screen and an empty one on the other.
+            if (g_bossKeyOn) BossKeyClear(now);
         } else {
-            // The fight is over (the active key died or left): say so once, so the partner
-            // lowers its bar on the kill rather than waiting for the 5 s silence timeout.
-            if (g_bossKeyOn) {
-                wire::BossBody x;
-                memset(&x, 0, sizeof(x));
-                memcpy(x.guid, g_bossKey, 16);
-                x.flags = wire::kBossBarOff;
-                uint8_t xb[64];
-                wire::Writer xw(xb, sizeof(xb));
-                wire::WriteBoss(xw, x);
-                if (xw.ok && g_net.SendReliable(wire::K_BOSS, xb, xw.len))
-                    QDLOG(LOG_INFO, "boss: sent bar off guid=", hex32(g_bossKey[0]),
-                          " (the active boss is dead or gone)");
+            const uint32_t* key = g_en[best].guid;
+            float hp = 0, mx = 0;
+            EnemyHp(g_en[best].actor, &hp, &mx);
+            uint16_t f = (mx > 0.0f) ? enemy::HpFrac(hp, mx) : 0;
+            if (g_bossAck.Acked(key)) {
+                if (!g_bossKeyOn || !BossKeyIs(key)) {
+                    QDLOG(LOG_INFO, "boss: active key -> ", hex32(key[0]),
+                          " (acknowledged by the partner; hp=", dec((int)f), ")");
+                }
+                g_bossKeyOn = true;
+                memcpy(g_bossKey, key, 16);
+                g_bossKeyMs = now;
+                g_bossAskPending = false;
+            } else {
+                bool same = g_bossAskPending && boss::SameKey(g_bossAskKey, key);
+                if (same && (uint32_t)(now - g_bossAskAt) > 1500) {
+                    // No answer is not a "yes": the peer may not hold the key at all, and
+                    // raising here would recreate exactly the divergence this fixes.
+                    g_bossAck.OnNack(key, now);
+                    g_bossAskPending = false;
+                    QDLOG(LOG_WARN, "boss: no answer for key=", hex32(key[0]),
+                          " within 1.5 s; skipping it for 5 s and choosing another");
+                } else if (!same) {
+                    memcpy(g_bossAskKey, key, 16);
+                    g_bossAskPending = true;
+                    g_bossAskAt = now;
+                    if (BossSend(key, wire::kBossAsk, (uint8_t)EnemyBossPhase(g_en[best].actor), f))
+                        QDLOG(LOG_INFO, "boss: asked the partner about key=", hex32(key[0]),
+                              " hp=", dec((int)f), " (no bar until it answers)");
+                }
             }
-            BossKeyClear();
         }
-    } else if (g_bossKeyOn && now - g_bossKeyMs > 5000) {
-        BossKeyClear();       // the host stopped describing a bar: no stale one here
+    } else if (g_bossKeyOn && (uint32_t)(now - g_bossKeyMs) > 5000) {
+        QDLOG(LOG_WARN, "boss: bar key=", hex32(g_bossKey[0]),
+              " lowered (the host stopped describing it)");
+        BossKeyClear(now);       // the host stopped describing a bar: no stale one here
     }
 
     // 2. Bind every record's bar to the ONE active key; lower all others.  Only the host
@@ -7781,7 +7969,16 @@ void BossPump(uint32_t now)
         EnemyRec& r = g_en[i];
         if (!r.haveGuid) continue;
         bool want = g_bossKeyOn && alive[i] && BossKeyIs(r.guid);
+        bool was = r.bossBarShown;
         BossBarSet(r, want, now);
+        if (was && !want && BossKeyIs(r.guid)) {
+            // The last value the bar carried: 0 is a kill, -1 is "could not read it".
+            float lhp = 0, lmx = 0;
+            bool lhave = ObjectIsLive(r.actor) && EnemyHp(r.actor, &lhp, &lmx) && lmx > 0.0f;
+            QDLOG(LOG_INFO, "boss: bar key=", hex32(r.guid[0]), " hp=",
+                  dec(lhave ? (int)enemy::HpFrac(lhp, lmx) : -1),
+                  " (lowered: the key is dead or gone)");
+        }
         if (!want || !g_net.IsHost()) continue;
 
         uint8_t phase = EnemyBossPhase(r.actor);
@@ -7801,22 +7998,14 @@ void BossPump(uint32_t now)
         // On change only, plus a slow repair while the bar is up: the partner's first body
         // can arrive before it holds the copy.  HP is not a change trigger (the enemy row
         // converges it); a dead/stale key never reaches this point (want is false).
-        bool repair = now - r.bossSentAt >= 3000;
+        bool repair = (uint32_t)(now - r.bossSentAt) >= 3000;
         if (repair) r.bossSentAt = now;
         if (!repair && b.flags == r.pubBossFlags && b.phase == r.pubBossPhaseSent) {
             // The one event that is not a state: a player left the arena.  Observed on the
             // owner, sent as a one-shot.
             if (BossArenaExitPending(r.spawner) && !r.bossArenaExitSent) {
                 r.bossArenaExitSent = true;
-                wire::BossBody x;
-                memset(&x, 0, sizeof(x));
-                memcpy(x.guid, r.guid, 16);
-                x.flags = wire::kBossArenaExit;
-                x.phase = phase;
-                uint8_t xb[64];
-                wire::Writer xw(xb, sizeof(xb));
-                wire::WriteBoss(xw, x);
-                if (xw.ok && g_net.SendReliable(wire::K_BOSS, xb, xw.len))
+                if (BossSend(r.guid, wire::kBossArenaExit, phase, b.hp))
                     QDLOG(LOG_INFO, "boss: arena exit sent guid=", hex32(r.guid[0]));
                 else
                     r.bossArenaExitSent = false;      // not sent: retry next pump
@@ -7838,9 +8027,28 @@ void BossPump(uint32_t now)
             r.pubBossFlags = 0xFF;
         }
     }
+
+    // 3. The sample both screens are compared on.  One line a second while the bar is up,
+    //    carrying the KEY and the HP this machine's bar is showing.  A scenario reads the
+    //    last sample from each machine and asks whether they are the same key and number;
+    //    without this the "both bars agree" claim had no measurement behind it.
+    if (g_bossKeyOn && (uint32_t)(now - g_bossSampleAt) >= 1000) {
+        g_bossSampleAt = now;
+        EnemyRec* br = EnemyByGuid(g_bossKey);
+        float hp = 0, mx = 0;
+        bool have = br && ObjectIsLive(br->actor) && EnemyHp(br->actor, &hp, &mx) && mx > 0.0f;
+        // -1 is UNKNOWN, not zero: the enemy dump learned the same lesson (R137).  A
+        // scenario that reads this number must not compare an unreadable HP with a real one.
+        int f = have ? (int)enemy::HpFrac(hp, mx) : -1;
+        QDLOG(LOG_INFO, "boss: bar key=", hex32(g_bossKey[0]), " hp=", dec(f),
+              " phase=", dec((int)(br ? br->bossPhase : 0)),
+              " host=", dec(g_net.IsHost() ? 1 : 0),
+              " bound=", dec((br && br->bossBarShown) ? 1 : 0));
+    }
 }
 
-// The follower's half: DROP every other bar and raise ITS OWN bar for the host's one key.
+// The follower's half: answer the host's question, then DROP every other bar and raise
+// ITS OWN bar for the key the host announced.
 void OnBoss(wire::Reader& r, uint32_t now)
 {
     if (!Cfg().enemy_sync) return;
@@ -7860,6 +8068,64 @@ void OnBoss(wire::Reader& r, uint32_t now)
         return;
     }
 
+    // ---- the selection question (R143) -------------------------------------
+    if (b.flags & wire::kBossAsk) {
+        if (g_net.IsHost()) return;            // only the host asks
+        EnemyRec* er = EnemyByGuid(b.guid);
+        float hp = 0, mx = 0;
+        bool have = er && er->haveGuid && ObjectIsLive(er->actor) &&
+                    EnemyHp(er->actor, &hp, &mx) && mx > 0.0f;
+        uint16_t f = have ? enemy::HpFrac(hp, mx) : 0;
+        if (BossSend(b.guid, have ? wire::kBossAck : wire::kBossNack, b.phase, f))
+            QDLOG(LOG_INFO, "boss: peer answer key=", hex32(b.guid[0]),
+                  (have ? " HOLDS a live copy (ack)" : " holds no live copy (nack)"),
+                  " hp=", dec((int)f));
+        return;
+    }
+    if (b.flags & wire::kBossAck) {
+        if (!g_net.IsHost()) return;
+        g_bossAck.OnAck(b.guid);
+        if (g_bossAskPending && boss::SameKey(g_bossAskKey, b.guid)) g_bossAskPending = false;
+        QDLOG(LOG_INFO, "boss: peer ACK key=", hex32(b.guid[0]),
+              " -- the shared bar may be raised");
+        return;
+    }
+    if (b.flags & wire::kBossNack) {
+        if (!g_net.IsHost()) return;
+        g_bossAck.OnNack(b.guid, now);
+        if (g_bossAskPending && boss::SameKey(g_bossAskKey, b.guid)) g_bossAskPending = false;
+        // A NACK is also the answer to "does the peer hold this key at all".  If the class
+        // path was already published (or published while the peer's position was unknown),
+        // re-arm it: `EnemySpawnPump` describes the class again as soon as the partner is a
+        // real audience, and the next ask can be an ACK.  Without this the one path that
+        // reached the peer before it could use it was the only one ever sent.
+        EnemyRec* nr = EnemyByGuid(b.guid);
+        if (nr && nr->mirrorPathSent) {
+            nr->mirrorPathSent = false;
+            QDLOG(LOG_INFO, "boss: key=", hex32(b.guid[0]),
+                  " is missing on the peer; its class path will be described again");
+        }
+        // One refusal per key per minute at WARN.  A boss the peer genuinely lacks is
+        // asked about again after the 3 s window, and in a 600 s soak that measured 246
+        // identical WARN lines -- loud enough to bury the line that mattered.
+        static uint32_t lastNackKey[4] = {0, 0, 0, 0};
+        static uint32_t lastNackAt = 0;
+        bool sameNack = boss::SameKey(lastNackKey, b.guid) &&
+                        (uint32_t)(now - lastNackAt) < 60000;
+        memcpy(lastNackKey, b.guid, 16);
+        if (!sameNack) {
+            lastNackAt = now;
+            QDLOG(LOG_WARN, "boss: peer NACK key=", hex32(b.guid[0]),
+                  " -- it cannot show this bar; choosing another");
+        } else {
+            QDLOG(LOG_DEBUG, "boss: peer still NACKs key=", hex32(b.guid[0]),
+                  " -- another candidate");
+        }
+        return;
+    }
+
+    if (g_net.IsHost()) return;                // the host is the only publisher
+
     EnemyRec* er = EnemyByGuid(b.guid);
     bool on = (b.flags & wire::kBossBarOn) != 0;
     if (on && (!er || !ObjectIsLive(er->actor))) {
@@ -7867,31 +8133,50 @@ void OnBoss(wire::Reader& r, uint32_t now)
         if (missing++ < 5)
             QDLOG(LOG_WARN, "boss: no local copy for guid=", hex32(b.guid[0]),
                   "; the bar cannot be raised here");
+        // Say so on the wire: the host's choice was made on an older picture, and a
+        // silent refusal is what left it repairing an unshowable bar every 3 s.
+        BossSend(b.guid, wire::kBossNack, b.phase, 0);
         on = false;
     }
     if (on && er) {
-        // A dead key never holds a bar, even if a stale body says on.
-        if (EnemyDead(er->actor) || g_remoteDead.Has(b.guid, now) || KillLogHas(b.guid)) on = false;
+        // THE OWNER'S WORD IS THE AUTHORITY (R143): an explicit bar-on retracts a stale
+        // local death on this machine.  Without this the peer kept a key dead -- its own
+        // spawner had respawned it and a standing death re-killed it -- while the owner
+        // showed it alive.
+        bool staleKill = KillLogHas(b.guid);
+        bool staleLedger = g_remoteDead.Has(b.guid, now);
+        if (staleKill) g_killLog.Remove(b.guid);
+        if (staleLedger) g_remoteDead.Remove(b.guid);
+        if (staleKill || staleLedger)
+            QDLOG(LOG_INFO, "boss: key=", hex32(b.guid[0]),
+                  " is alive on the owner; a stale local death was retracted");
+        er->isBoss = true;
+        er->bossPhase = b.phase;
     }
     if (on) {
         g_bossKeyOn = true;
         memcpy(g_bossKey, b.guid, 16);
         g_bossKeyMs = now;
-        if (er) { er->isBoss = true; er->bossPhase = b.phase; }
+        g_bossAck.OnAck(b.guid);      // remembered, so this machine's own samples are stable
     } else {
-        BossKeyClear();
+        QDLOG(LOG_INFO, "boss: bar lowered for key=", hex32(b.guid[0]), " hp=",
+              dec(b.hp == 0xFFFF ? -1 : (int)b.hp),
+              " (the partner says the key is dead or gone)");
+        BossKeyClear(now);
     }
     for (int i = 0; i < g_enN; ++i) {
         EnemyRec& r2 = g_en[i];
         if (!r2.haveGuid) continue;
-        bool want = on && BossKeyIs(r2.guid) && ObjectIsLive(r2.actor) && !EnemyDead(r2.actor);
+        // The owner has just said this key is alive; a follower's local death flag is not
+        // a veto.  `BossBarSet` still refuses a key with no live actor of its own.
+        bool want = on && BossKeyIs(r2.guid) && ObjectIsLive(r2.actor);
         bool was = r2.bossBarShown;
         BossBarSet(r2, want, now);
         if (want && !was)
             QDLOG(LOG_INFO, "boss: follower raised its own bar for guid=", hex32(r2.guid[0]),
                   " hp=", dec((int)b.hp), " phase=", dec((int)b.phase));
     }
-} 
+}
 // ---------------------------------------------------------------------------
 // Ownership by proximity (qdenemyown.h), applied to the local records
 // ---------------------------------------------------------------------------
@@ -8652,7 +8937,10 @@ void EnemyDetectDeaths()
     int vanished = 0;
     for (int i = 0; i < g_enN; ++i) {
         EnemyRec& r = g_en[i];
-        if (!r.haveGuid || r.mirror || !g_own.Running(r.guid)) continue;
+        // Every non-mirror record, not only the ones this machine runs: a follower's copy
+        // can vanish in the same unload, and counting only owned records made a mass
+        // disappearance look like one kill per owned record.
+        if (!r.haveGuid || r.mirror) continue;
         if (r.seenAlive && !ObjectIsLive(r.actor)) ++vanished;
     }
     static const int kMassGoneMax = 8;
@@ -8669,10 +8957,16 @@ void EnemyDetectDeaths()
 
     for (int i = 0; i < g_enN; ++i) {
         EnemyRec& r = g_en[i];
-        if (!r.haveGuid || !g_own.Running(r.guid)) continue;
         // A mirrored copy is never persisted by this machine: it exists because the owner
         // runs that key, and the owner's own spawner/save path is the one that records it.
-        if (r.mirror) continue;
+        if (!r.haveGuid || r.mirror) continue;
+        // R146: the death sweep used to run ONLY for keys this machine owns.  Measured in
+        // Session 19's 601 s hub run: key FA2FC279 (a SRC_SPAWNER identity) was dead in
+        // this machine's own record and appeared in NO outgoing lane, so the partner -- which
+        // held no copy of that spawner -- never learned it.  A death a machine OBSERVED is a
+        // fact it can state even when it is not the owner; the owner's own record then
+        // converges on the same value.  The write below stays owner-only.
+        const bool ownerHere = g_own.Running(r.guid);
         bool live = ObjectIsLive(r.actor);
         float hp = 0.0f, mx = 0.0f;
         bool haveHp = false;
@@ -8697,7 +8991,10 @@ void EnemyDetectDeaths()
         } else {
             // R140: an actor that vanished before it was ever seen alive is a record whose
             // spawner never activated, or a level unload -- not a corpse.  Same rule the
-            // HP-0 branch already used.
+            // HP-0 branch already used.  R146: an actor this machine SAW ALIVE and now
+            // cannot find is a death it can state even when it does not run the enemy; the
+            // mass-disappearance guard above is what keeps a level unload from being read
+            // as N kills.
             if (!r.seenAlive) continue;
             dead = true;
             why = "actor gone";
@@ -8713,6 +9010,15 @@ void EnemyDetectDeaths()
             continue;
         }
         r.deathRecorded = true;
+        // R146: a death observed on a copy this machine does not RUN is still broadcast.
+        // No save write (the owner's spawner owns the persistence fact), just the claim on
+        // the lane the partner already reads.  This is the lane FA2FC279 was missing from.
+        if (!ownerHere) {
+            g_killLog.Add(r.guid);
+            QDLOG(LOG_INFO, "enemy death observed guid=", hex32(r.guid[0]), " (", why,
+                  ") on a copy this machine does not run; broadcast as a death claim");
+            continue;
+        }
         // The spawner's own respawn time when it names one; 0 otherwise.  The record is
         // what this lane proves, and never inventing a respawn is the safe direction.
         float respawn = 0.0f;
@@ -8753,9 +9059,12 @@ void EnemyPump(uint32_t now)
         // The new world's enemy actors are not the old records' actors; do not read a
         // death out of a half-built world.
         g_enDeathSuppressUntil = now + 3000;
-        // R143: a bar belongs to the world it was raised in; rebind after the load.
+        // R143: a bar belongs to the world it was raised in; rebind after the load.  The
+        // peer's ACK/refusal knowledge is per world too: a key that was unshowable in the
+        // old world says nothing about the new one.
         for (int i = 0; i < g_enN; ++i) BossBarSet(g_en[i], false, now);
-        BossKeyClear();
+        BossKeyClear(now);
+        g_bossAck.Reset();
         g_enN = 0; g_enCursor = 0;
         g_enWorld = world;          // the records below name THIS world from now on
         g_propCacheN = 0;           // classes reload with the world
@@ -8796,7 +9105,8 @@ void EnemyPump(uint32_t now)
         // A boss bar this machine raised must not outlive the session (and the active
         // key goes with it, so the next session selects its own).
         for (int i = 0; i < g_enN; ++i) BossBarSet(g_en[i], false, Net::Now());
-        BossKeyClear();
+        BossKeyClear(Net::Now());
+        g_bossAck.Reset();
         for (int i = 0; i < g_enN; ++i) if (g_en[i].driven && ObjectIsLive(g_en[i].actor)) EnemyDrive(g_en[i], false);
         // A mirrored copy exists only while the owner is describing its key.  With no
         // session there is no owner, so every one of them is destroyed here rather than
@@ -13997,8 +14307,17 @@ void DevHardLever(uint32_t now)
     if (now - g_devHardPoll < 1000) return;
     g_devHardPoll = now;
 
+    // A trailing `#nonce` re-arms an UNCHANGED instruction.  Session 19's divergence run
+    // exposed why that matters: the first `780_SZ_Depths` can arrive before the level
+    // table is ready (or before the area's list is on the manager's stack), and a lever
+    // that ignores the same string forever cannot be retried.  The nonce is not part of
+    // the map name -- `qd.tp` already uses this convention.
     char map[64];
     if (!DevRigText("QDCOOP_TEST_HARD", "qd.hard", map, sizeof(map))) return;
+    for (int i = 0; map[i] && i < (int)sizeof(map); ++i) {
+        if (map[i] == '#') { map[i] = 0; break; }
+    }
+    if (!map[0]) return;
     if (strcmp(map, g_devHardApplied) == 0) return;
     lstrcpynA(g_devHardApplied, map, sizeof(g_devHardApplied));
 
@@ -14038,7 +14357,7 @@ uint32_t g_devEnemiesPoll = 0;
 
 void DevEnemyDumpNow(uint32_t now)
 {
-    int alive = 0, dead = 0;
+    int alive = 0, dead = 0, stale = 0;
     int ledgerLive = g_remoteDead.Count(now);
     int killLive = g_killLog.Count();
     int mirrorLive = 0;
@@ -14061,11 +14380,17 @@ void DevEnemyDumpNow(uint32_t now)
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             live = false; gameDead = false; haveHp = false; cls[0] = 0;
         }
+        // R146: a record with no live actor that this machine NEVER saw alive has no state
+        // to report -- its spawner never activated, or a level unload took it.  Printing
+        // it as DEAD made the diff claim a death the lane never broadcast, which is the
+        // shape of the FA2FC279 residual.  A death this machine knows by key (its own kill
+        // log or the partner's ledger) still wins: that IS a state.
+        bool knownDead = g_remoteDead.Has(r.guid, now) || KillLogHas(r.guid);
+        if (!live && !r.seenAlive && !knownDead) { ++stale; continue; }
         // R137: HP <= 0 counts only for a copy seen alive; a spawner's inactive enemy at
         // HP 0 and an un-converged follower are not corpses.  See qdenemy.h.
         bool isDead = enemy::EffectivelyDead(live, gameDead, haveHp, rhp, r.seenAlive);
-        if (!isDead && g_remoteDead.Has(r.guid, now)) isDead = true;
-        if (!isDead && KillLogHas(r.guid)) isDead = true;
+        if (!isDead && knownDead) isDead = true;
         // R137: a key with no readable row (or one never seen alive) has UNKNOWN HP, not
         // HP 0.  Printing "?" keeps the shared-HP comparison from failing on a value this
         // machine does not have -- measured in 780 as `host=909 peer=0`, `host=0 peer=240`.
@@ -14107,7 +14432,7 @@ void DevEnemyDumpNow(uint32_t now)
     }
     QDLOG(LOG_INFO, "enemykey n=", dec(alive + dead), " alive=", dec(alive), " dead=",
           dec(dead), " killlog=", dec(killLive), " ledger=", dec(ledgerLive),
-          " mirrors=", dec(g_mirrorN));
+          " mirrors=", dec(g_mirrorN), " stale=", dec(stale));
     // The mirror lane's own state, so a run can tell "the peer constructed nothing" from
     // "the peer constructed it and lost it again".
     int pendingN = 0;

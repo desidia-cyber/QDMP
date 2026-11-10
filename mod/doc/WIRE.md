@@ -319,9 +319,11 @@ pump, so the lane degrades to "later", never to "never".
 
 ```
 guid guid            the boss enemy's key; all zero when the body names no boss
-u8   flags           bit0 bar on, bit1 bar off, bit2 arena exit
+u8   flags           bit0 bar on, bit1 bar off, bit2 arena exit,
+                     bit3 ask, bit4 ack, bit5 nack (Session 20 negotiation)
 u8   phase           the owner's observed phase, 0 = none
-u16  hp              the boss's HP as the same 0..65535 fraction an `ENEMY` row carries
+u16  hp              the boss's HP as the same 0..65535 fraction an `ENEMY` row carries;
+                     a bar-off carries the last value read, 0 on a kill
 ```
 
 The two per-boss facts that are a **local call on each machine**, and therefore have to be
@@ -343,6 +345,33 @@ when it could observe nothing.
 
 Reliable, on change only: a boss bar that fails to appear because a datagram was lost is
 the failure a player reports as "the boss fight is broken".
+
+**The one bar is negotiated, because a bar the partner cannot show is not shared.** The
+game has ONE boss HP bar and `ActivateBossHPBar` binds it to the actor it is given, so the
+host is the single selector. Session 19 made it select the most-damaged live boss and
+publish it; measured live, the two screens still showed different bosses because the host
+selected `03FDBC21`, a key the peer held no copy of at all (it was outside the 25 m mirror
+radius), while the peer's own `17181166` was a key the host held as a standing death. The
+selection is therefore a round trip:
+
+- `ASK` (host → peer) — "do you hold a live copy of this key?". No state changes.
+- `ACK` (peer → host) — yes, and the receiver may keep its own bar raised for it.
+- `NACK` (peer → host) — no; the host marks the key ineligible for 3 s, chooses the next
+  candidate, and re-arms that key's `ENEMY_SPAWN` class description (the peer may gain a
+  copy while the fight is running). A silence for 1.5 s is treated as a NACK.
+- `BAR_ON` is only sent after an ACK. If nothing is showable on both machines, **no bar is
+  raised on either** — the honest agreement, not a full bar on one screen and an empty one
+  on the other.
+
+Liveness is the owner's: the machine that RUNS the enemy (`enemyown::OwnerSet::Running`)
+answers with its own dead flag / HP, and a follower takes the owner's `ENEMY` row verbatim.
+An explicit `BAR_ON` from the owner retracts a stale local death on the follower, so a key
+the owner is showing alive cannot stay dead on the other side. A candidate also needs a
+READABLE HP: measured, a boss 71 m away whose encounter was not running was ACKed, bound,
+and sampled `hp=0` forever while the dragon being fought was never selected. Both machines
+log `boss: bar key=<8hex> hp=<0..65535|-1>` once a second while the bar is up (`-1` is
+"HP unreadable", never 0), and the bar-off carries the last value: the live proof sampled
+the same key and the same HP on both machines down to 0, 28 ms apart.
 
 ### 3.9c `ENEMY_SPAWN` (0x2B)
 
@@ -631,7 +660,7 @@ mesh-free look in the game's content; the buffs (7-9) have no world visual in th
 ```
 u32  seq             bumps on every change
 u8   role            1 = host, 2 = peer
-u8   phase           0 = in-world, 1 = hard begin, 2 = arrived, 3 = resume
+u8   phase           0 = in-world, 1 = hard begin, 2 = arrived, 3 = resume, 4 = area
 str  map             short map name, e.g. `100_GR`
 str  dest            the destination the sender just took, "" when not travelling
 ```
@@ -677,6 +706,18 @@ The `phase` field is what makes the handshake explicit:
 - `3 RESUME` — the host releases the pair after both `ARRIVED`, and absolute state may
   be applied again. Until then both machines hold their absolute bodies (the existing
   `MapBoard` divergence gate).
+- `4 AREA` — one machine has entered a streamed AREA (a sublevel of the persistent world:
+  `780_SZ_Depths`, `760_SZ_AUT`, …). **`map` is still the UWorld and `dest` is the area**:
+  the divergence board consumes `map` before the phase is read, so an area name there made
+  it compare a world against an area and oscillate (measured: `world: partner=780_SZ_Depths`
+  while both machines stood in `Ruins_Level_00`). The receiver
+  streams the same area through the game's own level-list mechanism (`FollowHardTravel`
+  takes the sublevel path, which never loads the package as a world) and pins it; a name
+  it cannot enter is a named `travel: REFUSED the partner's area …` line. This is not
+  `HARD_BEGIN`: a hard load of an area is the pawn-less path R102 measured. The sender
+  re-announces while pinned, so a reload or a lost datagram heals. Measured failure it
+  closes (Session 19's run 3): entering an area was a LOCAL lever on each machine, and one
+  600 s run ended with the host in `780_SZ_Depths` and the peer still in the hub.
 
 The host is authoritative on a collision (both machines cross to different maps at the
 same instant): the host's `HARD_BEGIN` wins and the peer re-follows once. A hard
