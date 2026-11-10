@@ -74,12 +74,22 @@ trap {
     try { $script:lines | Set-Content -LiteralPath $Report } catch {}
     exit 1
 }
+# NOTE: these write to the HOST, not to the pipeline, and that is not cosmetic.
+#
+# MEASURED this session: `$key = Find-SharedDrop ...` returned an ARRAY of the note strings
+# instead of the key, because every `Note` call inside the function was emitted as function
+# output -- the same trap session20.ps1 warns about ("Check writes its note to the pipeline,
+# so [bool](Check ...) would be true").  The drop phase then probed 'near:drop::0' and the
+# log said `no live actor matches 'drop::0'` about a drop it had just found.  A helper that
+# both narrates and returns a value cannot afford a single stray object on the pipeline, so
+# narration goes to the host stream and the report file (built from $script:lines) and the
+# pipeline is reserved for return values.
 function Say($m) {
     $s = "[{0}] {1}" -f (Get-Date -Format 'HH:mm:ss'), $m
-    Write-Output $s
+    Write-Host $s
     $script:lines.Add($s) | Out-Null
 }
-function Note($m) { Write-Output $m; $script:lines.Add($m) | Out-Null }
+function Note($m) { Write-Host $m; $script:lines.Add($m) | Out-Null }
 
 function Get-RigPaths([int]$i) {
     $root   = Join-Path $rigRoot ("inst{0}" -f $i)
@@ -588,12 +598,18 @@ function Find-SharedDrop([int]$H, [int]$P, $skip, [int]$mark, [int]$maxProbe = 6
         if (@($skip) -contains $id) { continue }
         if ($probed -ge $maxProbe) { Note ("    (stopped after {0} probes; the remaining keys were not tested)" -f $probed); break }
         $probed++
+        # Probe BOTH machines for every key: a key only one of them holds is the state the
+        # phase has to report, and skipping the second probe hides which side is missing.
         $rh = Test-DropHeld $H $k.Hash $k.Index
-        if (-not $rh.Held) { Note ("    key {0}: the HOST does not hold it ({1})" -f $id, $(if ($rh.Line) { $rh.Line } else { 'no resolver line' })); continue }
         $rp = Test-DropHeld $P $k.Hash $k.Index
-        if (-not $rp.Held) { Note ("    key {0}: the PEER does not hold it ({1})" -f $id, $(if ($rp.Line) { $rp.Line } else { 'no resolver line' })); continue }
-        Note ("    key {0}: BOTH machines hold it" -f $id)
-        return $k
+        if ($rh.Held -and $rp.Held) {
+            Note ("    key {0}: BOTH machines hold it" -f $id)
+            return $k
+        }
+        Note ("    key {0}: host={1} peer={2} ({3})" -f $id,
+              $(if ($rh.Held) { 'HELD' } elseif ($rh.Gone) { 'gone' } else { 'absent' }),
+              $(if ($rp.Held) { 'HELD' } elseif ($rp.Gone) { 'gone' } else { 'absent' }),
+              $(if ($rh.Line) { $rh.Line } else { $rp.Line }))
     }
     return $null
 }
@@ -616,27 +632,19 @@ function Find-SharedDrop([int]$H, [int]$P, $skip, [int]$mark, [int]$maxProbe = 6
 # which is what the hiding half needs to have anything to hide.
 function Invoke-KillRounds([int]$H, [int]$P, [int]$rounds, [int]$mark) {
     for ($r = 1; $r -le $rounds; $r++) {
-        $dh = Invoke-EnemyDump $H ('kill{0}-h' -f $r)
-        $dp = Invoke-EnemyDump $P ('kill{0}-p' -f $r)
-        $cands = @()
-        foreach ($k in @($dh.Keys)) {
-            if ($dh[$k].State -ne 'ALIVE') { continue }
-            if (-not $dp.ContainsKey($k)) { continue }
-            if ($dp[$k].State -ne 'ALIVE') { continue }
-            $cands += $k
-        }
-        if ($cands.Count -eq 0) {
-            Note ("    round {0}: no enemy key is ALIVE on BOTH machines, so there is nothing to kill by key" -f $r)
-            return -1
-        }
-        Note ("    round {0}: {1} key(s) alive on both machines: {2}" -f $r, $cands.Count, (($cands | Select-Object -First 8) -join ' '))
-        foreach ($k in @($cands | Select-Object -First 3)) {
-            Set-Control $H 'qd.enemykill' $k
-            Set-Control $P 'qd.enemykill' $k
-            Note ("      enemykill {0} on both machines (the game's own Kill, so the death path and the drop roll both run)" -f $k)
-            Start-Sleep -Seconds 6
-        }
-        Start-Sleep -Seconds 5
+        # THE DAMAGE PATH FIRST.  Measured this session in the hub: `qd.enemykill` (the
+        # enemy's own Kill) runs the death but NOT the drop roll on the machine that calls
+        # it -- the drop always appeared on the OTHER machine, whose copy died through the
+        # mod's damage convergence.  So a kill that rolls a drop HERE has to be a real
+        # damage hit (`qd.hit`), which needs a class that implements TryApplyDamage: the
+        # hub's mostly do not (`ran=0 hp 0.0 -> 0.0`, Session 14), 780_SZ_Depths' do.
+        Note ("    round {0}: hitting the nearest enemy on both machines (damage, the path the drop roll runs on)" -f $r)
+        Set-Control $H 'qd.hit' '100000'
+        Set-Control $P 'qd.hit' '100000'
+        Start-Sleep -Seconds 7
+        Set-Control $H 'qd.hit' $null
+        Set-Control $P 'qd.hit' $null
+        Start-Sleep -Seconds 3
         $all = @(Get-DropKeys $H $mark) + @(Get-DropKeys $P $mark)
         $uniq = @{}
         foreach ($k in $all) { $uniq["$($k.Hash)#$($k.Index)"] = $true }
@@ -646,6 +654,27 @@ function Invoke-KillRounds([int]$H, [int]$P, [int]$rounds, [int]$mark) {
               @(Get-Since $P $mark | Where-Object { $_ -match 'loot: drop ' }).Count,
               @(Get-Since $H $mark | Where-Object { $_ -match 'loot: merged ' }).Count,
               @(Get-Since $P $mark | Where-Object { $_ -match 'loot: merged ' }).Count)
+        if ($uniq.Count -ge 2) { return $uniq.Count }
+        Invoke-Go $H 'enemy' 200
+        Invoke-Go $P 'enemy' 200
+        Start-Sleep -Seconds 4
+    }
+    # The `Kill` fallback, for a class whose TryApplyDamage this module cannot build a frame
+    # for.  It rolls the drop on the OTHER machine, which is still a drop both machines can
+    # end up holding once that machine's copy dies.
+    for ($r = 1; $r -le 2; $r++) {
+        $dh = Invoke-EnemyDump $H ('kill{0}-h' -f $r)
+        $hostKeys = @($dh.Keys | Where-Object { $dh[$_].State -eq 'ALIVE' } | Select-Object -First 3)
+        if ($hostKeys.Count -eq 0) { break }
+        foreach ($k in $hostKeys) {
+            Set-Control $H 'qd.enemykill' $k
+            Note ("      enemykill {0} on the HOST (fallback for a class with no usable TryApplyDamage)" -f $k)
+            Start-Sleep -Seconds 5
+        }
+        $all = @(Get-DropKeys $H $mark) + @(Get-DropKeys $P $mark)
+        $uniq = @{}
+        foreach ($k in $all) { $uniq["$($k.Hash)#$($k.Index)"] = $true }
+        Note ("    fallback round {0}: {1} distinct drop key(s)" -f $r, $uniq.Count)
         if ($uniq.Count -gt 0) { return $uniq.Count }
     }
     return 0
@@ -655,13 +684,18 @@ function Invoke-LootDirection([int]$H, [int]$P, [int]$taker, [int]$other, [strin
     Step ("R129 {0} -- the {1} takes a drop both machines hold; the {2} must hide its copy" -f
           $dir, $(if ($taker -eq $H) { 'HOST' } else { 'PEER' }), $(if ($other -eq $H) { 'HOST' } else { 'PEER' })) `
          'The tombstone is the lane''s own key {source_hash, drop_index}; the lever that addresses it is qd.tp near:drop:<8hex>:<index>.'
-    $key = Find-SharedDrop $H $P $skip $mark
-    if (-not $key) {
-        # One retry with fresh kills: the first pass may simply have rolled no drop that
-        # both machines hold at the same moment.
-        Note '  no shared drop yet; killing again and retrying once'
-        Invoke-KillRounds $H $P 3 $mark
+    $key = $null
+    for ($attempt = 1; $attempt -le 3 -and -not $key; $attempt++) {
         $key = Find-SharedDrop $H $P $skip $mark
+        if ($key) { break }
+        # A drop only ONE machine holds is the normal first state: the machine that did not
+        # do the Kill rolls its own copy when the death reaches it, and its object scan needs
+        # a pass to notice the actor.  So wait, look again, and only then kill more.
+        Note ("  attempt {0}: no drop both machines hold yet; waiting 10 s for the death to reach the other copy" -f $attempt)
+        Start-Sleep -Seconds 10
+        $key = Find-SharedDrop $H $P $skip $mark
+        if ($key) { break }
+        if ($attempt -lt 3) { Invoke-KillRounds $H $P 2 $mark }
     }
     if (-not $key) {
         Verdict $step $H $false 'a drop BOTH machines hold was found' 'no shared drop key exists; hiding cannot be measured'
@@ -710,15 +744,29 @@ function Invoke-LootDirection([int]$H, [int]$P, [int]$taker, [int]$other, [strin
 }
 
 function Invoke-LootDrop([int]$H, [int]$P) {
-    Step 'R129 -- loot hiding, both directions' `
+    Step 'R129 -- loot hiding, both directions, in 780_SZ_Depths' `
          'A drop both machines hold; one takes it; the other must hide its copy and refuse a second take.'
-    # Anchor the pair on enemies and kill by KEY until drops exist.  `qd.hit` cannot do
-    # this in the hub (see Invoke-KillRounds), so the lever used here is the enemy's own
-    # Kill on both machines.
+    # WHY THE AREA AND NOT THE HUB.  A drop's key is {source_hash, drop_index}, and the
+    # source is the enemy.  In the hub each machine runs its OWN spawner enemies with its own
+    # authored GUIDs, so the two machines' drop keys are disjoint -- measured this session:
+    # three drops the host held and two the peer held, not one key in common
+    # (`rig: no live loot-ledger drop matches ... (the scan has 2 drop(s))` on the peer for
+    # every host key).  PLAYTEST section 8 already says loot hiding needs the SAME enemy on
+    # both machines.  `780_SZ_Depths` is where both machines hold the same authored enemy
+    # GUIDs (Sessions 14-20), so that is where this proof has to be made.
+    $enterOk = Enter-Area $H $P '780_SZ_Depths' 'SecretSword_Altar_BP' 'loot-area'
+    foreach ($v in @($script:verdicts | Where-Object { $_.Step -eq 'loot-area' })) { if (-not $v.Ok) { $enterOk = $false } }
+    if (-not $enterOk) {
+        Verdict 'r129-roll' $H $false 'the loot proof was run' 'area entry did not converge; refusing to measure drops in two different places'
+        return
+    }
     $mark = Get-Mark $H
     Invoke-Go $H 'enemy' 200
     Invoke-Go $P 'enemy' 200
-    Start-Sleep -Seconds 8
+    # SETTLE.  Measured: a dump 10 s after gameplay can find 0 callable enemies -- the
+    # level's initial spawn set is still being torn down and rebuilt.
+    Note '  settling 20 s so the area''s spawn set is live and callable before the first hit'
+    Start-Sleep -Seconds 20
     $rolled = Invoke-KillRounds $H $P $LootRounds $mark
     $all = @(Get-DropKeys $H $mark) + @(Get-DropKeys $P $mark)
     $uniq = @{}
@@ -1075,7 +1123,7 @@ if ($Phase -eq 'probe' -or $Phase -eq 'all') {
     Invoke-Probe $H $P
 }
 
-if (\$Phase -eq 'lootdrop' -or \$Phase -eq 'all') {
+if ($Phase -eq 'lootdrop' -or $Phase -eq 'all') {
     Invoke-LootDrop $H $P
 }
 

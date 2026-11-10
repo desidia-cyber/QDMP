@@ -1,0 +1,20 @@
+'vswhere.exe' is not recognized as an internal or external command,
+operable program or batch file.
+Building winmm.dll ...
+proxy.cpp
+Generating Code...
+Compiling...
+fwd_symbols.c
+buffer.c
+hook.c
+trampoline.c
+hde64.c
+Generating Code...
+   Creating library C:\Users\ALVIBO\.t3\worktrees\Queens_Domain\t3-ee18e355\mod\native\build\winmm.lib and object C:\Users\ALVIBO\.t3\worktrees\Queens_Domain\t3-ee18e355\mod\native\build\winmm.exp
+
+Built C:\Users\ALVIBO\.t3\worktrees\Queens_Domain\t3-ee18e355\mod\native\build\winmm.dll
+  size: 1002496 bytes
+
+Next: python tools\pe_export_table.py "C:\Users\ALVIBO\.t3\worktrees\Queens_Domain\t3-ee18e355\mod\native\build\winmm.dll"
+      (expect "forwarders: 180  real code: 0" -- a proxy with real exports
+       under a system name is how a loader failure becomes someone else's bug)

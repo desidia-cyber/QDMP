@@ -14463,34 +14463,39 @@ void DevEnemyDumpNow(uint32_t now)
         // HP 0.  Printing "?" keeps the shared-HP comparison from failing on a value this
         // machine does not have -- measured in 780 as `host=909 peer=0`, `host=0 peer=240`.
         bool hpKnown = !isDead && enemy::HpKnown(usable, haveHp, r.seenAlive, rhp);
-        char hpTxt[32];
-        {
-            char* d = hpTxt;
-            const char* e = hpTxt + sizeof(hpTxt) - 1;
-            d = hpKnown ? ::qd::detail::CatFloat(d, e, rhp, 1)
-                        : ::qd::detail::Cat(d, e, "?");
-            *d = 0;
-        }
         // Session 21: WHICH fact produced a `?` on a key that is NOT dead.  Only the live
-        // keys are ever compared by a soak, and only three different facts print the same
-        // marker, so the marker is never left bare for them.  A DEAD key's `hp=?` is
-        // self-evident (nothing about a corpse is compared), so those lines are unchanged
-        // in shape -- they are the bulk of the dump and the log is already large.
-        const char* whyTxt = "";
-        bool showWhy = false;
-        if (!isDead && !hpKnown) {
-            showWhy = true;
-            whyTxt = enemy::HpUnknownText(
-                enemy::HpUnknownWhy(usable, haveHp, r.seenAlive, rhp, isDead, hpFail));
+        // keys are ever compared by a soak, and three different facts print the same marker,
+        // so the marker is never left bare for them.  A DEAD key's `hp=?` is self-evident
+        // (nothing about a corpse is compared), so those lines stay short -- they are the
+        // bulk of the dump and the log is already large.
+        //
+        // Two branches rather than one line with a ternary: the readable case prints a
+        // number through the same `flt()` every other HP line in this file uses, and the
+        // unknown case prints the reason.  `CatFloat` through a local buffer produced
+        // `hp=1.00000000000000000` -- correct value, 17 decimals -- and a dump line that
+        // long, 250 times a sample, is a log nobody reads.
+        if (!isDead && hpKnown) {
+            QDLOG(LOG_INFO, "enemykey ", hex32(r.guid[0]), " ALIVE local=",
+                  dec(g_own.Running(r.guid) ? 1 : 0), " src=", dec((int)r.src),
+                  " hp=", flt(rhp, 1),
+                  (r.mirror ? " mirrored=1" : ""),
+                  " cls=", (cls[0] ? cls : "?"));
+            ++alive;
+            continue;
         }
+        const char* whyTxt = enemy::HpUnknownText(
+            enemy::HpUnknownWhy(usable, haveHp, r.seenAlive, rhp, isDead, hpFail));
         QDLOG(LOG_INFO, "enemykey ", hex32(r.guid[0]), (isDead ? " DEAD" : " ALIVE"),
               " local=", dec(g_own.Running(r.guid) ? 1 : 0), " src=", dec((int)r.src),
-              " hp=", hpTxt,
-              (showWhy ? " why=" : ""), (showWhy ? whyTxt : ""),
-              (showWhy ? " seen=" : ""), (showWhy ? (r.seenAlive ? "1" : "0") : ""),
-              (showWhy ? " inworld=" : ""), (showWhy ? (inWorld ? "1" : "0") : ""),
-              (showWhy ? " iflags=" : ""), hex32(showWhy ? iflags : 0u),
-              (showWhy ? " oflags=" : ""), hex32(showWhy ? oflags : 0u),
+              " hp=? why=", whyTxt,
+              " seen=", (r.seenAlive ? "1" : "0"),
+              // The three candidates for "HP is unreadable", all three on the line:
+              //   inworld=0  the actor's level is not in this world
+              //   iflags     the object item's flags (bit 29 = the engine's call-deny)
+              //   oflags     the object's own RF_BeginDestroyed/RF_FinishDestroyed
+              // so the next session reads the cause instead of re-deriving it.
+              " inworld=", (inWorld ? "1" : "0"),
+              " iflags=", hex32(iflags), " oflags=", hex32(oflags),
               (r.mirror ? " mirrored=1" : ""),
               " cls=", (cls[0] ? cls : "?"));
         if (isDead) ++dead; else ++alive;

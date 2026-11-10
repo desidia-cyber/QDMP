@@ -1,31 +1,29 @@
-The shared-HP ghost: a live actor the engine refuses to call
+session21: narrate to the host stream, and prove the drop where the keys exist
 
-Session 20's hub runs 2 and 3 ended with one shared live key printing hp=? on both
-machines, so "shared HP equal" had no pair to compare. The dump now prints WHY, and a
-live run answered it in one line:
+Three harness defects, all found by running it.
 
-  enemykey 976CB2E9 ALIVE local=1 src=0 hp=? why=callfail seen=0 inworld=1 cls=Default_Lizer_02_C
-  enemykey 93494995 ALIVE local=1 src=0 hp=490.0                     cls=Default_Lizer_07_C
+1. `Note`/`Say` wrote to the PIPELINE, so any helper that both narrated and returned a
+   value returned an array of its own notes. `$key = Find-SharedDrop ...` then held note
+   strings, the phase probed `near:drop::0`, and the log said `no live actor matches
+   'drop::0'` about a drop it had just found. session20.ps1 warns about exactly this trap
+   for `Check`; the same trap was one level down. Narration now goes to the host stream
+   and the report file, and the pipeline carries return values only.
 
-Two instances of one class, one readable and one not -- so it is not the class and not the
-attribute component. why=callfail means the getter resolves and the reflective call is
-REFUSED, which is ObjectCallable: the item flags' deny bit (FUObjectItem::Flags bit 29,
-EInternalObjectFlags::PendingKill in this build) or RF_BeginDestroyed/FinishDestroyed. In
-the hub that is almost every enemy record: 565 "alive" keys, one of them callable.
+2. A fixed 3 s read after writing qd.enemies lost the peer's dump -- see the probe. Every
+   dump and drop probe now polls for its lines (60 s for a dump, 20 s for a resolver) and
+   records how long it took.
 
-So the copies the soak was trying to compare HP on were mid-teardown ghosts. The dump now
-reports them as GONE -- neither ALIVE (which made the comparison unmeasurable) nor DEAD
-(which would invent a kill no lane broadcast) -- and the why-line carries iflags/oflags so
-the claim is a number in the log rather than an inference. `usable = live && callable`
-replaces `live` for the whole per-key report, which is the same rule every reflective call
-in this module already goes through.
+3. The hub cannot prove loot hiding, and the run says why: a drop's key is
+   {source_hash, drop_index} and the source is the enemy, so two machines running
+   DIFFERENT spawner enemies have disjoint drop keys. Measured: three keys the host held
+   and two the peer held, not one in common -- `rig: no live loot-ledger drop matches
+   ... (the scan has 2 drop(s))` on the peer for every host key. The phase now enters
+   780_SZ_Depths first, where both machines hold the same authored enemy keys, and kills
+   through `qd.hit` (damage), because `qd.enemykill` runs the death but not the drop roll
+   on the machine that calls it -- every drop of this session appeared on the OTHER
+   machine.
 
-tools/session21.ps1 gains a `probe` phase, because the harness was measuring with a
-stopwatch it never checked: writing qd.enemies and reading after a fixed 3 s found the
-host's dump and nothing on the peer, and the loot phase then reported "no enemy key alive
-on both machines" about two machines holding hundreds. Measured: the file levers answer in
-0.5-1.1 s once warm, but the FIRST dump of a boot costs 33.1 s (the per-class UFunction
-resolution that makes GetHP readable is paid by whichever dump happens first). Every dump
-and drop probe now polls for its lines with a real timeout.
+Also: the readable-HP branch prints through `flt()` instead of a local CatFloat buffer,
+which was producing `hp=1.00000000000000000` (right value, 17 decimals) on every line.
 
 Co-authored-by: CommandCodeBot <noreply@commandcode.ai>
