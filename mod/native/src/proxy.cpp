@@ -2954,15 +2954,25 @@ uint8_t* OutParm(Call& c, int size)
     return nullptr;
 }
 
+// The same read, but the caller is told WHICH of the three ways it failed.  `EnemyHp` only
+// ever needed "did it read", and the per-key dump needs the distinction between "the class
+// has no such getter" and "the getter exists and produced nothing" -- they mean an
+// attribute component that is missing versus one that is not initialised (Session 21).
+//   0 = read, 1 = the function does not resolve, 2 = the call did not run, 3 = no result.
+int CallGetFloatEx(void* obj, Fn& f, const char* fn, float* out)
+{
+    if (!f.Resolve(obj, fn)) return 1;
+    Call c(f);
+    if (!c.Run(obj)) return 2;
+    uint8_t* p = OutParm(c, 4);
+    if (!p) return 3;
+    memcpy(out, p, 4);
+    return 0;
+}
+
 bool CallGetFloat(void* obj, Fn& f, const char* fn, float* out)
 {
-    if (!f.Resolve(obj, fn)) return false;
-    Call c(f);
-    if (!c.Run(obj)) return false;
-    uint8_t* p = OutParm(c, 4);
-    if (!p) return false;
-    memcpy(out, p, 4);
-    return true;
+    return CallGetFloatEx(obj, f, fn, out) == 0;
 }
 
 bool CallNoArgs(void* obj, Fn& f, const char* fn)
@@ -5311,10 +5321,26 @@ bool EnemyIdentity(EnemyRec& r)
     return r.haveGuid;
 }
 
-bool EnemyHp(void* actor, float* hp, float* maxHp)
+// The HP read, with the reason it failed when it did (Session 21).  `EnemyHp` is the path
+// the identity/convergence code trusts, so its answer is unchanged; the extra int is only
+// for the per-key dump's `hp=?` diagnosis.
+bool EnemyHpRead(void* actor, float* hp, float* maxHp, int* fail)
 {
     static Fn fHp = {}, fMax = {};
-    return CallGetFloat(actor, fHp, "GetHP", hp) && CallGetFloat(actor, fMax, "GetMaxHP", maxHp);
+    float h = 0.0f, m = 0.0f;
+    int r1 = CallGetFloatEx(actor, fHp, "GetHP", &h);
+    if (r1 != 0) { if (fail) *fail = r1; return false; }
+    int r2 = CallGetFloatEx(actor, fMax, "GetMaxHP", &m);
+    if (r2 != 0) { if (fail) *fail = r2; return false; }
+    if (hp) *hp = h;
+    if (maxHp) *maxHp = m;
+    if (fail) *fail = 0;
+    return true;
+}
+
+bool EnemyHp(void* actor, float* hp, float* maxHp)
+{
+    return EnemyHpRead(actor, hp, maxHp, nullptr);
 }
 
 bool EnemyDead(void* actor)
@@ -14367,18 +14393,24 @@ void DevEnemyDumpNow(uint32_t now)
     for (int i = 0; i < g_enN; ++i) {
         EnemyRec& r = g_en[i];
         if (!r.haveGuid) continue;
-        bool live = false, gameDead = false, haveHp = false;
+        bool live = false, gameDead = false, haveHp = false, inWorld = false;
         float rhp = 0, rmx = 0;
+        int hpFail = 0;
         char cls[64] = "";
         __try {
             live = ObjectIsLive(r.actor);
             if (live) {
-                FNameToString(ObjNameRaw(ObjClass(r.actor)), cls, sizeof(cls));
-                gameDead = EnemyDead(r.actor);
-                haveHp = EnemyHp(r.actor, &rhp, &rmx);
+                void* a = r.actor;                  // resolves through the weak handle
+                FNameToString(ObjNameRaw(ObjClass(a)), cls, sizeof(cls));
+                gameDead = EnemyDead(a);
+                haveHp = EnemyHpRead(a, &rhp, &rmx, &hpFail);
+                // The third candidate for "HP is unreadable": the record names an actor whose
+                // level is not in this world (streamed out, or an object from a level this
+                // machine never had).  Its HP is not a fact about the running encounter.
+                if (void* w = GWorldPtr()) inWorld = ActorInThisWorld(a, w);
             }
         } __except (EXCEPTION_EXECUTE_HANDLER) {
-            live = false; gameDead = false; haveHp = false; cls[0] = 0;
+            live = false; gameDead = false; haveHp = false; cls[0] = 0; hpFail = 0;
         }
         // R146: a record with no live actor that this machine NEVER saw alive has no state
         // to report -- its spawner never activated, or a level unload took it.  Printing
@@ -14394,7 +14426,7 @@ void DevEnemyDumpNow(uint32_t now)
         // R137: a key with no readable row (or one never seen alive) has UNKNOWN HP, not
         // HP 0.  Printing "?" keeps the shared-HP comparison from failing on a value this
         // machine does not have -- measured in 780 as `host=909 peer=0`, `host=0 peer=240`.
-        bool hpKnown = !isDead && enemy::HpKnown(live, haveHp, r.seenAlive);
+        bool hpKnown = !isDead && enemy::HpKnown(live, haveHp, r.seenAlive, rhp);
         char hpTxt[32];
         {
             char* d = hpTxt;
@@ -14403,9 +14435,24 @@ void DevEnemyDumpNow(uint32_t now)
                         : ::qd::detail::Cat(d, e, "?");
             *d = 0;
         }
+        // Session 21: WHICH fact produced a `?` on a key that is NOT dead.  Only the live
+        // keys are ever compared by a soak, and only three different facts print the same
+        // marker, so the marker is never left bare for them.  A DEAD key's `hp=?` is
+        // self-evident (nothing about a corpse is compared), so those lines are unchanged
+        // in shape -- they are the bulk of the dump and the log is already large.
+        const char* whyTxt = "";
+        bool showWhy = false;
+        if (!isDead && !hpKnown) {
+            showWhy = true;
+            whyTxt = enemy::HpUnknownText(
+                enemy::HpUnknownWhy(live, haveHp, r.seenAlive, rhp, isDead, hpFail));
+        }
         QDLOG(LOG_INFO, "enemykey ", hex32(r.guid[0]), (isDead ? " DEAD" : " ALIVE"),
               " local=", dec(g_own.Running(r.guid) ? 1 : 0), " src=", dec((int)r.src),
               " hp=", hpTxt,
+              (showWhy ? " why=" : ""), (showWhy ? whyTxt : ""),
+              (showWhy ? " seen=" : ""), (showWhy ? (r.seenAlive ? "1" : "0") : ""),
+              (showWhy ? " inworld=" : ""), (showWhy ? (inWorld ? "1" : "0") : ""),
               (r.mirror ? " mirrored=1" : ""),
               " cls=", (cls[0] ? cls : "?"));
         if (isDead) ++dead; else ++alive;

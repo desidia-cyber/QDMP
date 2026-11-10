@@ -103,9 +103,76 @@ inline int32_t HitFrac(float prevHp, float curHp, float maxHp)
 // fail on a disagreement between 0 and the owner's real value (measured in 780:
 // `5D370AC1 host=909 peer=0`, `AE6AFEB2 host=0 peer=240`), which is a measurement
 // artefact, not a sync failure.
-inline bool HpKnown(bool live, bool haveHp, bool seenAlive)
+//
+// A POSITIVE READING NEEDS NO CORROBORATION (Session 21).  `seenAlive` is set by the
+// death sweep, and that sweep is suppressed across a load (`g_enDeathSuppressUntil`) and
+// early-returns when many actors vanish at once -- so a record created in one of those
+// windows could hold a full-health copy and still print `?`.  HP > 0 IS the evidence that
+// the copy is alive, so it is reported on its own.  Requiring `seenAlive` for it is what
+// makes Session 20's "one shared live key, hp=?" reproducible: the number was often there
+// and was withheld.
+inline bool HpKnown(bool live, bool haveHp, bool seenAlive, float hp)
 {
-    return live && haveHp && seenAlive;
+    return live && haveHp && (seenAlive || hp > 0.0f);
+}
+
+// ---------------------------------------------------------------------------
+// WHY a key's HP could not be read (Session 21)
+// ---------------------------------------------------------------------------
+// Session 20's hub runs 2 and 3 ended with one shared live key printing `hp=?` on both
+// machines, so "shared HP equal" had no pair to compare and the run could only say "no
+// mismatch was observable".  Three different facts print `?` and each needs a different
+// answer, so the dump now names the one it has instead of leaving a bare marker:
+//
+//   HPZ_NOFN      `GetHP` / `GetMaxHP` do not resolve on the actor's class
+//                 (an attribute component that is not there, or a class that is not an enemy)
+//   HPZ_CALLFAIL  they resolve and the reflective call did not run
+//   HPZ_NOOUT     the call ran but produced no 4-byte result (a signature surprise)
+//   HPZ_ZERO      the read succeeded and HP is <= 0 on a copy never seen alive -- a
+//                 spawner's DORMANT enemy, i.e. the encounter is not running.  This is a
+//                 real value, not a missing one, and it is the reason it must not be
+//                 compared: 0 means "not activated", not "full health".
+//   HPZ_UNSEEN    HP reads > 0 but this machine has not observed the copy alive yet
+//   HPZ_GONE      not an HP answer at all: the key is dead, so nothing is compared
+enum HpUnknown {
+    HPZ_NONE = 0,
+    HPZ_NOFN,
+    HPZ_CALLFAIL,
+    HPZ_NOOUT,
+    HPZ_ZERO,
+    HPZ_UNSEEN,
+    HPZ_GONE
+};
+
+inline const char* HpUnknownText(HpUnknown w)
+{
+    switch (w) {
+    case HPZ_NOFN:     return "nofn";
+    case HPZ_CALLFAIL: return "callfail";
+    case HPZ_NOOUT:    return "noout";
+    case HPZ_ZERO:     return "zero";
+    case HPZ_UNSEEN:   return "unseen";
+    case HPZ_GONE:     return "dead";
+    default:           return "ok";
+    }
+}
+
+// The one place the reason is decided, so the dump and its test cannot disagree.
+inline HpUnknown HpUnknownWhy(bool live, bool haveHp, bool seenAlive, float hp, bool dead,
+                              int readFail)
+{
+    if (dead) return HPZ_GONE;
+    if (!live) return HPZ_GONE;
+    if (!haveHp) {
+        switch (readFail) {
+        case 1:  return HPZ_NOFN;
+        case 2:  return HPZ_CALLFAIL;
+        case 3:  return HPZ_NOOUT;
+        default: return HPZ_NOFN;
+        }
+    }
+    if (hp > 0.0f) return seenAlive ? HPZ_NONE : HPZ_UNSEEN;
+    return seenAlive ? HPZ_NONE : HPZ_ZERO;
 }
 
 // Is this key dead for reporting purposes?  The game's own flag is the first answer;
