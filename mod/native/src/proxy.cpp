@@ -9233,6 +9233,10 @@ struct LootActorRec {
     char     path[loot::kMaxPathLen];
     bool     gone;
     bool     visible;      // was not hidden when the scan recorded it
+    // SetActorHidden has been attempted for this record.  See the reconciliation loop in
+    // LootPump: the hide decision is re-derived every pass, but the Blueprint call happens at
+    // most once per drop.
+    bool     hideTried;
 };
 LootActorRec g_lootActors[64];
 int          g_lootActorN = 0;
@@ -9540,6 +9544,42 @@ void LootPump(uint32_t now)
                   "partner");
             g_lootRev = g_loot.Revision();
         }
+    }
+
+    // RECONCILE THE TOMBSTONES AGAINST THE DROPS THIS MACHINE HOLDS -- every pass, but each
+    // drop is ATTEMPTED ONCE.
+    //
+    // THE BUG THIS FIXES (Session 17 R129, still open at the end of that session).  `LootHide`
+    // was called from exactly one place: inside OnLoot, and only when `Merge` reported
+    // `changed != 0`.  Both halves of that are wrong for the case that matters:
+    //
+    //   * a state body is sent ON THE SECOND of a timer as well as on change, so the tombstone
+    //     for a drop the partner took usually arrives repeatedly, and after the first one
+    //     `changed` is 0 forever -- no further hide is attempted;
+    //   * and the drop may not have been SCANNED yet when the first tombstone landed (the scan
+    //     walks the object graph a slice per frame), so at that moment there was nothing to
+    //     hide and the one chance was spent.
+    //
+    // Together that produces exactly what Session 17 recorded: the drop rolls, the partner's
+    // tombstone exists, the drop still stands on this screen, and `loot: hiding local drop`
+    // never prints.  Re-deriving the answer from the ledger each pass recovers both.
+    //
+    // WHY `hideTried` AND NOT JUST `gone`.  `SetActorHidden` is a reflective ProcessEvent call
+    // into a Blueprint actor -- not free, and not something to invoke on every pass for every
+    // tombstoned drop.  One attempt per drop record is enough, because both inputs are
+    // monotonic: the scan either has the drop or will, the ledger either tombstones it or
+    // will, and once both are true a single call settles it.
+    for (int i = 0; i < g_lootActorN; ++i) {
+        LootActorRec& r = g_lootActors[i];
+        if (r.gone || r.hideTried) continue;
+        if (!g_loot.IsTaken(r.source_hash, r.drop_index)) continue;
+        r.hideTried = true;
+        void* a = r.actor;                      // resolves through the weak handle
+        if (!a) continue;                       // the copy is already gone locally
+        SetActorHidden(a, true);
+        r.gone = true;
+        QDLOG(LOG_INFO, "loot: hiding local drop ", hex32(r.source_hash), "#",
+              dec((int)r.drop_index), " -- the partner took it (reconciled)");
     }
 
     if (!g_net.Connected()) return;

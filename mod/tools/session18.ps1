@@ -44,7 +44,7 @@
 # assume a full dump exists and conclude it was lost.
 [CmdletBinding()]
 param(
-    [ValidateSet('smoke', 'soak-hub', 'soak-780', 'all')]
+    [ValidateSet('smoke', 'soak-hub', 'soak-780', 'loot', 'all')]
     [string]$Phase = 'all',
     [int]$BootSeconds = 300,
     [int]$SoakSeconds = 600,
@@ -701,6 +701,149 @@ function Invoke-Smoke([int]$H, [int]$P, [string]$step) {
 }
 
 # ===========================================================================
+# LOOT -- R129: the taker's tombstone must reach the machine holding the copy
+# ===========================================================================
+# Session 17 measured the killing half (an enemy drops) and left the hiding half
+# NOT-REACHED: `loot: hiding local drop` did not appear in any run, because the hide was
+# attempted only when an inbound body was a CHANGE -- and the tombstone is re-sent every
+# second, so after the first receipt there was never another attempt.  The proxy now
+# re-derives the decision from the ledger every pass; this phase asks the live game.
+function Invoke-LootHiding([int]$H, [int]$P, [string]$step) {
+    Step 'ITEM 2 -- a drop, taken by the machine that did not roll it, hidden on the other'
+    $mD = Get-Mark $H
+    # Drop tables are per-CLASS and most classes here drop nothing, so several enemies are
+    # tried until one rolls.  Each attempt is reported, so a run that finds none can say
+    # which classes were tried instead of "the lane failed".
+    $dropLines = @()
+    $dropOn = $H
+    $tried = @()
+    $key = ''
+    $deadline = (Get-Date).AddSeconds(420)
+    while ((Get-Date) -lt $deadline -and $dropLines.Count -eq 0) {
+        Invoke-Go $H 'enemy' 200
+        Invoke-Go $P 'enemy' 200
+        Start-Sleep -Seconds 6
+        $rows = @(Get-Since $H 0 | Where-Object { $_ -match 'scan: kind enemy (\S+) guid=([0-9A-Fa-f]{8})' })
+        if ($rows.Count -eq 0) { continue }
+        $ln = [string]$rows[-1]
+        if ($ln -notmatch 'guid=([0-9A-Fa-f]{8})') { continue }
+        $key = $Matches[1].ToUpperInvariant()
+        if ($tried -contains $key) { continue }
+        $tried += $key
+        $cls = if ($ln -match 'kind enemy (\S+) ') { $Matches[1] } else { '?' }
+        Note ("  attempt {0}: kill {1} guid={2}" -f $tried.Count, $cls, $key)
+        $mL = Get-Mark $H
+        $mLp = Get-Mark $P
+        Set-Control $H 'qd.enemykill' ($key + '#' + (Get-Date -Format 'HHmmss'))
+        [void](Check $step $H ('rig: enemykill -> key=' + $key) 25 'the game''s own Kill ran on the target enemy' $mL)
+        [void](Check $step $P ('the other machine recorded this death|enemy death recorded guid=' + $key) 40 'the PEER recorded the same death' $mLp)
+        $dropH = @(Wait-Since $H 'loot: drop ' $mL 12)
+        $dropP = @(Wait-Since $P 'loot: drop ' $mLp 12)
+        # BOTH machines are watched: Session 17 measured the drop rolling on the machine that
+        # did NOT run the kill, so a harness watching only the host reported "no drop".
+        Note ("    -> drop lines: host={0} peer={1}" -f $dropH.Count, $dropP.Count)
+        if ($dropP.Count -gt 0) { $dropOn = $P; $dropLines = $dropP } else { $dropOn = $H; $dropLines = $dropH }
+        if ($tried.Count -ge 14) { break }
+    }
+    Note ("  kills attempted: {0} ({1})" -f $tried.Count, ($tried -join ','))
+    Verdict $step $dropOn ($dropLines.Count -gt 0) 'a kill DROPPED something' $(if ($dropLines.Count) { ([string]$dropLines[0]).Trim() } else { "no loot: drop line from $($tried.Count) class(es), on either machine" })
+    if ($dropLines.Count -eq 0) { return }
+
+    $dropLine = [string]$dropLines[-1]
+    $dropKey = ''
+    if ($dropLine -match 'loot: drop ([0-9A-Fa-f]{8})') { $dropKey = $Matches[1].ToUpperInvariant() }
+    Note ("  drop key: '{0}' (rolled on inst{1})" -f $dropKey, $dropOn)
+
+    # Both players stand at the drop.  The TAKER is the machine that did NOT roll it, so the
+    # machine that DID roll it is left holding a visible copy with no reason of its own to
+    # hide it -- exactly the pair `loot: local pickup` / `loot: hiding local drop` needs.
+    Invoke-Go $H 'loot' 90
+    Invoke-Go $P 'loot' 90
+    Start-Sleep -Seconds 8
+    if ($dropOn -eq $P) { $taker = $H; $other = $P } else { $taker = $P; $other = $H }
+    $mTake = Get-Mark $taker
+    Say ("  inst{0} takes the drop; inst{1} must hide its own copy" -f $taker, $other)
+    # TWO WAYS TO TAKE A DROP, tried in order, because which one this content uses is not
+    # something the harness may assume:
+    #
+    #  1. STAND ON IT.  UE pickups are usually overlap triggers: walking the pawn into the
+    #     item's own volume collects it, with no input at all.  `near:` teleports within the
+    #     given radius, so a tiny radius lands the pawn inside the drop's volume.
+    #  2. PRESS INTERACT.  `near:loot` resolves the nearest Item/Drop/Pickup actor and drives
+    #     its verb -- but MEASURED on this build, `qd.act near:loot` reports
+    #     `the game's own gate says IsInteractible=0` on these pickups and none is collected,
+    #     and `near:` addresses a CLASS rather than a key, so one press does not even name the
+    #     drop the tombstone refers to.
+    #
+    # Each instruction carries a nonce because the lever ignores an unchanged string.
+    # STAND ON THE EXACT DROP, using coordinates the probe reports.
+    #
+    # MEASURED, over four attempts, why the obvious levers cannot do this:
+    #   * `Invoke-Go taker loot <radius>` teleports toward the nearest actor whose CLASS
+    #     contains "loot".  On this build that resolved `2Coins_Item_BP_C at ... dist=3947`
+    #     -- 39 m away -- while the probe listed the real candidates at 646-1167 cm.
+    #   * `qd.act near:loot` then drove that distant coin's verb (`IsInteractible=0`), so
+    #     nothing was ever collected and the harness reported the lane as broken.
+    #   * and `near:`/`guid:` address an enemy or a SAVABLE; a spawned drop is neither, so
+    #     there is no key to aim at.
+    # `qd.tp` also accepts raw `x,y,z[,yaw]`, which is the one precise instrument available.
+    # So: read the position out of the probe's own line for a real drop, and teleport there.
+    Set-Control $taker 'qd.drops' '1'
+    Start-Sleep -Seconds 5
+    $pickup = @()
+    $aim = @()
+    # PASS 1: aim at a SAVED WORLD OBJECT pickup by GUID, which is the one handle that names a
+    # single actor (`guid:` works for savables since Session 17 R128).  The scan's own
+    # `kind pickup ... guid=<full> at x,y,z` line carries both the key and the position, so
+    # the harness reads them rather than guessing a class name.
+    for ($p = 1; $p -le 10 -and $pickup.Count -eq 0; $p++) {
+        $rows = @(Get-Since $taker $mTake |
+                  Where-Object { $_ -match 'scan: kind pickup \S+ guid=([0-9a-f]{8})-\S+ at (-?\d+),(-?\d+),(-?\d+) dist=(\d+)' })
+        $best = $null; $bestD = 1e9; $bestGuid = ''; $bx = 0; $by = 0; $bz = 0
+        foreach ($ln in $rows) {
+            if ([string]$ln -match 'scan: kind pickup \S+ guid=([0-9a-f]{8})-\S+ at (-?\d+),(-?\d+),(-?\d+) dist=(\d+)') {
+                $d = [int]$Matches[5]
+                if ($d -lt $bestD) {
+                    $bestD = $d; $best = [string]$ln
+                    $bestGuid = $Matches[1]
+                    $bx = [int]$Matches[2]; $by = [int]$Matches[3]; $bz = [int]$Matches[4]
+                }
+            }
+        }
+        if (-not $best) {
+            Note ("    pass {0}: the scan named no pickup yet; re-anchoring on 'loot'" -f $p)
+            Invoke-Go $taker 'loot' 100
+            Start-Sleep -Seconds 4
+            continue
+        }
+        Note ("    pass {0}: nearest saved pickup guid={1} at {2},{3},{4} dist={5}" -f $p, $bestGuid, $bx, $by, $bz, $bestD)
+        $aim += $bestGuid
+        # Stand ON it: `qd.tp` also takes raw `x,y,z[,yaw]`, which is the only form that puts the
+        # pawn inside a pickup's volume -- `near:<name>` always parks it `offset` cm away.
+        Set-Control $taker 'qd.tp' ("{0},{1},{2},0#{3}" -f $bx, $by, $bz, (Get-Date -Format 'HHmmssfff'))
+        Start-Sleep -Seconds 3
+        $pickup = @(Wait-Since $taker 'loot: local pickup ' $mTake 2)
+        if ($pickup.Count -eq 0) {
+            # Then address that exact actor and press its verb.
+            Set-Control $taker 'qd.act' ('near:guid:' + $bestGuid + '#' + (Get-Date -Format 'HHmmssfff'))
+            Start-Sleep -Seconds 4
+            $pickup = @(Wait-Since $taker 'loot: local pickup ' $mTake 2)
+        }
+        Note ("    pass {0}: pickup lines={1}" -f $p, $pickup.Count)
+    }
+    Verdict $step $taker ($pickup.Count -gt 0) 'the taker collected a drop on its own machine' $(if ($pickup.Count) { ([string]$pickup[-1]).Trim() } else { "aimed at: $($aim -join ',')" })
+    Show-Since $taker 'rig: drop probe|loot: ' $mTake 6
+    Verdict $step $taker ($pickup.Count -gt 0) 'the taker tombstoned a drop for the partner' $(if ($pickup.Count) { ([string]$pickup[-1]).Trim() } else { '' })
+    # THE CLAIM -- and the one line Session 17 never saw.  It does NOT have to be the same key
+    # as the harness aimed at: any tombstone this machine did not roll, reconciled onto a local
+    # copy, proves the mechanism.  Which key it was is reported.
+    $hid = @(Wait-Since $other 'loot: hiding local drop ' $mTake 60)
+    Verdict $step $other ($hid.Count -gt 0) 'the OTHER machine hid its own copy of a drop the partner took' $(if ($hid.Count) { ([string]$hid[-1]).Trim() } else { '' })
+    Show-Since $other 'loot: ' $mTake 14
+    Show-Since $taker 'loot: ' $mTake 10
+}
+
+# ===========================================================================
 # main
 # ===========================================================================
 Say ("session18 start: phase={0} switches={1} repeat={2} soak={3}s" -f $Phase,
@@ -713,6 +856,10 @@ $P = $script:P
 
 if ($Phase -eq 'smoke') {
     Invoke-Smoke $H $P 'smoke'
+}
+
+if ($Phase -eq 'loot' -or $Phase -eq 'all') {
+    Invoke-LootHiding $H $P 'item2'
 }
 
 if ($Phase -eq 'soak-hub' -or $Phase -eq 'all') {

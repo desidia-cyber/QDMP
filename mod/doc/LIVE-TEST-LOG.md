@@ -3610,6 +3610,91 @@ Note that `PLAYTEST.md` section 8 already says hub kill lists diverge **by desig
 runs its own spawner enemies) — but these are divergences *within one shared key*, which that
 note does not excuse.
 
+### R129 (revisited). LOOT HIDING: the lane defect is fixed, the LIVE PROOF is still not reached
+
+Session 17 left this NOT-REACHED with "the ledger was not observed to converge". Reading the
+code found a real defect, and it is now fixed:
+
+`LootHide` was called from exactly one place — inside `OnLoot`, and only when `Merge` returned
+`changed != 0`. A loot body is also sent on a one-second timer, so the tombstone for a drop the
+partner took arrives REPEATEDLY and after the first receipt `changed` is 0 forever; and the drop
+may not have been SCANNED yet at that first receipt (the scan walks the object graph a slice per
+frame), so the one chance was spent before there was anything to hide. Both halves are now
+re-derived from the ledger every pass, with the Blueprint call bounded to one attempt per drop
+(`LootActorRec::hideTried`). `test_loot.cpp` pins the property it depends on — that `IsTaken` is
+a STANDING answer while a repeated `Merge` is not a change (`standing/a repeat of the same
+tombstone is NOT a change`, 52 assertions, was 43).
+
+**It is still NOT-REACHED live, and the reason is now measured rather than mysterious.** Five
+attempts, and the blocker is the harness's ability to make the taker stand on a spawned drop:
+
+```
+dev teleport near 'loot' -> loot at 8227,-3765,3918 dist=4595; standing at 8115,-3682,3918 offset=140
+```
+
+`near:` addresses a CLASS and always parks the pawn `offset` cm away, so it walks to a *placed*
+pickup (a coin `dist=3947`, or `BerserkFruit_Pickup_Bp4 at 12155,1581,-2916 dist=7691`) rather
+than the drop the tombstone names. The drop probe confirms the spawned drops are real and
+keyable (`isADrop=1 hasGUID=? lootKey=yes path=...Herb_Item_BP_C`) but they are NOT in the
+`scan: kind pickup` set the harness can address by GUID — a spawned drop is not a savable and
+has no saved GUID, which is the same reason Session 17 hit a wall.
+
+`loot: local pickup` DID fire in one run (`3:06:26 INFO loot: local pickup D78506BC#0 (?) --
+tombstoned for the partner`, six more on the peer), so the taker half works. The hiding half
+needs a scenario that puts the two machines on the SAME spawned drop, which is a harness problem
+whose answer is a lever that addresses a drop by `{source_hash, drop_index}` — the key the lane
+itself uses. That is the next session's first job, and it is stated as the job rather than as a
+mystery.
+
+### R138. ONE UNEXPLAINED CRASH, WITH A DUMP — recorded, not smoothed over
+
+The loot phase produced **one** `EXCEPTION_ACCESS_VIOLATION` on the peer across five attempts,
+on the run with the most pickup activity (six `loot: local pickup` lines immediately before).
+It is the only crash in the whole session, and it is a DIFFERENT fault from R132:
+
+```
+ExceptionAddress: 00000247d7e1bf40
+ExceptionCode:    c0000005 (Access violation)
+Parameter[0]:     0000000000000008          <- READ/WRITE/EXECUTE: 8 = EXECUTE
+Parameter[1]:     00000247d7e1bf40
+```
+
+UE wrote a real minidump this time, into the rig's own save dir
+(`inst2/Saved_qd2/Crashes/UE4CC-Windows-…/UE4Minidump.dmp`, kept), so this is read from the
+dump and not inferred:
+
+```
+rax=00000247f4084840                          <- the value the faulting call used
+rip=00000247d7e1bf40                          <- and it was not executable
+0x00007ffc015b3c54  mov rax,[winmm!g_oTick]
+0x00007ffc015b3c60  call rax                   <- HK_Tick+0x30
+0x00007ffc015b3c62  movzx r14d,al              <- HK_Tick+0x32, the frame in PCallStack
+```
+
+So `g_oTick` — the trampoline pointer MinHook hands back for `FEngineLoop::Tick` — held a heap
+address whose low bits match the framebuffer pointer in the same register dump. That is a
+global being overwritten with unrelated data, not a cached object and not one of the R132
+sites.
+
+**What is established:** the fault is an EXECUTE violation through a corrupted function
+pointer, in our tick hook, on one machine, once. **What is NOT established:** what wrote it.
+Two things were ruled out rather than assumed:
+
+* it did **not** reproduce on a re-run of the same phase with the same binary, nor across a
+  242 s hub soak and a 602 s 780 soak afterwards, all with the loot code in place;
+* it is **not** attributable to the loot reconciliation by inspection — that loop calls
+  `SetActorHidden`, which is `__try`-free but reads only a resolved handle, and the crash is in
+  `HK_Tick`'s *prologue*, before any pump runs.
+
+As a precaution the reconciliation was bounded anyway: `SetActorHidden` is a reflective
+Blueprint call and there is no reason to issue it repeatedly, so each drop record now attempts
+it at most once (`LootActorRec::hideTried`). That is a strictly smaller change than "hide on
+every pass", and it is the right shape regardless of whether it is related to R138.
+
+R138 is left **open and named**, with its dump kept, because a single non-reproducing
+execute-violation through a hook trampoline is exactly the kind of thing that a later session
+needs the evidence for rather than a summary of.
+
 ### Live proof, phase by phase
 
 | Claim | Verdict | Key line |
@@ -3623,9 +3708,12 @@ note does not excuse.
 | The play set survives 600 s, run 2 | **PASS** | `soak run 2: 603 s of 600 s, iterations=184` |
 | The play set survives 600 s in 780 | **PASS** | `soak run 1: 602 s of 600 s, iterations=175` |
 | Zero FAULT lines in all three soaks | **PASS** | `ACCESS_VIOLATION=0  EXCEPTION(any)=0` on both machines, all runs |
-| Kill sets diff 0 | **FAIL (open)** | `diff=3`, `diff=7`, `diff=34` — R137, three named lanes |
+| Kill sets diff 0 | **PASS (once) / FAIL** | hub 242 s soak: `host-dead=448 peer-dead=448 diff=0`; but `diff=3`, `diff=7`, `diff=34` in the three longer runs — R137 |
 | Shared-enemy HP equal | **FAIL (open)** | `HP MISMATCH 70F9CADA: host=85 peer=30`; `5D370AC1: host=909 peer=0` (R137) |
 | Peer actor-state writes land | **FAIL (open)** | 8005 × `actor-state: game writer ... (WRITE FAILED)` — R136 |
+| `loot: local pickup` on the taker | **PASS (measured)** | `loot: local pickup D78506BC#0 (?) -- tombstoned for the partner` |
+| `loot: hiding local drop` on the other | **NOT-REACHED** | the tombstone reconciliation is fixed, but no scenario can yet stand the taker on a SPAWNED drop — R129 revisited |
+| The smoke phase | **PASS 19/0** | `=== 19 PASS, 0 FAIL ===` |
 
 ### What this session settled
 
