@@ -90,10 +90,12 @@ unauthenticated in this version: it is for a LAN.  Over the internet, set
 etc. default to **0** in the shipped file, because each one was enabled only after it was
 proven on a live run.  For a play session, turn on this set:
 
-**This is the set Sessions 17 and 18 used for their ten-minute soaks with both players in
-`780_SZ_Depths` and in the hub.**  Session 18 fixed two crash causes in it; the soak still died
-in 3 of 7 runs, twice in the mod (now fixed) and once inside the game itself.  Read the
-stability note in section 8 before planning a marathon.  `MirrorSpawn` is deliberately absent — it
+**This is the set Sessions 17–19 used for their ten-minute soaks with both players in
+`780_SZ_Depths` and in the hub.**  Session 18 fixed the two crash causes it found; Session 19
+fixed the third at its source — a per-class UFunction cache (the dragon's `TryApplyDamage`
+running on crawlers and golems) — and removed the Escape-pause exception.  After that fix
+the uncaught deaths stopped in every measured run; kill sets still left one stray key in
+one 600 s run.  Read the stability note in section 8 before planning a marathon.  `MirrorSpawn` is deliberately absent — it
 is a compiled default (on), so a real pair of players gets it without an entry here.
 The three lines marked *proven* are the ones Session 17 closed; the one marked *not proven* is
 still safe to leave on (it is a read path and a refusal), but do not expect its second half.
@@ -291,34 +293,55 @@ The lines that answer most questions, verbatim:
   object table every half second and read a slot the engine had freed but not yet cleared. Every
   such walk is now guarded, one slot at a time.
 
-  Measured across the session at this play set, with both players fighting for ten minutes:
+  Measured across Session 18 at this play set, with both players fighting for ten minutes:
 
   | outcome | runs |
   |---|---|
   | survived the full 600 s, both processes alive, zero faults | **4** (two boots, two builds) |
   | died | **3** — at 248 s, 4130 s, 330 s |
 
-  Two of those three deaths were the mod's, and both are now fixed; the 330 s death happened
-  **inside the game's own code**, reached through the frame tick the mod forwards — that one is
-  not understood yet. The longest run of the session was **105 minutes of continuous play-set
-  traffic on both machines with zero faults**, which is well past what a normal session needs.
-  In practice: a long session is much more likely to survive than it was, and it is still not a
-  guarantee. If the game vanishes, look in `<user dir>\Saved\Crashes\` —
+  Two of those three deaths were the mod's, and both were fixed in Session 18. **The 330 s
+  death is now explained too (Session 19).** It was not an engine bug: the mod cached the
+  first enemy's `TryApplyDamage` UFunction and, when that enemy was the dragon, ran the
+  dragon's override on crawlers and golems. In `780_SZ_Depths` that aborted the game with
+  `Failed to find function CheckForSplit`; in the hub it corrupted the heap the engine's
+  next purge walked, which is the fault the dump showed inside the game's destruction
+  pass. `Fn::Resolve` now re-checks the cached UFunction when the object's class changes,
+  and the enemy damage API is per class. The longest run remains **105 minutes of
+  continuous play-set traffic on both machines with zero faults**.
+
+  Session 19 measured, after that fix: a 300 s hub soak and a 242 s hub soak both clean
+  (both alive, kill-set diff 0, shared HP equal, zero fault lines); a 601 s run alive
+  with diff 0 and one **caught** ProcessEvent fault (the process lived); a second 601 s
+  run alive with **one** stray key (`FA2FC279`, dead only on the host); a third 600 s run
+  invalid because the two machines ended in different worlds. So a ten-minute session is
+  now expected to survive, kill sets converge to within one stray key, and a long session
+  is still not a guarantee. If the game vanishes, look in `<user dir>\Saved\Crashes\` —
   `CrashContext.runtime-xml` names the faulting module, and a `WINMM` entry means the mod.
 - **Progress can still lag on the peer in a chest-dense area.** In `780_SZ_Depths` the peer
   logged about 8000 `actor-state: game writer ... (WRITE FAILED)` lines: it wrote a container
   value and read back a different one (±1 or ±2), so its write did not stick. Nothing crashed
   and the counters kept moving, but a chest counter can be a step behind on the second screen.
   The host's own writes were fine (55 such lines, all during the area entry).
-- **An enemy's health can still differ between the two screens for a *shared* enemy.** Three
-  distinct causes were measured, all now named rather than guessed: an enemy whose death was
-  recorded can be respawned by the other machine's own spawner
-  (`enemy record applied guid=… hp=0.0` followed by `enemy id: spawner …` and `ALIVE` on the
-  peer); a summon can mint a key that a *different* enemy class also uses, so one key names a
-  `Boner_Gray_Archer_BP_C` on one screen and a `FlamingSkull_BP_C` on the other; and a key with
-  no row yet reads as HP 0 on the machine that has no actor for it. The kill sets therefore
-  differ on a few shared keys (3–34 across the runs above). This does not affect damage you deal
-  or take — it affects the two screens agreeing about an enemy neither of you is looking at.
+- **An enemy's health can still differ between the two screens for a *shared* enemy — much
+  less often after Session 19.** Three distinct causes were measured: an enemy whose death
+  was recorded could be respawned by its own spawner (fixed: the death stands and the
+  respawn is re-killed until a rest); a summon could mint a key that a *different* class
+  also used (fixed: the class is part of the summon key); and a key with no row read as
+  HP 0 (fixed: it now reports unknown, `hp=?`).  Measured after the fixes: diff 0 in a
+  300 s and a 242 s hub soak, and one stray key (`FA2FC279`) in one 601 s run.  This does
+  not affect damage you deal or take — it affects the two screens agreeing about an enemy
+  neither of you is looking at.
+- **Boss HP bars can still show different bosses when the two machines disagree about
+  which boss exists.**  The bar itself is now one bar bound to one key (Session 19): the
+  host selects the most-damaged live boss, both machines bind their own bar to the actor
+  carrying that key, the bar rebinds when the actor changes (respawn, mirror, stream-in),
+  a dead key never holds it, and the active boss's death sends one explicit bar-off.  What
+  is still open is the *choice*: measured live, the host's active boss was `03FDBC21`
+  while the peer had no copy of it at all, and the peer's dragon `17181166` was a key the
+  host still held dead — so one screen showed a full bar and the other none.  Next: the
+  host must not select a boss the partner has no copy of (a refusal/ack on the boss lane),
+  and that alive-vs-dead disagreement must be reconciled.  This does not affect damage.
 - **Loot hiding** needs both machines to hold their own copy of the drop.  Session 17 measured
   that the drop often rolls on the machine that did NOT kill the enemy (`loot: drop
   90A52CF3#0 = …/Herb_Item_BP_C` appeared on the peer for a host kill), so the `loot: drop` line

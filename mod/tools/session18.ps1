@@ -44,7 +44,7 @@
 # assume a full dump exists and conclude it was lost.
 [CmdletBinding()]
 param(
-    [ValidateSet('smoke', 'soak-hub', 'soak-780', 'loot', 'all')]
+    [ValidateSet('smoke', 'soak-hub', 'soak-780', 'loot', 'lootdrop', 'all')]
     [string]$Phase = 'all',
     [int]$BootSeconds = 300,
     [int]$SoakSeconds = 600,
@@ -844,6 +844,73 @@ function Invoke-LootHiding([int]$H, [int]$P, [string]$step) {
 }
 
 # ===========================================================================
+# LOOT BY DROP KEY -- R129 revisited: the lever that names ONE spawned drop
+# ===========================================================================
+# Session 18 fixed the tombstone reconciliation but still could not prove the
+# hiding half live, because every existing lever addresses a CLASS: `near:loot`
+# parks the pawn beside a placed pickup, and `near:`/`guid:` cannot name a
+# spawned drop (it is not a savable).  The lane's own identity is
+# {source_hash, drop_index}, so `qd.tp near:drop:<8hex>:<index>` now resolves
+# exactly that actor from the loot ledger and stands the pawn ON it (a pickup is
+# collected by overlap, so the usual 140 cm offset is wrong by construction).
+function Invoke-LootDropKey([int]$H, [int]$P, [string]$step) {
+    Step 'R129 -- a spawned drop addressed by its OWN key, taken on one machine, hidden on the other'
+    $dropOn = 0
+    $common = $null
+    $deadline = (Get-Date).AddSeconds(420)
+    while ((Get-Date) -lt $deadline -and -not $common) {
+        # Roll a drop the same way the existing loot phase does: kill a class whose drop
+        # table is non-empty.  Both machines run the death path, so a drop can appear on
+        # either (measured Session 17); the intersection below is what makes it shared.
+        $rows = @(Get-Since $H 0 | Where-Object { $_ -match 'scan: kind enemy (\S+) guid=([0-9A-Fa-f]{8})' })
+        if ($rows.Count -eq 0) { Invoke-Go $H 'enemy' 200; Start-Sleep -Seconds 6; continue }
+        $ln = [string]$rows[-1]
+        if ($ln -notmatch 'guid=([0-9A-Fa-f]{8})') { continue }
+        $key = $Matches[1].ToUpperInvariant()
+        $mL = Get-Mark $H; $mP = Get-Mark $P
+        Set-Control $H 'qd.enemykill' ($key + '#' + (Get-Date -Format 'HHmmss'))
+        Start-Sleep -Seconds 10
+        $hRows = @(Get-Since $H $mL | Where-Object { $_ -match 'loot: drop ([0-9A-Fa-f]{8})#(\d+)' })
+        $pRows = @(Get-Since $P $mP | Where-Object { $_ -match 'loot: drop ([0-9A-Fa-f]{8})#(\d+)' })
+        $hKeys = @{}
+        foreach ($r in $hRows) { if ([string]$r -match 'loot: drop ([0-9A-Fa-f]{8})#(\d+)') { $hKeys[$Matches[1].ToUpperInvariant() + '#' + $Matches[2]] = $true } }
+        foreach ($r in $pRows) {
+            if ([string]$r -match 'loot: drop ([0-9A-Fa-f]{8})#(\d+)') {
+                $k = $Matches[1].ToUpperInvariant() + '#' + $Matches[2]
+                if ($hKeys.ContainsKey($k)) { $common = $k; break }
+            }
+        }
+        if (-not $common) {
+            Note ("  kill guid={0}: host drops={1} peer drops={2}; no shared key yet" -f $key, $hRows.Count, $pRows.Count)
+            Invoke-Go $P 'enemy' 200
+            Start-Sleep -Seconds 4
+        } else {
+            # $dropOn is the machine that ROLLED it -- whichever log named the key first is
+            # not knowable here, so it is read from which machine's kill produced it: the
+            # kill ran on the host, so the host is the roller by construction.
+            $dropOn = $H
+        }
+    }
+    Verdict $step $H ($null -ne $common) 'both machines hold the SAME spawned drop key' $(if ($common) { $common } else { 'no key appeared in both loot ledgers' })
+    if (-not $common) { Show-Since $H 'loot: ' 0 12; Show-Since $P 'loot: ' 0 12; return }
+    $parts = $common -split '#'
+    $hash = $parts[0]; $idx = $parts[1]
+    $taker = if ($dropOn -eq $H) { $P } else { $H }
+    $other = if ($taker -eq $H) { $P } else { $H }
+    Note ("  key {0}: taker=inst{1} (the machine that did not roll it), hider=inst{2}" -f $common, $taker, $other)
+    $mT = Get-Mark $taker
+    # The lever: `near:` is stripped by the tp lever, `drop:` is resolved from the loot
+    # ledger, and the trailing #nonce re-arms the "same instruction" rule.
+    Set-Control $taker 'qd.tp' ("near:drop:{0}:{1}#{2}" -f $hash, $idx, (Get-Date -Format 'HHmmssfff'))
+    $pick = @(Wait-Since $taker ('loot: local pickup ' + $hash + '#' + $idx) $mT 30)
+    Verdict $step $taker ($pick.Count -gt 0) 'the taker collected the drop addressed by its key' $(if ($pick.Count) { ([string]$pick[-1]).Trim() } else { '' })
+    $hid = @(Wait-Since $other 'loot: hiding local drop ' $mT 60)
+    Verdict $step $other ($hid.Count -gt 0) 'the OTHER machine hid its own copy of that key' $(if ($hid.Count) { ([string]$hid[-1]).Trim() } else { '' })
+    Show-Since $taker 'rig: drop|loot: ' $mT 10
+    Show-Since $other 'loot: ' $mT 12
+}
+
+# ===========================================================================
 # main
 # ===========================================================================
 Say ("session18 start: phase={0} switches={1} repeat={2} soak={3}s" -f $Phase,
@@ -860,6 +927,10 @@ if ($Phase -eq 'smoke') {
 
 if ($Phase -eq 'loot' -or $Phase -eq 'all') {
     Invoke-LootHiding $H $P 'item2'
+}
+
+if ($Phase -eq 'lootdrop') {
+    Invoke-LootDropKey $H $P 'lootdrop'
 }
 
 if ($Phase -eq 'soak-hub' -or $Phase -eq 'all') {

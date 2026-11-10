@@ -90,6 +90,36 @@ inline int32_t HitFrac(float prevHp, float curHp, float maxHp)
 }
 
 // ---------------------------------------------------------------------------
+// Reporting a key's HP honestly (Session 19, R137)
+// ---------------------------------------------------------------------------
+// The soak's per-key dump is EVIDENCE, so it must not print a number it does not have.
+// Two cases read as HP 0 and are not HP 0:
+//
+//   * a spawner's enemy exists at HP 0 BEFORE it is activated -- the same fact
+//     EnemyPump's death detection already encodes by requiring `seenAlive`;
+//   * a frozen follower whose copy has not received the owner's first row yet.
+//
+// A key in either state has UNKNOWN HP.  Reporting 0 for it made the shared-HP check
+// fail on a disagreement between 0 and the owner's real value (measured in 780:
+// `5D370AC1 host=909 peer=0`, `AE6AFEB2 host=0 peer=240`), which is a measurement
+// artefact, not a sync failure.
+inline bool HpKnown(bool live, bool haveHp, bool seenAlive)
+{
+    return live && haveHp && seenAlive;
+}
+
+// Is this key dead for reporting purposes?  The game's own flag is the first answer;
+// HP <= 0 counts only for a copy this machine has SEEN alive (EnemyPump's rule), so a
+// never-activated spawner is not a corpse and a respawned copy at HP 0 is not mistaken
+// for the death that the ledger will re-apply.
+inline bool EffectivelyDead(bool live, bool gameDead, bool haveHp, float hp, bool seenAlive)
+{
+    if (!live) return true;
+    if (gameDead) return true;
+    return haveHp && hp <= 0.0f && seenAlive;
+}
+
+// ---------------------------------------------------------------------------
 // HostView -- the peer's picture of what the host is simulating.
 // ---------------------------------------------------------------------------
 struct HostRow {

@@ -3863,3 +3863,175 @@ ten-minute sessions in the hub, a ten-minute session in `780_SZ_Depths`, and one
 game's own code and is not yet understood (R140). Play in reasonable stretches and keep the
 crash folder if the game vanishes. Progression may still lag on the peer in a chest-dense area
 (R136), and an enemy's health can differ between the two screens for a shared key (R137).
+
+---
+
+## Session 19 — 2026-11-10 (R140 named, the class cache, and the bar)
+
+This branch is `sync-fix` at `56e6313` (the Session 18 merge), with `fc59363` ("resolve
+UFunctions per class") and `b1f8bc8` ("Escape pause menu no longer slows the shared
+world") merged in.  The soak body is Session 18's, unchanged (`tools/session18.ps1`,
+documented PLAY set, `-Repeat`, roles from `session established`).
+
+### R140. THE DEATH INSIDE THE GAME'S OWN DESTRUCTION PASS — and the call that caused it
+
+The kept dump from the 330 s run was read with cdb and the map, frame by frame.  The
+fault is `call qword ptr [rax]` at `QueensDomain+0x1145580`, inside the engine's object
+destruction pass, and the full stack is:
+
+```
+FEngineLoop::Tick                 game+0x775b80
+  <- UGameEngine::Tick            game+0x28c4ea0
+       <- UWorld::Tick            game+0x29aeec0
+            <- the WorldTickMisc timed section
+                 <- the destruction pass  game+0x11453f0   call [rax]
+winmm!HK_Tick+0x32                the return address of the tick we forward
+```
+
+Our module appears **only** as the tick forward, exactly as Session 18 stated.  What
+the dump also shows is *where the object came from*: `rax = 0x1e3050060` (and
+`0x1e3030040` in the next dump) is the first qword of a block that has been freed and
+reused — the next dump's block holds two `FTransform`s.  The engine's destruction list
+held a dangling `UObject*`.
+
+The trigger was found by reproducing it.  Every death landed **~250–260 s after process
+start**, during a large area stream-in, immediately after a burst of
+`enemy death detected ... (actor gone)` in one frame.  The mod-side call that caused it
+is the one the coordinator's fatal named:
+
+> **`g_enDmg` cached `TryApplyDamage` from the first enemy hit.**  When that was
+> `Dragon_Green_BP_C`, its override — which schedules `CheckForSplit` **by name** — ran
+> on a `Crawler_Rotten_BP_C` / `Golem_Tree_BP_C`.  In `780_SZ_Depths` that aborted both
+> processes with `LowLevelFatalError: Failed to find function CheckForSplit`; in the hub
+> the same wrong-class bytecode wrote through the dragon's layout into a different
+> actor and corrupted the heap the engine's purge later walked.  That is why the fault
+> surfaced in the engine and not in a mod frame.
+
+**Fix (merged `fc59363`):** `Fn::Resolve` re-checks the cached UFunction whenever the
+object's class changes (`Fn::forCls`), and the enemy damage API is per class
+(`EnemyDamageApi`).  Recorded as **R142**.
+
+Hardening landed in this session as well, all of it aimed at the same rule — never hand
+the engine a target it did not validate:
+
+* `ObjectCallable` (native/src/qdsubstrate.h) refuses a ProcessEvent target on the
+  **engine's own** deny bit (`FUObjectItem::Flags` bit 29, measured in the
+  `0x011A7AA0` prologue: `shr eax,0x1d; test al,1`) plus `RF_BeginDestroyed` /
+  `RF_FinishDestroyed`; every reflective call goes through it.
+* `ActorCallReady` adds the actor's `ULevel` must still be one of the world's levels;
+  `SetActorHidden` / `DestroyActor` / spawn use it.
+* The mod no longer calls `K2_DestroyActor` on a gameplay Blueprint it spawned (enemy
+  mirrors, player-class body, puppet): it **hides** it and lets the engine reclaim it.
+  `DestroyActor` also refuses a second destroy of the same `{slot, serial}`.
+* The death sweep refuses a world that is not callable, requires `seenAlive` for
+  "actor gone", treats more than 8 disappearances in one sweep as a level unload (not
+  8 kills), and does not re-write an `hp=0` record on every spawner respawn.
+
+### R142. THE WRONG-CLASS UFUNCTION — the fatal the coordinator reported
+
+`Failed to find function CheckForSplit in Crawler_Rotten_BP_C` and the same in
+`Golem_Tree_BP_C`, on both machines, was the class-cached damage entry above.  The fix
+is `fc59363`; the unit suite is green.  This is the same mechanism as R140, recorded
+separately because the fatal and the engine-side fault are the same bug seen through
+two different outcomes.
+
+### R137. KILL SETS — three named causes, fixed, with the measured numbers
+
+The three causes Session 18 named were each given a fix:
+
+* **spawner respawn**: a death this machine recorded is no longer erased when its own
+  spawner respawns the enemy; the respawned copy is re-killed until a rest clears it.
+* **summon key collision**: `enemyid::SummonKey` now includes the enemy **class**, so
+  one summoner calling two classes at one point cannot collapse them onto one key.
+* **rowless HP 0**: a key with no readable row, or never seen alive, reports `hp=?`
+  (unknown) instead of 0, and HP<=0 counts as dead only after `seenAlive`.
+
+Measured: 300 s hub soak — `host-dead=22 peer-dead=22 diff=0`, shared HP equal (11
+checked); 242 s hub soak — `host-dead=21 peer-dead=21 diff=0`, shared HP equal (14
+checked); 601 s hub run 1 — `diff=0`, HP equal (6 checked); 601 s hub run 2 —
+`diff=1` (`FA2FC279` dead only on the host).  So the fixes remove the systematic
+divergence; **one host-only death in a 600 s run remains open** and is the next
+enemy-identity item, not a bar item.
+
+### R143. BOSS HP DESYNC — one bar, one key: the binding is fixed, the key choice is not
+
+Live evidence from the running pair (the user's report): the host held its bar on
+`03FDBC21` at full HP and re-activated it every 3 s (`boss: sent ... hp=65535 (repair)`),
+while the peer's dragon key `17181166` was dead and its bar was down; the peer also
+logged `boss: no local copy for guid=03FDBC21` every repair.  Two different boss keys,
+one bar each.
+
+What was wrong, precisely:
+
+* the pump raised and **published a bar for every boss record** — the game has ONE bar,
+  so the last activation won, and the two machines could bind different keys;
+* the binding was a per-record boolean with no actor identity, so a **respawn or mirror
+  adoption never rebound** the bar — it kept showing the old actor's HP;
+* a dead/stale key could keep its bar.
+
+Fixed: the host selects one active boss (the most-damaged live one, ties by key),
+announces only that key, and both machines bind their own bar to the actor that carries
+it (`BossBarSet` is a move and rebinds on actor change); a dead/stale key never holds the
+bar; the active boss's death sends one explicit bar-off so both screens reach 0 without
+waiting for the silence timeout; world change and session end lower every bar.
+
+**The live proof found the residual.**  In the 242 s run the bar code followed one key
+per machine, but the machines still held **different keys**: the host's active boss was
+`03FDBC21`, which exists only on the host (the peer has no copy and refuses every raise),
+while the peer's `17181166` is the dragon the host keeps re-killing as a standing death.
+That is a **key presence / liveness divergence**, not bar binding.  **R143 is therefore
+open on the selection step:** the host must not select a boss the partner has no copy of
+(a refusal/ack on the boss lane), and the `17181166` alive-vs-dead disagreement (peer
+respawned it, host holds a standing death) has to be reconciled before "both bars agree
+and both reach 0" can be claimed.  The binding half is done and is in the build.
+
+### R144. ESCAPE PAUSE — proven with the game's own menu-dilation path
+
+Merged `b1f8bc8`: the `PauseMenu_C` exception is gone from `HK_SetGlobalTimeDilation`
+and `MenuDilationPump`.  Live proof (the 242 s run): the rig's own menu lever issued
+`SetGlobalTimeDilation(0.20)` on the **peer** with a pretend menu open, and the peer's
+next `clock:` line read:
+
+```
+9:17:44.918 rig: menu lever -> pretend menu open, SetGlobalTimeDilation(0.20) issued; dilation 1.00 -> 0.20
+9:17:48.332 clock: dilation=1.00 real=252.1 unpaused=231.5 ...
+```
+
+The world was restored to 1.00 and `unpaused` advanced through the window.  Posting
+`VK_ESCAPE` to the peer's off-screen window did **not** open the menu (`menu=-` on every
+line), so the lever — the exact setter a menu calls — is the proof of the suppression
+path; the Escape key itself cannot be delivered to gameplay input by `PostMessage`
+(the R47 result).
+
+### The soak record, measured
+
+| run | duration | survived | kill diff | HP of shared keys | faults |
+|---|---|---|---|---|---|
+| 300 s hub (pre-merge guards) | 302 s | both | 0 (22/22) | equal (11) | 0 |
+| 300 s hub (post-boss build, diagnostic) | 242 s | both | 0 (21/21) | equal (14) | 0 |
+| 600 s hub run 1 (`fc59363` merged) | 601 s | both | 0 (61/61) | equal (6) | 1 **caught** ProcessEvent fault (puppet move), process survived |
+| 600 s hub run 2 | 601 s | both | **1** (142/141, `FA2FC279`) | — (0 shared alive) | 0 |
+| 600 s hub run 3 | — | — | **invalid** | — | both worlds diverged: host `780_SZ_Depths`, peer `300_LIB` |
+
+So: **the crash is gone from every run after `fc59363`** (zero uncaught faults; the one
+caught fault is inside `ProcessEventGuarded` and the process lived), and the kill-set
+convergence is systematic but not yet universal (one key in one 600 s run).  The 3 × 600 s
+"all diff 0" claim is **not** met; run 3's world divergence invalidates it and is the
+next streaming item.  The 242 s run that also carries the boss-bar and menu changes is
+13 PASS / 0 FAIL.
+
+### R138. still open, and now better explained
+
+The EXECUTE-bit fault of Session 18 (`g_oTick` overwritten) never reproduced.  The
+wrong-class UFunction of R142 is a plausible corruption source for it as well: a dragon
+override running on another class can write a function pointer-shaped value into memory
+before the next tick.  It is recorded as a candidate, not as a closed cause.
+
+### What a human tester needs to know
+
+The crash that killed the play set is understood and fixed at its source (a per-class
+UFunction cache), the Escape menu no longer stops the shared world, and the boss bar is
+now one bar bound to one key with rebinding — but a boss that exists on only one machine,
+or whose liveness the two machines disagree about, can still show two different bars.
+Kill sets converge on the order of one stray key per ten minutes; keep the crash folder
+if the game vanishes.
