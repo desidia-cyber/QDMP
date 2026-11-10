@@ -5323,7 +5323,23 @@ struct DamageApi {
     bool            ok;
     const PropDesc* param;     // the DamageToApply parameter of THIS class's function
 };
-DamageApi g_enDmg = {};        // enemies (host-side convergence and peer hit intents)
+// Enemies: one entry PER CLASS (live crash, see Fn::forCls).  Bounded; a class past the
+// table reuses the last slot after a reset rather than borrowing another class's entry.
+struct EnemyDamageSlot { const void* cls; DamageApi api; };
+static const int kEnemyDamageSlots = 24;
+EnemyDamageSlot g_enDmg[kEnemyDamageSlots] = {};
+DamageApi& EnemyDamageApi(void* actor)
+{
+    const void* cls = ObjClass(actor);
+    for (int i = 0; i < kEnemyDamageSlots; ++i) {
+        if (g_enDmg[i].cls == cls) return g_enDmg[i].api;
+        if (!g_enDmg[i].cls) { g_enDmg[i].cls = cls; g_enDmg[i].api = DamageApi{}; return g_enDmg[i].api; }
+    }
+    EnemyDamageSlot& last = g_enDmg[kEnemyDamageSlots - 1];
+    last.cls = cls;
+    last.api = DamageApi{};
+    return last.api;
+}
 DamageApi g_pawnDmg = {};      // the peer's own pawn (the G4 receive lane)
 
 bool DamageApiInit(DamageApi& a, void* actor, const char* label)
@@ -5448,7 +5464,7 @@ bool ApplyDamageToActor(void* actor, float amount, void* causer, bool player,
     if (haveHpOut) *haveHpOut = false;
     if (!actor || !ObjectIsLive(actor) || !(amount > 0.0f)) return false;
 
-    DamageApi& a = player ? g_pawnDmg : g_enDmg;
+    DamageApi& a = player ? g_pawnDmg : EnemyDamageApi(actor);
     const char* label = player ? "the local player" : "an enemy";
     if (!DamageApiInit(a, actor, label)) return false;
 

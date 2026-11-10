@@ -662,11 +662,45 @@ struct Fn {
         return true;
     }
 
+    // The class the cached answer was resolved for.  A `static Fn` is shared by every
+    // caller, and callers hand it objects of MANY classes (every enemy Blueprint goes
+    // through the same damage/HP entries).  A Blueprint subclass that OVERRIDES the
+    // function owns a different UFunction whose bytecode assumes that subclass's layout
+    // and calls that subclass's own functions by name; running it on another class is the
+    // LIVE crash "Failed to find function CheckForSplit in Crawler_Rotten_BP_C" (the
+    // dragon's `TryApplyDamage` override, cached from the first enemy hit, run on a
+    // crawler and a golem).  So the answer is re-checked whenever the class changes.
+    const void*  forCls = nullptr;
+
+    static bool ClassIsChildOf(const void* c, const void* ancestor)
+    {
+        __try {
+            for (int d = 0; c && d < 64; ++d, c = SuperOf(c))
+                if (c == ancestor) return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+        }
+        return false;
+    }
+
     bool Resolve(void* objOrNull, const char* name, const void* cls = nullptr)
     {
-        if (fn && sig.valid) return true;
-        if (tried) return false;
+        const void* c = cls ? cls : (objOrNull ? ObjClass(objOrNull) : nullptr);
+        if (fn && sig.valid) {
+            if (!c || c == forCls) return true;
+            // Most-derived definition visible from the new class.
+            void* mine = FindFunctionInClass(c, name);
+            if (mine == fn || (!mine && ClassIsChildOf(c, ObjOuter(fn)))) {
+                forCls = c;                    // same UFunction applies to this class
+                return true;
+            }
+            fn = nullptr;                      // an override, or an unrelated class
+            sig.valid = false;
+            tried = false;
+        }
+        if (tried && (!c || c == forCls)) return false;
         tried = true;
+        forCls = c;
         if (cls) return Accept(FindFunctionInClass(cls, name), name);
         return Accept(FindFunction(objOrNull, name), name);
     }
