@@ -7168,7 +7168,14 @@ void EnemySpawnPump(uint32_t now)
         if (!g_own.Running(r.guid)) continue;      // only the machine that simulates it
         ActorXform x;
         if (!ReadActorXform(r.actor, &x)) continue;
-        if (havePeer) {
+        // NO AUDIENCE, NO BODY.  Measured in Session 20's second boss run: the peer's
+        // drawn position was not known yet, the relevance test was skipped, and the host
+        // described the Green Dragon 177 m away -- marking `mirrorPathSent` forever.  By
+        // the time the peer stood next to the dragon it had no copy, the boss lane NACKed,
+        // and nothing re-sent the class.  The kill still worked (the host owns it), but
+        // the peer's bar could not be raised.  An unknown audience is not "everyone".
+        if (!havePeer) continue;
+        {
             float dx = x.px - peer[0], dy = x.py - peer[1], dz = x.pz - peer[2];
             if (dx * dx + dy * dy + dz * dz > kMirrorRelevanceCm * kMirrorRelevanceCm) continue;
         }
@@ -7832,6 +7839,10 @@ void BossPump(uint32_t now)
         if (!boss) continue;
         float hp = 0, mx = 0;
         bool haveHp = EnemyHp(r.actor, &hp, &mx) && mx > 0.0f;
+        // A boss whose HP this machine cannot READ is not eligible for the one shared bar:
+        // measured in the first Session 20 run, `Whaleking_SZ_BP_C` (71 km away, its
+        // encounter not running) was acked, bound and then sampled hp=0 forever while the
+        // dragon being fought was never selected.  A bar with no number is not a bar.
         // A mirrored copy has no ownership-table entry, and `OwnerSet::Running` answers
         // O_LOCAL for an unknown key -- so the mirror flag must be consulted FIRST, or a
         // constructed copy would be mistaken for the machine that runs the boss.
@@ -7841,9 +7852,8 @@ void BossPump(uint32_t now)
         bool haveRow = row && rowAge <= enemy::HostView::kDeadStaleMs;
         bool rowAlive = haveRow && (row->flags & enemy::kAlive) != 0;
         bool localAlive = !(EnemyDead(r.actor) || (haveHp && hp <= 0.0f) || KillLogHas(r.guid));
-        alive[i] = boss::AliveByAuthority(ownerHere, localAlive, haveRow, rowAlive);
+        alive[i] = haveHp && boss::AliveByAuthority(ownerHere, localAlive, haveRow, rowAlive);
         if (haveHp) frac[i] = hp / mx;
-        else if (haveRow) frac[i] = (float)row->hp / 65535.0f;
     }
 
     if (g_net.IsHost()) {
@@ -7876,11 +7886,13 @@ void BossPump(uint32_t now)
                 if (!g_en[i].haveGuid || !alive[i]) continue;
                 if (g_bossAck.Refused(g_en[i].guid, now)) continue;
                 if (best < 0) { best = i; continue; }
-                // Keep the bar that is already up while it stays showable: a bar that
-                // hops between two bosses on every HP tick is a visible defect.
-                bool aCur = g_bossKeyOn && boss::SameKey(g_en[i].guid, g_bossKey);
-                bool bCur = g_bossKeyOn && boss::SameKey(g_en[best].guid, g_bossKey);
-                if (aCur != bCur) { if (aCur) best = i; continue; }
+                // The bar follows the FIGHT: the most-damaged live boss, ties by key (the
+                // rule Session 19 measured as correct -- the host switched to the dragon
+                // the moment it was damaged).  An earlier "keep the key already bound"
+                // preference was wrong in a measured way: it held `17E153F4` (an untouched
+                // boss 8 km away) for the whole run while the dragon was being killed, so
+                // neither bar reached 0.  A tie by key is stable; a preference for the
+                // bound key is not the same thing.
                 float a = frac[i], b = frac[best];
                 if (a < b - 1e-4f) { best = i; continue; }
                 if (a > b + 1e-4f) continue;
@@ -7942,9 +7954,14 @@ void BossPump(uint32_t now)
         bool want = g_bossKeyOn && alive[i] && BossKeyIs(r.guid);
         bool was = r.bossBarShown;
         BossBarSet(r, want, now);
-        if (was && !want && BossKeyIs(r.guid))
-            QDLOG(LOG_INFO, "boss: bar key=", hex32(r.guid[0]),
-                  " hp=0 (lowered: the key is dead or gone)");
+        if (was && !want && BossKeyIs(r.guid)) {
+            // The last value the bar carried: 0 is a kill, -1 is "could not read it".
+            float lhp = 0, lmx = 0;
+            bool lhave = ObjectIsLive(r.actor) && EnemyHp(r.actor, &lhp, &lmx) && lmx > 0.0f;
+            QDLOG(LOG_INFO, "boss: bar key=", hex32(r.guid[0]), " hp=",
+                  dec(lhave ? (int)enemy::HpFrac(lhp, lmx) : -1),
+                  " (lowered: the key is dead or gone)");
+        }
         if (!want || !g_net.IsHost()) continue;
 
         uint8_t phase = EnemyBossPhase(r.actor);
@@ -8003,8 +8020,10 @@ void BossPump(uint32_t now)
         EnemyRec* br = EnemyByGuid(g_bossKey);
         float hp = 0, mx = 0;
         bool have = br && ObjectIsLive(br->actor) && EnemyHp(br->actor, &hp, &mx) && mx > 0.0f;
-        uint16_t f = have ? enemy::HpFrac(hp, mx) : 0;
-        QDLOG(LOG_INFO, "boss: bar key=", hex32(g_bossKey[0]), " hp=", dec((int)f),
+        // -1 is UNKNOWN, not zero: the enemy dump learned the same lesson (R137).  A
+        // scenario that reads this number must not compare an unreadable HP with a real one.
+        int f = have ? (int)enemy::HpFrac(hp, mx) : -1;
+        QDLOG(LOG_INFO, "boss: bar key=", hex32(g_bossKey[0]), " hp=", dec(f),
               " phase=", dec((int)(br ? br->bossPhase : 0)),
               " host=", dec(g_net.IsHost() ? 1 : 0),
               " bound=", dec((br && br->bossBarShown) ? 1 : 0));
@@ -8058,6 +8077,17 @@ void OnBoss(wire::Reader& r, uint32_t now)
         if (!g_net.IsHost()) return;
         g_bossAck.OnNack(b.guid, now);
         if (g_bossAskPending && boss::SameKey(g_bossAskKey, b.guid)) g_bossAskPending = false;
+        // A NACK is also the answer to "does the peer hold this key at all".  If the class
+        // path was already published (or published while the peer's position was unknown),
+        // re-arm it: `EnemySpawnPump` describes the class again as soon as the partner is a
+        // real audience, and the next ask can be an ACK.  Without this the one path that
+        // reached the peer before it could use it was the only one ever sent.
+        EnemyRec* nr = EnemyByGuid(b.guid);
+        if (nr && nr->mirrorPathSent) {
+            nr->mirrorPathSent = false;
+            QDLOG(LOG_INFO, "boss: key=", hex32(b.guid[0]),
+                  " is missing on the peer; its class path will be described again");
+        }
         QDLOG(LOG_WARN, "boss: peer NACK key=", hex32(b.guid[0]),
               " -- it cannot show this bar; choosing another");
         return;

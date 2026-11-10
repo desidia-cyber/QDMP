@@ -80,9 +80,11 @@ inline bool AliveByAuthority(bool ownerHere, bool localAlive,
 class AckBoard {
 public:
     static const int      kMax = 16;
-    // Long enough for the peer to construct a mirror it was already owed, short enough
-    // that a fight started after a stream-in is picked up inside one engagement.
-    static const uint32_t kRefuseMs = 5000;
+    // Long enough for the peer to construct a mirror it was already owed (a NACK now
+    // re-arms the class description), short enough that the bar joins a fight that is
+    // already in progress.  Measured: the dragon is killed in ~25 s of the harness's
+    // 3 s hits, so a longer refusal would miss the kill entirely.
+    static const uint32_t kRefuseMs = 3000;
 
     AckBoard() { Reset(); }
 
