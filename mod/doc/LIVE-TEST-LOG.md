@@ -3795,6 +3795,30 @@ PERFORMANCE AT THE DOCUMENTED PLAY SET, ALL RUNS
 **R140 is open**, with both dumps kept in `_test/s18-soak-hub/inst2/Saved_qd2/Crashes/`, so the
 next session can attack it from a stack rather than from a summary.
 
+### R141. THE LONGEST RUN OF THE SESSION — 105 minutes at the play set, zero faults
+
+After the guard, the same phase was run again and both processes were left running past the end
+of the harness's own soaks. Verbatim, from the two module logs:
+
+```
+qdcoop-qd1.log  AV=0  EXC=0
+   start: 5:26:16.018 INFO substrate: globals=1 fname=1(GameEngine) gobjects=1 objects=70103
+   end  : 7:11:29.916 WARN reliable send abandoned: kind=00000028 seq=420030 attempts=5
+qdcoop-qd2.log  AV=0  EXC=0
+   start: 5:26:22.694 INFO substrate: globals=1 fname=1(GameEngine) gobjects=1 objects=70103
+   end  : 7:11:30.042 WARN no free reliable slot; dropping kind=0000002B
+```
+
+That is **105 minutes of continuous play-set traffic on both machines, zero
+`ACCESS_VIOLATION` and zero `EXCEPTION` lines**, with the soak loop still driving `qd.hit` every
+three seconds at the end (`WARN rig: hit -- no live enemy within 15 m of -11686,-5480,-19702`,
+7:10:52) — i.e. the claim of 2 × 600 s was exceeded by a factor of five, twice over.
+
+The harness did not print its own verdict table for this run: its per-key log scan is O(keys ×
+log size), the log reached 17 MB, and the analysis was still running long after the soaks had
+finished. That is a harness limitation, recorded as such — the evidence above is read straight
+from the module's own logs, which is the stronger source anyway.
+
 ### Live proof, phase by phase
 
 | Claim | Verdict | Key line |
@@ -3804,15 +3828,16 @@ next session can attack it from a stack rather than from a summary.
 | The weak-resolved pawn is readable | **PASS** | `scan: local at 4106,-1744,140 yaw 174` |
 | `EnemyRec::actor` resolves across the churn | **PASS** | `enemykey n=627 alive=176 dead=451 killlog=324 ledger=61 mirrors=0` |
 | `ScanLocalEquip` (crash site 2) completes | **PASS** | `equip scan: RelativeScale3D@308 StaticMesh@1160 IsVisible=1` |
-| The play set survives 600 s, run 1 | **PASS** | `soak run 1: 600 s of 600 s, iterations=184` (final binary) |
-| The play set survives 600 s, run 2 | **PASS** | `soak run 2: 602 s of 600 s, iterations=185` (final binary) |
+| The play set survives 600 s, run 1 | **PASS** | `soak run 1: 600 s of 600 s, iterations=184` |
+| The play set survives 600 s, run 2 | **PASS** | `soak run 2: 602 s of 600 s, iterations=185` |
 | The play set survives 600 s in 780 | **PASS** | `soak run 1: 602 s of 600 s, iterations=175` |
-| Zero FAULT lines in all three soaks | **PASS** | `ACCESS_VIOLATION=0  EXCEPTION(any)=0` on both machines, all runs |
-| Kill sets diff 0 | **PASS (once) / FAIL** | hub 242 s soak: `host-dead=448 peer-dead=448 diff=0`; but `diff=3`, `diff=7`, `diff=34` in the three longer runs — R137 |
+| 105 min continuous, zero faults | **PASS** | `AV=0 EXC=0` on both logs, 5:26:16 → 7:11:29 (R141) |
+| Kill sets diff 0 | **PASS (once) / FAIL** | hub 242 s: `host-dead=448 peer-dead=448 diff=0`; but `diff=3`, `diff=7`, `diff=34` in three longer runs — R137 |
 | Shared-enemy HP equal | **FAIL (open)** | `HP MISMATCH 70F9CADA: host=85 peer=30`; `5D370AC1: host=909 peer=0` (R137) |
 | Peer actor-state writes land | **FAIL (open)** | 8005 × `actor-state: game writer ... (WRITE FAILED)` — R136 |
 | `loot: local pickup` on the taker | **PASS (measured)** | `loot: local pickup D78506BC#0 (?) -- tombstoned for the partner` |
-| `loot: hiding local drop` on the other | **NOT-REACHED** | the tombstone reconciliation is fixed, but no scenario can yet stand the taker on a SPAWNED drop — R129 revisited |
+| `loot: hiding local drop` on the other | **NOT-REACHED** | reconciliation fixed; no scenario can yet stand the taker on a SPAWNED drop — R129 revisited |
+| Every soak survives | **NO (4 of 7)** | R139 and R140 name the three deaths: two mod-side (both fixed), one engine-side (open) |
 | The smoke phase | **PASS 19/0** | `=== 19 PASS, 0 FAIL ===` |
 
 ### What this session settled
@@ -3823,12 +3848,18 @@ eighteen globals cached a raw address and re-checked it with a test that reads t
 checking. That is now one helper, one invariant, and a unit test that frees a slot, reuses it,
 and proves the handle refuses.
 
-The soak is no longer the black mark. 1808 s of play-set traffic (1206 s hub + 602 s 780), both
-machines alive in every run, zero faults. What is left is documented and different in kind: an
-actor-state lane where the peer's writes do not stick (R136), and three enemy-identity rules that
-let two machines disagree about one shared key (R137).
+The soak is no longer the black mark it was, and it is not yet closed. 105 minutes of
+continuous play-set traffic with zero faults is the strongest single result of the session, and
+it sits beside three deaths that are named rather than hidden: two in the mod (the cached-pointer
+caches and the unguarded object walk, both fixed, both proven fixed by later dumps) and one
+inside the engine (R140, open). What is left is documented and smaller in scope than what was
+found: an actor-state lane where the peer's writes do not stick (R136), three enemy-identity
+rules that let two machines disagree about one shared key (R137), and a loot-hiding fix that has
+no live proof only because no lever can yet address a spawned drop (R129).
 
 **What a human tester needs to know:** the play-set configuration survived two consecutive
-ten-minute sessions in the hub and a ten-minute session in `780_SZ_Depths`. Progression may still
-lag on the peer in a chest-dense area, and an enemy's health can differ between the two screens
-for a shared key (R137).
+ten-minute sessions in the hub, a ten-minute session in `780_SZ_Depths`, and one continuous
+105-minute session — but it also died in 3 of 7 attempts, and one of those deaths is inside the
+game's own code and is not yet understood (R140). Play in reasonable stretches and keep the
+crash folder if the game vanishes. Progression may still lag on the peer in a chest-dense area
+(R136), and an enemy's health can differ between the two screens for a shared key (R137).

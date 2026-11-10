@@ -300,10 +300,11 @@ The lines that answer most questions, verbatim:
 
   Two of those three deaths were the mod's, and both are now fixed; the 330 s death happened
   **inside the game's own code**, reached through the frame tick the mod forwards — that one is
-  not understood yet. In practice: a long session is much more likely to survive than it was,
-  and it is still not a guarantee. Play in reasonable stretches. If the game vanishes, look in
-  `<user dir>\Saved\Crashes\` — `CrashContext.runtime-xml` names the faulting module, and a
-  `WINMM` entry means the mod.
+  not understood yet. The longest run of the session was **105 minutes of continuous play-set
+  traffic on both machines with zero faults**, which is well past what a normal session needs.
+  In practice: a long session is much more likely to survive than it was, and it is still not a
+  guarantee. If the game vanishes, look in `<user dir>\Saved\Crashes\` —
+  `CrashContext.runtime-xml` names the faulting module, and a `WINMM` entry means the mod.
 - **Progress can still lag on the peer in a chest-dense area.** In `780_SZ_Depths` the peer
   logged about 8000 `actor-state: game writer ... (WRITE FAILED)` lines: it wrote a container
   value and read back a different one (±1 or ±2), so its write did not stick. Nothing crashed
