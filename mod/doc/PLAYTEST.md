@@ -326,6 +326,33 @@ The lines that answer most questions, verbatim:
   longer session is still not a guarantee.  If the game vanishes, look in
   `<user dir>\Saved\Crashes\` — `CrashContext.runtime-xml` names the faulting module, and a
   `WINMM` entry means the mod.
+
+  **Session 21 ran one longer session and it is the current best evidence.**  One pair of
+  processes for 39 minutes on the same play set: 602 s in the hub, a TP_AREA entry into
+  `780_SZ_Depths` and 304 s there, then 421 s back in the hub.  Both processes were alive
+  at the end of every segment and at the end of the run; **zero uncaught faults** over
+  92 k + 40 k log lines; **zero `ERR` lines**; the same world on both machines throughout.
+  The three caught `ProcessEvent faulted` lines on the peer are the guard doing its job —
+  the process survived them.  What it did *not* do: the run covered **22 minutes** of soak
+  body, not 30 (two segments were skipped), and the kill-set diff was not measured.  It
+  also produced the one number Session 20 could not — **shared HP compared on 71 pairs,
+  0 unequal, worst delta 0.1 HP** — so an enemy's health really is the same on both screens
+  wherever both machines can read it.
+- **An enemy's HP reads `?` when the engine is tearing that copy down — not a sync fault.**
+  Session 21 traced it: the mod refuses a reflective call on an object the engine has
+  flagged for destruction, and in the hub that was 428 of 569 enemy records.  A `?` in a
+  dump now means "the engine will not run a function on this copy", and the dump says why
+  (`why=callfail|zero|unseen|nofn`, with the flag words beside it).  Nothing about damage
+  or your own health is affected.
+- **A second area entry in one session does not move the partner (measured, open).**  The
+  first area you enter follows correctly.  A later one does not: the partner answers
+  `travel: area <the first one> is already pinned on this machine` and stays where it is.
+  If you need to be in another area together, walk there or restart the session.
+- **The rig cannot perform a hard map switch from the hub.**  `900_SipehaWorld` and
+  `990_B33sment` are in the hub's own level table, so asking the mod for one *streams* it
+  instead of loading a world (`rig: hard lever -> 900_SipehaWorld streamed=1`).  Travel
+  between worlds the way the game does — a teleporter or a map transition — and the
+  handshake takes it from there.
 - **Progress can still lag on the peer in a chest-dense area.** In `780_SZ_Depths` the peer
   logged about 8000 `actor-state: game writer ... (WRITE FAILED)` lines: it wrote a container
   value and read back a different one (±1 or ±2), so its write did not stick. Nothing crashed

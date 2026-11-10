@@ -295,6 +295,21 @@ Two assumptions in that paragraph are unproven and each is one probe:
 ## 3. Inside the systems built so far
 
 **Enemies**
+- **A key's HP is reported only for a copy the engine will still RUN a function on.** The
+  per-key dump used to print `hp=?` for a "live" key and leave it there; Session 21 asked
+  it why and the answer was the mod's own `ObjectCallable`: the object item's deny bit
+  (`FUObjectItem::Flags` bit 29, `EInternalObjectFlags::PendingKill`) or
+  `RF_BeginDestroyed`/`RF_FinishDestroyed`. In the hub, **428 of 569 records were such
+  ghosts and 141 were usable**, so "shared HP equal" was being asked of copies that were
+  mid-teardown. Such a key is now reported `GONE` — neither `ALIVE` (which made the
+  comparison unmeasurable) nor `DEAD` (which would invent a kill no lane broadcast) — and
+  skipped by both the kill diff and the HP comparison. The same rule decides `qd.hit`'s
+  target (`ran=0 hp 0.0 -> 0.0` on every swing before; `ran=1 hp 2590.0 -> -97410.0`
+  after) and `near:enemy`, which used to park the player beside a ghost. Measured result:
+  **71 shared-HP pairs compared, 0 unequal, max delta 0.1 HP** over 16 paired dumps in one
+  39-minute run. `why=nofn|callfail|noout|zero|unseen`, with `seen=`, `inworld=` and both
+  flag words, are on the line, so the next session reads the cause instead of re-deriving
+  it.
 - **Bosses share one bar, and the shared bar is now NEGOTIATED.** The game has one boss
   HP bar and `ActivateBossHPBar` binds it to the actor it is given, so the host is the
   single selector. Session 20 made the selection a round trip: the host asks the peer
@@ -382,6 +397,25 @@ Two assumptions in that paragraph are unproven and each is one probe:
   followed the host into `780_SZ_Depths` in every measured entry, both machines reported
   `level engine state 780_SZ_Depths LoadedLevel=1 actuallyVisible=1`, and both stood 0-3 cm
   apart at the anchor.
+  **A SECOND area in one session does not follow (Session 21, R150a).** The host streamed
+  `770_SZ_Swamp` (`PASS` on its own machine) and the peer answered
+  `travel: area 780_SZ_Depths is already pinned on this machine` — an announcement for the
+  area it already holds, not for the new one — so the peer stayed in `780_SZ_Depths`. The
+  first entry of a session works; a later one is refused by the wrong name, which is a
+  worse failure than silence because it looks like agreement.
+- **A hard travel is not reachable from `Ruins_Level_00` through `qd.hard` (Session 21,
+  R150b).** Both real candidates are in the hub's level table, so `FollowHardTravel`
+  streams them instead of loading a world, and the third name is the current one:
+
+  ```
+  rig: hard lever -> 990_B33sment    streamed=1 (a sublevel of this world ...)
+  rig: hard lever -> 900_SipehaWorld streamed=1 (a sublevel of this world ...)
+  rig: hard lever -> Ruins_Level_00  LoadMapWithLoadingScreen ran=0: already in Ruins_Level_00
+  ```
+
+  The report names which happened (`streamed=1` is a named refusal of the hard path, not a
+  failed handshake). The hard path therefore has to be reached the way a player reaches it
+  — a teleporter, or a map switch the game itself performs.
 
 ## 4. Not synced, lower stakes
 
@@ -391,8 +425,25 @@ Two assumptions in that paragraph are unproven and each is one probe:
   `movers: tracking …` lines for a real elevator.
 - **Loot pickups** share one host-authoritative drop set keyed by `{sourceId, dropIndex}`
   (`LootSync`). A take is a permanent tombstone and the local copy is hidden, not
-  destroyed. The unproven part is recovering the key/path from a `SpawnItemDrop_C` actor;
-  a class that exposes none is reported once and skipped.
+  destroyed. **The lane's key is addressable now**: `qd.tp near:drop:<8hex>:<index>`
+  resolves exactly `{source_hash, drop_index}` (Session 18 asked for this lever; Session 21
+  built the proof on it and it answered on both machines —
+  `rig: drop FB6F664F#0 resolved to a live actor`, versus
+  `rig: no live loot-ledger drop matches 'drop:7DF53D72:0' (the scan has 2 drop(s))`).
+  **`loot: hiding local drop` is still NOT-REACHED, and the blockers are now measured
+  rather than guessed** (R129):
+  1. the hub cannot prove it, because the two machines' drop KEYS are disjoint — a key's
+     source is the enemy, and the hub's machines run their own spawner enemies. One run
+     produced 3 host-only keys and 2 peer-only keys with not one in common;
+  2. in `780_SZ_Depths`, where both machines DO hold the same authored enemy keys, the
+     drop actor appears on one machine at a time: a host kill rolled 4 drops, all on the
+     peer; a peer kill rolled 3, all on the host. Standing the pair 9 m back before the
+     blow makes the killer keep its own drops (a pickup is an overlap, so the killer's own
+     pawn was eating the drop it had caused) — but no key was held by both machines inside
+     the window.
+  The reconciliation code is not the blocker (Session 18's fix stands, pinned by
+  `test_loot.cpp`). The next probe: kill the same authored key on each machine in turn,
+  using a spawner respawn, and probe the key after each kill.
 - **Shop, journal/bestiary, XP, weapon levels, grimoire ink.** Per-player by nature.
 - **Peer vitals.** The partner's HP and death are not shown; a death shows as the body
   falling. This is also why the damage lane's dead check is receive-side only.

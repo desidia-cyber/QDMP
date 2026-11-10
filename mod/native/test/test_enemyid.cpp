@@ -288,11 +288,21 @@ static void TestAdoption()
 static void TestHpReporting()
 {
     using namespace enemy;
-    CHECK(!HpKnown(false, true, true), "a key with no live actor has no known HP");
-    CHECK(!HpKnown(true, false, true), "an unreadable HP is unknown");
-    CHECK(!HpKnown(true, true, false),
+    CHECK(!HpKnown(false, true, true, 100.0f), "a key with no live actor has no known HP");
+    CHECK(!HpKnown(true, false, true, 0.0f), "an unreadable HP is unknown");
+    CHECK(!HpKnown(true, true, false, 0.0f),
           "a copy never seen alive has unknown HP (HP 0 is pre-activation)");
-    CHECK(HpKnown(true, true, true), "a live copy seen alive reports its HP");
+    CHECK(HpKnown(true, true, true, 100.0f), "a live copy seen alive reports its HP");
+    // Session 21: a POSITIVE reading is evidence on its own.  `seenAlive` is set by the
+    // death sweep, which is suppressed across a load and early-returns on a mass vanish,
+    // so requiring it withheld a number that was there -- the reproducible shape of
+    // Session 20's "one shared live key, hp=?".
+    CHECK(HpKnown(true, true, false, 100.0f),
+          "a positive reading is reported even when seenAlive has not caught up");
+    CHECK(!HpKnown(true, true, false, 0.0f),
+          "HP 0 that was never seen alive is still unknown (pre-activation)");
+    CHECK(HpKnown(true, true, true, 0.0f),
+          "HP 0 after being seen alive IS a value: it is the corpse the sweep names");
 
     CHECK(EffectivelyDead(false, false, true, 100.0f, true),
           "no actor after being seen alive is dead (the R146 broadcast case)");
@@ -303,6 +313,39 @@ static void TestHpReporting()
     CHECK(!EffectivelyDead(true, false, true, 0.0f, false),
           "HP 0 before activation is NOT dead");
     CHECK(!EffectivelyDead(true, false, true, 50.0f, true), "positive HP is alive");
+}
+
+// ===========================================================================
+// Why a `?` was printed (Session 21)
+// ===========================================================================
+// Three different facts print the same marker and each needs a different answer, so the
+// mapping is pinned here rather than left to the dump line's formatting.
+static void TestHpUnknownReason()
+{
+    using namespace enemy;
+    // Not HP at all.
+    CHECK(HpUnknownWhy(true, true, true, 100.0f, true, 0) == HPZ_GONE,
+          "a dead key reports no HP reason: nothing about it is compared");
+    CHECK(HpUnknownWhy(false, false, false, 0.0f, false, 0) == HPZ_GONE,
+          "a key with no live actor reports no HP reason either");
+    // The three read failures are distinguished, because they mean different things.
+    CHECK(HpUnknownWhy(true, false, true, 0.0f, false, 1) == HPZ_NOFN,
+          "the getter not resolving is 'nofn' (the attribute component is not there)");
+    CHECK(HpUnknownWhy(true, false, true, 0.0f, false, 2) == HPZ_CALLFAIL,
+          "a getter whose call did not run is 'callfail'");
+    CHECK(HpUnknownWhy(true, false, true, 0.0f, false, 3) == HPZ_NOOUT,
+          "a getter with no 4-byte result is 'noout'");
+    // The read succeeded.  A reading of 0 on a copy never seen alive is the DORMANT
+    // spawner enemy, which is the "the encounter is not running" answer.
+    CHECK(HpUnknownWhy(true, true, false, 0.0f, false, 0) == HPZ_ZERO,
+          "HP 0 never seen alive is a dormant spawner enemy, not a missing value");
+    CHECK(HpUnknownWhy(true, true, false, 120.0f, false, 0) == HPZ_UNSEEN,
+          "a positive reading before seenAlive is 'unseen', and HpKnown now reports it");
+    CHECK(HpKnown(true, true, false, 120.0f), "the 'unseen' positive reading is reported");
+    CHECK(strcmp(HpUnknownText(HPZ_ZERO), "zero") == 0 &&
+          strcmp(HpUnknownText(HPZ_NOFN), "nofn") == 0 &&
+          strcmp(HpUnknownText(HPZ_GONE), "dead") == 0,
+          "the reason text is stable (a run greps it)");
 }
 
 int main()
@@ -316,6 +359,7 @@ int main()
     TestCoincident();
     TestAdoption();
     TestHpReporting();
+    TestHpUnknownReason();
 
     printf("\n=== %d passed, %d failed ===\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

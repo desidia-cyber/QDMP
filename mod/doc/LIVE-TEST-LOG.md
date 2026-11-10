@@ -4169,3 +4169,229 @@ the other empty â€” did not occur.
 - The boss negotiation is chatty by design: a key the peer genuinely lacks is re-asked
   after the 3 s window.  The log line is now WARN once a minute per key (246 identical
   lines in one 600 s soak buried the lines that mattered).
+
+---
+
+## Session 21 ? 2026-11-10 (the ghost behind hp=?, the drop the lever can reach, and a soak that ran out of time)
+
+This branch is `t3/session-21-loot-hp-soak`, reset to `sync-fix`'s Session 20 merge
+(`1e2608a`).  The body is `tools/session21.ps1`, one phase per invocation:
+`probe` (lever latency), `lootdrop` (R129), `soak30` (the 1800 s run), `repro`
+(R138/R140).  Configuration is the documented PLAY set with `LogLevel=3`; roles are read
+from `session established`: **host=inst1, peer=inst2**.
+
+### R148. THE GHOST BEHIND `hp=?` ? a live actor the engine refuses to call
+
+Session 20 ended with one shared live key whose HP printed `?` on both machines, so
+"shared HP equal" had no pair to compare.  The dump now prints WHY, and one live dump
+answered it in two lines:
+
+```
+enemykey 976CB2E9 ALIVE local=1 src=0 hp=? why=callfail seen=0 inworld=1 cls=Default_Lizer_02_C
+enemykey 93494995 ALIVE local=1 src=0 hp=490.0                       cls=Default_Lizer_07_C
+```
+
+Two instances of ONE class, one readable and one not ? so it is neither the class nor a
+missing attribute component.  `why=callfail` means the getter resolves and the reflective
+call is **refused**, which is the module's own `ObjectCallable`: the object item's deny bit
+(`FUObjectItem::Flags` bit 29, `EInternalObjectFlags::PendingKill` in this build) or
+`RF_BeginDestroyed` / `RF_FinishDestroyed`.  `inworld=1` rules out "the actor is out of
+range", and `why=nofn` never appeared, ruling out "the attribute component is not there".
+
+**How much of the hub this was**: one dump counted 569 records, of which **428 were such
+ghosts and 141 were usable**.  The copies the soak was trying to compare HP on were, in
+the main, objects the engine was tearing down ? not enemies.
+
+**The fix.** The dump reports them as `GONE`, which is neither `ALIVE` (that is what made
+the comparison unmeasurable) nor `DEAD` (that would invent a kill no lane broadcast), and
+it is skipped by both the kill-set diff and the HP comparison.  `usable = live &&
+callable` replaces `live` for the whole per-key report, which is the same rule every
+reflective call in this module already goes through.  `HpKnown` also accepts a POSITIVE
+reading without `seenAlive` ? `seenAlive` is set by the death sweep, which is suppressed
+across a load and early-returns on a mass vanish, so the old rule withheld a number that
+was there.
+
+`HpUnknownWhy` is the single place the reason is decided, pinned in `test_enemyid`
+(**206 assertions, was 176**), so the dump and its test cannot disagree.
+
+### R149. THE HARNESS WAS MEASURING WITH A STOPWATCH IT NEVER CHECKED
+
+`lootdrop` failed three times with "no enemy key is ALIVE on BOTH machines" about two
+machines holding 141 and 112.  The cause was the harness, and the new `probe` phase is
+what found it.  Writing `qd.enemies` and reading the log 3 s later found the host's dump
+and nothing on the peer.
+
+```
+[1] dump 1: answered after 33.1s     <- the FIRST dump of a boot
+[1] dump 2: answered after 0.8s
+[2] dump 1: answered after 0.5s      <- every later dump, both machines, 0.5-1.1 s
+```
+
+A control-file lever answers in about a second once warm; the first enemy dump of a boot
+costs **33.1 s**, because the per-class UFunction resolution that makes `GetHP` readable is
+paid by whichever dump happens first.  Every dump and drop probe now polls for its lines
+with a real timeout and records how long it took, and `probe` is a standing phase so the
+next session can re-measure rather than assume.
+
+Two other harness defects, both the same family ? a number printed under the wrong label:
+
+* `Note`/`Say` wrote to the **pipeline**, so a helper that both narrated and returned a
+  value returned an array of its own notes.  `$key = Find-SharedDrop ...` then held note
+  strings and the phase probed `near:drop::0` (`no live actor matches 'drop::0'` about a
+  drop it had just found).  `session20.ps1` warns about this trap for `Check`; it was one
+  level down.  Narration now goes to the host stream and the report file.
+* the HP sample line had its `-f` indices off by one, so a sample read
+  `shared-alive=378 compared=0` when it meant `elapsed=378 s, shared-alive=0`.  The
+  counters were right and the labels were not; both are now explicit per field.
+
+### R129. LOOT HIDING ? the lever works, and the two things that block the proof are named
+
+**The lever exists and does what Session 18 said it would.**  `qd.tp
+near:drop:<8hex>:<index>` resolves the loot lane's own key, and it answered on both
+machines:
+
+```
+host  13:23:36.079 INFO rig: drop FB6F664F#0 resolved to a live actor at -25520,-16672,-15243
+peer  12:48:41.827 WARN rig: no live loot-ledger drop matches 'drop:7DF53D72:0' (the scan has 2 drop(s))
+```
+
+So the resolver distinguishes "this machine holds that drop" from "it holds two other
+drops", which is exactly what the proof needs.  **`loot: hiding local drop` still did not
+fire, and the reason is not the reconciliation code** (Session 18's fix stands, and
+`test_loot.cpp` pins it).  Two measured blockers:
+
+* **The hub cannot prove it: the two machines' drop keys are disjoint.**  A key is
+  `{source_hash, drop_index}` and the source is the enemy; the hub's machines run their
+  own spawner enemies with their own authored GUIDs.  One run produced 3 keys only the
+  host held and 2 only the peer held, **not one in common**:
+  `rig: no live loot-ledger drop matches ... (the scan has 2 drop(s))` on the peer for
+  every host key.  `PLAYTEST.md` section 8 says loot hiding needs the SAME enemy on both
+  machines; this is that sentence as a measurement.
+* **In `780_SZ_Depths`, where both machines DO hold the same authored enemy keys, the
+  drop only appears on one machine at a time.**  Measured twice, both ways round: a host
+  kill produced 4 drops, all on the peer; a peer kill produced 3 drops, all on the host.
+  The phase then stood the pair 9 m back before the blow (a pickup is an overlap, so the
+  killer's own pawn was consuming the drop it had just caused), and after that the killer
+  did hold its own drops ? 3 keys on the host, 1 on the peer ? but no key was held by both
+  machines inside the observation window.
+
+**R129 is therefore still NOT-REACHED live**, and it is now blocked by a shutter rather
+than by a mystery: to see the hiding half fire, one machine must hold a visible drop whose
+tombstone comes from the other, and this content does not put the same drop on both
+machines at the same time in any place the rig can reach.  The next probe is stated as a
+probe: kill the same authored key on each machine in turn (a spawner respawn makes that
+possible) and probe the key after each kill, rather than killing once and waiting.
+
+### R150. THE KILL LEVER HAD THE SAME BUG AS THE COMPARISON ? it aimed at ghosts
+
+`qd.hit` logged `ran=0 hp 0.0 -> 0.0 (local-run)` on **every** swing, in the hub and in
+`780_SZ_Depths`, and `qd.enemykill` was the only lever that produced deaths.  The cause is
+R148's: `DevKillNearest` picks the nearest three records **by distance**, and almost all of
+them are mid-teardown, so the reflective damage call is refused.  The lever was testing the
+one class of enemy that cannot be hit and reporting it as a failure of the damage lane.
+
+Measured after the fix (`ran=1 hp 2590.0 -> -97410.0` on a `qd.hit` of 100000).  The same
+rule is now in `near:enemy`, which used to park the player beside a ghost and make the whole
+rig report "no live actor" ? two passes: a usable enemy if there is one, and the old
+nearest-live answer only when there is not, so a caller can still look at a dying actor.
+
+### The soak, measured ? and where it fell short
+
+One pair of processes, the documented play set, `13:37:24` ¨ `14:16:30` (39 minutes of wall
+clock).  Segments are Hub / 780 / 770 / hard-out+hard-back / hub-final, with the per-key
+dump sampled through each.
+
+| segment | duration | both alive | drops observed |
+|---|---|---|---|
+| hub | 602 s of 599 s, 177 iterations | yes | ? |
+| area780 (`780_SZ_Depths`, TP_AREA) | 304 s of 301 s, 87 iterations | yes | ? |
+| area770 (`770_SZ_Swamp`, TP_AREA) | **not run** ? the peer refused the follow | yes | ? |
+| hard-out / hard-back | **not performed** ? the lever refuses every candidate by name | yes | ? |
+| hub-final | 421 s of 419 s, 104 iterations | yes | ? |
+
+**What passed**
+
+* Both processes alive at the end of every segment that ran, and at `14:16:30`.
+* **Zero uncaught faults** on both machines over 92 k and 40 k log lines
+  (`ACCESS_VIOLATION=0`, `EXCEPTION=0`).  The peer logged **3 caught** ProcessEvent faults
+  (`puppet move failed: ProcessEvent faulted`), which is `ProcessEventGuarded` doing its
+  job ? the process survived, exactly as in Session 19.
+* **Zero `ERR` lines** on both machines.
+* Same world at the end ? `Ruins_Level_00`, `agree=1` on both ? and the same area pin
+  (`900_SipehaWorld`) on both, with `WORLD DIVERGENCE` never printed.
+* **Shared HP, measured: 71 pairs compared, 0 unequal, max delta 0.1 HP**, 1 unreadable,
+  over 16 paired per-key dumps.  This is the first time the claim has a count beside it,
+  and it is the number Session 20 could not produce.
+* One TP_AREA entry followed in the measured direction: the peer logged
+  `travel: entered the partner's area 780_SZ_Depths by streaming it`, and both machines
+  then reported `level engine state 780_SZ_Depths LoadedLevel=1 actuallyVisible=1`.
+
+**What did not**
+
+* **The 30-minute requirement is NOT met.**  602 + 304 + 421 = **1327 s (22 minutes)** of
+  soak body ran; two of the five segments were skipped because their preconditions failed.
+  Reporting 1800 s here would be a lie about arithmetic, so it is not reported.
+* **A second TP_AREA entry does not follow, and the refusal is specific.**  The host
+  streamed `770_SZ_Swamp` (`PASS`), and the peer answered
+  `travel: area 780_SZ_Depths is already pinned on this machine` ? an announcement for the
+  area it already holds, not for the new one.  So a second area entry is a new gap
+  (**R150a**), not a re-measurement of R147's.
+* **A hard travel cannot be performed from the hub with this lever at all.**  Both real
+  candidates answer by name:
+
+  ```
+  13:55:36.954 INFO rig: hard lever -> 990_B33sment   streamed=1 (a sublevel of this world ...)
+  13:55:41.968 INFO rig: hard lever -> 900_SipehaWorld streamed=1 (a sublevel of this world ...)
+  13:55:51.299 WARN rig: hard lever -> Ruins_Level_00  LoadMapWithLoadingScreen ran=0: already in Ruins_Level_00
+  ```
+
+  The hub's level table carries both worlds as streaming levels, so `FollowHardTravel`
+  streams them instead of loading a world, and the remaining name is the current world.
+  `PLAYTEST.md` already says a hard load only lands you in a real world; this adds that
+  from `Ruins_Level_00` the rig's own hard lever cannot reach one.  **R150b.**
+* **The kill-set diff was not measured.**  The harness's end-of-run dump and its
+  per-key log scan did not finish (a 92 k-line log, re-read per machine per bucket); I
+  stopped the run rather than let it sit.  The dumps it did take show 63 ALIVE / 137 DEAD
+  on the host and 16 ALIVE / 139 DEAD on the peer, with **zero** keys alive on both ? the
+  hub's by-design divergence, not a measurement of convergence.  The 71 compared HP pairs
+  come from the samples taken *during* the run, which is why sampling was worth adding.
+
+**R138 / R140 were not attempted.**  Every minute of this session went into the three
+items above, and a reproduction run that never happened is not evidence about either.
+
+### Live proof, phase by phase
+
+| Claim | Verdict | Key line |
+|---|---|---|
+| The new binary loads and verifies | **PASS** | `targets: 36 byte-verified ... 0 mismatched` |
+| The area follow of R147 still works | **PASS** | `travel: entered the partner's area 780_SZ_Depths by streaming it` |
+| A second area entry follows | **FAIL (open, R150a)** | peer: `travel: area 780_SZ_Depths is already pinned on this machine` |
+| A hard travel can be performed from the hub | **FAIL (open, R150b)** | `rig: hard lever -> 900_SipehaWorld streamed=1` |
+| `qd.hit` lands damage | **PASS (after R150)** | `rig: hit enemy guid=350C0EAD amount=100000 ran=1 hp 2590.0 -> -97410.0` |
+| Shared HP is equal where readable | **PASS ? 71 compared, 0 unequal, max delta 0.1** | 16 paired dumps |
+| Zero uncaught faults over 39 min | **PASS** | `ACCESS_VIOLATION=0 EXCEPTION=0` on both logs |
+| Zero `ERR` lines | **PASS** | `ERR=0` on both logs |
+| Kill sets diff 0 | **NOT MEASURED** | the end-of-run dump did not complete |
+| `loot: hiding local drop` | **NOT-REACHED** | R129: the same drop is never on both machines at once |
+| The `near:drop:<key>` lever resolves the lane's key | **PASS** | `rig: drop FB6F664F#0 resolved to a live actor at ...` |
+| The 30-minute soak | **NOT MET ? 1327 s of soak body ran** | the table above |
+
+### What a human tester needs to know
+
+Nothing here changes what a pair of players should do: the play set is unchanged and the
+area follow still works for the first entry.  Two new things to know: **entering a second
+area in one session does not move the partner** (R150a ? walk them in, or re-enter the
+first area), and **an enemy's HP now reads `?` only when the engine is tearing that copy
+down**, so a `?` in a dump is information about the engine, not about sync.
+
+### What is still open
+
+- **R129** loot hiding, NOT-REACHED, blocked by "the same drop on both machines at once".
+- **R150a** a second TP_AREA entry is refused by name.
+- **R150b** no hard travel is reachable from `Ruins_Level_00` through `qd.hard`.
+- **R138** not reproduced; not attempted this session.
+- **R140** not reproduced in this run (0 uncaught faults); not attempted deliberately.
+- **Kill-set convergence** unmeasured this session; the sampling work makes HP solid and
+  the same technique applies to the diff next time.
+- **`Test-Alive` / end-of-run scans** are still O(log size) per bucket; a 30-minute run at
+  `LogLevel=3` produces ~92 k lines per machine and the end checks did not finish.

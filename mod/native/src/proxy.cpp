@@ -2954,15 +2954,25 @@ uint8_t* OutParm(Call& c, int size)
     return nullptr;
 }
 
+// The same read, but the caller is told WHICH of the three ways it failed.  `EnemyHp` only
+// ever needed "did it read", and the per-key dump needs the distinction between "the class
+// has no such getter" and "the getter exists and produced nothing" -- they mean an
+// attribute component that is missing versus one that is not initialised (Session 21).
+//   0 = read, 1 = the function does not resolve, 2 = the call did not run, 3 = no result.
+int CallGetFloatEx(void* obj, Fn& f, const char* fn, float* out)
+{
+    if (!f.Resolve(obj, fn)) return 1;
+    Call c(f);
+    if (!c.Run(obj)) return 2;
+    uint8_t* p = OutParm(c, 4);
+    if (!p) return 3;
+    memcpy(out, p, 4);
+    return 0;
+}
+
 bool CallGetFloat(void* obj, Fn& f, const char* fn, float* out)
 {
-    if (!f.Resolve(obj, fn)) return false;
-    Call c(f);
-    if (!c.Run(obj)) return false;
-    uint8_t* p = OutParm(c, 4);
-    if (!p) return false;
-    memcpy(out, p, 4);
-    return true;
+    return CallGetFloatEx(obj, f, fn, out) == 0;
 }
 
 bool CallNoArgs(void* obj, Fn& f, const char* fn)
@@ -5311,10 +5321,26 @@ bool EnemyIdentity(EnemyRec& r)
     return r.haveGuid;
 }
 
-bool EnemyHp(void* actor, float* hp, float* maxHp)
+// The HP read, with the reason it failed when it did (Session 21).  `EnemyHp` is the path
+// the identity/convergence code trusts, so its answer is unchanged; the extra int is only
+// for the per-key dump's `hp=?` diagnosis.
+bool EnemyHpRead(void* actor, float* hp, float* maxHp, int* fail)
 {
     static Fn fHp = {}, fMax = {};
-    return CallGetFloat(actor, fHp, "GetHP", hp) && CallGetFloat(actor, fMax, "GetMaxHP", maxHp);
+    float h = 0.0f, m = 0.0f;
+    int r1 = CallGetFloatEx(actor, fHp, "GetHP", &h);
+    if (r1 != 0) { if (fail) *fail = r1; return false; }
+    int r2 = CallGetFloatEx(actor, fMax, "GetMaxHP", &m);
+    if (r2 != 0) { if (fail) *fail = r2; return false; }
+    if (hp) *hp = h;
+    if (maxHp) *maxHp = m;
+    if (fail) *fail = 0;
+    return true;
+}
+
+bool EnemyHp(void* actor, float* hp, float* maxHp)
+{
+    return EnemyHpRead(actor, hp, maxHp, nullptr);
 }
 
 bool EnemyDead(void* actor)
@@ -12702,19 +12728,35 @@ void* RigFindNear(const char* sub, float* distOut, ActorXform* xfOut, char* name
         if (bestD >= 0.0f && d >= bestD) continue;
         bestD = d; best = owners[i].actor; bestXf = x;
     }
-    for (int i = 0; i < g_enN; ++i) {
-        EnemyRec& r = g_en[i];
-        if (!r.haveGuid || !ObjectIsLive(r.actor) || EnemyDead(r.actor)) continue;
-        // `near:enemy` means "the nearest enemy", not "an actor whose NAME contains
-        // 'enemy'" -- no enemy is called that.  Measured: the literal match made every
-        // G4/enemy step a no-op with "no live actor matches 'enemy'".
-        if (!wantEnemy && !RigNameMatches(r.actor, sub)) continue;
-        ActorXform x;
-        if (!ReadActorXform(r.actor, &x)) continue;
-        float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
-        float d = sqrtf(dx * dx + dy * dy + dz * dz);
-        if (bestD >= 0.0f && d >= bestD) continue;
-        bestD = d; best = r.actor; bestXf = x;
+    // `near:enemy` has to mean the nearest enemy that is actually THERE.  Measured
+    // (Session 21): a hub dump found 141 usable keys and 428 records the engine had marked
+    // for destruction, and this walk picked by distance alone -- so the rig stood the player
+    // beside a ghost, `qd.hit` reported `no CALLABLE live enemy within 15 m (skipped 576
+    // mid-teardown)`, and a loot phase and a kill set both looked like failures of the lanes
+    // rather than of the resolver.  Two passes: a usable enemy if there is one, and only if
+    // there is none does the old nearest-live answer stand (a caller may want to look at a
+    // dying actor).
+    for (int pass = 0; pass < 2 && !best; ++pass) {
+        for (int i = 0; i < g_enN; ++i) {
+            EnemyRec& r = g_en[i];
+            if (!r.haveGuid || !ObjectIsLive(r.actor) || EnemyDead(r.actor)) continue;
+            // `near:enemy` means "the nearest enemy", not "an actor whose NAME contains
+            // 'enemy'" -- no enemy is called that.  Measured: the literal match made every
+            // G4/enemy step a no-op with "no live actor matches 'enemy'".
+            if (!wantEnemy && !RigNameMatches(r.actor, sub)) continue;
+            if (pass == 0) {
+                // pass 0: a target the engine will actually run a UFunction on
+                if (!ObjectCallable(r.actor)) continue;
+                float hp0 = 0.0f, mx0 = 0.0f;
+                if (EnemyHp(r.actor, &hp0, &mx0) && !(hp0 > 0.0f)) continue;   // dormant
+            }
+            ActorXform x;
+            if (!ReadActorXform(r.actor, &x)) continue;
+            float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
+            float d = sqrtf(dx * dx + dy * dy + dz * dz);
+            if (bestD >= 0.0f && d >= bestD) continue;
+            bestD = d; best = r.actor; bestXf = x;
+        }
     }
 
     // Nothing in the two synced sets matched.  The remaining useful kinds are in neither
@@ -13847,9 +13889,23 @@ void DevKillNearest(uint32_t now)
     EnemyRec* cand[3] = {nullptr, nullptr, nullptr};
     float cd[3] = {-1.0f, -1.0f, -1.0f};
     bool cf[3] = {false, false, false};
+    int ghosts = 0, dormant = 0;
     for (int i = 0; i < g_enN; ++i) {
         EnemyRec& r = g_en[i];
         if (!r.haveGuid || !ObjectIsLive(r.actor) || EnemyDead(r.actor)) continue;
+        // A TARGET HAS TO BE ONE THE ENGINE WILL CALL.  Measured (Session 21): `qd.hit`
+        // logged `ran=0 hp 0.0 -> 0.0 (local-run)` on every swing in 780_SZ_Depths and on
+        // every swing in the hub, because `DevKillNearest` picks the nearest three records
+        // BY DISTANCE and almost all of them are copies the engine has marked for
+        // destruction (428 of the hub's 569 records: the same fact the per-key dump now
+        // reports as GONE).  The reflective damage call is refused on those, so the lever
+        // tested the one class of enemy that cannot be hit and reported it as a failure of
+        // the damage lane.  A dormant spawner enemy at HP 0 is the other unusable kind.
+        if (!ObjectCallable(r.actor)) { ++ghosts; continue; }
+        {
+            float hp0 = 0.0f, mx0 = 0.0f;
+            if (EnemyHp(r.actor, &hp0, &mx0) && !(hp0 > 0.0f)) { ++dormant; continue; }
+        }
         ActorXform x;
         if (!ReadActorXform(r.actor, &x)) continue;
         float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
@@ -13864,8 +13920,9 @@ void DevKillNearest(uint32_t now)
         }
     }
     if (!cand[0]) {
-        QDLOG(LOG_WARN, "rig: hit -- no live enemy within 15 m of ", flt(me.px, 0), ",", flt(me.py, 0),
-              ",", flt(me.pz, 0));
+        QDLOG(LOG_WARN, "rig: hit -- no CALLABLE live enemy within 15 m of ", flt(me.px, 0), ",",
+              flt(me.py, 0), ",", flt(me.pz, 0), " (skipped ", dec(ghosts),
+              " mid-teardown and ", dec(dormant), " dormant record(s))");
         return;
     }
     for (int k = 0; k < 3 && cand[k]; ++k) {
@@ -14357,7 +14414,7 @@ uint32_t g_devEnemiesPoll = 0;
 
 void DevEnemyDumpNow(uint32_t now)
 {
-    int alive = 0, dead = 0, stale = 0;
+    int alive = 0, dead = 0, stale = 0, gone = 0;
     int ledgerLive = g_remoteDead.Count(now);
     int killLive = g_killLog.Count();
     int mirrorLive = 0;
@@ -14367,45 +14424,109 @@ void DevEnemyDumpNow(uint32_t now)
     for (int i = 0; i < g_enN; ++i) {
         EnemyRec& r = g_en[i];
         if (!r.haveGuid) continue;
-        bool live = false, gameDead = false, haveHp = false;
+        bool live = false, callable = false, gameDead = false, haveHp = false, inWorld = false;
         float rhp = 0, rmx = 0;
+        int hpFail = 0;
+        uint32_t iflags = 0, oflags = 0;
         char cls[64] = "";
         __try {
             live = ObjectIsLive(r.actor);
             if (live) {
-                FNameToString(ObjNameRaw(ObjClass(r.actor)), cls, sizeof(cls));
-                gameDead = EnemyDead(r.actor);
-                haveHp = EnemyHp(r.actor, &rhp, &rmx);
+                void* a = r.actor;                  // resolves through the weak handle
+                FNameToString(ObjNameRaw(ObjClass(a)), cls, sizeof(cls));
+                gameDead = EnemyDead(a);
+                haveHp = EnemyHpRead(a, &rhp, &rmx, &hpFail);
+                // THE FOURTH CANDIDATE FOR "HP IS UNREADABLE" -- and the measured one.
+                // `ObjectIsLive` says the object table still holds this pointer; it does NOT
+                // say the engine will run a UFunction on it.  `ObjectCallable` adds the
+                // engine's own deny bit (`FUObjectItem::Flags` bit 29) and the object's
+                // RF_BeginDestroyed/RF_FinishDestroyed, and it is the same test every
+                // reflective call in this module already goes through.  A record whose actor
+                // fails it is a copy the engine is tearing down: it has no current HP to
+                // read, and reporting it as ALIVE is what made Session 20's "one shared live
+                // key, hp=?" reproducible.  Both flag words are printed so the cause is a
+                // number in the log rather than an inference from this comment.
+                callable = ObjectCallable(a);
+                iflags = ObjectItemFlagsAt(ObjInternalIndex(a));
+                oflags = *(const uint32_t*)((const uint8_t*)a + kObjFlagsOff);
+                // The third candidate for "HP is unreadable": the record names an actor whose
+                // level is not in this world (streamed out, or an object from a level this
+                // machine never had).  Its HP is not a fact about the running encounter.
+                if (void* w = GWorldPtr()) inWorld = ActorInThisWorld(a, w);
             }
         } __except (EXCEPTION_EXECUTE_HANDLER) {
-            live = false; gameDead = false; haveHp = false; cls[0] = 0;
+            live = false; callable = false; gameDead = false; haveHp = false;
+            cls[0] = 0; hpFail = 0;
         }
+        // `usable` is the answer to "is there an enemy HERE": live AND not on a destruction
+        // path.  Everything below uses it instead of `live`, exactly as the enemy sweep uses
+        // `ObjectIsLive` only to learn that the slot is still filled.
+        const bool usable = live && callable;
         // R146: a record with no live actor that this machine NEVER saw alive has no state
         // to report -- its spawner never activated, or a level unload took it.  Printing
         // it as DEAD made the diff claim a death the lane never broadcast, which is the
         // shape of the FA2FC279 residual.  A death this machine knows by key (its own kill
         // log or the partner's ledger) still wins: that IS a state.
         bool knownDead = g_remoteDead.Has(r.guid, now) || KillLogHas(r.guid);
-        if (!live && !r.seenAlive && !knownDead) { ++stale; continue; }
+        // Session 21: a copy the engine has marked for destruction is GONE, not ALIVE and
+        // not DEAD.  Its slot is filled so `!live` is false, and it was seen alive so it is
+        // not `stale` -- but it is mid-teardown, so it is neither a live enemy to compare
+        // HP with nor a death this machine observed.  Reporting it as either turns GC timing
+        // into a convergence result: ALIVE is what made the shared-HP set unmeasurable, and
+        // DEAD would invent a kill the lane never broadcast.
+        if (!usable && !knownDead) {
+            if (live) { ++gone; } else if (!r.seenAlive) { ++stale; } else { ++gone; }
+            continue;
+        }
+        if (!usable && knownDead) {
+            QDLOG(LOG_INFO, "enemykey ", hex32(r.guid[0]), " DEAD local=",
+                  dec(g_own.Running(r.guid) ? 1 : 0), " src=", dec((int)r.src),
+                  " hp=? why=dead seen=", (r.seenAlive ? "1" : "0"),
+                  " cls=", (cls[0] ? cls : "?"));
+            ++dead;
+            continue;
+        }
         // R137: HP <= 0 counts only for a copy seen alive; a spawner's inactive enemy at
         // HP 0 and an un-converged follower are not corpses.  See qdenemy.h.
-        bool isDead = enemy::EffectivelyDead(live, gameDead, haveHp, rhp, r.seenAlive);
+        bool isDead = enemy::EffectivelyDead(usable, gameDead, haveHp, rhp, r.seenAlive);
         if (!isDead && knownDead) isDead = true;
         // R137: a key with no readable row (or one never seen alive) has UNKNOWN HP, not
         // HP 0.  Printing "?" keeps the shared-HP comparison from failing on a value this
         // machine does not have -- measured in 780 as `host=909 peer=0`, `host=0 peer=240`.
-        bool hpKnown = !isDead && enemy::HpKnown(live, haveHp, r.seenAlive);
-        char hpTxt[32];
-        {
-            char* d = hpTxt;
-            const char* e = hpTxt + sizeof(hpTxt) - 1;
-            d = hpKnown ? ::qd::detail::CatFloat(d, e, rhp, 1)
-                        : ::qd::detail::Cat(d, e, "?");
-            *d = 0;
+        bool hpKnown = !isDead && enemy::HpKnown(usable, haveHp, r.seenAlive, rhp);
+        // Session 21: WHICH fact produced a `?` on a key that is NOT dead.  Only the live
+        // keys are ever compared by a soak, and three different facts print the same marker,
+        // so the marker is never left bare for them.  A DEAD key's `hp=?` is self-evident
+        // (nothing about a corpse is compared), so those lines stay short -- they are the
+        // bulk of the dump and the log is already large.
+        //
+        // Two branches rather than one line with a ternary: the readable case prints a
+        // number through the same `flt()` every other HP line in this file uses, and the
+        // unknown case prints the reason.  `CatFloat` through a local buffer produced
+        // `hp=1.00000000000000000` -- correct value, 17 decimals -- and a dump line that
+        // long, 250 times a sample, is a log nobody reads.
+        if (!isDead && hpKnown) {
+            QDLOG(LOG_INFO, "enemykey ", hex32(r.guid[0]), " ALIVE local=",
+                  dec(g_own.Running(r.guid) ? 1 : 0), " src=", dec((int)r.src),
+                  " hp=", flt(rhp, 1),
+                  (r.mirror ? " mirrored=1" : ""),
+                  " cls=", (cls[0] ? cls : "?"));
+            ++alive;
+            continue;
         }
+        const char* whyTxt = enemy::HpUnknownText(
+            enemy::HpUnknownWhy(usable, haveHp, r.seenAlive, rhp, isDead, hpFail));
         QDLOG(LOG_INFO, "enemykey ", hex32(r.guid[0]), (isDead ? " DEAD" : " ALIVE"),
               " local=", dec(g_own.Running(r.guid) ? 1 : 0), " src=", dec((int)r.src),
-              " hp=", hpTxt,
+              " hp=? why=", whyTxt,
+              " seen=", (r.seenAlive ? "1" : "0"),
+              // The three candidates for "HP is unreadable", all three on the line:
+              //   inworld=0  the actor's level is not in this world
+              //   iflags     the object item's flags (bit 29 = the engine's call-deny)
+              //   oflags     the object's own RF_BeginDestroyed/RF_FinishDestroyed
+              // so the next session reads the cause instead of re-deriving it.
+              " inworld=", (inWorld ? "1" : "0"),
+              " iflags=", hex32(iflags), " oflags=", hex32(oflags),
               (r.mirror ? " mirrored=1" : ""),
               " cls=", (cls[0] ? cls : "?"));
         if (isDead) ++dead; else ++alive;
@@ -14432,7 +14553,7 @@ void DevEnemyDumpNow(uint32_t now)
     }
     QDLOG(LOG_INFO, "enemykey n=", dec(alive + dead), " alive=", dec(alive), " dead=",
           dec(dead), " killlog=", dec(killLive), " ledger=", dec(ledgerLive),
-          " mirrors=", dec(g_mirrorN), " stale=", dec(stale));
+          " mirrors=", dec(g_mirrorN), " stale=", dec(stale), " gone=", dec(gone));
     // The mirror lane's own state, so a run can tell "the peer constructed nothing" from
     // "the peer constructed it and lost it again".
     int pendingN = 0;
