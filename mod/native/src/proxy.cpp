@@ -14383,7 +14383,7 @@ uint32_t g_devEnemiesPoll = 0;
 
 void DevEnemyDumpNow(uint32_t now)
 {
-    int alive = 0, dead = 0, stale = 0;
+    int alive = 0, dead = 0, stale = 0, gone = 0;
     int ledgerLive = g_remoteDead.Count(now);
     int killLive = g_killLog.Count();
     int mirrorLive = 0;
@@ -14393,9 +14393,10 @@ void DevEnemyDumpNow(uint32_t now)
     for (int i = 0; i < g_enN; ++i) {
         EnemyRec& r = g_en[i];
         if (!r.haveGuid) continue;
-        bool live = false, gameDead = false, haveHp = false, inWorld = false;
+        bool live = false, callable = false, gameDead = false, haveHp = false, inWorld = false;
         float rhp = 0, rmx = 0;
         int hpFail = 0;
+        uint32_t iflags = 0, oflags = 0;
         char cls[64] = "";
         __try {
             live = ObjectIsLive(r.actor);
@@ -14404,29 +14405,64 @@ void DevEnemyDumpNow(uint32_t now)
                 FNameToString(ObjNameRaw(ObjClass(a)), cls, sizeof(cls));
                 gameDead = EnemyDead(a);
                 haveHp = EnemyHpRead(a, &rhp, &rmx, &hpFail);
+                // THE FOURTH CANDIDATE FOR "HP IS UNREADABLE" -- and the measured one.
+                // `ObjectIsLive` says the object table still holds this pointer; it does NOT
+                // say the engine will run a UFunction on it.  `ObjectCallable` adds the
+                // engine's own deny bit (`FUObjectItem::Flags` bit 29) and the object's
+                // RF_BeginDestroyed/RF_FinishDestroyed, and it is the same test every
+                // reflective call in this module already goes through.  A record whose actor
+                // fails it is a copy the engine is tearing down: it has no current HP to
+                // read, and reporting it as ALIVE is what made Session 20's "one shared live
+                // key, hp=?" reproducible.  Both flag words are printed so the cause is a
+                // number in the log rather than an inference from this comment.
+                callable = ObjectCallable(a);
+                iflags = ObjectItemFlagsAt(ObjInternalIndex(a));
+                oflags = *(const uint32_t*)((const uint8_t*)a + kObjFlagsOff);
                 // The third candidate for "HP is unreadable": the record names an actor whose
                 // level is not in this world (streamed out, or an object from a level this
                 // machine never had).  Its HP is not a fact about the running encounter.
                 if (void* w = GWorldPtr()) inWorld = ActorInThisWorld(a, w);
             }
         } __except (EXCEPTION_EXECUTE_HANDLER) {
-            live = false; gameDead = false; haveHp = false; cls[0] = 0; hpFail = 0;
+            live = false; callable = false; gameDead = false; haveHp = false;
+            cls[0] = 0; hpFail = 0;
         }
+        // `usable` is the answer to "is there an enemy HERE": live AND not on a destruction
+        // path.  Everything below uses it instead of `live`, exactly as the enemy sweep uses
+        // `ObjectIsLive` only to learn that the slot is still filled.
+        const bool usable = live && callable;
         // R146: a record with no live actor that this machine NEVER saw alive has no state
         // to report -- its spawner never activated, or a level unload took it.  Printing
         // it as DEAD made the diff claim a death the lane never broadcast, which is the
         // shape of the FA2FC279 residual.  A death this machine knows by key (its own kill
         // log or the partner's ledger) still wins: that IS a state.
         bool knownDead = g_remoteDead.Has(r.guid, now) || KillLogHas(r.guid);
-        if (!live && !r.seenAlive && !knownDead) { ++stale; continue; }
+        // Session 21: a copy the engine has marked for destruction is GONE, not ALIVE and
+        // not DEAD.  Its slot is filled so `!live` is false, and it was seen alive so it is
+        // not `stale` -- but it is mid-teardown, so it is neither a live enemy to compare
+        // HP with nor a death this machine observed.  Reporting it as either turns GC timing
+        // into a convergence result: ALIVE is what made the shared-HP set unmeasurable, and
+        // DEAD would invent a kill the lane never broadcast.
+        if (!usable && !knownDead) {
+            if (live) { ++gone; } else if (!r.seenAlive) { ++stale; } else { ++gone; }
+            continue;
+        }
+        if (!usable && knownDead) {
+            QDLOG(LOG_INFO, "enemykey ", hex32(r.guid[0]), " DEAD local=",
+                  dec(g_own.Running(r.guid) ? 1 : 0), " src=", dec((int)r.src),
+                  " hp=? why=dead seen=", (r.seenAlive ? "1" : "0"),
+                  " cls=", (cls[0] ? cls : "?"));
+            ++dead;
+            continue;
+        }
         // R137: HP <= 0 counts only for a copy seen alive; a spawner's inactive enemy at
         // HP 0 and an un-converged follower are not corpses.  See qdenemy.h.
-        bool isDead = enemy::EffectivelyDead(live, gameDead, haveHp, rhp, r.seenAlive);
+        bool isDead = enemy::EffectivelyDead(usable, gameDead, haveHp, rhp, r.seenAlive);
         if (!isDead && knownDead) isDead = true;
         // R137: a key with no readable row (or one never seen alive) has UNKNOWN HP, not
         // HP 0.  Printing "?" keeps the shared-HP comparison from failing on a value this
         // machine does not have -- measured in 780 as `host=909 peer=0`, `host=0 peer=240`.
-        bool hpKnown = !isDead && enemy::HpKnown(live, haveHp, r.seenAlive, rhp);
+        bool hpKnown = !isDead && enemy::HpKnown(usable, haveHp, r.seenAlive, rhp);
         char hpTxt[32];
         {
             char* d = hpTxt;
@@ -14445,7 +14481,7 @@ void DevEnemyDumpNow(uint32_t now)
         if (!isDead && !hpKnown) {
             showWhy = true;
             whyTxt = enemy::HpUnknownText(
-                enemy::HpUnknownWhy(live, haveHp, r.seenAlive, rhp, isDead, hpFail));
+                enemy::HpUnknownWhy(usable, haveHp, r.seenAlive, rhp, isDead, hpFail));
         }
         QDLOG(LOG_INFO, "enemykey ", hex32(r.guid[0]), (isDead ? " DEAD" : " ALIVE"),
               " local=", dec(g_own.Running(r.guid) ? 1 : 0), " src=", dec((int)r.src),
@@ -14453,6 +14489,8 @@ void DevEnemyDumpNow(uint32_t now)
               (showWhy ? " why=" : ""), (showWhy ? whyTxt : ""),
               (showWhy ? " seen=" : ""), (showWhy ? (r.seenAlive ? "1" : "0") : ""),
               (showWhy ? " inworld=" : ""), (showWhy ? (inWorld ? "1" : "0") : ""),
+              (showWhy ? " iflags=" : ""), hex32(showWhy ? iflags : 0u),
+              (showWhy ? " oflags=" : ""), hex32(showWhy ? oflags : 0u),
               (r.mirror ? " mirrored=1" : ""),
               " cls=", (cls[0] ? cls : "?"));
         if (isDead) ++dead; else ++alive;
@@ -14479,7 +14517,7 @@ void DevEnemyDumpNow(uint32_t now)
     }
     QDLOG(LOG_INFO, "enemykey n=", dec(alive + dead), " alive=", dec(alive), " dead=",
           dec(dead), " killlog=", dec(killLive), " ledger=", dec(ledgerLive),
-          " mirrors=", dec(g_mirrorN), " stale=", dec(stale));
+          " mirrors=", dec(g_mirrorN), " stale=", dec(stale), " gone=", dec(gone));
     // The mirror lane's own state, so a run can tell "the peer constructed nothing" from
     // "the peer constructed it and lost it again".
     int pendingN = 0;

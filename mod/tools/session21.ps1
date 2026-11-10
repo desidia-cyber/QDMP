@@ -25,6 +25,7 @@
 #
 # PHASES (one .ps1 invocation per phase; a launched game does not survive the command that
 # started it -- R14)
+#   probe     how long each machine's file-poll levers take (the number the rest waits on).
 #   lootdrop  a drop both machines hold, taken on one, hidden on the other, and refused a
 #             second time -- then the same the other way round.
 #   soak30    the 1800 s play-set run described above.
@@ -41,7 +42,7 @@
 # NEVER counted as equal.
 [CmdletBinding()]
 param(
-    [ValidateSet('lootdrop', 'soak30', 'repro', 'all')]
+    [ValidateSet('probe', 'lootdrop', 'soak30', 'repro', 'all')]
     [string]$Phase = 'all',
     [int]$BootSeconds = 300,
     [int]$SoakSeconds = 1800,
@@ -439,15 +440,33 @@ function Get-WorldState([int]$i) {
 # seen=<0|1> inworld=<0|1>] [mirrored=1] cls=<class>`.  Only the dump prints `enemykey`,
 # so a mark-to-now window is exactly one dump -- which is why the soak can now sample it
 # repeatedly instead of reading one end-of-run answer.
-function Invoke-EnemyDump([int]$i, [string]$tag) {
+function Invoke-EnemyDump([int]$i, [string]$tag, [int]$timeoutSec = 60) {
     $mark = Get-Mark $i
+    $t0 = Get-Date
     Set-Control $i 'qd.enemies' ('s21-' + $tag + '-' + (Get-Date -Format 'HHmmssfff'))
-    Start-Sleep -Seconds 3
-    $rows = @(Get-Since $i $mark | Where-Object { $_ -match 'enemykey [0-9A-Fa-f]{8} (ALIVE|DEAD)' })
+    # WAIT FOR THE LINES, NOT A FIXED SLEEP.  Measured this session (the `probe` phase): a
+    # control-file lever answers in 0.5-1.1 s on both machines ONCE WARM, but the FIRST
+    # enemy dump of a boot cost 33.1 s -- the per-class UFunction resolution that makes
+    # `GetHP` readable is paid once, per class, by whichever dump happens first.  A fixed
+    # 3 s read therefore lost the peer's first dump and the loot phase reported "no enemy
+    # key alive on both machines" about two machines that each had hundreds.
+    $deadline = (Get-Date).AddSeconds($timeoutSec)
+    $rows = @()
+    while ((Get-Date) -lt $deadline) {
+        Start-Sleep -Milliseconds 700
+        $rows = @(Get-Since $i $mark | Where-Object { $_ -match 'enemykey [0-9A-Fa-f]{8} (ALIVE|DEAD|GONE)' })
+        if ($rows.Count -gt 0) { break }
+    }
+    $elapsed = [math]::Round(((Get-Date) - $t0).TotalSeconds, 1)
+    if ($rows.Count -eq 0) {
+        Note ("    [{0}] WARN: no enemykey dump within {1}s of the trigger '{2}'" -f $i, $timeoutSec, $tag)
+    } elseif ($elapsed -gt 5) {
+        Note ("    [{0}] (the dump for '{1}' took {2}s -- first-use cost)" -f $i, $tag, $elapsed)
+    }
     $out = @{}
     foreach ($ln in $rows) {
         $s = [string]$ln
-        if ($s -notmatch 'enemykey ([0-9A-Fa-f]{8}) (ALIVE|DEAD)') { continue }
+        if ($s -notmatch 'enemykey ([0-9A-Fa-f]{8}) (ALIVE|DEAD|GONE)') { continue }
         $k = $Matches[1].ToUpperInvariant(); $st = $Matches[2]
         $hp = $null
         if ($s -match '\shp=([-0-9.]+)') { $hp = [double]$Matches[1] }
@@ -470,10 +489,13 @@ function Invoke-EnemyDump([int]$i, [string]$tag) {
 function Compare-SharedHp([hashtable]$dh, [hashtable]$dp, [string]$tag) {
     $out = [pscustomobject]@{
         Tag = $tag; AliveBoth = 0; Compared = 0; Unequal = 0
-        Unreadable = 0; Whys = @{}; Mismatches = @()
+        Unreadable = 0; Ghosts = 0; Whys = @{}; Mismatches = @()
     }
     foreach ($k in @($dh.Keys)) {
         if (-not $dp.ContainsKey($k)) { continue }
+        # GONE (the engine has marked the copy for destruction) is neither alive nor dead:
+        # it has no HP to compare and it is not a death, so it is counted and skipped.
+        if ($dh[$k].State -eq 'GONE' -or $dp[$k].State -eq 'GONE') { $out.Ghosts++; continue }
         if ($dh[$k].State -ne 'ALIVE' -or $dp[$k].State -ne 'ALIVE') { continue }
         $out.AliveBoth++
         $a = $dh[$k].Hp; $b = $dp[$k].Hp
@@ -521,12 +543,18 @@ function Get-DropKeys([int]$i, [int]$mark) {
 # `rig: drop <key> resolved to a live actor` versus `... is already gone on this machine`
 # versus `rig: no live loot-ledger drop matches`.  Standing 400 cm away so the probe cannot
 # be mistaken for a pickup.
-function Test-DropHeld([int]$i, [string]$hash, [int]$index) {
+function Test-DropHeld([int]$i, [string]$hash, [int]$index, [int]$timeoutSec = 20) {
     $mark = Get-Mark $i
     Invoke-GoDrop $i $hash $index 400
-    Start-Sleep -Seconds 3
-    $held = @(Get-Since $i $mark | Where-Object { $_ -match ('rig: drop ' + $hash + '#' + $index + ' resolved to a live actor') })
-    $gone = @(Get-Since $i $mark | Where-Object { $_ -match ('rig: drop ' + $hash + '#' + $index + ' is already gone') })
+    $held = @(); $gone = @()
+    $deadline = (Get-Date).AddSeconds($timeoutSec)
+    while ((Get-Date) -lt $deadline) {
+        Start-Sleep -Milliseconds 700
+        $held = @(Get-Since $i $mark | Where-Object { $_ -match ('rig: drop ' + $hash + '#' + $index + ' resolved to a live actor') })
+        if ($held.Count -gt 0) { break }
+        $gone = @(Get-Since $i $mark | Where-Object { $_ -match ('rig: drop ' + $hash + '#' + $index + ' is already gone') })
+        if ($gone.Count -gt 0) { break }
+    }
     return [pscustomobject]@{
         Held = ($held.Count -gt 0); Gone = ($gone.Count -gt 0)
         Line = $(if ($held.Count) { ([string]$held[-1]).Trim() } elseif ($gone.Count) { ([string]$gone[-1]).Trim() } else { '' })
@@ -536,8 +564,15 @@ function Test-DropHeld([int]$i, [string]$hash, [int]$index) {
 # Stand ON the drop (a pickup is an overlap, not a verb) and then run the game's own
 # Interact input event on that exact actor as the fallback the interaction lever documents.
 function Invoke-TakeDrop([int]$i, [string]$hash, [int]$index) {
+    $mark = Get-Mark $i
     Invoke-GoDrop $i $hash $index 60
-    Start-Sleep -Seconds 4
+    # Stand first, press second: the pickup is an overlap, so the pawn has to ARRIVE before
+    # the Interact event is worth sending.
+    $deadline = (Get-Date).AddSeconds(20)
+    while ((Get-Date) -lt $deadline) {
+        Start-Sleep -Milliseconds 700
+        if (@(Get-Since $i $mark | Where-Object { $_ -match 'dev teleport near ' }).Count -gt 0) { break }
+    }
     Invoke-PressDrop $i $hash $index
     Say ("  act[$i] -> near:drop:{0}:{1} (stood 60 cm away, then the real Interact event)" -f $hash, $index)
 }
@@ -566,17 +601,42 @@ function Find-SharedDrop([int]$H, [int]$P, $skip, [int]$mark, [int]$maxProbe = 6
 # Roll more drops by killing: the drop is the dying enemy's own Blueprint's, so both
 # machines roll it locally and hold a copy -- which is exactly the precondition hiding
 # needs.
+#
+# WHY `qd.enemykill` AND NOT `qd.hit`.  Measured (Session 14, recorded in the lever's own
+# comment): 123 `qd.hit` swings over 120 s in the hub produced `ran=0 hp 0.0 -> 0.0` every
+# time -- most hub enemy classes have no `TryApplyDamage` this module can build a frame
+# for -- so there was no death and therefore no drop.  The first loot attempt of this
+# session reproduced it exactly:
+#
+#     rig: hit enemy guid=A8D5C9E1 amount=400 ran=0 hp 0.0 -> 0.0 (local-run)
+#
+# `qd.enemykill <8hex>` calls the enemy's OWN `Kill`/`Die`, which runs the game's death
+# path, and the drop roll is part of that path.  It is applied on BOTH machines so each
+# copy dies through its own Blueprint and rolls its own local drop under the same key --
+# which is what the hiding half needs to have anything to hide.
 function Invoke-KillRounds([int]$H, [int]$P, [int]$rounds, [int]$mark) {
     for ($r = 1; $r -le $rounds; $r++) {
-        Set-Control $H 'qd.hit' '400'
-        Set-Control $P 'qd.hit' '400'
-        Note ("  kill round {0}/{1}: hitting the nearest enemy on both machines" -f $r, $rounds)
+        $dh = Invoke-EnemyDump $H ('kill{0}-h' -f $r)
+        $dp = Invoke-EnemyDump $P ('kill{0}-p' -f $r)
+        $cands = @()
+        foreach ($k in @($dh.Keys)) {
+            if ($dh[$k].State -ne 'ALIVE') { continue }
+            if (-not $dp.ContainsKey($k)) { continue }
+            if ($dp[$k].State -ne 'ALIVE') { continue }
+            $cands += $k
+        }
+        if ($cands.Count -eq 0) {
+            Note ("    round {0}: no enemy key is ALIVE on BOTH machines, so there is nothing to kill by key" -f $r)
+            return -1
+        }
+        Note ("    round {0}: {1} key(s) alive on both machines: {2}" -f $r, $cands.Count, (($cands | Select-Object -First 8) -join ' '))
+        foreach ($k in @($cands | Select-Object -First 3)) {
+            Set-Control $H 'qd.enemykill' $k
+            Set-Control $P 'qd.enemykill' $k
+            Note ("      enemykill {0} on both machines (the game's own Kill, so the death path and the drop roll both run)" -f $k)
+            Start-Sleep -Seconds 6
+        }
         Start-Sleep -Seconds 5
-        Set-Control $H 'qd.hit' $null
-        Set-Control $P 'qd.hit' $null
-        Invoke-Go $H 'enemy' 200
-        Invoke-Go $P 'enemy' 200
-        Start-Sleep -Seconds 4
         $all = @(Get-DropKeys $H $mark) + @(Get-DropKeys $P $mark)
         $uniq = @{}
         foreach ($k in $all) { $uniq["$($k.Hash)#$($k.Index)"] = $true }
@@ -586,7 +646,9 @@ function Invoke-KillRounds([int]$H, [int]$P, [int]$rounds, [int]$mark) {
               @(Get-Since $P $mark | Where-Object { $_ -match 'loot: drop ' }).Count,
               @(Get-Since $H $mark | Where-Object { $_ -match 'loot: merged ' }).Count,
               @(Get-Since $P $mark | Where-Object { $_ -match 'loot: merged ' }).Count)
+        if ($uniq.Count -gt 0) { return $uniq.Count }
     }
+    return 0
 }
 
 function Invoke-LootDirection([int]$H, [int]$P, [int]$taker, [int]$other, [string]$step, [string]$dir, $skip, [int]$mark) {
@@ -650,14 +712,14 @@ function Invoke-LootDirection([int]$H, [int]$P, [int]$taker, [int]$other, [strin
 function Invoke-LootDrop([int]$H, [int]$P) {
     Step 'R129 -- loot hiding, both directions' `
          'A drop both machines hold; one takes it; the other must hide its copy and refuse a second take.'
-    # Anchor the pair on enemies and kill until drops exist.  The drop is rolled by the
-    # dying enemy's own Blueprint, so both machines roll it locally and hold a copy --
-    # which is exactly the precondition hiding needs.
+    # Anchor the pair on enemies and kill by KEY until drops exist.  `qd.hit` cannot do
+    # this in the hub (see Invoke-KillRounds), so the lever used here is the enemy's own
+    # Kill on both machines.
     $mark = Get-Mark $H
     Invoke-Go $H 'enemy' 200
     Invoke-Go $P 'enemy' 200
     Start-Sleep -Seconds 8
-    Invoke-KillRounds $H $P 3 $mark
+    $rolled = Invoke-KillRounds $H $P $LootRounds $mark
     $all = @(Get-DropKeys $H $mark) + @(Get-DropKeys $P $mark)
     $uniq = @{}
     foreach ($k in $all) { $uniq["$($k.Hash)#$($k.Index)"] = $true }
@@ -671,6 +733,49 @@ function Invoke-LootDrop([int]$H, [int]$P) {
     $id2 = Invoke-LootDirection $H $P $P $H 'r129-peer' 'direction 2 (PEER takes)' $used $mark
     if ($id2) { $used += $id2 }
     Note ("  drops exercised: {0}" -f ($used -join ' '))
+}
+
+# ===========================================================================
+# PROBE -- how long each machine's file-poll levers actually take
+# ===========================================================================
+# Measured the hard way this session: a 3 s read after writing `qd.enemies` found the
+# host's dump and nothing on the peer, and a `qd.tp` written at 11:58:49 was applied at
+# 11:59:05.  Every lever in the harness is a file whose CONTENT the game polls, so the
+# latency is a property of the run, not of the scenario -- and a harness that assumes
+# 3 s turns a slow machine into a failed claim.  This phase measures it, for both kinds
+# of lever, and prints the number the rest of the harness waits on.
+function Invoke-Probe([int]$H, [int]$P) {
+    Step 'PROBE -- file-lever latency on each machine' `
+         'qd.enemies (a dump) and qd.tp (a teleport) are both control files the game polls; the 3 s assumption is what lost the peer''s dump.'
+    foreach ($i in @($H, $P)) {
+        for ($k = 1; $k -le 3; $k++) {
+            $mark = Get-Mark $i
+            $t0 = Get-Date
+            Set-Control $i 'qd.enemies' ('probe-{0}-{1}' -f $k, (Get-Date -Format 'HHmmssfff'))
+            $secs = -1
+            $deadline = (Get-Date).AddSeconds(40)
+            while ((Get-Date) -lt $deadline) {
+                Start-Sleep -Milliseconds 400
+                $hit = @(Get-Since $i $mark | Where-Object { $_ -match 'enemykey [0-9A-Fa-f]{8} (ALIVE|DEAD|GONE)' })
+                if ($hit.Count -gt 0) { $secs = [math]::Round(((Get-Date) - $t0).TotalSeconds, 1); break }
+            }
+            Note ("  [{0}] dump {1}: answered after {2}s{3}" -f $i, $k, $secs, $(if ($secs -lt 0) { ' (NEVER within 40 s)' } else { '' }))
+            Verdict 'probe' $i ($secs -ge 0 -and $secs -le 20) 'the enemy dump answers within 20 s of the trigger' ("dump $k after ${secs}s")
+
+            $mark2 = Get-Mark $i
+            $t1 = Get-Date
+            Invoke-Go $i 'enemy' 200
+            $secs2 = -1
+            $deadline = (Get-Date).AddSeconds(40)
+            while ((Get-Date) -lt $deadline) {
+                Start-Sleep -Milliseconds 400
+                $hit = @(Get-Since $i $mark2 | Where-Object { $_ -match 'dev teleport near |dev teleport file ->' })
+                if ($hit.Count -gt 0) { $secs2 = [math]::Round(((Get-Date) - $t1).TotalSeconds, 1); break }
+            }
+            Note ("  [{0}] teleport {1}: answered after {2}s{3}" -f $i, $k, $secs2, $(if ($secs2 -lt 0) { ' (NEVER within 40 s)' } else { '' }))
+            Verdict 'probe' $i ($secs2 -ge 0 -and $secs2 -le 20) 'the teleport lever answers within 20 s of the write' ("teleport $k after ${secs2}s")
+        }
+    }
 }
 
 # ===========================================================================
@@ -704,9 +809,9 @@ function Invoke-SoakSegment([int]$H, [int]$P, [string]$label, [int]$seconds, [st
             $dp = Invoke-EnemyDump $P ($label + '-p-' + $n)
             $cmp = Compare-SharedHp $dh $dp ("{0} t+{1}s" -f $label, [int]((Get-Date) - $start).TotalSeconds)
             $script:hpSamples.Add($cmp) | Out-Null
-            Note ("    hp sample t+{0,4}s: shared-alive={1} compared={2} unequal={3} unreadable={4} why={5}" -f
+            Note ("    hp sample t+{0,4}s: shared-alive={1} compared={2} unequal={3} unreadable={4} ghosts={5} why={6}" -f
                   $cmp.Tag, [int]((Get-Date) - $start).TotalSeconds, $cmp.AliveBoth, $cmp.Compared,
-                  $cmp.Unequal, $cmp.Unreadable, (Format-Whys $cmp.Whys))
+                  $cmp.Unequal, $cmp.Unreadable, $cmp.Ghosts, (Format-Whys $cmp.Whys))
             foreach ($mm in ($cmp.Mismatches | Select-Object -First 4)) { Note ("      HP MISMATCH " + $mm) }
         }
         Start-Sleep -Seconds 3
@@ -806,22 +911,22 @@ function Invoke-EndChecks([int]$H, [int]$P, [string]$step, [int]$m0) {
     Verdict $step $H ($onlyH.Count -eq 0 -and $onlyP.Count -eq 0) 'the per-GUID kill sets DIFF TO ZERO' ("host-dead=$($deadH.Count) peer-dead=$($deadP.Count) diff=$($onlyH.Count + $onlyP.Count)")
 
     $end = Compare-SharedHp $dh $dp 'end'
-    Note ("  shared live keys at the end: {0}; comparable={1} unequal={2} unreadable={3} why={4}" -f
-          $end.AliveBoth, $end.Compared, $end.Unequal, $end.Unreadable, (Format-Whys $end.Whys))
+    Note ("  shared live keys at the end: {0}; comparable={1} unequal={2} unreadable={3} ghosts={4} why={5}" -f
+          $end.AliveBoth, $end.Compared, $end.Unequal, $end.Unreadable, $end.Ghosts, (Format-Whys $end.Whys))
     foreach ($mm in ($end.Mismatches | Select-Object -First 8)) { Note ("    HP MISMATCH " + $mm) }
     $script:hpSamples.Add($end) | Out-Null
 
-    $cmpTotal = 0; $uneqTotal = 0; $unreadTotal = 0; $aliveTotal = 0
+    $cmpTotal = 0; $uneqTotal = 0; $unreadTotal = 0; $aliveTotal = 0; $ghostTotal = 0
     $whys = @{}
     foreach ($s in $script:hpSamples) {
         $cmpTotal += $s.Compared; $uneqTotal += $s.Unequal
-        $unreadTotal += $s.Unreadable; $aliveTotal += $s.AliveBoth
+        $unreadTotal += $s.Unreadable; $aliveTotal += $s.AliveBoth; $ghostTotal += $s.Ghosts
         foreach ($k in @($s.Whys.Keys)) {
             if ($whys.ContainsKey($k)) { $whys[$k] += $s.Whys[$k] } else { $whys[$k] = $s.Whys[$k] }
         }
     }
-    Note ("  HP ACROSS THE RUN: {0} sample(s); shared-alive {1}; COMPARED {2}; unequal {3}; unreadable {4}; why {5}" -f
-          $script:hpSamples.Count, $aliveTotal, $cmpTotal, $uneqTotal, $unreadTotal, (Format-Whys $whys))
+    Note ("  HP ACROSS THE RUN: {0} sample(s); shared-alive {1}; COMPARED {2}; unequal {3}; unreadable {4}; ghosts {6}; why {5}" -f
+          $script:hpSamples.Count, $aliveTotal, $cmpTotal, $uneqTotal, $unreadTotal, (Format-Whys $whys), $ghostTotal)
     Verdict $step $P ($cmpTotal -gt 0) 'shared HP was actually MEASURED during the run' ("compared=$cmpTotal of $aliveTotal shared-alive observations, $unreadTotal unreadable (never counted as equal)")
     Verdict $step $P ($cmpTotal -gt 0 -and $uneqTotal -eq 0) 'the HP of shared enemies is EQUAL wherever it was readable' ("compared=$cmpTotal unequal=$uneqTotal")
 
@@ -966,7 +1071,11 @@ Start-Boot $Phase
 $H = $script:H
 $P = $script:P
 
-if ($Phase -eq 'lootdrop' -or $Phase -eq 'all') {
+if ($Phase -eq 'probe' -or $Phase -eq 'all') {
+    Invoke-Probe $H $P
+}
+
+if (\$Phase -eq 'lootdrop' -or \$Phase -eq 'all') {
     Invoke-LootDrop $H $P
 }
 
