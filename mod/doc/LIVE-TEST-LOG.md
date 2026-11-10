@@ -4297,7 +4297,7 @@ nearest-live answer only when there is not, so a caller can still look at a dyin
 
 ### The soak, measured ? and where it fell short
 
-One pair of processes, the documented play set, `13:37:24` Å® `14:16:30` (39 minutes of wall
+One pair of processes, the documented play set, `13:37:24` ÔøΩÔøΩ `14:16:30` (39 minutes of wall
 clock).  Segments are Hub / 780 / 770 / hard-out+hard-back / hub-final, with the per-key
 dump sampled through each.
 
@@ -5352,4 +5352,11 @@ anything presses it.
   the rebuild rather than the world.
 - **`WORLD DIVERGENCE` counts transient lines during a hard travel**; the harness's `== 0` check
   should be "0 outside a transition".
+- **One loot phase ended with both processes gone at the same second** (20:58:16), each log
+  stopping mid-line, with **0 FAULT lines, 0 ERR lines and no crash folder on either
+  machine** - so neither crashed in a way this harness can see. It did not recur: the soak
+  that followed ran 43 minutes in the same shape and both processes were alive at the end.
+  Recorded because an exit that leaves no trace is worse than a crash that does; the
+  evidence that would settle it (the UE engine log) is not being captured - -AbsLog names
+  out/<phase>-inst<N>-ue.log and no such file is ever written.
 - **Boss phases, hit reactions, the shop door, peer vitals** - unchanged from Sessions 20-23.
