@@ -471,13 +471,31 @@ Two assumptions in that paragraph are unproven and each is one probe:
   (`SpawnerManagesActor` falls back to `true` when `CurrentManagedEnemy` is unreadable), so a
   cross-machine pair can still be two different bodies; it is now counted as `mx-differ`, not as
   unequal HP.
-- **A second engine crash, found by the Session 23 soak (R155, OPEN).** After two hard round
-  trips and 1605 s of body, the peer died in ordinary play with a *different* fault from R152:
-  `NULL_CLASS_PTR_READ` at RVA `0xE420D5`, reading `0x130` from `rax = 0` - a UFunction
-  dispatched with a null `this`. The module is in that stack twice, both times as the
-  `ProcessEvent` forward called from game code. R152's fix holds (eight consecutive hard loads
-  survive); this is a separate, unexplained fault in the same dispatch family, and it is why the
-  Session 23 soak reports a dead peer at 1605 s of body rather than 1800.
+- **A second engine crash, found by the Session 23 soak and named in Session 24 (R155, the
+  module's half CLOSED).** After two hard round trips and 1605 s of body the peer died in
+  ordinary play: `NULL_CLASS_PTR_READ` at RVA `0xE420D5`, `mov rax,[rsi+0x130]` with `rsi = 0`,
+  inside `FUN_00E41B90` - the implementation of a Blueprint movement/steering function that
+  reads `RootComponent` (+0x130) of `this` and of its **third parameter, an actor**, without
+  testing that parameter. The call arrives through the generated exec thunk `FUN_00E54570` and
+  vtable slot `0x890`, from `UObject::ProcessEvent`, from the module's pass-through forward, from
+  game code. So the null target is the game's to pass; the mod's contribution is what made the
+  graph run against nothing:
+  the peer held **one live enemy key with two records whose class was `WidgetTree` and
+  `SaveHelper_C`** (`enemykey AD410C56 ... cls=WidgetTree`, then `cls=SaveHelper_C` 0.2 s
+  later). Nothing is an actor there: the object-table **slot had been reused**, and `weak::Ref`
+  cannot see a reuse that happens before a capture. The scan then read a "transform" out of the
+  WidgetTree, got `(0, -9.223372e18, 0)`, and `dev teleport near 'enemy'` **wrote it into the
+  player pawn** - six seconds before the fault.
+  Three fixes: a record now carries the class it was created for and `EnemyActor()` refuses and
+  retires a record whose slot no longer holds it (sweep purge, resolver, scan, guid teleport,
+  dump, `peers=`); `motion::SanePos()` makes `ReadActorXform` reject, and
+  `SetActorXform`/`SetActorXformSweep`/`SweepPawnTo` refuse to write, anything that is not a
+  finite position inside `|1e7|` cm; and `HK_ProcessEvent` refuses a dispatch on a null object
+  and names the function. **Measured: two full `loot` phases on the fixed build, 0 FAULT lines,
+  0 `ERR` lines, no dump, and the class guard never misfired.** The game's own missing null
+  check is untouched - any graph that passes a null actor will still fault there - so this is
+  closed as "the module no longer manufactures the state", not as "that instruction is safe".
+  See `LIVE-TEST-LOG.md` Session 24.
 
 ## 4. Not synced, lower stakes
 
@@ -521,6 +539,22 @@ Two assumptions in that paragraph are unproven and each is one probe:
   mechanisms Session 22 listed. The next probe is the content itself: read the drop class'
   collision/overlap component and whether its pickup body hangs off `ReceiveActorBeginOverlap`
   at all, and drive REAL movement (the input-injection rig) rather than any position write.
+  **Session 24 found two more, and the second is the one no earlier session could see.** The
+  pickup answers the Interact action *itself* - `ItemPickup_Base_C` declares
+  `InpActEvt_Interact_K2Node_InputActionEvent`, with `PickupItemAnim__AllowInput__EventFunc` and
+  the `DoItemPickupPause`/`EndItemPickupPause` pair - so the act lever had been pressing the
+  *player's* compiled event, which is a different Blueprint. And the rig's "step onto the drop"
+  leg never moved the pawn at all: `SweepPawnTo` from a point the capsule was just teleported to
+  returns no movement when the start already penetrates geometry, so every `:on` leg since R153
+  stood 3 m away (`take: pawn now 299 cm from the drop`, five stages running) and then reported
+  that nothing consumed the drop. The new `qd.take` lever teleports onto the drop, stands at 0
+  cm, and presses, in stages, `Activate`, the pickup's own `InpActEvt_Interact`, `Interact`,
+  `ReceiveActorBeginOverlap` and `Pickup` - never a payout. **The tilt is unchanged: all five
+  run and the drop stays**, and the reason is now a value rather than a mystery:
+  the pickup's own **`Acquired`** bool is `1` before any press, on a rolled drop and on one the
+  mod constructed (`take: gate before stage requireActivation=0 activated=0 acquired=1 ...`).
+  Nothing in the module writes that property. Next: read it on the class default object, read
+  the `PickedUp` delegate, and ask `GetInteractInfo` for every out-parameter.
 - **Shop, journal/bestiary, XP, weapon levels, grimoire ink.** Per-player by nature.
 - **Peer vitals.** The partner's HP and death are not shown; a death shows as the body
   falling. This is also why the damage lane's dead check is receive-side only.

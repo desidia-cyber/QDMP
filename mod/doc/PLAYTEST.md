@@ -376,6 +376,40 @@ The lines that answer most questions, verbatim:
   RVA `0xE420D5`), which this session recorded and did not fix. So: the hard-load crash is
   contained, the long-session crash is still there, and the soak's own numbers are in the
   Session 23 log including the dead process.
+  **Session 24 named that second crash and fixed the module's half.** The faulting instruction
+  is `mov rax,[rsi+0x130]` with `rsi` null, inside a Blueprint movement/steering function that
+  reads `RootComponent` of `this` and of an actor it was handed - and the actor it was handed
+  was null. The mod's own frames in that stack are only the `ProcessEvent` forward and the tick
+  detour, so the graph is the game's; what the mod had done was worse than nothing. One of its
+  enemy records had lost its body - the object-table **slot was reused by a `WidgetTree`** (the
+  peer's own dump printed `cls=WidgetTree`, then `cls=SaveHelper_C` 0.2 s later, under one live
+  enemy key) - and the rig read a "transform" out of that UObject and **wrote it into your
+  player pawn** as a position. Six seconds later the game asked that graph where its target was
+  and the answer was null. A record now carries the class it was created for and is retired the
+  moment its slot holds something else; a transform read that is not finite and inside 100 km is
+  refused, and so is any attempt to write one; and a `ProcessEvent` on a null object is refused
+  and named in the log instead of forwarded. **Measured on the fixed build: two full loot phases,
+  0 fault lines, 0 `ERR` lines, no dump, and the new guard never fired on a healthy record.**
+  The game's own missing null check is not something the mod can repair - if any graph passes a
+  null actor it will still fault there - so what is claimed is that the mod no longer manufactures
+  that state, and the soak below is the measurement.
+  **And the long-session test now passes.** One pair of processes, the documented play set,
+  **1816 s of measured body** (hub 578 s, a `780_SZ_Depths` loot step, `770_SZ_Swamp` 291 s, a
+  leave, hub 255 s, two hard round trips that each landed the pair in the same world, then
+  692 s of hub-final) and 2567 s of wall clock: **both machines alive at the end, zero fault
+  lines, zero `ERR` lines, no crash dump**, two area changes followed on both, **kill sets
+  diff 0** (89 dead keys on each machine, none one-sided), and shared HP measured on **259
+  pairs with 1 unequal** (128 of 128 equal at the end of the run). The one unequal pair
+  (`E6EA2F33...`, host 544 / peer 143.9, hub, 153 s in) is not explained and is not claimed to
+  be anything else. Four `WORLD DIVERGENCE` lines appear, one per hard load, each in the window
+  between one machine loading and the other arriving and each resolved within seconds - a
+  transition, not a desync, and the harness's check for it is too strict.
+  **Picking up a drop still does not work, and the reason is now one flag.** The rig finally
+  stands ON the drop (0 cm) and presses the entry the pickup itself declares
+  (`InpActEvt_Interact_K2Node_InputActionEvent`, alongside `Activate`, `Interact`,
+  `ReceiveActorBeginOverlap` and `Pickup`) - and the drop stays, because the pickup's own
+  `Acquired` bool is already 1 before anything presses it. That is where the next session
+  starts; the details are in the Session 24 log.
 - **An enemy's HP reads `?` when the engine is tearing that copy down — not a sync fault.**
   Session 21 traced it: the mod refuses a reflective call on an object the engine has
   flagged for destruction, and in the hub that was 428 of 569 enemy records.  A `?` in a
@@ -401,7 +435,16 @@ The lines that answer most questions, verbatim:
   that is the open item, not a mistake you made.  Session 23 tried two more ways of
   making the game take one - a real swept move through the pickup volume instead of a
   teleport, and the class' own `ReceiveActorBeginOverlap` event - and both ran and consumed
-  nothing, so the take is still the open half.  **A pickup's HP that reads 140 on one screen and
+  nothing, so the take is still the open half.  **Session 24 found two reasons and neither was
+  the one being looked for.** First, the pickup answers the Interact action *itself*
+  (`ItemPickup_Base_C.InpActEvt_Interact_K2Node_InputActionEvent` is on its own class), so
+  pressing the player's event could never work. Second, and worse: the rig's "step onto the
+  drop" leg **never moved the pawn** - a sweep started from a spot the capsule had just been
+  teleported to returns no movement when the start already penetrates geometry, so every
+  attempt in five sessions stood 3 m away and reported that the drop was not consumed. With the
+  pawn standing on the drop and the pickup's own event being pressed, all five entries run and
+  the drop still stays, because the pickup's `Acquired` bool is already 1 before any press.
+  That is the next thing to look at.  **A pickup's HP that reads 140 on one screen and
   30 on the other is a different bug, and it is fixed**: one machine was holding two bodies for
   one enemy (a constructed copy beside the real one).
 

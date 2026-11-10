@@ -55,6 +55,31 @@ struct MoveOut {
     bool  should_hide;    // no sample for kHideMs
 };
 
+// IS THIS A POSITION THE ENGINE CAN USE?  (Session 24, R155.)
+//
+// MEASURED.  The rig read a "transform" out of an object that was no longer the actor the
+// record named -- the object table slot had been reused by a `WidgetTree` -- got
+// (0, -9.223372e18, 0), and WROTE it into the local player pawn through
+// `K2_SetActorLocationAndRotation`.  Six seconds later the game faulted inside its own
+// Blueprint dispatch (`NULL_CLASS_PTR_READ` at game RVA 0xE420D5, a movement/steering
+// function reading `Target->RootComponent`).  The mod's contribution was two numbers that
+// are not coordinates.
+//
+// The test is finite-and-in-range, deliberately NOT a camera or level-bounds test: a cooked
+// level expresses centimetres, this game's worlds span ~50 km, so anything past 100 km is
+// not a place.  Both halves matter.  A NaN propagates silently through the engine's own
+// vector math and turns every distance into NaN, and a 9e18 poisons navigation, streaming
+// and the AI's steering -- neither is a value to hand the game.
+inline bool SanePos(float x, float y, float z)
+{
+    const float kMax = 1.0e7f;
+    if (!(x == x) || !(y == y) || !(z == z)) return false;    // NaN
+    if (x > kMax || x < -kMax) return false;                  // includes +/-inf
+    if (y > kMax || y < -kMax) return false;
+    if (z > kMax || z < -kMax) return false;
+    return true;
+}
+
 class Interp {
 public:
     static const int      kRing          = 32;
