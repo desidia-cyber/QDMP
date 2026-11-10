@@ -539,6 +539,22 @@ Two assumptions in that paragraph are unproven and each is one probe:
   mechanisms Session 22 listed. The next probe is the content itself: read the drop class'
   collision/overlap component and whether its pickup body hangs off `ReceiveActorBeginOverlap`
   at all, and drive REAL movement (the input-injection rig) rather than any position write.
+  **Session 24 found two more, and the second is the one no earlier session could see.** The
+  pickup answers the Interact action *itself* - `ItemPickup_Base_C` declares
+  `InpActEvt_Interact_K2Node_InputActionEvent`, with `PickupItemAnim__AllowInput__EventFunc` and
+  the `DoItemPickupPause`/`EndItemPickupPause` pair - so the act lever had been pressing the
+  *player's* compiled event, which is a different Blueprint. And the rig's "step onto the drop"
+  leg never moved the pawn at all: `SweepPawnTo` from a point the capsule was just teleported to
+  returns no movement when the start already penetrates geometry, so every `:on` leg since R153
+  stood 3 m away (`take: pawn now 299 cm from the drop`, five stages running) and then reported
+  that nothing consumed the drop. The new `qd.take` lever teleports onto the drop, stands at 0
+  cm, and presses, in stages, `Activate`, the pickup's own `InpActEvt_Interact`, `Interact`,
+  `ReceiveActorBeginOverlap` and `Pickup` - never a payout. **The tilt is unchanged: all five
+  run and the drop stays**, and the reason is now a value rather than a mystery:
+  the pickup's own **`Acquired`** bool is `1` before any press, on a rolled drop and on one the
+  mod constructed (`take: gate before stage requireActivation=0 activated=0 acquired=1 ...`).
+  Nothing in the module writes that property. Next: read it on the class default object, read
+  the `PickedUp` delegate, and ask `GetInteractInfo` for every out-parameter.
 - **Shop, journal/bestiary, XP, weapon levels, grimoire ink.** Per-player by nature.
 - **Peer vitals.** The partner's HP and death are not shown; a death shows as the body
   falling. This is also why the damage lane's dead check is receive-side only.

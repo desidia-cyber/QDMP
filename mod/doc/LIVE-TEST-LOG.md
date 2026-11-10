@@ -5069,3 +5069,287 @@ open item.
   harness compares on it, but the DEAD lines still print only the token (the kill-set diff is
   therefore still keyed on 4 bytes).
 - **Boss phases, hit reactions, the shop door, peer vitals** - unchanged from Sessions 20-22.
+## Session 24 - 2026-11-10 (the null dispatch named, the drop the pickup answers itself)
+
+This branch is `t3/fix-r155-crash-loot-take`, reset to `sync-fix`'s Session 23 merge
+(`e06a6fd`).  Body: `tools/session24.ps1`, one phase per invocation (`hardloop`, `loot`,
+`smoke`, `soak`).  Configuration is the documented PLAY set with `LogLevel=3`; roles are read
+from `session established`: **host=inst1, peer=inst2**.
+
+### R155. THE NULL DISPATCH, NAMED - a reused slot, a garbage transform, a pawn outside the world
+
+Session 23 recorded this as a `NULL_CLASS_PTR_READ` at game RVA `0xE420D5` and called it
+unexplained.  It is now named, and the mod's half of it is fixed and measured.
+
+**The full stack, from the kept dump** (`_test/s23-soak/inst2/.../UE4Minidump.dmp`, process up
+45 min 26 s, opened with cdb and the module's own `.pdb`; the game's frames resolved from
+`.pdata` by `analysis/re/qdlib.py`, because the game ships without symbols):
+
+```
+0    QueensDomain  FUN_00E41B90+0x545        RVA 0xE420D5  mov rax,[rsi+0x130]   <- FAULT, rsi=0
+1    QueensDomain  FUN_00E54570+0x154        RVA 0xE546C4
+2    QueensDomain  FUN_010428E0+0x79         RVA 0x1042959
+3    QueensDomain  FUN_011A7AA0+0x2E2        UObject::ProcessEvent
+4    winmm         HK_ProcessEvent+0x2ad     the module's pass-through forward
+5    QueensDomain  FUN_0265F3CD+0x4E         game code that called ProcessEvent
+6    QueensDomain  FUN_00E51760+0x49
+...
+31   QueensDomain  FEngineLoop::Tick+0x7e0
+32   winmm         HK_Tick+0x32               the tick detour's trampoline
+```
+
+**The instruction is a missing null check in the game, on an argument the game supplied.**
+`rsi` is the function's **third parameter** (`0xE41BC0  mov rsi, r8` at entry) and it is 0.  The
+body reads `[rsi+0x130]` - `AActor::RootComponent` - and then `[root+0x1d0]`, the translation
+inside `ComponentToWorld`; it reads the same pair off `this` (`[rbx+0x130]`), takes a rotator
+from `this->vtable[0x300]`, normalises a direction, tests an interface on `this->[0x258]`, reads
+three state bytes at `this+0x574..0x578` and a vector at `this+0x518`.  So it is a
+movement/steering routine that turns a body toward a **target actor**, and it dereferences that
+target's root component without ever testing the target.  `rax` was 0 at the fault because the
+load never completed.  The call reaches it as a Blueprint function: `FUN_00E54570` is the
+generated exec thunk (it decodes its parameters through the engine's property accessors) and it
+enters the implementation through vtable slot `0x890` of the actor's class - `0xE41B90` is
+exactly what that slot holds in the shipped image.
+
+**Which object had the null at +0x130.**  Not a component of a constructed actor and not a
+pointer held across teardown: the **target actor itself** was null, i.e. the Blueprint graph
+that ran this function passed a null actor to it.  The module's only frames in that stack are
+the ProcessEvent forward and the tick trampoline, so the graph is the game's.  What follows is
+the mod state that made the game run that graph against nothing.
+
+**The mod's contribution, from the peer's own log.**  At 19:58:30, 33 s before the fault, one
+*live enemy key* answered with two records whose class was **not an actor at all**:
+
+```
+19:58:30.450 enemykey AD410C56 ALIVE local=1 src=1 hp=? why=nofn seen=0 inworld=0 oflags=00800048 cls=WidgetTree
+19:58:30.641 enemykey AD410C56 ALIVE local=1 src=1 hp=? why=nofn seen=0 inworld=1 oflags=00200000 cls=SaveHelper_C
+```
+
+`WidgetTree` and `SaveHelper_C` are UObjects.  The enemy record's object-table **slot had been
+reused**, and `weak::Ref` cannot see that: a handle names a SLOT (`{index, serial}`), and
+`Capture` reads the slot index off whatever object sits at the address it is handed - so a
+capture taken *after* a reuse names the new occupant faithfully.  `ObjectIsLive` said yes to
+both.  Then, in the soak's ordinary hover-the-enemy step:
+
+```
+19:58:56.648 dev teleport near 'enemy' -> enemy at 0,--9223372036854775808,0 dist=+inf; standing at 0,--9223372036854775808,0 offset=140
+19:58:56.667 scan: kind enemy WidgetTree guid=AD410C56 at 0,--9223372036854775808,0 dist=0 local-run=1
+```
+
+`-9223372036854775808` is `CatFloat` printing a float near `-2^63`: the rig had read a
+"transform" out of a WidgetTree (the `RootComponent` offset applied to a UObject that has none)
+and **wrote it into the local player pawn** through `K2_SetActorLocationAndRotation` - the line
+carries no `FAILED`.  Six seconds later the game ran a Blueprint graph that steers a body toward
+a target actor and the target was null.  The plain description: the mod stood the player
+9.2e16 m outside the world, and the game then asked who was there.
+
+**Three fixes, at the source and at the guard.**
+
+* **`EnemyRec::cls`** - a record remembers the class it was created for, and `EnemyActor()`
+  refuses *and retires* a record whose slot now holds another class.  A respawn or a mirror is a
+  new record with a new capture (`EnemyScanStep`, `RegisterMirror`), never a re-point of an old
+  one, so class equality is the one identity test a reused slot cannot fake.  Applied at the
+  sweep's purge (the one place that sees every record once per cycle), the `near:enemy`
+  resolver, the scan, the guid teleport, the per-key dump and the `peers=` count.  The class
+  read is guarded (`ObjClassGuarded`), because a slot can also name memory the engine has
+  already freed (R139).
+* **`motion::SanePos()`** - a transform read is only a transform if it is a *place*: finite and
+  inside `|1e7|` cm.  `ReadActorXform` now returns false for a garbage read, and `SetActorXform`,
+  `SetActorXformSweep` and `SweepPawnTo` **refuse to write** one, with a rate-limited `WARN` that
+  says what was refused.  Both halves matter: a NaN propagates through the engine's own vector
+  math, and a 9e18 poisons navigation and streaming.  `test_sanitize.cpp` pins the predicate on
+  the two measured values, the NaN/inf cases, and real places (a 41 km placed NPC, the origin, a
+  measured `780_SZ_Depths` drop position).
+* **`HK_ProcessEvent` refuses a dispatch on a null object** and names the function it would have
+  called.  A forward with no `this` cannot do anything but fault.
+
+**Measured on the fixed build** (two `loot` phases, one pair of processes each, the same
+hover/teleport/scan steps that produced the garbage transform in Session 23): both machines ran
+the whole phase with **0 FAULT lines, 0 ERR lines and no crash dump**, and `enemy record
+retired` / `enemy record dropped` fired **0 times** - the class check did not misfire on healthy
+records.  The soak below is the harder test: the same shape, hub play after two hard round trips.
+
+**What this proves and what it does not.**  It proves the mod read a value that is not a
+coordinate out of an object that is not an actor and wrote it into the player pawn, and that both
+halves are now refused.  It does **not** prove the game's missing null check is unreachable: any
+graph that passes a null target will still fault in that instruction.  What changed is that the
+module no longer manufactures the state that led to it.
+
+### R129. THE TAKE - the pickup answers its OWN event, and the pawn was never in the volume
+
+Six mechanisms had been measured failing across Sessions 21-23.  Two of the reasons were
+found this session, and neither was the one anybody was looking for.
+
+**1. The pickup owns the Interact action.**  Session 23 dumped the drop's class chain and
+stopped there; that dump is the answer.  `ItemPickup_Base_C` declares
+`InpActEvt_Interact_K2Node_InputActionEvent` **itself**, with `InpActEvt_Attack`/`Jump`/`Pause`,
+`PickupItemAnim__AllowInput__EventFunc` and the `DoItemPickupPause`/`EndItemPickupPause` pair.
+The pickup takes input while its own flow plays.  The act lever had been pressing the *player's*
+compiled event (`FS_PlayerChar_C.InpActEvt_Interact...`), which is a different Blueprint and
+consumes nothing - and `Pickup`/`Interact` "ran and changed nothing" for the same reason a name
+lookup for a Blueprint *override* always runs nothing.
+
+**2. The rig never stood on the drop.**  The take lever logs where the pawn actually ended up,
+and on the first instrumented run it printed the same thing five times:
+
+```
+take: pawn now 299 cm from the drop, hidden=0
+take: pawn now 300 cm from the drop, hidden=0
+```
+
+`SweepPawnTo` from a point the capsule was just *teleported* to returns "no movement" when the
+start already penetrates geometry, so **every "step onto the drop" leg this rig has ever run -
+including the `:on` sweep added for R153 - stood 3 m away** and then reported that nothing
+consumed the drop.  That is the mechanism behind R153's "the sweep ran and consumed nothing".
+The lever now teleports *onto* the drop (which is what guarantees presence) and keeps the sweep
+for the overlap half; the same line then reads `pawn now 0 cm from the drop`.
+
+**What the new lever does.**  `qd.take <drop:<8hex>:<index>>` runs the attempt in stages, each
+one a *place* pass and a *press* pass a poll apart - a pickup's own tick is what opens a
+proximity gate, so a press in the same frame as the move is a press against the state from
+before the move.  The presses, in order: `Activate`, the pickup's own `InpActEvt_Interact`
+(resolved by prefix, because the suffix is compiler-generated), `Interact`,
+`ReceiveActorBeginOverlap` with the pawn, `Pickup`.  It never calls a payout
+(`GrantItemsAndActivate`, `Grant`, `AddItemToInventory`): a take that skips the game's own
+grant is a take the two machines can disagree about.  It stops the moment the drop is gone and
+says which stage did it.
+
+**What it measured, and it is not a take.**  Both directions ran on a drop both machines held
+(`B759900A#0` on the host, `3D0AF1A3#0` on the peer), the pawn stood **0 cm** from the drop,
+all five entries ran, and the drop stayed.  The gate line says why:
+
+```
+take: gate before stage requireActivation=0 activated=0 acquired=1 isADrop=0 validGUID=n/a
+take: gate after the press  requireActivation=0 activated=0 acquired=1 isADrop=0 validGUID=n/a
+```
+
+`Acquired` - the bool `ItemPickup_Base_C` carries next to `PickupLocation`, `IsADrop` and
+`DropRestoredFromSave` - is **already 1**, before any press, on both drops.  So every entry the
+class declares is a no-op by construction, which is exactly what five sessions of "the verb ran
+and consumed nothing" were looking at.  The module never writes that property (`grep Acquired`
+finds one reader, `qdobjectstate.h`'s object-lane probe, and that lane only tracks *placed*
+actors - a rolled drop is runtime-spawned and is skipped).  `isADrop=0` on the host's copy is
+the second half of the same picture: that drop is one the *mod constructed* from the partner's
+description, and it does not carry the roll's own flags.
+
+**R129's take half is NOT proven, and this is the exact place the next session starts:** read
+`Acquired` on the class default object (if the CDO is also 1 the name means something other
+than "already taken"), read `PickedUp`/`PickUpEnded` (a multicast delegate, so the take is an
+*event*, not a state), and ask `GetInteractInfo` for its whole out-parameter set rather than the
+three fields the lever reads today.  What is now proven is that the rig reaches the drop, that
+the entry the class declares is the one being pressed, and that one bool on the pickup is
+closed.
+
+### The soak, measured
+
+One pair of processes, the documented PLAY set (`switches: flags=1 inventory=1 actors=1 enemy=1
+puppet=1 playerBody=1 dialogue=1 stream=1 travel=1 cutscene=1 movers=1 loot=1 suspend=1 pause=1`),
+the `soak` phase, 21:05:15 -> 21:48:00.  Segments are hub / loot step / 770 / leave / hub-again /
+two hard round trips / hub-final.
+
+| segment | ran | iterations | both alive |
+|---|---|---|---|
+| hub | 578 s of 576 s | 168 | yes |
+| loot step (`780_SZ_Depths`, entered by the step itself) | ~7 min | 12 kill rounds | yes |
+| area770 (`770_SZ_Swamp`, TP_AREA) | 291 s of 288 s | 83 | yes |
+| leave (back to the hub) | - | - | yes |
+| hub-again | 255 s of 252 s | 71 | yes |
+| hard round trip 1 (`auto` -> `997_FinalZoneCutscene` -> `Ruins_Level_00`) | - | - | yes |
+| hard round trip 2 (the same again) | - | - | yes |
+| hub-final | 692 s of 684 s | 175 | yes |
+
+**MEASURED BODY: 1816 s of 1800 s.**  Wall clock including the transitions: 2567 s.
+
+**What passed.**
+
+* **Both machines alive at the end**, 0 `FAULT` lines and 0 `ERR` lines on either machine, and
+  no crash dump written.  That is the R155 measurement: two area changes, four world loads and
+  30 minutes of hub play in one pair of processes, in exactly the shape that killed the peer at
+  45 min in Session 23.
+* **Two hard round trips, four world loads, every one landed both machines in the same world**
+  (`997_FinalZoneCutscene` / `Ruins_Level_00` on both), each checked after the load.
+* **Two area changes followed on both machines**, each with `rig: level engine state ... 
+  LoadedLevel=1 actuallyVisible=1` on BOTH, and the leave followed 18 ms after the host.
+* **Kill sets diff to zero**: 219 keys on the host (89 dead), 236 on the peer (89 dead), **0
+  one-sided**.
+* **Shared HP was measured, not assumed**: 25 samples, **259 shared-alive observations, 259
+  compared, 0 unreadable, 1 unequal**.  At the end of the run: 128 shared live keys, **128
+  compared, 0 unequal**.
+* Both machines ended in `Ruins_Level_00` with `agree=1` and the same area (`-`).
+
+**What failed, with the numbers.**
+
+* **The take** (both directions) - see R129 above.  The soak's own verdict line "a loot take was
+  performed and checked on both machines" PASSED, and that pass is weaker than it reads: the
+  check matches any passing `r129*` verdict and the one that passed is `r129-roll` (three drops
+  rolled).  The two `took the drop` verdicts FAILED.  Reported here rather than left to the
+  table.
+* **One HP pair was unequal** - `E6EA2F3347860316D380D6A06472C4C5: host=544 peer=143.9`, one
+  sample of 259, at t+153 s in the hub.  `mx-differ` was 0 for the run, so the two machines
+  agree on that key's **MaxHP**; this is one body's health read 400 apart, in the segment before
+  the first area change.  It is not explained by a duplicate record (`duplicates=0`) and it is
+  not claimed to be anything but open.  Every other comparison in the run - including the 128 at
+  the end - was equal.
+* **`WORLD DIVERGENCE` lines=4**, one per hard world load, all transient:
+
+  ```
+  21:34:08.748 WARN WORLD DIVERGENCE: local map 997_FinalZoneCutscene, partner map Ruins_Level_00
+  21:34:48.538 WARN WORLD DIVERGENCE: local map Ruins_Level_00, partner map 997_FinalZoneCutscene
+  21:35:26.328 WARN WORLD DIVERGENCE: local map 997_FinalZoneCutscene, partner map Ruins_Level_00
+  21:36:09.426 WARN WORLD DIVERGENCE: local map Ruins_Level_00, partner map 997_FinalZoneCutscene
+  ```
+
+  Each is the window between one machine loading and the other arriving, and each resolved:
+  the per-load check "both machines report <world>" passed after every load and the end state
+  agrees.  The harness check is a strict `count == 0`; Session 23 got 0 because its peer loaded
+  before the host's world pointer changed.  Recorded as a harness over-strictness, not a desync -
+  the substantive world checks pass.
+
+### The live-proof table
+
+| Claim | Verdict | Key line |
+|---|---|---|
+| The R155 fault is named at instruction level | **PASS** | `mov rax,[rsi+0x130]`, `rsi` = the function's 3rd parameter, 0 |
+| The object with the null `+0x130` is identified | **PASS** | the game's Blueprint graph passed a null target actor; `FUN_00E41B90` reads `Target->RootComponent` unchecked |
+| The mod's input to it is identified | **PASS** | `cls=WidgetTree` / `cls=SaveHelper_C` under one live enemy key, then `dev teleport ... standing at 0,-9.22e18,0` |
+| A record whose slot was reused can no longer be read as an enemy | **PASS (source)** | `EnemyRec::cls` + `EnemyActor()`, applied at the sweep purge, resolver, scan, guid teleport, dump, `peers=` |
+| A transform that is not a place cannot be written | **PASS** | `motion::SanePos` in `ReadActorXform` / `SetActorXform` / `SetActorXformSweep`; `test_sanitize` pins it |
+| That guard does not misfire on healthy records | **PASS** | 0 `enemy record retired` lines in a 30-minute soak |
+| Both alive after >= 1800 s of body | **PASS** | 1816 s of 1800 s |
+| Two area changes follow | **PASS** - 2 of 2 | `travel: entered the partner's area 770_SZ_Swamp` |
+| Two hard round trips follow | **PASS** - 2 of 2 (4 loads) | `travel: both machines arrived in ...; host releasing the pair` |
+| Kill sets diff 0 | **PASS** | host-dead=89 peer-dead=89 diff=0 |
+| Shared HP measured, and equal | **PASS with one exception** | 259 compared, 0 unreadable, 1 unequal; end of run 128 compared, 0 unequal |
+| Zero uncaught faults, zero ERR | **PASS** | 0 FAULT and 0 `ERR` lines, no dump, on both machines |
+| The rig reaches a drop and presses the entry the class declares | **PASS** | `take: pawn now 0 cm from the drop`, `ran=InpActEvt_Interact_K2Node_InputActionEvent` |
+| Taking a drop hides the partner's copy and is refused twice | **NOT-PROVEN** | `acquired=1` before any press; the drop stays standing in both directions |
+
+### What a human tester needs to know
+
+**A long session with map transitions is now safer in the way Session 23 could not prove.**  In
+one pair of processes, 30 minutes of measured play, two areas and four world loads, nothing
+crashed: the peer that used to die at 45 minutes held on to the end.  **Picking up a drop is
+still not proven.**  If you walk over a drop and it does not disappear, that is the open item;
+the next session starts from the fact that the drop's own `Acquired` flag is already set before
+anything presses it.
+
+### What is still open
+
+- **R129's take half.**  The mechanism is now the right one (the pickup's own event) and the
+  rig now stands on the drop, but the pickup's `Acquired` bool is 1 before any press, on both a
+  rolled drop and a constructed one.  Next: read it on the class default object, read the
+  `PickedUp` delegate, and ask `GetInteractInfo` for every out-parameter.
+- **One HP pair of 259 was unequal** (`E6EA2F33...`, host 544 / peer 143.9, hub, t+153 s), with
+  MaxHP agreeing.  Not explained.
+- **The engine-side crash (R152) is contained, not explained**, unchanged from Session 23.
+- **R155's game-side instruction is still unchecked**: any Blueprint graph that passes a null
+  actor to `FUN_00E41B90` will still fault.  What is fixed is that the module no longer supplies
+  the state that made it happen.
+- **Enemy records can still be lost after a hard load**: `hub-final`'s first samples reported
+  `shared-alive=0` because the peer's table had few live keys 40 s after the load
+  (`enemykey n=28 alive=5` at 21:39:22) while the host had many.  The sweep rebuilt them and the
+  last sample compared 90 keys, but a soak that samples immediately after a load still measures
+  the rebuild rather than the world.
+- **`WORLD DIVERGENCE` counts transient lines during a hard travel**; the harness's `== 0` check
+  should be "0 outside a transition".
+- **Boss phases, hit reactions, the shop door, peer vitals** - unchanged from Sessions 20-23.
