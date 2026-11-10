@@ -376,6 +376,23 @@ The lines that answer most questions, verbatim:
   RVA `0xE420D5`), which this session recorded and did not fix. So: the hard-load crash is
   contained, the long-session crash is still there, and the soak's own numbers are in the
   Session 23 log including the dead process.
+  **Session 24 named that second crash and fixed the module's half.** The faulting instruction
+  is `mov rax,[rsi+0x130]` with `rsi` null, inside a Blueprint movement/steering function that
+  reads `RootComponent` of `this` and of an actor it was handed - and the actor it was handed
+  was null. The mod's own frames in that stack are only the `ProcessEvent` forward and the tick
+  detour, so the graph is the game's; what the mod had done was worse than nothing. One of its
+  enemy records had lost its body - the object-table **slot was reused by a `WidgetTree`** (the
+  peer's own dump printed `cls=WidgetTree`, then `cls=SaveHelper_C` 0.2 s later, under one live
+  enemy key) - and the rig read a "transform" out of that UObject and **wrote it into your
+  player pawn** as a position. Six seconds later the game asked that graph where its target was
+  and the answer was null. A record now carries the class it was created for and is retired the
+  moment its slot holds something else; a transform read that is not finite and inside 100 km is
+  refused, and so is any attempt to write one; and a `ProcessEvent` on a null object is refused
+  and named in the log instead of forwarded. **Measured on the fixed build: two full loot phases,
+  0 fault lines, 0 `ERR` lines, no dump, and the new guard never fired on a healthy record.**
+  The game's own missing null check is not something the mod can repair - if any graph passes a
+  null actor it will still fault there - so what is claimed is that the mod no longer manufactures
+  that state, and the soak below is the measurement.
 - **An enemy's HP reads `?` when the engine is tearing that copy down — not a sync fault.**
   Session 21 traced it: the mod refuses a reflective call on an object the engine has
   flagged for destruction, and in the hub that was 428 of 569 enemy records.  A `?` in a

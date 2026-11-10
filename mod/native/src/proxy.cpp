@@ -5282,9 +5282,26 @@ EnemyRec* EnemyByActor(void* a) { for (int i = 0; i < g_enN; ++i) if (g_en[i].ac
 
 // IS THE OBJECT AT THIS RECORD'S SLOT STILL THE ENEMY IT WAS MADE FOR?  (Session 24, R155.)
 // See `EnemyRec::cls`: a weak handle names a SLOT, and a slot can be reused by anything.
+//
+// GUARDED, and that is not defensive habit: `weak::Ref::Resolve` returns whatever the object
+// table holds for the slot, and the engine only NULLs a slot when it destroys the object --
+// so between the two the slot can name memory that has been freed (R139).  Reading the class
+// out of it is a wild read, which is why this is its own frame with nothing in it that needs
+// unwinding (MSVC C2712).
+void* ObjClassGuarded(const void* a)
+{
+    if (!a) return nullptr;
+    __try {
+        return *(void* const*)((const uint8_t*)a + kObjClass);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return nullptr;
+    }
+}
+
 bool EnemyActorOfClass(const EnemyRec& r, void* a)
 {
-    return a && r.cls && ObjClass(a) == r.cls;
+    if (!a || !r.cls) return false;
+    return ObjClassGuarded(a) == r.cls;
 }
 
 // The record's actor, or nullptr when its slot no longer holds the class the record was
@@ -5297,11 +5314,27 @@ void* EnemyActor(EnemyRec& r)
 {
     void* a = r.actor;
     if (!a) return nullptr;
-    if (EnemyActorOfClass(r, a)) return a;
-    char nm[64] = "?";
-    FNameToString(ObjNameRaw(ObjClass(a)), nm, sizeof(nm));
-    QDLOG(LOG_WARN, "enemy record retired: guid=", hex32(r.guid[0]), " now names a ", nm,
-          " -- not the class it was created for.  It is not an actor, so it is not read");
+    void* c = ObjClassGuarded(a);
+    if (c && r.cls && c == r.cls) return a;
+    // Bounded, because a hub that churns can hand out the same slot many times: the first
+    // sixteen are printed in full and after that one line every five seconds.  A silent
+    // guard is not evidence and an unbounded one is a log nobody can read.
+    static int said = 0;
+    static uint32_t lastSaid = 0;
+    uint32_t now = Net::Now();
+    if (said < 16 || now - lastSaid > 5000) {
+        ++said; lastSaid = now;
+        if (c) {
+            char nm[64] = "?";
+            FNameToString(ObjNameRaw(c), nm, sizeof(nm));
+            QDLOG(LOG_WARN, "enemy record retired: guid=", hex32(r.guid[0]), " now names a ",
+                  nm, " -- not the class it was created for.  It is not an actor, so it is "
+                  "not read");
+        } else {
+            QDLOG(LOG_WARN, "enemy record retired: guid=", hex32(r.guid[0]),
+                  " names an object whose class cannot be read (the slot was freed)");
+        }
+    }
     r.actor.Reset();
     r.cls = nullptr;
     r.haveGuid = false;
@@ -5772,10 +5805,16 @@ void EnemyScanStep()
             // cycle, answered the enemy scan, and was reported as `cls=WidgetTree` under a
             // live enemy key -- the shape that led the rig to stand the player beside it.
             if (!EnemyActorOfClass(g_en[i], (void*)g_en[i].actor)) {
-                char nm[64] = "?";
-                FNameToString(ObjNameRaw(ObjClass((void*)g_en[i].actor)), nm, sizeof(nm));
-                QDLOG(LOG_WARN, "enemy record dropped: guid=", hex32(g_en[i].guid[0]),
-                      " slot reused by a ", nm, " (not an enemy actor)");
+                static int said = 0;
+                static uint32_t lastSaid = 0;
+                uint32_t now2 = Net::Now();
+                if (said < 16 || now2 - lastSaid > 5000) {
+                    ++said; lastSaid = now2;
+                    char nm[64] = "?";
+                    FNameToString(ObjNameRaw(ObjClass((void*)g_en[i].actor)), nm, sizeof(nm));
+                    QDLOG(LOG_WARN, "enemy record dropped: guid=", hex32(g_en[i].guid[0]),
+                          " slot reused by a ", nm, " (not an enemy actor)");
+                }
                 g_en[i] = g_en[--g_enN];
                 continue;
             }
@@ -14239,6 +14278,58 @@ bool RigCallVerb(void* obj, const char* name, void* arg, const char** ranName)
 // the interaction lever needs the same primitive, so it is declared here.
 void WriteObjPropRaw(void* obj, const char* name, void* v);
 
+// Call a verb resolved by PREFIX on one object, cached per (object, prefix).
+//
+// WHY A PREFIX IS REQUIRED FOR A PICKUP (Session 24, R129).  `ItemPickup_Base_C` declares
+// `InpActEvt_Interact_K2Node_InputActionEvent` -- the compiled event for the Interact action,
+// which the class chain dump of Session 23 printed.  The suffix is compiler-generated
+// (`_K2Node_InputActionEvent`, or `_K` for the delegate half; qdreflect.h states why the mod
+// never builds one), so an exact-name lookup cannot name it.  A prefix lookup finds the one
+// function the class declares for the action.
+struct RigPrefixVerb {
+    void* obj;
+    char  prefix[40];
+    Fn    f;
+    char  name[96];
+};
+RigPrefixVerb g_rigPrefixVerbs[8];
+int           g_rigPrefixVerbN = 0;
+
+bool RigCallVerbPrefix(void* obj, const char* prefix, void* arg, const char** ranName)
+{
+    if (!obj || !prefix) return false;
+    RigPrefixVerb* slot = nullptr;
+    for (int i = 0; i < g_rigPrefixVerbN; ++i)
+        if (g_rigPrefixVerbs[i].obj == obj && strcmp(g_rigPrefixVerbs[i].prefix, prefix) == 0) {
+            slot = &g_rigPrefixVerbs[i];
+            break;
+        }
+    if (!slot) {
+        if (g_rigPrefixVerbN >= (int)(sizeof(g_rigPrefixVerbs) / sizeof(g_rigPrefixVerbs[0])))
+            return false;
+        slot = &g_rigPrefixVerbs[g_rigPrefixVerbN++];
+        slot->obj = obj;
+        lstrcpynA(slot->prefix, prefix, sizeof(slot->prefix));
+        slot->name[0] = 0;
+        slot->f = Fn();
+    }
+    if (!slot->f.ResolvePrefix(obj, prefix, slot->name, sizeof(slot->name))) return false;
+    Call c(slot->f);
+    if (arg) {
+        for (int i = 0; i < slot->f.sig.props; ++i) {
+            const PropDesc& d = slot->f.sig.p[i];
+            if (!NameEquals(d.type, "ObjectProperty") || (d.flags & CPF_OutParm) || d.size < 8)
+                continue;
+            c.Obj(d.name, arg);
+            break;
+        }
+    }
+    if (!c.Run(obj)) return false;
+    if (ranName) *ranName = slot->name;
+    return true;
+}
+
+
 // The player's compiled `Interact` input event, resolved by prefix once per process.  These
 // live at file scope, not in the function: a function-local `static Fn` needs a thread-safe
 // init guard, and the enclosing frame then requires object unwinding -- the same trap that
@@ -16075,6 +16166,272 @@ void DevMenuLever(uint32_t now)
 }
 
 
+// ===========================================================================
+// R129's TAKE HALF -- the pickup's OWN input event (Session 24)
+// ===========================================================================
+// SIX MECHANISMS MEASURED FAILING (Sessions 21-23): a teleport into the volume, three
+// out-and-back teleports, a fall from 3 m, the class' own `Pickup`/`Interact` verbs, a real
+// swept move through the volume, and a direct `ReceiveActorBeginOverlap`.  Every one of them
+// either moved the pawn without the engine noticing or called a verb the content does not
+// put the take behind.
+//
+// WHAT THE CLASS ACTUALLY DECLARES.  Session 23 dumped the drop's SuperStruct chain
+// (`3Coins_Item_Bp_C` -> `Coin_Item_BP_C` -> `ItemPickup_Base_C` -> ...), and the answer is
+// on that list:
+//
+//     ItemPickup_Base_C.InpActEvt_Interact_K2Node_InputActionEvent
+//     ItemPickup_Base_C.InpActEvt_Attack_K2Node_InputActionEvent
+//     ItemPickup_Base_C.InpActEvt_Jump_K2Node_InputActionEvent
+//     ItemPickup_Base_C.InpActEvt_Pause_K2Node_InputActionEvent
+//     ItemPickup_Base_C.PickupItemAnim__AllowInput__EventFunc
+//     ItemPickup_Base_C.DoItemPickupPause / EndItemPickupPause
+//
+// THE PICKUP ANSWERS THE INTERACT ACTION ITSELF.  The act lever pressed the PLAYER's
+// `InpActEvt_Interact` (FS_PlayerChar's compiled event) and it ran and consumed nothing --
+// because the take is not behind the player's event.  The pickup owns a compiled input
+// event for the same action, and `PickupItemAnim__AllowInput__EventFunc` plus the pause pair
+// say what it is for: the pickup takes input WHILE it plays its own pickup flow.  A name
+// lookup for `Pickup` finds nothing to run for the same reason `ReceiveActorBeginOverlap`
+// did not: the body is the OVERRIDE, and the entry that reaches it is the event the class
+// declares.
+//
+// WHY STAGES AND NOT ONE BURST.  The flow is animated and it pauses the game
+// (`DoItemPickupPause`), so a ladder fired inside one tick gives every mechanism zero game
+// time and the log cannot say which one was refused.  Each stage re-enters the volume with a
+// real SWEPT move first (the engine generates `BeginOverlap` from a move, never from a
+// teleport -- R153), then runs one entry, then waits.  The lever stops the moment the drop is
+// gone, and it says which stage did it.
+//
+// This lever never calls a PAYOUT (`GrantItemsAndActivate`, `Grant`, `AddItemToInventory`).
+// The take has to be the game's own, or the item is granted without the game's consent and
+// the two machines disagree about what the player owns.
+char     g_devTakePath[MAX_PATH];
+char     g_devTakeApplied[80] = "";
+uint32_t g_devTakePoll = 0;
+int      g_devTakeOn = -1;
+
+struct RigTakeState {
+    char     spec[48];
+    int      stage;          // -1 = idle
+    uint32_t stageAt;
+    void*    target;
+    bool     hiddenAtStart;
+    bool     armed;          // the pawn has been placed for this stage; the press is due
+};
+static RigTakeState g_take = {{0}, -1, 0, nullptr, false, false};
+
+// How long one stage is given before the next is tried.  1.5 s is three ticks of the
+// pickup's own pause at the documented play set and well inside the harness' 12 s window.
+static const uint32_t kTakeStageMs = 1500;
+
+void RigTakeForget()
+{
+    g_take.stage = -1;
+    g_take.target = nullptr;
+    g_take.stageAt = 0;
+    g_take.spec[0] = 0;
+}
+
+// Is the drop gone?  Not live, or hidden where it was visible when this started.  The loot
+// lane's own tombstone is the authority on the WIRE; this is only the lever's stop condition.
+bool RigDropConsumed(void* drop, bool hiddenAtStart)
+{
+    if (!drop) return true;
+    if (!ObjectIsLive(drop)) return true;
+    if (!hiddenAtStart && ActorHiddenNow(drop)) return true;
+    return false;
+}
+
+// The drop's own gate, READ rather than guessed.  Session 24's property dump of
+// `Herb_Item_BP_C` names them: `RequireActivation` and `Activated` (the pair that
+// `HideToWaitForActivation`/`Activate` drive), `Acquired` (the take already happened),
+// `IsADrop`, and `HasValidGUID()` (the save-side identity a grant has to write to).
+void RigLogDropGate(void* drop, const char* tag)
+{
+    if (!drop) return;
+    uint8_t req = 0xFF, act = 0xFF, acq = 0xFF, isDrop = 0xFF, guid = 0xFF;
+    bool hReq = BytePropC(drop, "RequireActivation", &req);
+    bool hAct = BytePropC(drop, "Activated", &act);
+    bool hAcq = BytePropC(drop, "Acquired", &acq);
+    bool hDrop = BytePropC(drop, "IsADrop", &isDrop);
+    static Fn fGuid = {};
+    if (fGuid.Resolve(drop, "HasValidGUID")) {
+        Call cg(fGuid);
+        if (cg.Run(drop) && cg.Ret()) guid = *(uint8_t*)cg.Ret();
+    }
+    QDLOG(LOG_INFO, "take: ", tag, " requireActivation=", (hReq ? (req ? "1" : "0") : "n/a"),
+          " activated=", (hAct ? (act ? "1" : "0") : "n/a"),
+          " acquired=", (hAcq ? (acq ? "1" : "0") : "n/a"),
+          " isADrop=", (hDrop ? (isDrop ? "1" : "0") : "n/a"),
+          " validGUID=", (guid == 0xFF ? "n/a" : (guid ? "1" : "0")));
+}
+
+// Stand `out` cm away from a point, facing it: the "step out" half of the out-and-back.
+bool RigStepOutFrom(void* pawn, float px, float py, float pz, float outCm)
+{
+    ActorXform me = {};
+    if (!ReadActorXform(pawn, &me)) return false;
+    float dx = me.px - px, dy = me.py - py;
+    float len = sqrtf(dx * dx + dy * dy);
+    if (len < 1.0f) { dx = 1.0f; dy = 0.0f; len = 1.0f; }
+    float yaw = atan2f(-(dx / len), -(dy / len)) * 57.29578f;
+    return SetActorXform(pawn, px + (dx / len) * outCm, py + (dy / len) * outCm, pz, yaw);
+}
+
+void DevTakeLever(uint32_t now)
+{
+    if (g_devTakeOn < 0) {
+        DevRigPath("QDCOOP_TEST_TAKE", "qd.take", g_devTakePath, sizeof(g_devTakePath));
+        g_devTakeOn = (g_devTakePath[0] != 0) ? 1 : 0;
+        if (g_devTakeOn)
+            QDLOG(LOG_INFO, "rig: take control '", g_devTakePath, "' enabled");
+    }
+    if (!g_devTakeOn || !IsGameplayPawn(g_localPawn)) return;
+    if (now - g_devTakePoll < 100) return;
+    g_devTakePoll = now;
+
+    char raw[48] = "";
+    if (DevRigText("QDCOOP_TEST_TAKE", "qd.take", raw, sizeof(raw)) && raw[0]) {
+        // Change detection is on the WHOLE string, nonce included: taking the same key twice
+        // (the second take is the refusal that has to be measured) must be two instructions.
+        if (strcmp(raw, g_devTakeApplied) != 0) {
+            lstrcpynA(g_devTakeApplied, raw, sizeof(g_devTakeApplied));
+            char spec[48];
+            lstrcpynA(spec, raw, sizeof(spec));
+            for (int i = 0; spec[i]; ++i) if (spec[i] == '#') { spec[i] = 0; break; }
+            RigTakeForget();
+            float d = 0.0f;
+            ActorXform xf = {};
+            char nm[64] = "-";
+            void* a = (spec[0] && g_localPawn) ? RigFindNear(spec, &d, &xf, nm, sizeof(nm)) : nullptr;
+            if (!a) {
+                QDLOG(LOG_WARN, "take: '", spec, "' resolves to no live drop on this machine");
+                return;
+            }
+            g_take.target = a;
+            g_take.hiddenAtStart = ActorHiddenNow(a);
+            lstrcpynA(g_take.spec, spec, sizeof(g_take.spec));
+            g_take.stage = 0;
+            g_take.stageAt = now;
+            QDLOG(LOG_INFO, "take: '", spec, "' -> ", nm, " at ", flt(xf.px, 0), ",",
+                  flt(xf.py, 0), ",", flt(xf.pz, 0), " dist=", flt(d, 0),
+                  " -- taking it through the entries the class declares");
+            // ONCE PER DROP, the class' own property surface.  A take that every declared
+            // entry refuses is either a state gate (`Activate`/`SetState`/an enum) or no
+            // gate at all, and the difference is a property NAME on the record rather than
+            // another guess at a verb.
+            static void* dumpedFor = nullptr;
+            if (dumpedFor != a) { dumpedFor = a; LogPropertiesOf(ObjClass(a), "drop", 70); }
+        }
+    } else {
+        if (g_take.stage >= 0) { RigTakeForget(); g_devTakeApplied[0] = 0; }
+        return;
+    }
+    if (g_take.stage < 0) return;
+
+    void* drop = g_take.target;
+    if (RigDropConsumed(drop, g_take.hiddenAtStart)) {
+        QDLOG(LOG_INFO, "take: THE GAME CONSUMED THE DROP at stage ", dec(g_take.stage),
+              " -- the entry that reaches the pickup body is the one the class declares");
+        RigTakeForget();
+        return;
+    }
+    if (now - g_take.stageAt < kTakeStageMs) return;
+    g_take.stageAt = now;
+    // TWO HALVES PER STAGE, a poll apart: PLACE first, PRESS on the next pass.  A pickup's
+    // own tick is what turns `RequireActivation` into `Activated` when a player is inside it,
+    // so a press in the same frame as the move is a press against the state from before the
+    // move -- which is exactly the shape all six earlier attempts had.
+    if (g_take.armed) {
+        g_take.armed = false;
+        const char* ran = nullptr;
+        const char* what = "?";
+        switch (g_take.stage) {
+        case 0:
+            // THE ACTIVATION STEP.  `ItemPickup_Base_C` declares `HideToWaitForActivation`,
+            // `Activate` and `SetState`; a drop that waits for activation has no state for
+            // `Pickup` to act on.
+            what = "the pickup's Activate";
+            RigCallVerb(drop, "Activate", g_localPawn, &ran);
+            break;
+        case 1:
+            // The pickup's OWN compiled entry for the Interact action.
+            what = "the pickup's InpActEvt_Interact";
+            RigCallVerbPrefix(drop, "InpActEvt_Interact", g_localPawn, &ran);
+            break;
+        case 2:
+            // The game's interaction verb, pressed the way the player's event would press it.
+            what = "the pickup's Interact";
+            RigCallVerb(drop, "Interact", g_localPawn, &ran);
+            break;
+        case 3:
+            // The route the engine uses when a capsule enters the volume.
+            what = "ReceiveActorBeginOverlap";
+            RigCallVerb(drop, "ReceiveActorBeginOverlap", g_localPawn, &ran);
+            break;
+        case 4:
+            // The class' own consume verb, last: it is the payout-adjacent one.
+            what = "the pickup's Pickup";
+            RigCallVerb(drop, "Pickup", g_localPawn, &ran);
+            break;
+        default:
+            QDLOG(LOG_WARN, "take: '", g_take.spec, "' is still standing after every entry "
+                  "the class declares (Activate, InpActEvt_Interact, Interact, "
+                  "ReceiveActorBeginOverlap, Pickup); the take is not reachable from this lever");
+            RigTakeForget();
+            return;
+        }
+        QDLOG(LOG_INFO, "take: stage ", dec(g_take.stage), " ", what, " ran=", (ran ? ran : "none"),
+              " drop=", (RigDropConsumed(drop, g_take.hiddenAtStart) ? "GONE" : "standing"));
+        RigLogDropGate(drop, "gate after the press");
+        ++g_take.stage;
+        g_take.armed = false;
+        return;
+    }
+
+    // The PLACE half.  Every stage re-enters the volume, so the engine dispatches
+    // `BeginOverlap` for it whether the stage's own entry needs one or not.
+    ActorXform xf = {};
+    if (!ReadActorXform(drop, &xf)) {
+        QDLOG(LOG_WARN, "take: the drop's transform is not a place; abandoned");
+        RigTakeForget();
+        return;
+    }
+    RigStepOutFrom(g_localPawn, xf.px, xf.py, xf.pz, 300.0f);
+    const float yaw = 0.0f;
+    // ONTO IT, THEN THROUGH IT.  Session 24's instrumented run measured something none of
+    // the earlier six attempts could see: the pawn never got closer than 299 cm.  A
+    // `SweepPawnTo` from a spot the capsule was teleported into returns "no movement" when
+    // the start already penetrates geometry, so every "stepped onto the drop" leg the rig
+    // has ever run -- including the `:on` sweep added for R153 -- stood 3 m away and then
+    // reported that nothing consumed the drop.  The teleport is therefore the move that
+    // guarantees presence, and the sweep is kept for the overlap half.
+    SetActorXform(g_localPawn, xf.px, xf.py, xf.pz, yaw);
+    SweepPawnTo(g_localPawn, xf.px, xf.py, xf.pz, yaw);
+    RigFaceTarget(drop);
+    // Fill the field the interaction component's gate reads, exactly as a real press does.
+    if (void* comp = ObjPropC(g_localPawn, "PlayerInteractionComponent"))
+        WriteObjPropRaw(comp, "Current Interact Actor", drop);
+    {
+        // WHERE THE PAWN ACTUALLY IS, and whether the drop is even visible.  Both facts were
+        // missing from the first run, and without them "every entry ran and the drop stayed"
+        // cannot be told apart from "the pawn never entered the volume".
+        ActorXform px = {};
+        float d = -1.0f;
+        if (ReadActorXform(g_localPawn, &px)) {
+            float dx = px.px - xf.px, dy = px.py - xf.py, dz = px.pz - xf.pz;
+            d = sqrtf(dx * dx + dy * dy + dz * dz);
+        }
+        QDLOG(LOG_INFO, "take: pawn now ", flt(d, 0), " cm from the drop, hidden=",
+              (ActorHiddenNow(drop) ? "1" : "0"), " (the volume is entered only if this is 0-120 cm)");
+    }
+    { char tag[32]; lstrcpynA(tag, "gate before stage", sizeof(tag)); RigLogDropGate(drop, tag); }
+    // The press is due on the NEXT pass, one stage interval later: the pickup's own tick has
+    // to see the player inside it before its gate can open.
+    g_take.armed = true;
+}
+
+
 // QDCOOP_TEST_EFUNC / QDCOOP_TEST_EATTACK: TEST INSTANCES ONLY.
 //   qd.efunc   = "1" dumps the nearest enemy's UFunction surface once, so an attack verb
 //                can be chosen from what the build actually has rather than guessed.
@@ -17340,6 +17697,7 @@ bool HK_Tick(void* engineLoop)
     DevSequenceLever(now);
     DevMenuLever(now);
     DevEFuncLever(now);
+    DevTakeLever(now);
     DevUseLever(now);
     DevDropProbe(now);
     TravelPump(now);
