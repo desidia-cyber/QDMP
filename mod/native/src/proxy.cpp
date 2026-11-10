@@ -2890,7 +2890,11 @@ static const int kMgrCurEntry  = 0x330;    // {X*, u8 hide}; X + 0x30 = ULevelSt
 static const int kMgrCurHide   = 0x338;
 
 struct LevelRec {
-    void*  ls;
+    // WEAK (Session 18).  A ULevelStreaming* cached across frames and re-checked with
+    // ObjectIsLive at four separate sites below -- the same read-a-freed-pointer pattern R132
+    // names.  The level manager recycles these objects as the union loads and unloads levels,
+    // so this is one of the caches most likely to go stale in a ten-minute soak.
+    weak::Ref ls;
     char   name[stream::kMaxNameLen];
     int8_t gameWants;      // -1 unknown, else the game's last request
     bool   skipNextShow;   // the manager is about to re-issue our flipped entry
