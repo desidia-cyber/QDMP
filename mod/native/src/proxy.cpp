@@ -2635,7 +2635,7 @@ uint32_t LocalStatusMask()
         fireLogic = poisonLogic = nullptr;
         int n = ObjectCount();
         for (int i = 0; i < n; ++i) {
-            void* o = ObjectAt(i);
+            void* o = ObjectAtSafe(i);
             if (!o || ObjOuter(o) != pawn) continue;
             for (int k = 0; k < kStatusSrcN; ++k) if (ObjNameIs(o, kStatusSrc[k].comp)) comps[k] = o;
             if (ObjNameIs(ObjClass(o), "MagicFireEffectLogic_C")) fireLogic = o;
@@ -5119,8 +5119,8 @@ void EnemyScanStep()
     int end = g_enCursor + 16384;
     if (end > total) end = total;
     for (int i = g_enCursor; i < end; ++i) {
-        void* o = ObjectAt(i);
-        if (!o || !LooksLikeUObject(o)) continue;
+        void* o = ObjectAtSafe(i);
+        if (!o) continue;
         void* cls = ObjClass(o);
         bool yes = false, known = false;
         for (int k = 0; k < nYes; ++k) if (clsYes[k] == cls) { yes = known = true; break; }
@@ -8574,8 +8574,8 @@ void* FindNpcById(const uint8_t id[16])
     if (!npcBase) return nullptr;
     int total = ObjectCount();
     for (int i = 0; i < total; ++i) {
-        void* o = ObjectAt(i);
-        if (!o || !LooksLikeUObject(o) || !DerivesFrom(ObjClass(o), npcBase)) continue;
+        void* o = ObjectAtSafe(i);
+        if (!o || !DerivesFrom(ObjClass(o), npcBase)) continue;
         char nm[12];
         if (FNameToString(ObjNameRaw(o), nm, sizeof(nm)) > 0 && strncmp(nm, "Default__", 9) == 0) continue;
         uint8_t got[16];
@@ -9102,7 +9102,7 @@ void MoverScanStep()
     int total = ObjectCount();
     int budget = 4096;
     while (budget-- > 0 && g_moverScanCursor < total) {
-        void* o = ObjectAt(g_moverScanCursor++);
+        void* o = ObjectAtSafe(g_moverScanCursor++);
         if (!o || !LooksLikeUObject(o)) continue;
         void* c = ObjClass(o);
         if (!c || !IsMoverClass(c)) continue;
@@ -9445,7 +9445,7 @@ void LootScanStep()
     int total = ObjectCount();
     int budget = 4096;
     while (budget-- > 0 && g_lootScanCursor < total) {
-        void* o = ObjectAt(g_lootScanCursor++);
+        void* o = ObjectAtSafe(g_lootScanCursor++);
         if (!o || !LooksLikeUObject(o)) continue;
         void* c = ObjClass(o);
         if (!c || !IsDropClass(c)) continue;
@@ -10739,7 +10739,7 @@ void ObjectsScanStep()
     int total = ObjectCount();
     int budget = 4096;
     while (budget-- > 0 && g_objScanCursor < total) {
-        void* o = ObjectAt(g_objScanCursor++);
+        void* o = ObjectAtSafe(g_objScanCursor++);
         if (!o || !LooksLikeUObject(o)) continue;
         void* c = ObjClass(o);
         if (!c) continue;

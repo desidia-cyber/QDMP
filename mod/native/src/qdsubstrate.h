@@ -330,8 +330,29 @@ inline int32_t ObjectSerialAt(int i)
                        kFUObjectItemSerialOff);
 }
 
-// Liveness: the object's InternalIndex must lead back to the object itself.
+// The object at index i, IF the slot is safe to dereference.  Null otherwise.
 //
+// WHY THIS EXISTS (Session 18, R139).  `ObjectAt(i)` returns whatever pointer sits in slot i,
+// and UE only NULLS a slot when it destroys the object -- so between destruction and that write
+// the slot can hold an address whose memory has been freed and possibly reused.  Reading that
+// object's Class (or anything else in it) is then a read of freed memory.  The soak crashed on
+// exactly that instruction:
+//
+//   WINMM+0x6fde1  ScanLocalEquip+0x371   mov rcx,[rax+0x10]   <- ObjClass(o), rax = the slot
+//   EXCEPTION_ACCESS_VIOLATION reading 0x0000017efb13d040
+//
+// Every GObjects walk in this module needs the same protection, and the ones that had it said
+// so in a local comment while the ones that did not looked identical.  So the guard lives HERE,
+// once, and walks call `ObjectAtSafe`.  The two checks are cheap and independent:
+//
+//   * `LooksLikeUObject` -- aligned, non-null vtable inside the game image.  A recycled block
+//     usually fails this, and it is the one check that does not trust the object's contents.
+//   * `ObjectIsLive` -- the slot the object claims must still name it.  This is the check that
+//     catches "slot 900 still says 0x...1000 but 0x...1000 now says it lives in slot 1200".
+//
+// Both are `__try`-guarded inside, so a garbage pointer costs a `false`, not the process.
+
+// Liveness: the object's InternalIndex must lead back to the object itself.
 // THIS IS NOT A GUARD FOR A CACHED POINTER.  It reads the object's own InternalIndex to
 // find the slot, so it dereferences the very allocation that may be freed -- measured as
 // Session 17's `EXCEPTION_ACCESS_VIOLATION reading 0x0000000100000017`.  It is only
@@ -366,6 +387,19 @@ inline bool LooksLikeUObject(const void* p)
     if (vt == 0) return false;
     uintptr_t base = ImageBase();
     return vt >= base && vt < base + (uintptr_t)QD_IMAGE_SIZE;
+}
+
+// A slot whose object is safe to dereference, or null.
+//
+// See the comment on the shared guard above `ObjectIsLive`: this is that guard, in one place,
+// for every GObjects walk in the module.  It has to come AFTER both checks it uses.
+inline void* ObjectAtSafe(int i)
+{
+    void* o = ObjectAt(i);
+    if (!o) return nullptr;
+    if (!LooksLikeUObject(o)) return nullptr;
+    if (!ObjectIsLive(o)) return nullptr;
+    return o;
 }
 
 // Class objects: native classes are of class "Class", Blueprint classes of class
