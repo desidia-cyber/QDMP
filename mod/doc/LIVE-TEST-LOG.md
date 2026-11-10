@@ -3550,6 +3550,48 @@ Zero FAULT lines on either machine across 1206 s of play-set traffic (`ACCESS_VI
 R136 below — it is a lane's own refusal, not a crash, and Session 18's harness reports the two
 separately for exactly that reason.
 
+**The final binary was then re-run on the same claim, and it holds twice more:**
+
+```
+### soak-hub run 1 of 2   (binary: weak handles + LevelRec::ls + bounded loot hide)
+  soak run 1: 600 s of 600 s, iterations=184
+  PASS [1] both processes survived the soak -- 600s
+  PASS [1] the process is alive at the end of the soak -- 600s
+  PASS [2] the process is alive at the end of the soak -- 600s
+  host keys=460 (dead 419); peer keys=417 (dead 415)
+  dead only on the host: 4 -> 9395EC50,3165F724,180CD9AA,FA2FC279
+  dead only on the peer: 0 ->
+  [1] FAULT lines (ACCESS_VIOLATION/EXCEPTION/fatal)=0
+  [2] FAULT lines (ACCESS_VIOLATION/EXCEPTION/fatal)=0
+
+### soak-hub run 2 of 2
+  soak run 2: 602 s of 600 s, iterations=185
+  PASS [1] both processes survived the soak -- 602s
+  PASS [1] the process is alive at the end of the soak -- 602s
+  PASS [2] the process is alive at the end of the soak -- 602s
+```
+
+That is **four** consecutive ten-minute-ish soaks across two boots on two builds, every one of
+them with both processes alive at the end and zero FAULT lines. The kill-set difference in that
+last run's first soak was 4 and one-sided (`dead only on the host` with `dead only on the peer:
+0`), which is the spawner-respawn shape R137 names rather than a tombstone that failed to travel.
+
+**BUT THE CLAIM DID NOT HOLD ON EVERY RUN, AND THAT IS THE NUMBER THAT MATTERS.** Three later
+runs at the same configuration died — at 248 s, 4130 s and 330 s. The 4130 s dump named a mod
+fault (R139, fixed); the 330 s dump names a fault inside the game's own code (R140, open). So the
+soak record for this session is **4 survived / 3 died**, not "the crash is gone", and the
+stability note in `PLAYTEST.md` is written to say exactly that. Four-in-a-row was real, and so
+were the three failures; presenting only the first would be the same error as Session 17's
+combined `ERR|EXCEPTION|ACCESS_VIOLATION` gate, one layer up.
+
+The second soak of that boot measured `diff=31` (`dead only on the peer: 29`), and the world
+check rules out the easy explanation — both machines were in the same world (`travel: the
+partner arrived in Ruins_Level_00 (both there)` on both, 3:44:38). So this is R137 at full
+weight rather than a world mismatch: 29 keys the peer buried and the host did not, one-sided in
+the opposite direction from the first soak. That is the honest number for the remaining enemy
+identity work, and it is exactly why R137 is listed as open instead of folded into the soak
+verdict.
+
 ### R136. THE 780 SOAK SURVIVES TOO — AND FINDS A THIRD, DIFFERENT BUG
 
 The same body after entering `780_SZ_Depths` through the game's own level list, where both
@@ -3646,54 +3688,112 @@ whose answer is a lever that addresses a drop by `{source_hash, drop_index}` —
 itself uses. That is the next session's first job, and it is stated as the job rather than as a
 mystery.
 
-### R138. ONE UNEXPLAINED CRASH, WITH A DUMP — recorded, not smoothed over
+### R139. THE REMAINING FAULT WAS THE GOBJECTS WALK ITSELF — fixed, from a real dump
 
-The loot phase produced **one** `EXCEPTION_ACCESS_VIOLATION` on the peer across five attempts,
-on the run with the most pickup activity (six `loot: local pickup` lines immediately before).
-It is the only crash in the whole session, and it is a DIFFERENT fault from R132:
+The final soak boot crashed the peer 4130 s in, and this time UE wrote a minidump with **three
+of our frames** in it. Resolved with the map:
+
+```
+WINMM+0x44107   HK_Tick+0x497
+WINMM+0x4afd8   LocalEquipPump+0x28
+WINMM+0x6fde1   ScanLocalEquip+0x371      <- the faulting frame
+```
+
+and the instruction at the top of that frame, read out of the dump rather than inferred:
+
+```
+000000018006FDE1  mov rcx,qword ptr [rax+10h]     ; ObjClass(o), rax = the object pointer
+ExceptionCode:    c0000005 (Access violation) reading 0x0000017efb13d040
+```
+
+**This is not a cached pointer at all.** `ObjectAt(i)` returns whatever is in slot `i` of
+GUObjectArray, and UE only NULLS that slot when it destroys the object — so between destruction
+and that write the slot holds an address whose memory has been freed and possibly reused.
+Reading that object's `Class` field is then a read of freed memory. It happens once per 500 ms
+over ~70k slots per pass, which is why it took 4130 s to hit and why it looked like streaming
+churn rather than a loop defect.
+
+**The fix is one guard, and the interesting part is that the guard already existed one file
+over.** `qdwrite.h`'s `BuildActorStateOwnersGuarded` has been fault-contained as a unit since
+Session 17 R125, with a comment naming precisely this hazard ("each of them dereferences a slot
+the engine may be tearing down"). `ScanLocalEquip`'s loop body had none. It does now, per object
+rather than per pass, so one bad slot costs that one candidate instead of the frame's whole
+equipment scan.
+
+This is also the explanation for a number Session 17 could only record: it listed
+`WINMM+0x6f4d7` as one of the three play-set crash sites and wrote "the remaining fault is in a
+path the session did not isolate". It was this path, and it was never a cached pointer.
+
+**What this fix does and does not claim.** It closes the mod-side fault that the 04:53 dump
+pins, and no dump after it faults there. It does **not** make the soak survive: the very next
+run still died, and that death is inside the game's own code — see R140, which is the honest
+account of what the session's last run shows.
+
+### R138. One earlier crash that is a DIFFERENT fault — recorded, not merged
+
+Before R139 there was one crash whose dump shows the EXECUTE bit set:
 
 ```
 ExceptionAddress: 00000247d7e1bf40
 ExceptionCode:    c0000005 (Access violation)
-Parameter[0]:     0000000000000008          <- READ/WRITE/EXECUTE: 8 = EXECUTE
-Parameter[1]:     00000247d7e1bf40
-```
-
-UE wrote a real minidump this time, into the rig's own save dir
-(`inst2/Saved_qd2/Crashes/UE4CC-Windows-…/UE4Minidump.dmp`, kept), so this is read from the
-dump and not inferred:
-
-```
-rax=00000247f4084840                          <- the value the faulting call used
-rip=00000247d7e1bf40                          <- and it was not executable
+Parameter[0]:     0000000000000008          <- 8 = EXECUTE
+rax=00000247f4084840
 0x00007ffc015b3c54  mov rax,[winmm!g_oTick]
 0x00007ffc015b3c60  call rax                   <- HK_Tick+0x30
 0x00007ffc015b3c62  movzx r14d,al              <- HK_Tick+0x32, the frame in PCallStack
 ```
 
-So `g_oTick` — the trampoline pointer MinHook hands back for `FEngineLoop::Tick` — held a heap
-address whose low bits match the framebuffer pointer in the same register dump. That is a
-global being overwritten with unrelated data, not a cached object and not one of the R132
-sites.
+`g_oTick` — the trampoline pointer MinHook hands back for `FEngineLoop::Tick` — held a heap
+address whose low bits match a framebuffer pointer from the same register dump. That is a
+function pointer overwritten with unrelated data, in the tick hook's *prologue*, before any pump
+runs. It did not reproduce on a re-run of the same phase, nor across four subsequent ten-minute
+soaks.
 
-**What is established:** the fault is an EXECUTE violation through a corrupted function
-pointer, in our tick hook, on one machine, once. **What is NOT established:** what wrote it.
-Two things were ruled out rather than assumed:
+It is kept separate from R139 deliberately: two crashes, two mechanisms, two dumps, and only one
+of them is understood. Folding them together because both say `WINMM` would be the same mistake
+as Session 17's combined `ERR|EXCEPTION|ACCESS_VIOLATION` gate. **R138 is open.**
 
-* it did **not** reproduce on a re-run of the same phase with the same binary, nor across a
-  242 s hub soak and a 602 s 780 soak afterwards, all with the loot code in place;
-* it is **not** attributable to the loot reconciliation by inspection — that loop calls
-  `SetActorHidden`, which is `__try`-free but reads only a resolved handle, and the crash is in
-  `HK_Tick`'s *prologue*, before any pump runs.
+### R140. WHAT THE SESSION'S LAST RUN ACTUALLY SHOWS — two crashes, and only one is ours
 
-As a precaution the reconciliation was bounded anyway: `SetActorHidden` is a reflective
-Blueprint call and there is no reason to issue it repeatedly, so each drop record now attempts
-it at most once (`LootActorRec::hideTried`). That is a strictly smaller change than "hide on
-every pass", and it is the right shape regardless of whether it is related to R138.
+The fully-guarded binary was run on the same claim and a process still died, at 330 s. That
+looked like the fix failing; the dump says otherwise, and the distinction is the whole point of
+this section. **Two dumps, two different faulting modules:**
 
-R138 is left **open and named**, with its dump kept, because a single non-reproducing
-execute-violation through a hook trampoline is exactly the kind of thing that a later session
-needs the evidence for rather than a summary of.
+| dump | `ExceptionAddress` | `Parameter[1]` | whose code |
+|---|---|---|---|
+| 04:53 (pre-guard) | `winmm+0x6fde1` — `ScanLocalEquip+0x371`, `mov rcx,[rax+0x10]` | `0x17efb13d040` | **ours** |
+| 05:20 (post-guard) | `QueensDomain_Win64_Shipping+0x1145580` | `0x1e3050060` | **the game's** |
+
+In the 05:20 dump the fault happens INSIDE the game's code; our module appears only as a
+*return address* one frame above it (`WINMM+0x43f02` = `HK_Tick+0x32`, i.e. the `movzx` right
+after the `call` into the engine's tick). The game frames below it are identical to the earlier
+dump to within two bytes (`+0x1066134`, `+0x10662c3`, `+0x2cd5299`, `+0x29afbcd`, `+0x28c506d`,
+`+0x775b80`), so this is the same engine call site crashing on the same malformed pointer — and
+the pointer comes through `HK_Tick`'s forward to `FEngineLoop::Tick`, not from any read the mod
+makes.
+
+What this establishes, stated as narrowly as the evidence allows:
+
+* the crash R139 names is **gone from the dumps** — no dump after the guard faults in
+  `ScanLocalEquip`, where the previous one did;
+* the soak still dies, and the surviving failure is **inside the engine**, reached through the
+  tick the mod forwards. That is the same relationship `HK_Tick` has with the game on every
+  frame, so a corrupted pointer delivered TO the engine is a candidate cause, and the mod is a
+  candidate source of it — but the evidence in hand does not name it, and neither dump shows a
+  mod-side fault.
+
+The honest summary of the soak claim for this session is therefore:
+
+```
+PERFORMANCE AT THE DOCUMENTED PLAY SET, ALL RUNS
+  survived 600 s / 182-185 iterations ...... 4 runs  (2 boots, 2 binaries)
+  died at 248 s, 4130 s, 330 s ............. 3 runs
+  of those 3, faults inside winmm .......... 1  (ScanLocalEquip, fixed)
+  of those 3, faults inside the game ....... 2  (post-fix; engine-side)
+```
+
+**R140 is open**, with both dumps kept in `_test/s18-soak-hub/inst2/Saved_qd2/Crashes/`, so the
+next session can attack it from a stack rather than from a summary.
 
 ### Live proof, phase by phase
 
@@ -3704,8 +3804,8 @@ needs the evidence for rather than a summary of.
 | The weak-resolved pawn is readable | **PASS** | `scan: local at 4106,-1744,140 yaw 174` |
 | `EnemyRec::actor` resolves across the churn | **PASS** | `enemykey n=627 alive=176 dead=451 killlog=324 ledger=61 mirrors=0` |
 | `ScanLocalEquip` (crash site 2) completes | **PASS** | `equip scan: RelativeScale3D@308 StaticMesh@1160 IsVisible=1` |
-| The play set survives 600 s, run 1 | **PASS** | `soak run 1: 603 s of 600 s, iterations=182` |
-| The play set survives 600 s, run 2 | **PASS** | `soak run 2: 603 s of 600 s, iterations=184` |
+| The play set survives 600 s, run 1 | **PASS** | `soak run 1: 600 s of 600 s, iterations=184` (final binary) |
+| The play set survives 600 s, run 2 | **PASS** | `soak run 2: 602 s of 600 s, iterations=185` (final binary) |
 | The play set survives 600 s in 780 | **PASS** | `soak run 1: 602 s of 600 s, iterations=175` |
 | Zero FAULT lines in all three soaks | **PASS** | `ACCESS_VIOLATION=0  EXCEPTION(any)=0` on both machines, all runs |
 | Kill sets diff 0 | **PASS (once) / FAIL** | hub 242 s soak: `host-dead=448 peer-dead=448 diff=0`; but `diff=3`, `diff=7`, `diff=34` in the three longer runs — R137 |

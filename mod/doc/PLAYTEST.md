@@ -91,9 +91,9 @@ etc. default to **0** in the shipped file, because each one was enabled only aft
 proven on a live run.  For a play session, turn on this set:
 
 **This is the set Sessions 17 and 18 used for their ten-minute soaks with both players in
-`780_SZ_Depths` and in the hub.**  Session 18 fixed the crash that made long sessions unsafe:
-two consecutive ten-minute hub soaks and a ten-minute `780` soak, all with zero faults — see the
-stability note in section 8 for what is still rough.  `MirrorSpawn` is deliberately absent — it
+`780_SZ_Depths` and in the hub.**  Session 18 fixed two crash causes in it; the soak still died
+in 3 of 7 runs, twice in the mod (now fixed) and once inside the game itself.  Read the
+stability note in section 8 before planning a marathon.  `MirrorSpawn` is deliberately absent — it
 is a compiled default (on), so a real pair of players gets it without an entry here.
 The three lines marked *proven* are the ones Session 17 closed; the one marked *not proven* is
 still safe to leave on (it is a read path and a refusal), but do not expect its second half.
@@ -276,27 +276,34 @@ The lines that answer most questions, verbatim:
 
 ## 8. Known rough edges (read before reporting)
 
-- **A long session at the play set is now safe — ten minutes was measured twice, back to back.**
+- **A long session at the play set is much better but NOT yet reliable — read this first.**
   Session 17 left this open: ten minutes with both players in a busy hub ended in a crash at
-  about eight minutes, always inside the mod, always the same shape. Session 18 found the cause
-  and fixed it. The crash was a **cached object pointer read after the game had freed the
-  object** — the mod held raw addresses to actors and objects and re-checked them with a test
-  that itself reads the address it is checking, so "is this still valid?" was reading freed
-  memory. Every one of those caches now stores the object's *identity* (its slot in the game's
-  object table plus that slot's serial number) and looks it up fresh, so a freed object reads as
-  "gone" instead of faulting.
+  about eight minutes, always inside the mod. Session 18 found the cause of that one and fixed
+  it, and then found a second, different one.
 
-  Measured after the fix, at this play set, with both players fighting for ten minutes:
+  The first cause was a **cached object pointer read after the game had freed the object** — the
+  mod held raw addresses to actors and objects and re-checked them with a test that itself reads
+  the address it is checking. Every one of those caches now stores the object's *identity* (its
+  slot in the game's object table plus that slot's serial number) and looks it up fresh, so a
+  freed object reads as "gone" instead of faulting.
 
-  | run | survived | faults |
-  |---|---|---|
-  | hub, run 1 | 603 s of 600 s, 182 iterations | 0 |
-  | hub, run 2 (same processes) | 603 s of 600 s, 184 iterations | 0 |
-  | `780_SZ_Depths` | 602 s of 600 s, 175 iterations | 0 |
+  The second cause was found afterwards and from a crash dump: the mod walks the game's whole
+  object table every half second and read a slot the engine had freed but not yet cleared. Every
+  such walk is now guarded, one slot at a time.
 
-  In practice: a long session is fine now. If the game *does* vanish, look in
-  `<user dir>\Saved\Crashes\` — a `WINMM` module in the stack still means this mod rather than
-  the game, and it is now a new bug worth reporting rather than a known one.
+  Measured across the session at this play set, with both players fighting for ten minutes:
+
+  | outcome | runs |
+  |---|---|
+  | survived the full 600 s, both processes alive, zero faults | **4** (two boots, two builds) |
+  | died | **3** — at 248 s, 4130 s, 330 s |
+
+  Two of those three deaths were the mod's, and both are now fixed; the 330 s death happened
+  **inside the game's own code**, reached through the frame tick the mod forwards — that one is
+  not understood yet. In practice: a long session is much more likely to survive than it was,
+  and it is still not a guarantee. Play in reasonable stretches. If the game vanishes, look in
+  `<user dir>\Saved\Crashes\` — `CrashContext.runtime-xml` names the faulting module, and a
+  `WINMM` entry means the mod.
 - **Progress can still lag on the peer in a chest-dense area.** In `780_SZ_Depths` the peer
   logged about 8000 `actor-state: game writer ... (WRITE FAILED)` lines: it wrote a container
   value and read back a different one (±1 or ±2), so its write did not stick. Nothing crashed
