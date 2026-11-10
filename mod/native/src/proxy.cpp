@@ -1287,20 +1287,22 @@ bool ActorCallReady(void* actor)
 }
 
 // One refusal line per call class, rate-limited: a refusal is a fact the run must show,
-// but a world teardown would otherwise print it for every actor.
+// but a world teardown would otherwise print it for every actor.  The reason is named:
+// "pending kill" and "level not resident" are different findings, and a run has to be
+// able to tell a correct refusal from a wrong `Levels` offset.
 void LogCallRefused(const char* what, void* actor)
 {
     static uint32_t last[2] = {0, 0};
-    static int said[2] = {0, 0};
     int slot = (what && what[0] == 'd') ? 1 : 0;
     uint32_t now = Net::Now();
     if (now - last[slot] < 2000) return;
     last[slot] = now;
     char d[96];
     ObjDescribe(actor, d, sizeof(d));
-    ++said[slot];
-    QDLOG(LOG_WARN, "call refused: ", what, " ", d,
-          (said[slot] > 1 ? " (the target is pending kill, being destroyed, or its level is streaming out)" : ""));
+    const char* why = !ObjectCallable(actor)
+                          ? "pending kill or being destroyed"
+                          : "its level is not resident (streaming out)";
+    QDLOG(LOG_WARN, "call refused: ", what, " ", d, " -- ", why);
 }
 
 void SetActorHidden(void* actor, bool hidden)
@@ -1319,6 +1321,32 @@ void DestroyActor(void* actor)
 {
     if (!actor || !g_actor.sigDestroy.valid) return;
     if (!ActorCallReady(actor)) { LogCallRefused("destroy", actor); return; }
+    // R140: never ask the engine to destroy the SAME object twice.  `K2_DestroyActor`
+    // puts the actor's objects on the engine's own destruction list; a second add of a
+    // pointer that list has already freed is exactly the dangling entry the 330 s dump
+    // shows (`call [rax]`, rax the first qword of a recycled block).  The engine's flag
+    // is the first line of defence (`ObjectCallable`), but it is a state bit, not a
+    // history: this set is the history, keyed by {slot, serial} so a reused slot is a
+    // different object.  Bounded and recycled; a mirror/puppet table is at most 64.
+    weak::Handle h = weak::Capture(actor);
+    if (h.index > 0) {
+        static weak::Handle seen[512];
+        static int n = 0, cur = 0;
+        for (int i = 0; i < n; ++i) {
+            if (weak::Same(seen[i], h)) {
+                static uint32_t lastSaid = 0;
+                uint32_t now = Net::Now();
+                if (now - lastSaid > 2000) {
+                    lastSaid = now;
+                    QDLOG(LOG_DEBUG, "destroy refused: this object was already destroyed");
+                }
+                return;
+            }
+        }
+        seen[cur] = h;
+        cur = (cur + 1) % 512;
+        if (n < 512) ++n;
+    }
     ArgList a;
     char err[128];
     Invoke(actor, g_actor.fnDestroy, g_actor.sigDestroy, a, nullptr, err, sizeof(err));
@@ -1566,7 +1594,8 @@ void* SpawnPlayerBody(avatar::Body* b, float x, float y, float z, float yaw)
     if (!root || !LooksLikeUObject(root)) root = nullptr;
     if (!avatar::BuildBody(b, actor, root, -hh)) {
         QDLOG(LOG_WARN, "player body: could not attach the visible body; falling back");
-        DestroyActor(actor);
+        // R140: hide the inert body; never destroy a gameplay Blueprint from native code.
+        SetActorHidden(actor, true);
         memset(b, 0, sizeof(*b));
         return nullptr;
     }
@@ -2073,8 +2102,11 @@ void PuppetPump(uint32_t now)
 
     if (st.want_destroy) {
         if (g_puppetActor) {
-            QDLOG(LOG_INFO, "puppet destroyed (peer left the session)");
-            DestroyActor(g_puppetActor);
+            QDLOG(LOG_INFO, "puppet hidden (peer left the session)");
+            // R140: the body is the game's own player class under PlayerBody=1, so it is a
+            // gameplay Blueprint.  Hide it and let the engine reclaim it; destroying it
+            // from native code is the engine-list hazard this session removes.
+            SetActorHidden(g_puppetActor, true);
             g_puppetActor = nullptr;
             memset(&g_body, 0, sizeof(g_body));
         }
@@ -6981,7 +7013,12 @@ static bool TryConstructMirrorBody(const wire::EnemySpawnBody& s, uint32_t now)
         return false;
     }
     EnemyRec* rec = RegisterMirror(actor, s.guid, now);
-    if (!rec) { DestroyActor(actor); return false; }
+    // R140: never `K2_DestroyActor` a gameplay Blueprint the module just spawned.  The
+    // corpus states the hazard ("destroying a Blueprint actor from native code is the AV
+    // ..."), and the engine's own destruction list is where this session's fault lands.
+    // Hiding leaves a reachable, inert actor for the engine to reclaim; a dangling list
+    // entry is a crash.
+    if (!rec) { SetActorHidden(actor, true); return false; }
     // Freeze it through the game's own levers rather than trusting the pre-finish writes: a
     // Blueprint's ReceiveBeginPlay may have set any of them after the finish.
     EnemyDrive(*rec, false);
@@ -7276,9 +7313,10 @@ void EnemyMirrorPump(uint32_t now)
             }
             if (!gone) {
                 // The death path can leave the actor standing (no damage entry, a Build that
-                // ignores the message).  Then the copy is a corpse with a row saying dead, so
-                // it is removed -- guarded, because this is content-owned memory.
-                __try { DestroyActor(r.actor); } __except (EXCEPTION_EXECUTE_HANDLER) {}
+                // ignores the message).  Then the copy is a corpse with a row saying dead.
+                // R140: HIDE it, never `K2_DestroyActor` -- a gameplay Blueprint destroyed
+                // from native code leaves the engine list this session's dump faults in.
+                __try { SetActorHidden(r.actor, true); } __except (EXCEPTION_EXECUTE_HANDLER) {}
                 ForgetMirror(r.actor);
                 gone = true;
             }
@@ -8501,6 +8539,39 @@ void EnemyDetectDeaths()
     // in one frame while a map switch was starting).  The world-change branch of
     // EnemyPump and FollowHardTravel both arm this window.
     if (Net::Now() < g_enDeathSuppressUntil) return;
+    // R140 (Session 19): the 330 s fault reproduces HERE.  A sublevel streams out, every
+    // enemy record in it reads "actor gone" in one sweep, and the module recorded them all
+    // as deaths -- 15 `StoreEnemySaveState` calls into the world on the frame its level was
+    // being torn down, immediately before the engine's own destruction list faulted
+    // (`call [rax]`, rax a GC reference token).  So two statements are added:
+    //
+    //   1. the world itself must be callable -- a world on a destruction path is not a
+    //      thing to write persistence records into;
+    //   2. a sweep that sees MANY actors vanish at once is a level event, not N kills.
+    //      A real death is seen as bDead/HP<=0 first (the game's death animation takes
+    //      frames); "actor gone" is the teardown signature.
+    void* world = GWorldPtr();
+    if (!world || !ObjectCallable(world)) return;
+    if (!EnemyRecordsTrustworthy()) return;   // the records name another world
+
+    int vanished = 0;
+    for (int i = 0; i < g_enN; ++i) {
+        EnemyRec& r = g_en[i];
+        if (!r.haveGuid || r.mirror || !g_own.Running(r.guid)) continue;
+        if (r.seenAlive && !ObjectIsLive(r.actor)) ++vanished;
+    }
+    static const int kMassGoneMax = 8;
+    if (vanished > kMassGoneMax) {
+        static uint32_t saidAt = 0;
+        uint32_t now = Net::Now();
+        if (now - saidAt > 5000) {
+            saidAt = now;
+            QDLOG(LOG_WARN, "enemy: ", dec(vanished), " enemies disappeared in one sweep -- "
+                  "a level unload, not ", dec(vanished), " deaths; recording none");
+        }
+        return;
+    }
+
     for (int i = 0; i < g_enN; ++i) {
         EnemyRec& r = g_en[i];
         if (!r.haveGuid || !g_own.Running(r.guid)) continue;
@@ -8529,16 +8600,42 @@ void EnemyDetectDeaths()
             else if (haveHp && hp <= 0.0f && r.seenAlive) { dead = true; why = "hp<=0"; }
             if (!dead) continue;
         } else {
+            // R140: an actor that vanished before it was ever seen alive is a record whose
+            // spawner never activated, or a level unload -- not a corpse.  Same rule the
+            // HP-0 branch already used.
+            if (!r.seenAlive) continue;
             dead = true;
             why = "actor gone";
         }
         if (r.deathRecorded) continue;
+        // R140: a death that is ALREADY standing (this machine's kill log, or the other
+        // machine's ledger) needs no second write.  Before this, a spawner that respawned
+        // a killed enemy produced one `StoreEnemySaveState(hp=0)` per respawn, forever --
+        // `5D370AC1`/`91FC5EC5` every 1.5 s on the host and the dragon every 3.5 s on the
+        // peer in the 210 s run.  The death stands without the repeat.
+        if (KillLogHas(r.guid) || g_remoteDead.Has(r.guid, Net::Now())) {
+            r.deathRecorded = true;
+            continue;
+        }
         r.deathRecorded = true;
         // The spawner's own respawn time when it names one; 0 otherwise.  The record is
         // what this lane proves, and never inventing a respawn is the safe direction.
         float respawn = 0.0f;
         if (r.spawner && !FloatPropC(r.spawner, "RespawnTime", &respawn)) respawn = 0.0f;
         void* ctx = (r.spawner && ObjectIsLive(r.spawner)) ? r.spawner : GWorldPtr();
+        // The writer is a game call like any other: refuse it on a target the engine has
+        // flagged (R140).  A skipped record is a lost death; a write into a dying object
+        // is the fault this session is here to remove.
+        if (!ctx || !ActorCallReady(ctx)) {
+            static uint32_t saidCtx = 0;
+            uint32_t n = Net::Now();
+            if (n - saidCtx > 5000) {
+                saidCtx = n;
+                QDLOG(LOG_WARN, "enemy death detected guid=", hex32(r.guid[0]),
+                      " but its world/spawner is being torn down; the record was not written");
+            }
+            continue;
+        }
         QdGuid g = {r.guid[0], r.guid[1], r.guid[2], r.guid[3]};
         QDLOG(LOG_INFO, "enemy death detected guid=", hex32(r.guid[0]), " (", why, ", hp ",
               flt(haveHp ? hp : 0.0f, 1), "); recording it through StoreEnemySaveState");
@@ -8612,9 +8709,10 @@ void EnemyPump(uint32_t now)
         for (int i = 0; i < g_enN;) {
             if (!g_en[i].mirror) { ++i; continue; }
             if (ObjectIsLive(g_en[i].actor)) {
-                __try { DestroyActor(g_en[i].actor); } __except (EXCEPTION_EXECUTE_HANDLER) {}
+                // R140: hide, never destroy a gameplay Blueprint from native code.
+                __try { SetActorHidden(g_en[i].actor, true); } __except (EXCEPTION_EXECUTE_HANDLER) {}
             }
-            QDLOG(LOG_INFO, "enemy mirror: the session ended -- destroying guid=",
+            QDLOG(LOG_INFO, "enemy mirror: the session ended -- hiding guid=",
                   hex32(g_en[i].guid[0]));
             g_en[i] = g_en[--g_enN];
         }
@@ -12088,6 +12186,63 @@ void* RigFindNear(const char* sub, float* distOut, ActorXform* xfOut, char* name
         }
     }
 
+    // `drop:<8 hex>:<index>`: the ONE spawned drop the loot lane calls by name (Session 19,
+    // R129's next job).  `near:loot` and `drop` (the class walk) resolve a CLASS, so they
+    // park a player beside a placed pickup instead of the drop the tombstone names; the
+    // lane's own identity is `{source_hash, drop_index}`, and this resolves exactly that.
+    // ':' separates the index because '#' is the lever's nonce delimiter.
+    if (!strncmp(sub, "drop:", 5)) {
+        uint32_t want = 0;
+        int digits = 0;
+        const char* p = sub + 5;
+        for (; *p && digits < 8; ++p, ++digits) {
+            char c = *p;
+            uint32_t v;
+            if (c >= '0' && c <= '9') v = (uint32_t)(c - '0');
+            else if (c >= 'a' && c <= 'f') v = (uint32_t)(c - 'a' + 10);
+            else if (c >= 'A' && c <= 'F') v = (uint32_t)(c - 'A' + 10);
+            else break;
+            want = (want << 4) | v;
+        }
+        int32_t index = 0;
+        bool haveIndex = false;
+        if (*p == ':') {
+            haveIndex = true;
+            for (++p; *p >= '0' && *p <= '9'; ++p) index = index * 10 + (*p - '0');
+        }
+        if (digits > 0 && haveIndex) {
+            for (int i = 0; i < g_lootActorN; ++i) {
+                LootActorRec& r = g_lootActors[i];
+                if (r.source_hash != want || r.drop_index != index) continue;
+                if (r.gone || LootActorGone(r)) {
+                    QDLOG(LOG_WARN, "rig: drop ", hex32(want), "#", dec(index),
+                          " is already gone on this machine");
+                    return nullptr;
+                }
+                void* a = r.actor;
+                if (!a || !ObjectIsLive(a)) continue;
+                ActorXform x;
+                if (!ReadActorXform(a, &x)) continue;
+                if (distOut) {
+                    float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
+                    *distOut = sqrtf(dx * dx + dy * dy + dz * dz);
+                }
+                if (xfOut) *xfOut = x;
+                if (nameOut && nameCap > 0) {
+                    nameOut[0] = 0;
+                    FNameToString(ObjNameRaw(a), nameOut, nameCap);
+                }
+                QDLOG(LOG_INFO, "rig: drop ", hex32(want), "#", dec(index),
+                      " resolved to a live actor at ", flt(x.px, 0), ",", flt(x.py, 0), ",",
+                      flt(x.pz, 0));
+                return a;
+            }
+        }
+        QDLOG(LOG_WARN, "rig: no live loot-ledger drop matches '", sub,
+              "' (the scan has ", dec(g_lootActorN), " drop(s))");
+        return nullptr;
+    }
+
     // `near:loot` (or `near:lootdrop`): the nearest actor in the LOOT LEDGER, not the
     // nearest placed pickup.  Measured Session 8: the class walk matched a placed herb and
     // the pickup produced an item while never touching the spawned drop the ledger held.
@@ -12275,6 +12430,21 @@ void DevTeleportToTarget(const char* sub, float yawOverride, bool haveYaw)
     void* actor = RigFindNear(sub, &d, &t, nm, sizeof(nm));
     if (!actor) {
         QDLOG(LOG_WARN, "dev teleport near: no live actor matches '", sub, "'");
+        return;
+    }
+    // A DROP IS COLLECTED BY OVERLAP, so the pawn goes ON it, not `offset` cm beside it.
+    // `RigStandBeside`'s offset is right for a door (you press it from arm's length) and
+    // wrong for a pickup volume; Session 18's five attempts failed on exactly that.
+    if (!strncmp(sub, "drop:", 5)) {
+        ActorXform me = {};
+        ReadActorXform(g_localPawn, &me);
+        bool ok = SetActorXform(g_localPawn, t.px, t.py, t.pz, haveYaw ? yawOverride : me.yaw);
+        void* pc = LocalController();
+        int ro = pc ? FindPropertyOffsetIn(ObjClass(pc), "ControlRotation") : -1;
+        if (ro >= 0) { float* r = (float*)((uint8_t*)pc + ro); r[0] = 0.0f; r[1] = me.yaw; }
+        QDLOG(LOG_INFO, "dev teleport drop '", sub, "' -> ", nm, " at ", flt(t.px, 0), ",",
+              flt(t.py, 0), ",", flt(t.pz, 0), " (standing ON it to trigger the overlap pickup)",
+              (ok ? "" : " FAILED"));
         return;
     }
     RigStandBeside(actor, t, sub, d, yawOverride, haveYaw);
