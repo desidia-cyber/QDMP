@@ -661,7 +661,14 @@ function Invoke-Smoke([int]$H, [int]$P, [string]$step) {
         Verdict $step $i ($t.Count -gt 0) 'the build verified its target table (0 mismatched)' $(if ($t.Count) { ([string]$t[-1]).Trim() } else { '' })
         $s = @(Wait-LoadMatch $i 'substrate: globals=1 fname=1' 30)
         Verdict $step $i ($s.Count -gt 0) 'the substrate validated (globals + FName)' $(if ($s.Count) { ([string]$s[-1]).Trim() } else { '' })
-        $r = @(Get-LoadMatches $i 'REFUS')
+        # "REFUS" alone is far too broad: the lanes refuse intents all the time on a healthy
+        # run (`actor-state intent refused (stale)`, `flags applied=0 refused=13`), and those
+        # are the lanes' own containment, NOT the module declining to load.  The module's
+        # refusal is the specific line `REFUSING TO RUN`, printed once during substrate
+        # validation.  Matching it is the difference between "this build is wrong" and "a lane
+        # did its job", which is the same FAULT-versus-ERR distinction this session had to draw
+        # for the soak gate.
+        $r = @(Wait-LoadMatch $i 'REFUSING TO RUN' 3)
         Verdict $step $i ($r.Count -eq 0) 'the build did not refuse to run' $(if ($r.Count) { ([string]$r[-1]).Trim() } else { '' })
         $sw = @(Get-LoadMatches $i 'switches: ')
         Verdict $step $i ($sw.Count -gt 0) 'the switch set this run used is recorded' $(if ($sw.Count) { ([string]$sw[-1]).Trim() } else { '' })
