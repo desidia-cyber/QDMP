@@ -7870,7 +7870,10 @@ void BossPump(uint32_t now)
                 bool lhave = ci >= 0 && ObjectIsLive(g_en[ci].actor) &&
                              EnemyHp(g_en[ci].actor, &lhp, &lmx) && lmx > 0.0f;
                 int lf = lhave ? (int)enemy::HpFrac(lhp, lmx) : -1;
-                if (!BossSend(g_bossKey, wire::kBossBarOff, 0, (uint16_t)(lf < 0 ? 0 : lf)))
+                // 0xFFFF on the wire means "unreadable", so the follower does not turn an
+                // unknown last value into a measured 0.
+                uint16_t wireHp = (lf < 0) ? (uint16_t)0xFFFF : (uint16_t)lf;
+                if (!BossSend(g_bossKey, wire::kBossBarOff, 0, wireHp))
                     QDLOG(LOG_WARN, "boss: bar-off send failed for key=", hex32(g_bossKey[0]));
                 QDLOG(LOG_INFO, "boss: sent bar off key=", hex32(g_bossKey[0]), " hp=", dec(lf),
                       " (the active boss died or left)");
@@ -8094,8 +8097,22 @@ void OnBoss(wire::Reader& r, uint32_t now)
             QDLOG(LOG_INFO, "boss: key=", hex32(b.guid[0]),
                   " is missing on the peer; its class path will be described again");
         }
-        QDLOG(LOG_WARN, "boss: peer NACK key=", hex32(b.guid[0]),
-              " -- it cannot show this bar; choosing another");
+        // One refusal per key per minute at WARN.  A boss the peer genuinely lacks is
+        // asked about again after the 3 s window, and in a 600 s soak that measured 246
+        // identical WARN lines -- loud enough to bury the line that mattered.
+        static uint32_t lastNackKey[4] = {0, 0, 0, 0};
+        static uint32_t lastNackAt = 0;
+        bool sameNack = boss::SameKey(lastNackKey, b.guid) &&
+                        (uint32_t)(now - lastNackAt) < 60000;
+        memcpy(lastNackKey, b.guid, 16);
+        if (!sameNack) {
+            lastNackAt = now;
+            QDLOG(LOG_WARN, "boss: peer NACK key=", hex32(b.guid[0]),
+                  " -- it cannot show this bar; choosing another");
+        } else {
+            QDLOG(LOG_DEBUG, "boss: peer still NACKs key=", hex32(b.guid[0]),
+                  " -- another candidate");
+        }
         return;
     }
 
@@ -8134,7 +8151,8 @@ void OnBoss(wire::Reader& r, uint32_t now)
         g_bossKeyMs = now;
         g_bossAck.OnAck(b.guid);      // remembered, so this machine's own samples are stable
     } else {
-        QDLOG(LOG_INFO, "boss: bar lowered for key=", hex32(b.guid[0]), " hp=", dec((int)b.hp),
+        QDLOG(LOG_INFO, "boss: bar lowered for key=", hex32(b.guid[0]), " hp=",
+              dec(b.hp == 0xFFFF ? -1 : (int)b.hp),
               " (the partner says the key is dead or gone)");
         BossKeyClear(now);
     }

@@ -571,9 +571,18 @@ function Invoke-OneSoak([int]$H, [int]$P, [string]$step, [int]$run, [string]$anc
         $bossSamples | Export-Csv -LiteralPath $csv -NoTypeInformation
         Note ("  boss samples: {0} rows, {1} paired, {2} same key, max hp delta {3}; csv={4}" -f
               $bossSamples.Count, $paired, $same, $maxDelta, $csv)
-        Verdict $step $H ($paired -gt 0) 'a boss bar was sampled on both machines during the soak' ("paired=$paired")
-        if ($last) {
-            Verdict $step $H ($maxDelta -le 1200) 'the shared boss bar carries the SAME HP on both machines' ("max delta=$maxDelta of 65535")
+        # INFORMATIONAL in a soak.  A soak is not a boss fight: once the bar's key dies
+        # there may be no boss both machines can show (measured in run 3: after the dragon
+        # died the only live hub boss was one the peer holds no copy of, so no bar existed
+        # for the rest of the run -- the rule working).  The dedicated `boss` phase is the
+        # proof; here the numbers are recorded without turning "no fight" into a failure.
+        if ($paired -eq 0) {
+            Note ("  (no shared boss bar existed during this soak: {0} rows, none paired; the bar rule only raises one both machines can show)" -f $bossSamples.Count)
+        } else {
+            Note ("  shared boss bar: {0} paired samples, max hp delta {1} of 65535" -f $paired, $maxDelta)
+            if ($last) {
+                Verdict $step $H ($maxDelta -le 1200) 'the shared boss bar carries the SAME HP on both machines' ("max delta=$maxDelta of 65535")
+            }
         }
     }
 
@@ -591,6 +600,10 @@ function Invoke-OneSoak([int]$H, [int]$P, [string]$step, [int]$run, [string]$anc
                   $wH.Partner -eq $wP.World -and $wP.Partner -eq $wH.World -and
                   $wH.Agree -eq '1' -and $wP.Agree -eq '1')
     Verdict $step $P $sameWorld 'both machines are in the SAME world (UWorld + agreement)' ("host=$($wH.World)/partner=$($wH.Partner)/agree=$($wH.Agree) peer=$($wP.World)/partner=$($wP.Partner)/agree=$($wP.Agree)")
+    # R147: the AREA is a separate axis from the UWorld.  A 780 run that left one machine
+    # in the hub would agree on the world and disagree here, which is exactly the run 3
+    # failure Session 19 recorded.
+    Verdict $step $P ($wH.Area -eq $wP.Area) 'both machines hold the SAME area' ("host='$($wH.Area)' peer='$($wP.Area)'")
 
     # ---- the per-GUID kill sets (R137) ------------------------------------
     if (-not (Test-Alive $H) -or -not (Test-Alive $P)) {
