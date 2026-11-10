@@ -1056,15 +1056,31 @@ inline bool ReadMovers(Reader& r, MoversBody* b)
 
 // ---- loot (WIRE.md 3.18) ---------------------------------------------------
 // A shared drop set plus tombstones.  Body: rev(u32), n(u16), n x {u32 source_hash,
-// i32 drop_index, u8 taken, str item_path}.  The host is authoritative; a peer's own
-// rolls are merged as proposals.  `taken` wins: a drop one player picked up must
-// disappear for the other.
+// i32 drop_index, u8 taken, u8 flags, i16 yaw, i32 px, i32 py, i32 pz, str item_path}.
+// The host is authoritative; a peer's own rolls are merged as proposals.  `taken` wins:
+// a drop one player picked up must disappear for the other.
+//
+// THE SPAWN HALF (Session 22, R129).  The game rolls its own drop on EACH machine, and
+// the two rolls are not the same item and not at the same centimetre, so a key derived
+// from the roll's class and position could never agree (measured: two machines, four
+// drops, not one key in common).  So a drop's identity is the DEATH that caused it and
+// the machine that ran that death is its ORIGINATOR: it owns the drop and describes it
+// here.  The partner materialises the same class at the same point under the same key
+// instead of trusting its own roll.  `flags` says whether this entry carries a spawn
+// point; `yaw` is `QuantizeAngle`, the three positions are `QuantizePos`.
 static const int kLootMax = 40;
+
+enum LootFlags {
+    LF_SPAWN = 1        // the entry carries a point: a drop to materialise if absent
+};
 
 struct LootEntry {
     uint32_t source_hash;
     int32_t  drop_index;
     uint8_t  taken;
+    uint8_t  flags;
+    int16_t  yaw;
+    int32_t  px, py, pz;
     char     item_path[200];
 };
 
@@ -1087,11 +1103,16 @@ inline int WriteLootChunk(Writer& w, const LootEntry* e, int n, int first)
     while (i < n) {
         int pl = 0;
         while (e[i].item_path[pl]) ++pl;
-        int need = 4 + 4 + 1 + 2 + pl;
+        int need = 4 + 4 + 1 + 1 + 2 + 12 + 2 + pl;
         if (w.len + need > w.cap) break;
         w.U32(e[i].source_hash);
         w.I32(e[i].drop_index);
         w.U8(e[i].taken);
+        w.U8(e[i].flags);
+        w.I16(e[i].yaw);
+        w.I32(e[i].px);
+        w.I32(e[i].py);
+        w.I32(e[i].pz);
         w.Str(e[i].item_path);
         ++i;
         if (!w.ok) break;
@@ -1115,6 +1136,11 @@ inline bool ReadLoot(Reader& r, LootBody* b)
         tmp.source_hash = r.U32();
         tmp.drop_index = r.I32();
         tmp.taken = r.U8();
+        tmp.flags = r.U8();
+        tmp.yaw = r.I16();
+        tmp.px = r.I32();
+        tmp.py = r.I32();
+        tmp.pz = r.I32();
         if (r.Str(tmp.item_path, sizeof(tmp.item_path)) >= (int)sizeof(tmp.item_path)) return false;
         if (b->n < kLootMax) b->entry[b->n++] = tmp;
         if (!r.ok) return false;

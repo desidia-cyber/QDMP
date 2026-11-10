@@ -338,21 +338,46 @@ The lines that answer most questions, verbatim:
   also produced the one number Session 20 could not — **shared HP compared on 71 pairs,
   0 unequal, worst delta 0.1 HP** — so an enemy's health really is the same on both screens
   wherever both machines can read it.
+
+  **Session 22 ran two full sessions and neither reached 1800 s of measured body.**  Both
+  are reported because the second one failed.  Run 1 lasted **2049 s of wall clock** with
+  both processes alive end to end: **kill sets diff 0 (60 dead keys on each machine, none
+  one-sided)** — the first time the end-of-run dump ever completed — shared HP on 68 pairs
+  with 4 unequal, zero fault lines and zero `ERR` lines over 11 MB and 7 MB of log, and the
+  same world and area on both machines; its measured body was **1581 s of 1800 s** because
+  the area-leave segment was skipped by a lever defect.  Run 2 fixed that (the leave
+  followed on both machines) and ran **1496 s of body** before **the peer crashed** during
+  the second hard return to `Ruins_Level_00`, 62 minutes into the process: an
+  `ACCESS_VIOLATION` on a freed pointer inside the game's own object destruction, with the
+  mod present only as the `ProcessEvent` forward.  That crash is the top open stability
+  item.  Run 2 measured shared HP on 101 pairs with 3 unequal, all the same key
+  (`530F7FD0`, 140 against 30 — a standing difference, not a sample taken mid-convergence).
+  So: a 30-minute session is close, not proven, and a long session with several hard map
+  transitions can still take the game down.
 - **An enemy's HP reads `?` when the engine is tearing that copy down — not a sync fault.**
   Session 21 traced it: the mod refuses a reflective call on an object the engine has
   flagged for destruction, and in the hub that was 428 of 569 enemy records.  A `?` in a
   dump now means "the engine will not run a function on this copy", and the dump says why
   (`why=callfail|zero|unseen|nofn`, with the flag words beside it).  Nothing about damage
   or your own health is affected.
-- **A second area entry in one session does not move the partner (measured, open).**  The
-  first area you enter follows correctly.  A later one does not: the partner answers
-  `travel: area <the first one> is already pinned on this machine` and stays where it is.
-  If you need to be in another area together, walk there or restart the session.
-- **The rig cannot perform a hard map switch from the hub.**  `900_SipehaWorld` and
-  `990_B33sment` are in the hub's own level table, so asking the mod for one *streams* it
-  instead of loading a world (`rig: hard lever -> 900_SipehaWorld streamed=1`).  Travel
-  between worlds the way the game does — a teleporter or a map transition — and the
-  handshake takes it from there.
+- **Areas and hard travel now follow in every direction (fixed in Session 22).**  Two
+  rough edges from Sessions 20-21 are gone.  Entering a *second* area in one session used to
+  be refused (`travel: area <the first one> is already pinned on this machine`); 780 ->
+  770 -> back to the hub now follows on both machines, and the leave is announced too.  And
+  a hard map switch is reachable again: asking for a world this machine's level table only
+  *streams* used to make the request a no-op, and now `qd.hard auto` picks a real `UWorld`
+  and the partner loads the same one.  A hard switch still costs a `WORLD DIVERGENCE` line
+  while the two machines are mid-transition — that is the transition, not a desync.
+- **A drop can still be seen on one screen only (open).**  A drop's identity is now the
+  death that caused it, so the same drop is normally on both machines under the same name
+  (`loot: drop <key>` on one, `loot: constructed the partner's drop <key>` on the other) —
+  but that depends on both machines marking the death, and in one measured run every drop
+  of the session fell back to the older position-derived key, which the two machines cannot
+  agree on.  Taking a drop has also not been demonstrated by the rig: a teleport, an
+  out-and-back step, a fall onto it, and the class' own `Interact`/`Pickup` verbs all run
+  and consume nothing.  So if you walk over a drop and it stays on your friend's screen,
+  that is the open item, not a mistake you made.
+
 - **Progress can still lag on the peer in a chest-dense area.** In `780_SZ_Depths` the peer
   logged about 8000 `actor-state: game writer ... (WRITE FAILED)` lines: it wrote a container
   value and read back a different one (±1 or ±2), so its write did not stick. Nothing crashed

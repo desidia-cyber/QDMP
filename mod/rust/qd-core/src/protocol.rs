@@ -842,15 +842,31 @@ pub struct Movers {
     pub rows: Vec<MoverRow>,
 }
 
+/// `LF_SPAWN`: the entry carries a point, so a machine that holds no copy of this drop
+/// materialises it there. See [`LootEntry`].
+pub mod loot_flags {
+    pub const SPAWN: u8 = 1;
+}
+
 /// One `LOOT` entry (WIRE.md §3.18).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct LootEntry {
-    /// FNV-1a of the drop source id (the object name the game keys the roll with).
+    /// The drop's identity: FNV-1a over the DEATH that caused it (Session 22, R129).
+    /// The game rolls its own drop on each machine and the two rolls are neither the
+    /// same item nor the same point, so the roll cannot be the key; the death can.
     pub source_hash: u32,
-    /// The per-source drop index the game keys the roll with.
+    /// Which drop of that death this is (spawn order within it).
     pub drop_index: i32,
     /// A tombstone: this drop was taken and must disappear on both machines.
     pub taken: bool,
+    /// See [`loot_flags`].
+    pub flags: u8,
+    /// Facing, `QuantizeAngle` units.
+    pub yaw: i16,
+    /// The point the drop occupies, `QuantizePos` units.
+    pub px: i32,
+    pub py: i32,
+    pub pz: i32,
     /// The item the roll produced, as a soft object path; empty for a tombstone.
     pub item_path: String,
 }
@@ -1509,6 +1525,11 @@ pub fn encode_body(body: &Body) -> Result<Vec<u8>> {
                 w.write_u32(e.source_hash)?;
                 w.write_i32(e.drop_index)?;
                 w.write_u8(u8::from(e.taken))?;
+                w.write_u8(e.flags)?;
+                w.write_i16(e.yaw)?;
+                w.write_i32(e.px)?;
+                w.write_i32(e.py)?;
+                w.write_i32(e.pz)?;
                 write_str(&mut w, &e.item_path)?;
             }
         }
@@ -1908,6 +1929,11 @@ pub fn decode_body(kind: Kind, bytes: &[u8]) -> Result<Body> {
                     source_hash: r.read_u32()?,
                     drop_index: r.read_i32()?,
                     taken: r.read_u8()? != 0,
+                    flags: r.read_u8()?,
+                    yaw: r.read_i16()?,
+                    px: r.read_i32()?,
+                    py: r.read_i32()?,
+                    pz: r.read_i32()?,
                     item_path: read_str(&mut r)?,
                 });
             }
@@ -2204,12 +2230,31 @@ mod tests {
             }),
             Body::Loot(Loot {
                 rev: 9,
-                entries: vec![LootEntry {
-                    source_hash: 0xDEAD_BEEF,
-                    drop_index: 2,
-                    taken: true,
-                    item_path: String::new(),
-                }],
+                entries: vec![
+                    LootEntry {
+                        source_hash: 0xDEAD_BEEF,
+                        drop_index: 2,
+                        taken: true,
+                        flags: 0,
+                        yaw: 0,
+                        px: 0,
+                        py: 0,
+                        pz: 0,
+                        item_path: String::new(),
+                    },
+                    LootEntry {
+                        source_hash: 0x0BAD_F00D,
+                        drop_index: 0,
+                        taken: false,
+                        flags: loot_flags::SPAWN,
+                        yaw: -8192,
+                        px: -123_456,
+                        py: 78_910,
+                        pz: -7,
+                        item_path: "/Game/Items/Consumables/Herb/Herb_Item_BP.Herb_Item_BP_C"
+                            .into(),
+                    },
+                ],
             }),
             Body::Suspend(Suspend {
                 seq: 3,

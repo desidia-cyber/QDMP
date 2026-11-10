@@ -390,10 +390,16 @@ fn vectors() -> Vec<Vector> {
                     source_hash: 0xDEAD_BEEF,
                     drop_index: 2,
                     taken: true,
+                    flags: 0,
+                    yaw: 0,
+                    px: 0,
+                    py: 0,
+                    pz: 0,
                     item_path: String::new(),
                 }],
             }),
-            expected: "27 09 00 00 00 01 00 ef be ad de 02 00 00 00 01 00 00",
+            // kind, rev, n, hash, index, taken, flags, yaw, px, py, pz, empty path.
+            expected: "27 09 00 00 00 01 00 ef be ad de 02 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
         },
         Vector {
             name: "suspend",

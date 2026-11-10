@@ -520,6 +520,11 @@ static void TestWorldBodies()
         memset(e, 0, sizeof(e));
         e[0].source_hash = 0xDEADBEEFu; e[0].drop_index = 2; e[0].taken = 1;
         e[1].source_hash = 0x12345678u; e[1].drop_index = 0;
+        // The spawn half (Session 22): the originator's point travels with the entry so a
+        // machine that holds no copy can materialise the same drop in the same place.
+        e[1].flags = LF_SPAWN;
+        e[1].yaw = -8192;
+        e[1].px = -123456; e[1].py = 78910; e[1].pz = -7;
         strcpy(e[1].item_path, "/Game/Items/KeyItems/AquaDoorKey_2.AquaDoorKey_2");
         Writer w(buf, sizeof(buf));
         WriteLootHeader(w, 9, 2);
@@ -531,6 +536,11 @@ static void TestWorldBodies()
         CHECK(got.rev == 9 && got.n == 2, "loot header round-trips");
         CHECK(got.entry[0].source_hash == 0xDEADBEEFu && got.entry[0].drop_index == 2 &&
               got.entry[0].taken == 1, "loot tombstone round-trips");
+        CHECK(got.entry[1].flags == LF_SPAWN && got.entry[1].yaw == -8192 &&
+              got.entry[1].px == -123456 && got.entry[1].py == 78910 &&
+              got.entry[1].pz == -7, "loot spawn point round-trips");
+        CHECK(!got.entry[0].flags && !got.entry[0].yaw && !got.entry[0].pz,
+              "a tombstone carries no spawn point");
         CHECK(strcmp(got.entry[1].item_path, e[1].item_path) == 0, "loot item path round-trips");
         CHECK(r.pos == r.len, "loot body fully consumed");
         // A lying count must not read past the body.
