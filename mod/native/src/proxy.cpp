@@ -4865,6 +4865,12 @@ struct EnemyRec {
     uint8_t  pubBossPhaseSent;  // the phase last published
     bool     bossArenaExitSent; // the arena exit is a one-shot, not a state
     bool     bossBarShown;
+    // R143: the ACTOR the bar was last raised on.  The game has ONE boss bar and it stays
+    // bound to the actor it was given, so a record whose actor changes (respawn, mirror
+    // adoption, a streamed-out copy) must REBIND -- otherwise the bar keeps showing the
+    // old actor's HP while the shared key's real actor is elsewhere (measured: one screen
+    // full, the other empty).
+    weak::Ref bossBarActor;
     uint32_t bossBarAt;
     uint32_t bossSentAt;        // when this bar was last PUBLISHED (the slow repair's clock)
     // When this machine last applied a death it learned by KEY from the other machine
@@ -7651,84 +7657,155 @@ bool BossArenaExitPending(void* spawner)
     return false;
 }
 
-// The owner announces the boss lane for the enemies it runs.  Sent on change only, like
-// the detail lane: a boss bar is not a 20 Hz sample.
+// R143: ONE bar, ONE shared key.
+// The game has a single boss HP bar and `ActivateBossHPBar` binds it to the actor it is
+// given.  The old pump raised and published a bar for EVERY boss record, so a machine
+// with two boss records ended up bound to whichever it processed last, and the two
+// machines could bind DIFFERENT keys -- measured live: the host held `03FDBC21` at full
+// HP (repaired every 3 s) while the peer's dragon key `17181166` was dead and its bar was
+// down.  The HOST now selects the one active boss (the most-damaged live one, ties by
+// key), announces only that key, and both machines bind their own bar to the actor that
+// carries it.  A dead or stale key never holds the bar.
+static uint32_t g_bossKey[4] = {0, 0, 0, 0};
+static bool     g_bossKeyOn = false;
+static uint32_t g_bossKeyMs = 0;
+
+bool BossKeyIs(const uint32_t g[4]) { return enemy::SameGuid(g_bossKey, g); }
+void BossKeyClear()
+{
+    g_bossKeyOn = false;
+    g_bossKey[0] = g_bossKey[1] = g_bossKey[2] = g_bossKey[3] = 0;
+}
+
+// Binding is a MOVE: lower the old actor's bar before raising the new one.  A record whose
+// actor changed (respawn, mirror adoption, a streamed-out copy) must rebind, or the bar
+// keeps showing the old actor's HP.
+void BossBarSet(EnemyRec& r, bool on, uint32_t now)
+{
+    if (on && !ObjectIsLive(r.actor)) on = false;
+    if (!on) {
+        if (!r.bossBarShown) return;
+        void* old = r.bossBarActor;
+        if (old && ObjectIsLive(old)) BossBarLocal(old, false);
+        r.bossBarShown = false;
+        r.bossBarActor = nullptr;
+        r.bossBarAt = now;
+        return;
+    }
+    void* cur = r.actor;
+    if (r.bossBarShown && r.bossBarActor == cur) return;      // already on this actor
+    void* old = r.bossBarActor;
+    if (old && old != cur && ObjectIsLive(old)) BossBarLocal(old, false);
+    BossBarLocal(cur, true);
+    r.bossBarShown = true;
+    r.bossBarActor = cur;
+    r.bossBarAt = now;
+}
+
 void BossPump(uint32_t now)
 {
     static uint32_t lastCheck = 0;
     if (now - lastCheck < 250) return;
     lastCheck = now;
 
+    // 1. Boss flag and live HP for EVERY record, including mirrors and frozen copies: the
+    //    machine that does not RUN the boss still binds the bar it shows.
+    static bool  alive[kEnemyRecMax];
+    static float frac[kEnemyRecMax];
     for (int i = 0; i < g_enN; ++i) {
         EnemyRec& r = g_en[i];
-        if (!r.haveGuid || !ObjectIsLive(r.actor)) continue;
-        // A MIRRORED copy is the other machine's boss, so this machine is the FOLLOWER for it:
-        // raising and publishing its own bar would make both machines the owner of one bar
-        // (measured: the peer sent `boss: sent guid=17181166 bar on` and never raised its
-        // own, so the partner saw no bar at all).  `OnBoss` is this copy's half.
-        if (r.mirror) continue;
-        // The boss lane belongs to the machine that RUNS the enemy.  `Running()` is exactly
-        // that (O_LOCAL, or O_HANDOFF where this machine still simulates until the partner
-        // confirms); requiring O_LOCAL alone skipped the dragon for a whole hand-off
-        // window -- measured Session 15: a live, owned dragon scanned as `local-run=1`
-        // and the boss lane never ran.
-        if (g_own.State(r.guid) == enemyown::O_FROZEN) continue;
-
+        alive[i] = false; frac[i] = 2.0f;
+        if (!r.haveGuid || !ObjectIsLive(r.actor)) { r.isBoss = false; continue; }
         bool boss = EnemyIsBoss(r.actor, r.spawner);
         if (boss != r.isBoss) {
             r.isBoss = boss;
-            // A newly identified boss has published nothing: force the first body even if
-            // its bar state happens to equal the "never sent" sentinel.
-            r.pubBossFlags = 0xFF;
-            if (!boss) { r.bossBarShown = false; r.bossPhase = 0; }
-            QDLOG(LOG_INFO, "boss: guid=", hex32(r.guid[0]), (boss ? " is a boss" : " is not a boss"));
+            r.pubBossFlags = 0xFF;      // a newly identified boss publishes its first body
+            if (!boss) { r.bossPhase = 0; BossBarSet(r, false, now); }
+            QDLOG(LOG_INFO, "boss: guid=", hex32(r.guid[0]),
+                  (boss ? " is a boss" : " is not a boss"));
         }
         if (!boss) continue;
-
         float hp = 0, mx = 0;
         bool haveHp = EnemyHp(r.actor, &hp, &mx) && mx > 0.0f;
-        bool dead = EnemyDead(r.actor) || (haveHp && hp <= 0.0f);
-        uint8_t phase = EnemyBossPhase(r.actor);
+        bool dead = EnemyDead(r.actor) || (haveHp && hp <= 0.0f) ||
+                    g_remoteDead.Has(r.guid, now) || KillLogHas(r.guid);
+        alive[i] = !dead;
+        if (haveHp) frac[i] = hp / mx;
+    }
 
+    if (g_net.IsHost()) {
+        // The host is the single selector, so both screens name the same key.
+        int best = -1;
+        for (int i = 0; i < g_enN; ++i) {
+            if (!g_en[i].haveGuid || !alive[i]) continue;
+            if (best < 0) { best = i; continue; }
+            float a = frac[i], b = frac[best];
+            if (a < b - 1e-4f) { best = i; continue; }
+            if (a > b + 1e-4f) continue;
+            for (int k = 0; k < 4; ++k) {
+                if (g_en[i].guid[k] < g_en[best].guid[k]) { best = i; break; }
+                if (g_en[i].guid[k] > g_en[best].guid[k]) break;
+            }
+        }
+        if (best >= 0) {
+            if (!g_bossKeyOn || !BossKeyIs(g_en[best].guid))
+                QDLOG(LOG_INFO, "boss: active key -> ", hex32(g_en[best].guid[0]),
+                      " (the most-damaged live boss)");
+            g_bossKeyOn = true;
+            memcpy(g_bossKey, g_en[best].guid, 16);
+            g_bossKeyMs = now;
+        } else {
+            // The fight is over (the active key died or left): say so once, so the partner
+            // lowers its bar on the kill rather than waiting for the 5 s silence timeout.
+            if (g_bossKeyOn) {
+                wire::BossBody x;
+                memset(&x, 0, sizeof(x));
+                memcpy(x.guid, g_bossKey, 16);
+                x.flags = wire::kBossBarOff;
+                uint8_t xb[64];
+                wire::Writer xw(xb, sizeof(xb));
+                wire::WriteBoss(xw, x);
+                if (xw.ok && g_net.SendReliable(wire::K_BOSS, xb, xw.len))
+                    QDLOG(LOG_INFO, "boss: sent bar off guid=", hex32(g_bossKey[0]),
+                          " (the active boss is dead or gone)");
+            }
+            BossKeyClear();
+        }
+    } else if (g_bossKeyOn && now - g_bossKeyMs > 5000) {
+        BossKeyClear();       // the host stopped describing a bar: no stale one here
+    }
+
+    // 2. Bind every record's bar to the ONE active key; lower all others.  Only the host
+    //    publishes, so two machines cannot announce two different bosses.
+    for (int i = 0; i < g_enN; ++i) {
+        EnemyRec& r = g_en[i];
+        if (!r.haveGuid) continue;
+        bool want = g_bossKeyOn && alive[i] && BossKeyIs(r.guid);
+        BossBarSet(r, want, now);
+        if (!want || !g_net.IsHost()) continue;
+
+        uint8_t phase = EnemyBossPhase(r.actor);
         if (phase != r.bossPhase) {
             r.bossPhase = phase;
             QDLOG(LOG_INFO, "boss: guid=", hex32(r.guid[0]), " phase -> ", dec((int)phase));
         }
-
-        // The bar is driven by the OWNER, on the owner, when the fight starts and hidden
-        // when it ends.  The receiver gets the same fact and raises its own.
-        bool wantBar = !dead;
-        if (wantBar != r.bossBarShown) {
-            r.bossBarShown = wantBar;
-            BossBarLocal(r.actor, wantBar);
-            r.bossBarAt = now;
-        }
-
+        float hp = 0, mx = 0;
+        bool haveHp = EnemyHp(r.actor, &hp, &mx) && mx > 0.0f;
         wire::BossBody b;
         memset(&b, 0, sizeof(b));
         memcpy(b.guid, r.guid, 16);
         b.phase = phase;
         b.hp = haveHp ? enemy::HpFrac(hp, mx) : 0;
-        b.flags = wantBar ? wire::kBossBarOn : wire::kBossBarOff;
+        b.flags = wire::kBossBarOn;
 
-        // On change only, like the detail lane: a bar is not a 20 Hz sample.  The key is
-        // (bar state, phase).  HP is not a change trigger -- the bar reads the copy's own
-        // HP on each machine, and the ENEMY row is already converging it; sending a boss
-        // body per HP tick would be a 10 Hz reliable packet per boss for no new fact.
-        //
-        // A SLOW REPAIR anyway, because "on change" has a lost-receiver case that this lane
-        // uniquely creates: the partner's FIRST body can arrive before it holds a copy of the
-        // boss at all (the mirror takes a construction interval), and the body is acked and
-        // dropped -- measured Session 16, the partner never raised its bar.  Republishing
-        // makes a bar the partner missed appear without a reconnect.  It is PER BOSS and only
-        // while the bar is UP: a bar that is down is not repaired (there is nothing to show),
-        // and the arena-exit one-shot below is never re-sent by this path.
-        bool repair = wantBar && now - r.bossSentAt >= 3000;
+        // On change only, plus a slow repair while the bar is up: the partner's first body
+        // can arrive before it holds the copy.  HP is not a change trigger (the enemy row
+        // converges it); a dead/stale key never reaches this point (want is false).
+        bool repair = now - r.bossSentAt >= 3000;
         if (repair) r.bossSentAt = now;
         if (!repair && b.flags == r.pubBossFlags && b.phase == r.pubBossPhaseSent) {
-            // The one event that is not a state: a player left the arena.  It is observed
-            // on the owner, which is the machine that runs the spawner the game computes
-            // the condition on, and it is sent as a one-shot.
+            // The one event that is not a state: a player left the arena.  Observed on the
+            // owner, sent as a one-shot.
             if (BossArenaExitPending(r.spawner) && !r.bossArenaExitSent) {
                 r.bossArenaExitSent = true;
                 wire::BossBody x;
@@ -7755,8 +7832,7 @@ void BossPump(uint32_t now)
         if (w.ok && g_net.SendReliable(wire::K_BOSS, body, w.len)) {
             r.bossSentAt = now;
             QDLOG(LOG_INFO, "boss: sent guid=", hex32(r.guid[0]), " phase=",
-                  dec((int)phase), (wantBar ? " bar on" : " bar off"), " hp=", dec((int)b.hp),
-                  (repair ? " (repair)" : ""));
+                  dec((int)phase), " bar on hp=", dec((int)b.hp), (repair ? " (repair)" : ""));
         } else {
             // Not recorded, so the next pump retries it.
             r.pubBossFlags = 0xFF;
@@ -7764,8 +7840,7 @@ void BossPump(uint32_t now)
     }
 }
 
-// The follower's half: raise ITS OWN boss bar for ITS OWN copy, and raise its own
-// spawner's arena exit when the owner says a player left the arena.
+// The follower's half: DROP every other bar and raise ITS OWN bar for the host's one key.
 void OnBoss(wire::Reader& r, uint32_t now)
 {
     if (!Cfg().enemy_sync) return;
@@ -7786,31 +7861,35 @@ void OnBoss(wire::Reader& r, uint32_t now)
     }
 
     EnemyRec* er = EnemyByGuid(b.guid);
-    if (!er || !ObjectIsLive(er->actor)) {
+    bool on = (b.flags & wire::kBossBarOn) != 0;
+    if (on && (!er || !ObjectIsLive(er->actor))) {
         static int missing = 0;
         if (missing++ < 5)
             QDLOG(LOG_WARN, "boss: no local copy for guid=", hex32(b.guid[0]),
                   "; the bar cannot be raised here");
-        return;
+        on = false;
     }
-    // This machine is the FOLLOWER for this key: it either holds a frozen copy of the other
-    // machine's enemy, or a MIRROR of one it never spawned.  A mirror's ownership state is
-    // `O_LOCAL` by construction (the ownership table has never heard of a key it did not
-    // spawn), so requiring O_FROZEN here skipped exactly the case this lane exists for --
-    // measured Session 16, the partner's bar never rose.
-    if (!er->mirror && (!er->driven || g_own.State(b.guid) != enemyown::O_FROZEN))
-        return;                                                          // owner's own bar
-
-    er->isBoss = true;
-    er->bossPhase = b.phase;
-    bool wantBar = (b.flags & wire::kBossBarOn) != 0;
-    if (wantBar != er->bossBarShown) {
-        er->bossBarShown = wantBar;
-        BossBarLocal(er->actor, wantBar);
-        er->bossBarAt = now;
-        QDLOG(LOG_INFO, "boss: follower ", (wantBar ? "raised" : "lowered"),
-              " its own bar for guid=", hex32(b.guid[0]), " hp=", dec((int)b.hp),
-              " phase=", dec((int)b.phase));
+    if (on && er) {
+        // A dead key never holds a bar, even if a stale body says on.
+        if (EnemyDead(er->actor) || g_remoteDead.Has(b.guid, now) || KillLogHas(b.guid)) on = false;
+    }
+    if (on) {
+        g_bossKeyOn = true;
+        memcpy(g_bossKey, b.guid, 16);
+        g_bossKeyMs = now;
+        if (er) { er->isBoss = true; er->bossPhase = b.phase; }
+    } else {
+        BossKeyClear();
+    }
+    for (int i = 0; i < g_enN; ++i) {
+        EnemyRec& r2 = g_en[i];
+        if (!r2.haveGuid) continue;
+        bool want = on && BossKeyIs(r2.guid) && ObjectIsLive(r2.actor) && !EnemyDead(r2.actor);
+        bool was = r2.bossBarShown;
+        BossBarSet(r2, want, now);
+        if (want && !was)
+            QDLOG(LOG_INFO, "boss: follower raised its own bar for guid=", hex32(r2.guid[0]),
+                  " hp=", dec((int)b.hp), " phase=", dec((int)b.phase));
     }
 } 
 // ---------------------------------------------------------------------------
@@ -8674,6 +8753,9 @@ void EnemyPump(uint32_t now)
         // The new world's enemy actors are not the old records' actors; do not read a
         // death out of a half-built world.
         g_enDeathSuppressUntil = now + 3000;
+        // R143: a bar belongs to the world it was raised in; rebind after the load.
+        for (int i = 0; i < g_enN; ++i) BossBarSet(g_en[i], false, now);
+        BossKeyClear();
         g_enN = 0; g_enCursor = 0;
         g_enWorld = world;          // the records below name THIS world from now on
         g_propCacheN = 0;           // classes reload with the world
@@ -8711,13 +8793,10 @@ void EnemyPump(uint32_t now)
         g_hostView.Reset();
         g_dmgGate.Reset();
         g_detailBw.Reset();
-        // A boss bar this machine raised must not outlive the session.
-        for (int i = 0; i < g_enN; ++i) {
-            if (g_en[i].bossBarShown && ObjectIsLive(g_en[i].actor)) {
-                BossBarLocal(g_en[i].actor, false);
-                g_en[i].bossBarShown = false;
-            }
-        }
+        // A boss bar this machine raised must not outlive the session (and the active
+        // key goes with it, so the next session selects its own).
+        for (int i = 0; i < g_enN; ++i) BossBarSet(g_en[i], false, Net::Now());
+        BossKeyClear();
         for (int i = 0; i < g_enN; ++i) if (g_en[i].driven && ObjectIsLive(g_en[i].actor)) EnemyDrive(g_en[i], false);
         // A mirrored copy exists only while the owner is describing its key.  With no
         // session there is no owner, so every one of them is destroyed here rather than
