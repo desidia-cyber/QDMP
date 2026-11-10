@@ -1200,7 +1200,13 @@ bool ReadActorXformGuarded(void* actor, ActorXform* x)
             const float* v = (const float*)((uint8_t*)root + g_actor.velocity);
             x->vx = v[0]; x->vy = v[1]; x->vz = v[2];
         }
-        return true;
+        // A READ IS ONLY A TRANSFORM IF IT IS A PLACE (Session 24, R155).  `LooksLikeUObject`
+        // proves the RootComponent field holds *an* object; it does not prove the object
+        // this offset was applied to is an actor at all.  Measured: an enemy record whose
+        // slot had been reused read (0, -9.223372e18, 0) here, and the rig then wrote it
+        // into the player pawn.  A caller that cannot get a usable position must be told so,
+        // because every caller already treats `false` as "not in this world".
+        return motion::SanePos(x->px, x->py, x->pz);
     }
     __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
@@ -1219,6 +1225,21 @@ bool SetActorXform(void* actor, float px, float py, float pz, float yaw)
     // chain.  A pending-kill actor is refused here and the expensive level check is on
     // the mutating calls (SetActorHidden / DestroyActor / spawn).
     if (!actor || !g_actor.sigSetLocRot.valid || !ObjectCallable(actor)) return false;
+    // NEVER HAND THE GAME A POSITION THAT IS NOT ONE (Session 24, R155).  The source of the
+    // value is a read, and a read of a stale record produced (0, -9.22e18, 0).  Writing it
+    // put the player pawn outside every world and the game faulted six seconds later inside
+    // its own Blueprint dispatch.  A refused move is a visible `WARN`, not a silent one.
+    if (!motion::SanePos(px, py, pz)) {
+        static uint32_t lastBad = 0;
+        uint32_t now = Net::Now();
+        if (now - lastBad > 5000) {
+            lastBad = now;
+            QDLOG(LOG_WARN, "REFUSED a move to a position that is not a place: (",
+                  flt(px, 0), ",", flt(py, 0), ",", flt(pz, 0),
+                  ") -- the caller read a stale object, not an actor");
+        }
+        return false;
+    }
     ArgList a;
     a.AddVector("NewLocation", px, py, pz);
     a.AddRotator("NewRotation", 0.0f, yaw, 0.0f);
@@ -1243,6 +1264,17 @@ bool SetActorXform(void* actor, float px, float py, float pz, float yaw)
 bool SetActorXformSweep(void* actor, float px, float py, float pz, float yaw)
 {
     if (!actor || !g_actor.sigSetLocRot.valid || !ObjectCallable(actor)) return false;
+    // Same gate as the teleport: a sweep through a point that does not exist is not a move.
+    if (!motion::SanePos(px, py, pz)) {
+        static uint32_t lastBad = 0;
+        uint32_t now = Net::Now();
+        if (now - lastBad > 5000) {
+            lastBad = now;
+            QDLOG(LOG_WARN, "REFUSED a sweep to a position that is not a place: (",
+                  flt(px, 0), ",", flt(py, 0), ",", flt(pz, 0), ")");
+        }
+        return false;
+    }
     ArgList a;
     a.AddVector("NewLocation", px, py, pz);
     a.AddRotator("NewRotation", 0.0f, yaw, 0.0f);
@@ -1264,6 +1296,7 @@ bool SetActorXformSweep(void* actor, float px, float py, float pz, float yaw)
 // the engine can see.
 bool SweepPawnTo(void* pawn, float px, float py, float pz, float yaw)
 {
+    if (!motion::SanePos(px, py, pz)) return false;
     ActorXform me = {};
     if (!ReadActorXform(pawn, &me)) return false;
     float dx = px - me.px, dy = py - me.py, dz = pz - me.pz;
@@ -5115,6 +5148,20 @@ struct EnemyRec {
     // address WINMM+0x3b357.  A weak::Ref resolves through GUObjectArray instead of
     // trusting the address, so a freed enemy reads as gone, not as a fault.
     weak::Ref actor;
+    // THE CLASS THE RECORD WAS MADE FOR, and the reason a weak handle is not enough
+    // (Session 24, R155).  `weak::Ref` proves the object-table SLOT still holds the object
+    // the handle was captured from -- it cannot prove the slot was not reused between two
+    // captures, because `Capture` reads the slot index off whatever object sits at the
+    // address it is handed.  Measured: one enemy key's actor resolved to a `WidgetTree` at
+    // 19:58:30.450 and to a `SaveHelper_C` at 19:58:30.641.  Both are UObjects; neither is
+    // an actor; `ObjectIsLive` was true for both.  The rig then read a "transform" out of a
+    // WidgetTree, got (0, -9.223372e18, 0) and wrote it into the local player pawn.
+    //
+    // A class pointer is the one fact a reused slot cannot fake.  A record is only created
+    // for an object deriving from `FS_EnemyCharacterBase`, and a respawn or a mirror is a
+    // NEW record with a NEW capture -- never a re-point of an old one.  So "same class as
+    // when it was made" is the correct identity test, and it costs one load.
+    void*    cls;
     weak::Ref spawner;
     uint32_t guid[4];
     bool     haveGuid;
@@ -5232,6 +5279,37 @@ void*           g_clsYes[32];  int g_clsYesN = 0;    // class -> derives from th
 void*           g_clsNo[256];  int g_clsNoN = 0;     // (reset with the world: classes unload)
 
 EnemyRec* EnemyByActor(void* a) { for (int i = 0; i < g_enN; ++i) if (g_en[i].actor == a) return &g_en[i]; return nullptr; }
+
+// IS THE OBJECT AT THIS RECORD'S SLOT STILL THE ENEMY IT WAS MADE FOR?  (Session 24, R155.)
+// See `EnemyRec::cls`: a weak handle names a SLOT, and a slot can be reused by anything.
+bool EnemyActorOfClass(const EnemyRec& r, void* a)
+{
+    return a && r.cls && ObjClass(a) == r.cls;
+}
+
+// The record's actor, or nullptr when its slot no longer holds the class the record was
+// created for.  A record that has lost its body is RETIRED here -- actor dropped, identity
+// cleared -- rather than left in the table, because a stale record is not merely useless:
+// it is what the rig stood the player beside.  Measured (R155): the scan and the teleport
+// both read `(0, -9.223372e18, 0)` out of one, and the write that followed put the local
+// pawn outside the world.
+void* EnemyActor(EnemyRec& r)
+{
+    void* a = r.actor;
+    if (!a) return nullptr;
+    if (EnemyActorOfClass(r, a)) return a;
+    char nm[64] = "?";
+    FNameToString(ObjNameRaw(ObjClass(a)), nm, sizeof(nm));
+    QDLOG(LOG_WARN, "enemy record retired: guid=", hex32(r.guid[0]), " now names a ", nm,
+          " -- not the class it was created for.  It is not an actor, so it is not read");
+    r.actor.Reset();
+    r.cls = nullptr;
+    r.haveGuid = false;
+    r.seenAlive = false;
+    r.lastHp = -1.0f;
+    return nullptr;
+}
+
 EnemyRec* EnemyByGuid(const uint32_t g[4])
 {
     for (int i = 0; i < g_enN; ++i) if (g_en[i].haveGuid && enemy::SameGuid(g_en[i].guid, g)) return &g_en[i];
@@ -5650,6 +5728,7 @@ void EnemyScanStep()
             r = &g_en[g_enN++];
             memset(r, 0, sizeof(*r));
             r->actor = o;
+            r->cls = cls;                    // R155: the identity a reused slot cannot fake
             r->lastHp = -1.0f;
             r->fresh = true;
         }
@@ -5687,6 +5766,19 @@ void EnemyScanStep()
                 continue;
             }
             if (!ObjectIsLive(g_en[i].actor)) { g_en[i] = g_en[--g_enN]; continue; }
+            // THE SLOT IS FILLED, BUT BY WHAT?  (Session 24, R155.)  This purge is the one
+            // place that sees every record once per cycle, so it is where a record whose
+            // slot was reused by an unrelated UObject is retired.  Left in, it survived the
+            // cycle, answered the enemy scan, and was reported as `cls=WidgetTree` under a
+            // live enemy key -- the shape that led the rig to stand the player beside it.
+            if (!EnemyActorOfClass(g_en[i], (void*)g_en[i].actor)) {
+                char nm[64] = "?";
+                FNameToString(ObjNameRaw(ObjClass((void*)g_en[i].actor)), nm, sizeof(nm));
+                QDLOG(LOG_WARN, "enemy record dropped: guid=", hex32(g_en[i].guid[0]),
+                      " slot reused by a ", nm, " (not an enemy actor)");
+                g_en[i] = g_en[--g_enN];
+                continue;
+            }
             ++i;
         }
         static int lastN = -1;
@@ -7296,6 +7388,7 @@ EnemyRec* RegisterMirror(void* actor, const uint32_t guid[4], uint32_t now)
     EnemyRec* r = &g_en[g_enN++];
     memset(r, 0, sizeof(*r));
     r->actor = actor;
+    r->cls = actor ? ObjClass(actor) : nullptr;   // R155, as the sweep does
     memcpy(r->guid, guid, 16);
     r->haveGuid = true;
     r->spawner = nullptr;          // the game's own "no spawner": identity can never re-mint
@@ -13418,23 +13511,26 @@ void* RigFindNear(const char* sub, float* distOut, ActorXform* xfOut, char* name
     for (int pass = 0; pass < 2 && !best; ++pass) {
         for (int i = 0; i < g_enN; ++i) {
             EnemyRec& r = g_en[i];
-            if (!r.haveGuid || !ObjectIsLive(r.actor) || EnemyDead(r.actor)) continue;
+            // R155: `EnemyActor` retires a record whose slot no longer holds the class it
+            // was created for.  `ObjectIsLive` alone answered "yes" to a `WidgetTree`.
+            void* ea = r.haveGuid ? EnemyActor(r) : nullptr;
+            if (!ea || EnemyDead(ea)) continue;
             // `near:enemy` means "the nearest enemy", not "an actor whose NAME contains
             // 'enemy'" -- no enemy is called that.  Measured: the literal match made every
             // G4/enemy step a no-op with "no live actor matches 'enemy'".
-            if (!wantEnemy && !RigNameMatches(r.actor, sub)) continue;
+            if (!wantEnemy && !RigNameMatches(ea, sub)) continue;
             if (pass == 0) {
                 // pass 0: a target the engine will actually run a UFunction on
-                if (!ObjectCallable(r.actor)) continue;
+                if (!ObjectCallable(ea)) continue;
                 float hp0 = 0.0f, mx0 = 0.0f;
-                if (EnemyHp(r.actor, &hp0, &mx0) && !(hp0 > 0.0f)) continue;   // dormant
+                if (EnemyHp(ea, &hp0, &mx0) && !(hp0 > 0.0f)) continue;   // dormant
             }
             ActorXform x;
-            if (!ReadActorXform(r.actor, &x)) continue;
+            if (!ReadActorXform(ea, &x)) continue;
             float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
             float d = sqrtf(dx * dx + dy * dy + dz * dz);
             if (bestD >= 0.0f && d >= bestD) continue;
-            bestD = d; best = r.actor; bestXf = x;
+            bestD = d; best = ea; bestXf = x;
         }
     }
 
@@ -13637,14 +13733,15 @@ bool DevTeleportToGuid(const char* hex8, float yawOverride, bool haveYaw)
     }
     for (int i = 0; i < g_enN; ++i) {
         EnemyRec& r = g_en[i];
-        if (!r.haveGuid || r.guid[0] != want || !ObjectIsLive(r.actor)) continue;
+        void* ea = (r.haveGuid && r.guid[0] == want) ? EnemyActor(r) : nullptr;
+        if (!ea) continue;
         ActorXform t = {};
-        if (!ReadActorXform(r.actor, &t)) continue;
+        if (!ReadActorXform(ea, &t)) continue;
         float d = 0.0f;
         { ActorXform me; if (ReadActorXform(g_localPawn, &me)) {
               float dx = me.px - t.px, dy = me.py - t.py, dz = me.pz - t.pz;
               d = sqrtf(dx * dx + dy * dy + dz * dz); } }
-        RigStandBeside(r.actor, t, "guid", d, yawOverride, haveYaw);
+        RigStandBeside(ea, t, "guid", d, yawOverride, haveYaw);
         QDLOG(LOG_INFO, "dev teleport: resolved guid=", hex32(want), " (the key both machines "
               "hold, so both players arrive at the SAME enemy)");
         return true;
@@ -13883,9 +13980,13 @@ void DevScanNearestBody()
     uint32_t bestGuid[4] = {0, 0, 0, 0};
     for (int i = 0; i < g_enN; ++i) {
         EnemyRec& r = g_en[i];
-        if (!r.haveGuid || !ObjectIsLive(r.actor) || EnemyDead(r.actor)) continue;
+        // R155: the same class check the resolver uses.  This scan is what the soak's
+        // teleport step reads, so a record whose slot was reused here is a record the rig
+        // would have stood the player beside.
+        void* ea = r.haveGuid ? EnemyActor(r) : nullptr;
+        if (!ea || EnemyDead(ea)) continue;
         ActorXform x;
-        if (!ReadActorXform(r.actor, &x)) continue;
+        if (!ReadActorXform(ea, &x)) continue;
         float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
         float d = sqrtf(dx * dx + dy * dy + dz * dz);
         if (bestD >= 0.0f && d >= bestD) continue;
@@ -15218,7 +15319,9 @@ int EnemyKeyPeerCount(const uint32_t g[4], const EnemyRec* self)
         // for a key that died and respawned; counting it made the hub report every respawn as a
         // duplicate (measured in this session's first soak: `duplicates=45` in one sample, for
         // keys with exactly one live enemy).
-        void* a = g_en[i].actor;
+        // R155: "live" must also mean "still the class the record was made for" -- a slot
+        // reused by a WidgetTree is not a second body for the key.
+        void* a = EnemyActor(g_en[i]);
         if (!a || !ObjectIsLive(a) || !ObjectCallable(a)) continue;
         ++n;
     }
@@ -15242,9 +15345,13 @@ void DevEnemyDumpNow(uint32_t now)
         uint32_t iflags = 0, oflags = 0;
         char cls[64] = "";
         __try {
-            live = ObjectIsLive(r.actor);
+            // R155: a record whose slot was reused by something that is not an enemy actor is
+            // retired here rather than reported.  The dump is what a reader used to see
+            // `cls=WidgetTree` under a live enemy key and had to treat as a body.
+            void* ea = EnemyActor(r);
+            live = (ea != nullptr);
             if (live) {
-                void* a = r.actor;                  // resolves through the weak handle
+                void* a = ea;                       // resolves through the weak handle
                 FNameToString(ObjNameRaw(ObjClass(a)), cls, sizeof(cls));
                 gameDead = EnemyDead(a);
                 haveHp = EnemyHpRead(a, &rhp, &rmx, &hpFail);
@@ -17426,6 +17533,26 @@ void TravelVerbObserve(void* self, void* func)
 
 void HK_ProcessEvent(void* self, void* func, void* parms)
 {
+    // A DISPATCH ON NOTHING IS THE CRASH, NOT A CALL (Session 24, R155).  The game's own
+    // fault was `NULL_CLASS_PTR_READ` inside a Blueprint dispatch: `mov rax,[rsi+0x130]` with
+    // rsi null, i.e. a native function reading a field of an actor pointer its graph passed
+    // as null.  That frame is the game's, and the module cannot repair the graph -- but the
+    // module IS the dispatcher for every call that crosses this hook, and forwarding a null
+    // `this` cannot do anything except fault.  Refusing it turns a process death into one
+    // line that names the function, which is what the next dump needs.
+    if (!self) {
+        static uint32_t lastNull = 0;
+        static int said = 0;
+        uint32_t now = Net::Now();
+        if (said < 8 || now - lastNull > 5000) {
+            ++said; lastNull = now;
+            char fn[96] = "?";
+            if (func) FNameToString(ObjNameRaw(func), fn, sizeof(fn));
+            QDLOG(LOG_ERROR, "ProcessEvent REFUSED: a dispatch on a null object (function ",
+                  fn, "); forwarding this can only fault");
+        }
+        return;
+    }
     FxObserve(self, func);
     UseObserve(self, func);
     RestObserve(self, func);
