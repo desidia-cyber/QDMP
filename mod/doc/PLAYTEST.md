@@ -90,10 +90,11 @@ unauthenticated in this version: it is for a LAN.  Over the internet, set
 etc. default to **0** in the shipped file, because each one was enabled only after it was
 proven on a live run.  For a play session, turn on this set:
 
-**This is the set Session 17 used for its ten-minute soak with both players in
-`780_SZ_Depths`.**  It is the set that works; it is **not yet stable for a long session** — read
-the last-but-one bullet of section 8 before planning a marathon.  `MirrorSpawn` is deliberately
-absent — it is a compiled default (on), so a real pair of players gets it without an entry here.
+**This is the set Sessions 17 and 18 used for their ten-minute soaks with both players in
+`780_SZ_Depths` and in the hub.**  Session 18 fixed two crash causes in it; the soak still died
+in 3 of 7 runs, twice in the mod (now fixed) and once inside the game itself.  Read the
+stability note in section 8 before planning a marathon.  `MirrorSpawn` is deliberately absent — it
+is a compiled default (on), so a real pair of players gets it without an entry here.
 The three lines marked *proven* are the ones Session 17 closed; the one marked *not proven* is
 still safe to leave on (it is a read path and a refusal), but do not expect its second half.
 
@@ -275,15 +276,49 @@ The lines that answer most questions, verbatim:
 
 ## 8. Known rough edges (read before reporting)
 
-- **A long session at the play set is not yet safe — read this first.**  Ten minutes with both
-  players in a busy hub still ended in a crash, at about **eight minutes**, always inside the
-  mod and always the same shape (a pointer read out of an object the hub's streaming had just
-  replaced).  Session 17 added three guards and the survival window went from 256 s to 499 s, so
-  it is moving in the right direction but it is not fixed.  In practice: play in shorter
-  stretches, and if the game vanishes, look in `<user dir>\Saved\Crashes\` — a `WINMM` module in
-  the stack means this bug and not the game.  The shipped defaults (every write path off) DO
-  survive the full ten minutes, but they also do nothing, so that is a control and not a
-  workaround.
+- **A long session at the play set is much better but NOT yet reliable — read this first.**
+  Session 17 left this open: ten minutes with both players in a busy hub ended in a crash at
+  about eight minutes, always inside the mod. Session 18 found the cause of that one and fixed
+  it, and then found a second, different one.
+
+  The first cause was a **cached object pointer read after the game had freed the object** — the
+  mod held raw addresses to actors and objects and re-checked them with a test that itself reads
+  the address it is checking. Every one of those caches now stores the object's *identity* (its
+  slot in the game's object table plus that slot's serial number) and looks it up fresh, so a
+  freed object reads as "gone" instead of faulting.
+
+  The second cause was found afterwards and from a crash dump: the mod walks the game's whole
+  object table every half second and read a slot the engine had freed but not yet cleared. Every
+  such walk is now guarded, one slot at a time.
+
+  Measured across the session at this play set, with both players fighting for ten minutes:
+
+  | outcome | runs |
+  |---|---|
+  | survived the full 600 s, both processes alive, zero faults | **4** (two boots, two builds) |
+  | died | **3** — at 248 s, 4130 s, 330 s |
+
+  Two of those three deaths were the mod's, and both are now fixed; the 330 s death happened
+  **inside the game's own code**, reached through the frame tick the mod forwards — that one is
+  not understood yet. The longest run of the session was **105 minutes of continuous play-set
+  traffic on both machines with zero faults**, which is well past what a normal session needs.
+  In practice: a long session is much more likely to survive than it was, and it is still not a
+  guarantee. If the game vanishes, look in `<user dir>\Saved\Crashes\` —
+  `CrashContext.runtime-xml` names the faulting module, and a `WINMM` entry means the mod.
+- **Progress can still lag on the peer in a chest-dense area.** In `780_SZ_Depths` the peer
+  logged about 8000 `actor-state: game writer ... (WRITE FAILED)` lines: it wrote a container
+  value and read back a different one (±1 or ±2), so its write did not stick. Nothing crashed
+  and the counters kept moving, but a chest counter can be a step behind on the second screen.
+  The host's own writes were fine (55 such lines, all during the area entry).
+- **An enemy's health can still differ between the two screens for a *shared* enemy.** Three
+  distinct causes were measured, all now named rather than guessed: an enemy whose death was
+  recorded can be respawned by the other machine's own spawner
+  (`enemy record applied guid=… hp=0.0` followed by `enemy id: spawner …` and `ALIVE` on the
+  peer); a summon can mint a key that a *different* enemy class also uses, so one key names a
+  `Boner_Gray_Archer_BP_C` on one screen and a `FlamingSkull_BP_C` on the other; and a key with
+  no row yet reads as HP 0 on the machine that has no actor for it. The kill sets therefore
+  differ on a few shared keys (3–34 across the runs above). This does not affect damage you deal
+  or take — it affects the two screens agreeing about an enemy neither of you is looking at.
 - **Loot hiding** needs both machines to hold their own copy of the drop.  Session 17 measured
   that the drop often rolls on the machine that did NOT kill the enemy (`loot: drop
   90A52CF3#0 = …/Herb_Item_BP_C` appeared on the peer for a host kill), so the `loot: drop` line

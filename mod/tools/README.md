@@ -289,9 +289,38 @@ the save is the intended path.
 ## The live-session rig (`sessionN.ps1`) and its read-only levers
 
 Each session is ONE PowerShell process per scenario, because a launched game does not survive
-the command that started it.  `session17.ps1` is the current one:
-`-Phase smoke|item1|item2|item3|item4|soak`, one boot per phase, each phase in its own instance
-root under `_test/`.
+the command that started it.  `session18.ps1` is the current one:
+`-Phase smoke|soak-hub|soak-780|all`, one boot per phase, each phase in its own instance root
+under `_test/`.  It differs from `session17.ps1` in ways worth knowing before reading it:
+
+* **`-Repeat N`** runs the soak body N times inside ONE pair of processes.  A fix that merely
+  moves the first crash later is only visible on the second run, so "survived twice back to
+  back" is a stronger claim than "survived once", and the only way to make it is not to reboot.
+* **The PLAY set is the default**, because that is the configuration under test; the shipped
+  set (every write path off) is the control and is selected with `-ShippedDefaults`.
+* **FAULT and ERR are counted separately.**  The old combined
+  `ERR |EXCEPTION|ACCESS_VIOLATION|fatal` gate cannot tell "the process faulted" from "a lane's
+  own write was refused", and a 780 soak produced ~8000 of the latter with zero of the former.
+  The verdict asserts the crash claim (`faults=0`) and reports ERR as a number beside it.
+* **It waits for gameplay after the session forms.**  Without that wait a `qd.hard` fired while
+  the title screen was still up, and the game answered
+  `arrive: 780_SZ_Depths ended with no pawn to place` — every phase below then silently had no
+  pawn, which reads as a lane failure rather than a boot-order bug.
+
+`session18.ps1` also installs `winmm.pdb` beside the DLL, so a stack in a dump names functions
+instead of offsets.  WER LocalDumps needs a write to HKLM and is not available to a
+non-Administrator account; the script says so rather than implying a dump was collected.
+
+`map_lookup.py` turns a reported `WINMM+0xNNNN` into a symbol:
+
+```
+python tools/map_lookup.py native/build/winmm.dll native/build/winmm.map 0x3b357
+  0x3b357    -> ?EnemySpawnPump@...@@YAXI@Z + 0x377
+```
+
+It reads the map's `Rva+Base` column rather than `section:offset`, because that column's section
+is a NUMBER, not a name — parsing it as a name silently matches nothing, which is why a map the
+build had emitted for many sessions had never been read.
 
 Every lever's control file takes a trailing `#<nonce>`, so that "press this again" is
 expressible: the needle is the whole string, and the nonce is what makes it new.  Measured the

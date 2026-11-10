@@ -160,6 +160,52 @@ static void TestDropOrdinals()
     CHECK(o.Claim(h, p, 1000) == 0, "ordinals/a world change resets the table");
 }
 
+// The ledger's answer must be a STANDING fact, not an edge.
+//
+// This is the property the hiding lane needed and did not have (Session 17 R129).  The lane
+// hid a local drop only inside the inbound handler, and only when `Merge` reported a change.
+// But the body is also sent on a one-second timer, so after the first receipt `changed` is 0
+// forever -- and the drop may not have been scanned yet at that first receipt.  Both halves
+// are visible here: the second merge of the same tombstone changes nothing, while
+// `IsTaken` still answers yes.
+//
+// So the fix on the proxy side is to RE-DERIVE the hide decision from the ledger every pass.
+// What this test pins is that the ledger supports that: `IsTaken` is a question about state,
+// answerable at any time, independent of whether anything just changed.
+static void TestTakenIsStandingNotAnEdge()
+{
+    Ledger l;
+    l.Offer(0xAB, 0, "/Game/Items/Consumables/Herb/Herb_Item_BP.Herb_Item_BP_C");
+    loot::Entry taken[1] = { In(0xAB, 0, true,
+                                "/Game/Items/Consumables/Herb/Herb_Item_BP.Herb_Item_BP_C") };
+
+    int first = l.Merge(taken, 1, false);
+    CHECK(first == 1, "standing/the first tombstone is a change");
+    CHECK(l.IsTaken(0xAB, 0), "standing/and reads taken");
+
+    // The same body again, as the one-second timer sends it.  No change -- by design.
+    int again = l.Merge(taken, 1, false);
+    CHECK(again == 0, "standing/a repeat of the same tombstone is NOT a change");
+
+    // ... but the QUESTION is still answerable, which is what lets a later pass act on it.
+    CHECK(l.IsTaken(0xAB, 0), "standing/IsTaken still answers yes after a no-change merge");
+
+    // The case that produced R129: the tombstone arrives BEFORE the local scan has recorded
+    // the drop, so there was nothing to hide at the moment `changed` was non-zero.
+    {
+        Ledger m;
+        int c = m.Merge(taken, 1, false);            // the tombstone leads the roll
+        CHECK(c == 1, "standing/a tombstone for an unseen key is kept");
+        CHECK(m.IsTaken(0xAB, 0), "standing/it is taken before the drop is ever offered");
+        // The scan finally sees the drop.  Offer must not resurrect it...
+        CHECK(!m.Offer(0xAB, 0, "/Game/Items/Consumables/Herb/Herb_Item_BP.Herb_Item_BP_C"),
+              "standing/the later roll is not new");
+        CHECK(m.IsTaken(0xAB, 0), "standing/and the tombstone still stands");
+        // ...so a pass that asks the ledger at ANY time still gets "hide this".
+        CHECK(m.IsTaken(0xAB, 0), "standing/so the hide decision is re-derivable every pass");
+    }
+}
+
 int main()
 {
     printf("=== qd loot tests ===\n");
@@ -171,6 +217,7 @@ int main()
     TestOverflowIsReported();
     TestDerivedKey();
     TestDropOrdinals();
+    TestTakenIsStandingNotAnEdge();
     printf("=== %d passed, %d failed ===\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
