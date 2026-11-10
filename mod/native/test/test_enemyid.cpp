@@ -313,6 +313,16 @@ static void TestHpReporting()
     CHECK(!EffectivelyDead(true, false, true, 0.0f, false),
           "HP 0 before activation is NOT dead");
     CHECK(!EffectivelyDead(true, false, true, 50.0f, true), "positive HP is alive");
+    // Session 23, R151: ONE KEY, ONE BODY.  A key that two records answer for cannot be
+    // compared.  The measured case: one host dump held a constructed copy at HP 140 and the
+    // real enemy at 30 under `530F7FD0`, both `src=0` (a spawner key), both the same class.
+    // They sit at the same FRACTION, so fraction-based convergence has nothing to move and
+    // the absolute difference never moves -- reporting it as a desync is a false claim.
+    CHECK(HpComparable(true, 0, 0), "one body per key on both machines is comparable");
+    CHECK(!HpComparable(true, 1, 0), "a key with a second body here is NOT comparable");
+    CHECK(!HpComparable(true, 0, 2), "a key with a second body there is NOT comparable");
+    CHECK(!HpComparable(true, 3, 3), "two duplicated sides are not comparable either");
+    CHECK(!HpComparable(false, 0, 0), "a key not alive on both is not comparable");
 }
 
 // ===========================================================================

@@ -352,8 +352,30 @@ The lines that answer most questions, verbatim:
   mod present only as the `ProcessEvent` forward.  That crash is the top open stability
   item.  Run 2 measured shared HP on 101 pairs with 3 unequal, all the same key
   (`530F7FD0`, 140 against 30 — a standing difference, not a sample taken mid-convergence).
-  So: a 30-minute session is close, not proven, and a long session with several hard map
-  transitions can still take the game down.
+  **Session 23 found that crash's shape and fixed the module's half of it.** It is not "the
+  fourth load" and it is not "62 minutes": a fast loop of nothing but hard loads killed the peer
+  on the **sixth** load, 7 min 51 s into the process. Both dumps fault at the same instruction
+  (`sub dword ptr [rax+10h],1`, RVA `0x102e790`), inside the engine's own container destroy,
+  with the pointer read out of a store that had been freed and reused - in the newer dump that
+  store held printable text. The module was holding things that live in the world being
+  destroyed: enemy records and their actors, constructed copies, your partner's body, drops it
+  spawned, and a table of raw actor pointers. It now drops all of it before it asks for a load
+  and again when the world changes, and does nothing at all while a load is in flight.
+  **Measured with the same loop: 6 loads -> peer dead (before); 8 consecutive loads -> both
+  processes alive and in the same world after every single one, zero fault lines (after).**
+  The engine-side double destruction is not claimed to be understood; what is proven is that
+  the mod no longer holds or reads anything from the world being torn down. A long session with
+  several hard transitions is still the thing to test.
+  **The long-session test was run too, and it did not pass.** One pair of processes, the
+  documented play set, 2695 s of wall clock and **1605 s of measured body** (hub 577 s, a
+  `780_SZ_Depths` loot step, `770_SZ_Swamp` 291 s, a leave, hub 255 s, two hard round trips
+  that both landed the pair in the same world, then 482 s of the final hub segment): two area
+  changes followed on both machines, zero `ERR` lines, and shared HP was measured on **67 pairs
+  with 0 unequal**. The peer then died **45 min 26 s in**, in ordinary play, with a *different*
+  fault from the hard-load one - a null object in a Blueprint call (`NULL_CLASS_PTR_READ`,
+  RVA `0xE420D5`), which this session recorded and did not fix. So: the hard-load crash is
+  contained, the long-session crash is still there, and the soak's own numbers are in the
+  Session 23 log including the dead process.
 - **An enemy's HP reads `?` when the engine is tearing that copy down — not a sync fault.**
   Session 21 traced it: the mod refuses a reflective call on an object the engine has
   flagged for destruction, and in the hub that was 428 of 569 enemy records.  A `?` in a
@@ -376,7 +398,12 @@ The lines that answer most questions, verbatim:
   agree on.  Taking a drop has also not been demonstrated by the rig: a teleport, an
   out-and-back step, a fall onto it, and the class' own `Interact`/`Pickup` verbs all run
   and consume nothing.  So if you walk over a drop and it stays on your friend's screen,
-  that is the open item, not a mistake you made.
+  that is the open item, not a mistake you made.  Session 23 tried two more ways of
+  making the game take one - a real swept move through the pickup volume instead of a
+  teleport, and the class' own `ReceiveActorBeginOverlap` event - and both ran and consumed
+  nothing, so the take is still the open half.  **A pickup's HP that reads 140 on one screen and
+  30 on the other is a different bug, and it is fixed**: one machine was holding two bodies for
+  one enemy (a constructed copy beside the real one).
 
 - **Progress can still lag on the peer in a chest-dense area.** In `780_SZ_Depths` the peer
   logged about 8000 `actor-state: game writer ... (WRITE FAILED)` lines: it wrote a container

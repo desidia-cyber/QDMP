@@ -440,6 +440,44 @@ Two assumptions in that paragraph are unproven and each is one probe:
   and the same for the return load to `Ruins_Level_00`. A hard travel costs a `WORLD
   DIVERGENCE` line while the two machines are mid-transition and one more when they agree
   again; that is the transition, not a desync.
+- **A repeated hard world load used to kill the game (Session 22 found it, Session 23 fixed
+  it - R152).** The peer died on the second hard return to `Ruins_Level_00`, and a fast loop
+  showed it was any load after enough of them: six consecutive loads on the unfixed build, dead
+  on the sixth, 7 min 51 s into the process. Both dumps fault at one instruction -
+  `sub dword ptr [rax+10h],1` at RVA `0x102e790` - inside the engine's own container destroy,
+  reached through `FEngineLoop::Tick` -> a UFunction -> `UObject::ProcessEvent`. In the second
+  dump the pointer the lookup produced was `0x4100000000000032`, i.e. printable text: the
+  container's backing store had been freed and reused. The module's only frames in that stack
+  are the `ProcessEvent` forward and the tick detour's trampoline.
+  The module was holding world-scoped state across that teardown (enemy records and their
+  actors, constructed mirrors, the partner's body, spawned loot drops, `void* g_fxRing[64]`,
+  latched `UClass*`, ~50 cached `UFunction*`, and a level table reset only when
+  `StreamUnion=1`). `WorldTeardownReset` now drops all of it, before the module asks for a hard
+  load and again when the world pointer changes, and `HK_Tick` does nothing between the request
+  and the change. **Measured: 6 loads -> peer dead (unfixed); 8 loads -> both alive, 47 PASS /
+  0 FAIL (fixed).** The engine-side double destruction itself is not claimed to be understood;
+  what is proven is that the module no longer contributes to it. See `LIVE-TEST-LOG.md`
+  Session 23.
+- **One enemy key can name two bodies (Session 22's "standing HP divergence", explained and
+  closed as a measurement in Session 23 - R151).** `530F7FD0` read 140 on one machine and 30 on
+  the other for three segments. The host's own dump held BOTH under the key: a constructed copy
+  at full HP 140 (`mirrored=1`) and the real enemy at 30. Two bodies at the same HP *fraction*
+  cannot converge, so the difference was permanent. A real enemy now takes its key back from a
+  copy (`DropMirrorForKey`), a key this machine already runs is never copied
+  (`HoldsOwnLiveBody`), and the dump prints `mx=`, `peers=` and the whole 128-bit key (`id=`) so
+  a duplicate is visible rather than reported as a desync. Measured after the fix in
+  `780_SZ_Depths`: `peers=0` on every ALIVE line, 22 pairs compared, 0 unequal. **Still open:**
+  the identity itself can hand one spawner GUID to more than one live enemy
+  (`SpawnerManagesActor` falls back to `true` when `CurrentManagedEnemy` is unreadable), so a
+  cross-machine pair can still be two different bodies; it is now counted as `mx-differ`, not as
+  unequal HP.
+- **A second engine crash, found by the Session 23 soak (R155, OPEN).** After two hard round
+  trips and 1605 s of body, the peer died in ordinary play with a *different* fault from R152:
+  `NULL_CLASS_PTR_READ` at RVA `0xE420D5`, reading `0x130` from `rax = 0` - a UFunction
+  dispatched with a null `this`. The module is in that stack twice, both times as the
+  `ProcessEvent` forward called from game code. R152's fix holds (eight consecutive hard loads
+  survive); this is a separate, unexplained fault in the same dispatch family, and it is why the
+  Session 23 soak reports a dead peer at 1605 s of body rather than 1800.
 
 ## 4. Not synced, lower stakes
 
@@ -466,18 +504,23 @@ Two assumptions in that paragraph are unproven and each is one probe:
   on the host, and `key 46FB326A#0: BOTH machines hold it` from the rig's own resolver --
   the precondition Session 21 could never reach. The lane's key stays addressable:
   `qd.tp near:drop:<8hex>:<index>`.
-  **Still open: the HIDE half is not live-proven, because the rig cannot make the game
-  consume a drop.** Four mechanisms were tried and all measured failing: a teleport into the
-  pickup volume generates no BeginOverlap (a pawn parked on a `Herb_Item_BP_C` for 30 s
-  picked nothing up); stepping out 500/800/250 cm and back generates none either; dropping
-  the pawn onto it from 3 m did not either; and the class' own `Interact` and `Pickup` verbs
-  both RUN and consume nothing (`dev interact: drop verbs tried; ran=Pickup`, state 0, actor
-  still there). So "taken on A, gone on B, refused a second time" is not measured. The
-  ledger half -- tombstone wins, no resurrection, one take only -- is pinned by
-  `test_loot.cpp`. The next probe is stated as one: read `ItemPickup_Base`'s own surface
-  through SuperStruct (the BP child has zero UFUNCTIONs of its own) and call the parent's
-  overlap entry with the pawn as `OtherActor`, or drive real player movement instead of a
-  position write.
+  **Session 23 measured two more ways to make the game consume a drop, and neither worked
+  either** - but both removed a harness fault that had been masking the attempt. `qd.near`
+  treats a non-positive offset as "not set" and substitutes 140, so every "stand on it" leg the
+  harness had ever asked for actually stood 140 cm away (`dev teleport drop ... standing
+  offset=140 move=teleport`, nine times in one take); the spec suffix `:on` now forces offset 0
+  and a **sweep** (`SetActorXformSweep`, `bSweep=true, bTeleport=false`, in 100 cm steps),
+  because the engine dispatches `BeginOverlap` from a MOVE and every earlier attempt was a
+  position write. And `ReceiveActorBeginOverlap` - declared by `AActor`, and the event a
+  Blueprint child *overrides* (an override creates no UFunction, which is why the child reports
+  `0 UFUNCTIONs`) - is now the first drop verb. Measured in `780_SZ_Depths`, both directions,
+  three drops rolled and `key D1DB5E8F#0: BOTH machines hold it`: the verb RAN
+  (`drop verbs tried; ran=ReceiveActorBeginOverlap`), the gate said `IsInteractible=1`, the
+  player's `InpActEvt_Interact` event ran, and the drop was still standing afterwards. **So the
+  take half is still NOT-PROVEN**, and it is now blocked on something other than the four
+  mechanisms Session 22 listed. The next probe is the content itself: read the drop class'
+  collision/overlap component and whether its pickup body hangs off `ReceiveActorBeginOverlap`
+  at all, and drive REAL movement (the input-injection rig) rather than any position write.
 - **Shop, journal/bestiary, XP, weapon levels, grimoire ink.** Per-player by nature.
 - **Peer vitals.** The partner's HP and death are not shown; a death shows as the body
   falling. This is also why the damage lane's dead check is receive-side only.

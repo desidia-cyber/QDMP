@@ -4657,3 +4657,415 @@ drop that one of you caused should appear on both screens under the same name, b
 it does depends on both machines noticing the death, and picking one up has never been
 observed by the rig.  If the game vanishes during a map transition late in a long session,
 that is the crash this session measured and did not fix -- keep the crash folder.
+
+---
+
+## Session 23 - 2026-11-10 (the crash that repeats, the key that had two bodies, and the move the game can see)
+
+This branch is `t3/session-23-crash-soak-r129`, reset to `sync-fix`'s Session 22 merge
+(`9845c5f`).  The body is `tools/session23.ps1`, one phase per invocation: `hardloop` (N
+consecutive hard world loads), `loot` (R129's take half on its own), `smoke`, `soak` (>= 1800 s
+of measured body).  Configuration is the documented PLAY set with `LogLevel=3`; roles are read
+from `session established`: **host=inst1, peer=inst2**.
+
+### R152. THE CRASH ON A REPEATED HARD WORLD LOAD - REPRODUCED, NAMED, FIXED
+
+Session 22 lost the peer on the second hard return to `Ruins_Level_00`, the fourth world load
+in that process.  It could only afford four loads inside a 30-minute soak, so this session's
+first piece of work was a phase that does nothing but loads.
+
+**It reproduces.**  Six consecutive hard loads on the Session 22 build, 18:24:07 -> 18:31:54,
+one pair of processes:
+
+| load | world | both alive |
+|---|---|---|
+| 1 | `997_FinalZoneCutscene` | yes |
+| 2 | `Ruins_Level_00` | yes |
+| 3 | `997_FinalZoneCutscene` | yes |
+| 4 | `Ruins_Level_00` | yes |
+| 5 | `997_FinalZoneCutscene` | yes |
+| 6 | `Ruins_Level_00` | **NO - the peer died at 18:31:51, 7 min 51 s into the process** |
+
+```
+crash error: Unhandled Exception: EXCEPTION_ACCESS_VIOLATION reading address 0xffffffffffffffff
+```
+
+So it is not "the fourth load" and it is not "62 minutes": it is **a load after enough of
+them**, and the new dump is 7:51 into a process.  That is what a loop is for.
+
+**The instruction.**  Both dumps carry the same one, resolved with the game's base
+(`0x7ff7d4a30000`) and the build's own `winmm.pdb`:
+
+```
+QueensDomain_Win64_Shipping!png_get_uint_16+0xa87870   (RVA 0x102e790)
+  83681001   sub dword ptr [rax+10h],1
+```
+
+The enclosing function is `RVA 0x102e650` (792 bytes).  It is the destructor of one entry in a
+hash container: the caller passes a **16-byte key** `{object*, packed id}`, the container hangs
+off the object at `+0x500` with its element array at `[container+0x48]`, and the probe uses
+`3 * index` against two primes at `+0x60`/`+0x64`, i.e. **24-byte elements**.  The address the
+lookup produced has its `+0x10` dword decremented - a reference count on an entry that is no
+longer there:
+
+| dump | `rax` (the faulting base) | what it is |
+|---|---|---|
+| Session 22 `...C139E2...`, uptime 1:02:26 | `0x00bc3a170969b9dd` | freed heap |
+| Session 23 `...F1FD6DD8...`, uptime 0:07:51 | `0x4100000000000032` | **printable text - `'2'` and `'A'`** |
+
+The second value is the decisive one: the container's **backing store had been freed and reused
+by a string** before this destructor walked it.  In both dumps the keyed object is likewise
+dead memory while the container's owner (`rsi`) is a live object of the same class - vtable RVA
+`0x3993918`, identical in both dumps:
+
+```
+Session 23   [rbx] -> 0x1f29bfa4d00 (dead)    rsi = 0x1f29bfa4d80  vtable 0x7ff7d83c3918
+Session 22   [rbx] -> 0x17edc9af900 (dead)    rsi = 0x17edc9af9a0  vtable 0x7ff7d83c3918
+```
+
+**Which object or class, honestly.**  The game ships without a PDB and without RTTI, and this
+object is **not a UObject**: `[obj+0x10]` is `0x0009fb49ffffffff`, not a `UClass*`, and the
+object-table index at `[obj+0x0C]` is 0.  It is an engine-internal polymorphic C++ object with
+a hash container at `+0x500`.  Naming it needs symbols that do not exist on disk.  What *is*
+proven is the shape: **the engine's own destruction pass walked a container whose store had
+already been freed** - a stale handle or a double destruction inside the engine, reached during
+a hard world load.
+
+**The full stack** (new dump; frames are the return addresses, mapped through `.pdata`, with
+names where the module's PDB has one):
+
+```
+0    QueensDomain  (faulting instruction)                        RVA 0x102e790
+1    QueensDomain  FUN_0102a230+0x327
+2    QueensDomain  FUN_01010ea0+0x193
+3    QueensDomain  FUN_01028d70+0x455
+4    QueensDomain  FUN_010336c0+0x169
+5    QueensDomain  FUN_010328ed+0x188
+6    QueensDomain  FUN_010218d4+0xc3
+7    QueensDomain  FUN_02d3422d+0x31
+8    QueensDomain  FUN_00e3bbf6+0x16
+9    QueensDomain  FUN_00e2eeb8+0x61
+10   QueensDomain  FUN_00e5c100+0x72
+11   QueensDomain  FUN_011b6aa9+0x18f
+12   QueensDomain  FUN_011a7f50+0x5f
+13   QueensDomain  FUN_01195800+0x306
+14   QueensDomain  FUN_011b6ec0+0x4b
+15   QueensDomain  FUN_011a7f50+0x5f
+16   QueensDomain  FUN_011a7e40+0x6e
+17   QueensDomain  FUN_010428e0+0x79
+18   QueensDomain  UObject::ProcessEvent+0x2e2
+19   winmm         anonymous namespace::HK_ProcessEvent+0x2ad      <- the ProcessEvent forward
+20   QueensDomain  FUN_0265f3cd+0x4e
+21   QueensDomain  FUN_02649b40+0x1e8
+22   QueensDomain  FUN_0264d99a+0x36
+23   QueensDomain  FUN_02d4ece4+0x3a
+24   QueensDomain  FUN_028e25d0+0x21
+25   QueensDomain  FUN_00e3b419+0x8
+26   QueensDomain  FUN_02d2c220+0x1e
+27   QueensDomain  FUN_02ce85b0+0x5ee
+28   QueensDomain  FUN_02cd2690+0x958
+29   QueensDomain  FUN_02cf1537+0x240
+30   QueensDomain  FUN_028c4ea0+0x1b4
+31   QueensDomain  FEngineLoop::Tick+0x7e0
+32   winmm         anonymous namespace::HK_Tick+0x32            <- the tick detour's trampoline
+33   QueensDomain  FUN_0077c130+0x36c
+...
+```
+
+Read from the bottom: the engine loop calls the module's `FEngineLoop::Tick` detour, the detour
+calls the MinHook trampoline, and the trampoline resumes **inside the engine's own tick** at
+`+0x7e0`; everything above that is the engine.  The module's other frame,
+`HK_ProcessEvent+0x2ad`, is the forward to `UObject::ProcessEvent` - the game asked for a
+UFunction and the module passed it through.  **Neither frame is the module's own work**, which
+is why Session 22 recorded "the mod present only as the ProcessEvent forward".  Session 22's
+stack is the same stack, with `HK_ProcessEvent+0x2ad` in the same place.
+
+**What the module was holding across that teardown.**  The dump cannot name the module's
+contributions, so they were enumerated from the source.  All of these are world-scoped and were
+still live when the world went: the enemy record table (`g_en[]`: actor, spawner,
+`bossBarActor`) and the mirrors in `g_mirrorActor[]`; the partner's body (`g_puppetActor`) and
+`avatar::Body g_body`'s raw component pointers, which were cleared only when `g_puppetActor` was
+non-null; the loot actor table and the drop copies the module spawns;
+`void* volatile g_fxRing[64]` - the last array of raw actor pointers in the module, re-read
+through `ObjectIsLive`; `g_proxyCls`/`g_proxyClsTried`, which latch a `UClass*` forever; ~50
+cached `UFunction*` and the per-class property caches; and the level table, which is reset
+**only** by `StreamPump` - which returns early unless `StreamUnion=1`.
+
+There was no central world generation and no delegate or timer registration: world-change
+detection was eleven independent `static void* lastWorld` snapshots, one per lane, each gated on
+that lane's switch.
+
+**The fix - one place, called twice.**
+
+`WorldTeardownReset(now, why)` hides the actors the module owns (hide, never destroy: R140),
+drops every table above, resets the level table unconditionally, and clears the raw caches.  It
+runs:
+
+1. **immediately before the module asks for a hard load**, inside `FollowHardTravel`, because
+   the world is destroyed *inside* `LoadMapWithLoadingScreen` and the module's tick runs again
+   before that call returns;
+2. **when the world pointer changes**, in the tick's existing world-change block, because a load
+   can also be started by the game itself and the pointer is the only signal.
+
+Between the request and the observed change, `HK_Tick` **returns immediately** (the transition
+gate) and `HK_StoreEnemySaveState` keeps the engine's write but skips its own bookkeeping.  The
+module therefore never reads an actor from the world being torn down.  The gate is bounded at
+20 s (a refused load must not leave the module silent) and is cleared at once if
+`LoadMapWithLoadingScreen` itself faults.
+
+**Measured, same harness, same play set, same machine:**
+
+| build | loads attempted | outcome |
+|---|---|---|
+| Session 22 build (unfixed) | 6 | **peer dead on load 6**, 31 PASS / 6 FAIL |
+| this build (fixed) | 8 | **both alive after every one**, 47 PASS / 0 FAIL, zero FAULT lines |
+
+Timeline of the fixed run: 18:37:18 first load, 18:47:35 last, one pair of processes, eight
+world loads (four round trips), and every load landed both machines in the same world
+(`host=Ruins_Level_00 peer=Ruins_Level_00` / `997_FinalZoneCutscene` on both).
+
+What this does **not** prove: that the engine-side double destruction is gone.  The module no
+longer contributes a stale handle to it and no longer reads the dying world, and eight loads
+survive where six killed the unfixed build.  A crash inside the game's own container could
+still have another cause; that is stated as open at the end.
+
+### R151. THE STANDING HP DISAGREEMENT WAS ONE KEY WITH TWO BODIES
+
+Session 22 recorded `530F7FD0: host=140 peer=30`, three samples across three segments, and
+called it a standing divergence.  The module's own dump from that run, on the host:
+
+```
+17:44:46.999 enemykey 530F7FD0 ALIVE local=0 src=0 hp=30.0  cls=BookBug_Magic_BP_C
+17:46:02.369 enemykey 530F7FD0 ALIVE local=0 src=0 hp=140.0 mirrored=1 cls=BookBug_Magic_BP_C
+17:47:18.439 enemykey 530F7FD0 ALIVE local=1 src=0 hp=140.0 mirrored=1 cls=BookBug_Magic_BP_C
+17:47:18.481 enemykey 530F7FD0 ALIVE local=1 src=0 hp=30.0  cls=BookBug_Magic_BP_C
+```
+
+**Two records answer for one key**: a copy the module constructed (`mirrored=1`, at full HP 140)
+and the real enemy (30).  Both `src=0` - a **spawner** GUID, the exact identity the two
+machines agree on - and both the same class.  The key was never diverging between the machines;
+one machine had two bodies for it and the harness kept whichever line came last.
+
+**Why the HP lane could not converge it.**  Convergence targets a **fraction**
+(`ConvergeDamage(hp, mx, hostFrac, ...)`) and the boss bar carries a fraction (`HpFrac`,
+0..65535).  Two bodies at the same fraction have nothing to move, so the *absolute* difference
+is permanent by construction.  The per-key dump compared absolute HP and never printed
+`MaxHP` - the one number that would have made the cause visible.
+
+**How the copy got there.**  A mirror is constructed when the partner describes an enemy this
+machine does **not** hold yet.  `OnEnemySpawn` tested `EnemyByGuid(...)->actor` - a *first
+match* - so a key whose first record was a swept corpse looked unheld and a second body was
+built beside a live enemy the scan had simply not met yet.
+
+**The fix, three small rules.**
+
+* `DropMirrorForKey`: when the scan meets a real enemy whose key a constructed copy already
+  holds, the copy is hidden and its record removed.  The real enemy wins - it is the body the
+  game simulates and the one the loot key derives from.
+* `HoldsOwnLiveBody`: `OnEnemySpawn` asks about **every** record, not the first, and refuses to
+  construct a copy for a key this machine already runs.
+* The dump prints `mx=` (the body's own MaxHP), `peers=` (how many other records answer for the
+  key) and `id=` (the whole 128-bit key), and `enemy::HpComparable` - pinned in
+  `test_enemyid.cpp` - makes a key with a second body on either side **not comparable**, so the
+  harness reports `duplicates=` instead of a false mismatch.
+
+Measured in the `loot` phase (780_SZ_Depths, both machines): **`peers=0` on every ALIVE line,
+22 pairs compared, 0 unequal**.  No duplicate body existed to compare.
+
+### R154. THE KEY IN THE DUMP WAS FOUR BYTES, AND TWO KEYS SHARED THEM
+
+The first `loot` run of the session failed its HP check on a key that was not `530F7FD0`:
+
+```
+HP MISMATCH 55E0EA46: host=250 peer=440
+enemykey 55E0EA46 ALIVE local=1 src=0 hp=250.0 mx=250.0 peers=0 mirrored=1 cls=Boner_Black_Berserker_BP_C   (host)
+enemykey 55E0EA46 ALIVE local=1 src=0 hp=440.0 mx=440.0 peers=0 mirrored=1 cls=Boner_Black_Berserker_BP_C   (peer)
+```
+
+Same class, same `src`, **no duplicate on either machine**, and each at exactly its own MaxHP.
+`enemykey` printed `guid[0]` - 4 of the key's 16 bytes - and the harness keyed on that, so two
+different 128-bit keys looked like one enemy.  The dump now prints `id=` (the whole key) and the
+harness compares on it; a pair whose `mx` differs is counted as `mx-differ` (a *different body
+under one key*, which is not a shared quantity) instead of `unequal`.
+
+**Still open, and named as such:** the module's identity can hand one spawner GUID to more than
+one live enemy (`SpawnerManagesActor` falls back to `true` when `CurrentManagedEnemy` is
+unreadable), so two bodies under one key remain possible across machines.  What is fixed is that
+such a pair is now **visible** (`peers=`, `mx=`, `id=`) and is no longer reported as an HP
+desync.
+
+### R153. R129's TAKE HALF - THE ENGINE GENERATES AN OVERLAP FROM A MOVE, NOT A TELEPORT
+
+Session 22 tried four ways to make the game consume a drop and all four failed: a teleport into
+the volume, three out-and-back teleports, a fall from 3 m, and the class' own `Pickup`/`Interact`
+verbs.  Every one of them was a **position write or a reflective call**.
+
+`SetActorXform` - the function every rig movement uses - asks for
+`K2_SetActorLocationAndRotation(..., bSweep=false, bTeleport=true)`.  A teleport does not move a
+component through space, so the engine never dispatches `BeginOverlap`, and a pickup *is* an
+overlap.  Two things were added:
+
+* `SetActorXformSweep` (bSweep=true, bTeleport=false) and `SweepPawnTo`, which walks the pawn in
+  <=100 cm steps so every centimetre of the path is a move the engine can see.  The spec suffix
+  `:on` asks for it; a non-zero offset is still a teleport, because "stand 4 m away" does not
+  have to be seen.
+* `ReceiveActorBeginOverlap` as the **first** drop verb.  It is declared by `AActor` (the new
+  `qd.efunc` SuperStruct walk prints `Actor has 132 UFUNCTIONs`), and a Blueprint child's pickup
+  body is its *override* of that event - an override creates no UFunction, which is exactly why
+  the child reported `0 UFUNCTIONs` in Session 22 and why calling `Pickup` on it ran nothing.
+
+**Measured, and still not enough.**  Three drops rolled in `780_SZ_Depths` (`54F6FD50#0`,
+`9D047AD7#0`, `D1DB5E8F#0`), the precondition held (`key D1DB5E8F#0: BOTH machines hold it`),
+and the verb ran - `dev interact: drop verbs tried; ran=ReceiveActorBeginOverlap` - and the drop
+was still standing afterwards, in both directions.  The game's own gate said
+`IsInteractible=1`, the player's `InpActEvt_Interact` event ran, the `Current Interact Actor`
+field was set and read back, and nothing consumed the drop.
+
+One harness defect was found and fixed on the way, and it is worth recording because it hid the
+sweep entirely: **`qd.near` treats a non-positive value as "not set" and substitutes 140**, so
+every on-drop leg the harness asked for stood 140 cm away.  The host log said so nine times:
+
+```
+dev teleport drop 'drop:D1DB5E8F:0' -> 3Coins_Item_Bp_C at ... standing offset=140 height=0 move=teleport
+```
+
+`:on` forces offset 0, and the teleport line now prints `move=sweep|teleport` so the next run can
+see which one ran.  `R129's take half remains NOT-PROVEN` (state at the time of writing; the
+soak's own take attempt is recorded below).
+
+### R155. A SECOND CRASH, DIFFERENT FAULT, FOUND BY THE SOAK
+
+The 1800 s soak (below) ended with the peer dead at 45 min 26 s, and the dump is **not** R152's:
+
+```
+ExceptionAddress: QueensDomain_Win64_Shipping!png_get_uint_16+0x89b1b5  (RVA 0xE420D5)
+ExceptionType:    c0000005 (EXCEPTION_ACCESS_VIOLATION)
+READ_ADDRESS:     0000000000000130      FAILURE_BUCKET_ID: NULL_CLASS_PTR_READ
+rax = 0
+```
+
+A null `this` in a UFunction dispatch - `[rax + 0x130]` on a null object - where R152 was a
+reference-count decrement on a *freed* one.  The module is in the stack twice, both times as
+`HK_ProcessEvent+0x2ad` (the pass-through forward), called from game code, so this is the
+engine's own BP dispatch again.
+
+It happened in `hub-final`, ~9 minutes after the second hard round trip, in ordinary play.  Two
+readings are consistent with the evidence and neither is proven: the four world loads leave the
+engine in a state that faults later (the same family as R152, a different symptom), or this is
+the long-run fault Sessions 18-22 kept meeting (R138/R140) and it is unrelated to loads at all.
+Recorded, not explained, and not claimed fixed.  The next probe is the null object itself: the
+two `HK_ProcessEvent` frames are enough to identify which BP call was dispatched with a null
+target if the module logs its own forwards, which it does not do today.
+### The soak, measured - and what the counters actually counted
+
+One pair of processes, the documented PLAY set, `soak` phase, 19:13:23 -> 19:59:44 (one pair of processes, 2695 s of wall clock).
+Segments are hub / loot / 770 / leave / hub-again / two hard round trips / hub-final, with the
+per-key dump sampled through the hub segments.
+
+| segment | ran | iterations | both alive |
+|---|---|---|---|
+| hub | 577 s of 576 s | 165 | yes |
+| loot step (`780_SZ_Depths`, entered by the step itself) | ~13 min | - | yes |
+| area770 (`770_SZ_Swamp`, TP_AREA) | 291 s of 288 s | 80 | yes |
+| leave (back to the hub) | - | - | yes |
+| hub-again | 255 s of 252 s | 68 | yes |
+| hard round trip 1 (`auto` -> `997_FinalZoneCutscene` -> `Ruins_Level_00`) | - | - | yes |
+| hard round trip 2 (the same again) | - | - | yes |
+| hub-final | **482 s of 684 s** | 114 | **NO - the peer died at 19:59:03** |
+
+**MEASURED BODY: 1605 s of 1800 s.**  The shortfall is the last segment, cut by the peer's
+death; the four other segments ran their full budget.  Wall clock 2695 s.
+
+**What passed.**
+
+* Two area changes followed on both machines (`780_SZ_Depths` and `770_SZ_Swamp`), each with
+  `rig: level engine state ... LoadedLevel=1 actuallyVisible=1` on BOTH, and the leave followed
+  26 ms after the host.
+* **Two hard round trips - four world loads - all landed both machines in the same world**, with
+  zero fault lines through them.
+* Shared HP was MEASURED, not assumed: **20 samples, 231 shared-alive observations, 67 pairs
+  compared, 0 unequal, 0 unreadable, 0 ghosts.**  The other 164 observations were counted as
+  `duplicates=`, and that number is **inflated by a defect in the dump that this run found**:
+  `peers=` counted a record whose actor is already gone, which is the normal state of a key that
+  died and respawned.  The dump now counts only a live, callable body.  The evidence that the
+  counter was the problem, not the enemies: `770_SZ_Swamp` and the first `hub-final` samples
+  reported `duplicates=0` with `compared=5`, `compared=26` and `compared=9`, all unequal 0, and
+  the one `peers=1` line in the final dump (`BF617311`, hp 250 of 250) had a second record the
+  dump itself classified as a ghost - it printed no line for it.
+* Both machines ended in `Ruins_Level_00` with `agree=1` and the same area (`-`).
+* Zero `ERR` lines.
+
+**What failed, and it is not the same crash.**
+
+The peer died at **19:59:03, 45 min 26 s into the process**, during `hub-final` - after the hard
+round trips, in ordinary play.  The dump is a **different fault**:
+
+```
+ExceptionAddress: QueensDomain_Win64_Shipping!png_get_uint_16+0x89b1b5  (RVA 0xE420D5)
+READ_ADDRESS: 0000000000000130
+FAILURE_BUCKET_ID: NULL_CLASS_PTR_READ
+rax = 0
+```
+
+A null `this` in a UFunction dispatch, not the reference-count decrement of R152.  The module is
+in that stack twice, both times as `HK_ProcessEvent+0x2ad`, the pass-through forward, called from
+game code.  **R152's fix holds** - eight consecutive loads survive the loop, and four loads
+inside this soak cost nothing - but the engine is left in a state that faults later, and that is
+a new, open item (**R155**), not a regression of the closed one.  The kill-set diff could not be
+measured because one process is gone.
+
+### The live-proof table
+
+| Claim | Verdict | Key line |
+|---|---|---|
+| The crash reproduces on the unfixed build | **PASS (it is the defect)** | peer dead on load 6 of 6, 7:51 uptime, same RVA and instruction as Session 22 |
+| The fix survives repeated hard loads | **PASS** | 8 consecutive loads, both alive after every one, 47 PASS / 0 FAIL |
+| One key, one live body | **PASS** | `peers=0` on every ALIVE line in `780_SZ_Depths`; 22 pairs compared, 0 unequal |
+| The dump names a duplicate instead of reporting a desync | **PASS** | `peers=` / `mx=` / `id=` on the line; `mx-differ` counted separately |
+| A key's HP is comparable across machines | **PASS where keys are unambiguous** | 22 compared / 0 unequal (loot run); see the soak table for the hub |
+| A drop exists on both machines under the same key | **PASS** | `key D1DB5E8F#0: BOTH machines hold it` |
+| Taking a drop hides the partner's copy; refused twice | **NOT-PROVEN** | the verb runs (`ran=ReceiveActorBeginOverlap`) and consumes nothing; the drop is still standing |
+| Two area changes follow | **PASS** - 2 of 2 | `travel: entered the partner's area 770_SZ_Swamp by streaming it` |
+| Two hard round trips inside the soak | **PASS** - 2 of 2 (4 loads) | `travel: both machines arrived in ...` |
+| Both alive at the end of >= 1800 s of body | **FAIL** - the peer died at 45:26 | 1605 s of 1800 s |
+| Kill sets diff 0 | **NOT MEASURED** | | a process died; its dump cannot answer |
+| Shared HP measured, not assumed | **PASS** - 67 compared, 0 unequal, 0 unreadable |  20 samples, 231 shared-alive observations (164 counted as `duplicates=` by the pre-fix counter) |
+| Zero uncaught faults, zero ERR | 0 FAULT lines and 0 `ERR` lines on both machines; the peer died by an uncaught null-class read at RVA 0xE420D5 (R155) | |
+
+### What a human tester needs to know
+
+Two things are better and one is unchanged.  **A long session with map transitions is safer**:
+the mod used to keep pointers into the world a hard load destroys, and that is what killed the
+game on the sixth load; it now drops them and goes quiet during the load.  **One screen showing
+an enemy at 140 and the other at 30 was never a sync failure** - the machine with 140 was
+holding a second body for the same enemy; that is fixed, and a dump now says `peers=` and `mx=`
+so the question can be answered from the log.  **Picking up a drop is still not proven**: if you
+walk over a drop and it does not disappear, or it disappears on one screen only, that is the
+open item.
+
+### What is still open
+
+- **R129's take half.**  Six mechanisms have now been measured failing (teleport in, three
+  out-and-back teleports, a fall from 3 m, the class' `Pickup`/`Interact` verbs, a real swept
+  move through the volume, and a direct `ReceiveActorBeginOverlap`).  The next probe is the
+  content: whether the drop class' pickup body hangs off `ReceiveActorBeginOverlap` at all, and
+  real input-driven movement rather than any position write.
+- **The engine-side crash (R152) is contained, not explained.**  The module no longer contributes
+  to it and eight consecutive loads survive where six killed the unfixed build, but the engine's
+  own double destruction of a hash container is not understood.
+- **R155 - a null-class UFunction dispatch 45 minutes in.**  Found by this session's soak, a
+  different fault from R152, in the same engine-dispatch family.  Not fixed, not explained, and
+  the soak below therefore reports a dead peer at 1605 s of body.
+- **One spawner GUID can name more than one live enemy** across machines
+  (`SpawnerManagesActor` falls back to `true` when `CurrentManagedEnemy` is unreadable).  The
+  pair is now visible (`mx=`, `id=`, `mx-differ`) instead of being reported as an HP desync, but
+  the identity is still not unique.
+- **`peers=` counted dead records in the build that ran the first soak** (a record whose actor
+  is gone is the normal case for a key that died and respawned).  The dump now counts only a
+  live, callable body; the soak numbers above are from the build BEFORE that correction, which
+  is why the hub's `duplicates=` count is high and its `compared=` count is low.  Stated here
+  rather than quietly fixed in the table.
+- **The `enemykey` token in the log is 8 hex**; `id=` carries all 128 bits now, and the
+  harness compares on it, but the DEAD lines still print only the token (the kill-set diff is
+  therefore still keyed on 4 bytes).
+- **Boss phases, hit reactions, the shop door, peer vitals** - unchanged from Sessions 20-22.
