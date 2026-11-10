@@ -4425,7 +4425,10 @@ bool StreamTravelTo(const char* name)
         if (!SameNameText(g_levels[i].name, name)) continue;
         if (!ObjectIsLive(g_levels[i].ls)) continue;
         lstrcpynA(g_rigLevelPin, name, sizeof(g_rigLevelPin));
-        g_rigAreaLocalAt = Net::Now();
+        // Only a pin this machine CHOSE counts as a local claim to defend (see g_rigAreaLocalAt
+        // and the grace window in OnTravel).  A pin applied from the partner's announcement
+        // must never look like one, or the next real change from the partner is refused.
+        if (!g_rigAreaAppliedFromPartner) g_rigAreaLocalAt = Net::Now();
 
         // The game's own entry FIRST: push the list that carries this area onto the
         // manager's stack.  Its per-frame pass then resolves the stack, loads the level
@@ -4838,14 +4841,17 @@ void OnTravel(wire::Reader& r, uint32_t now)
         }
         char err[160];
         bool streamed = false;
+        // Marked BEFORE the follow so `StreamTravelTo` can tell a partner-applied pin from
+        // one this machine chose; cleared again if the follow is refused.
+        g_rigAreaAppliedFromPartner = true;
         if (FollowHardTravel(area, err, sizeof(err), &streamed)) {
             QDLOG(LOG_INFO, "travel: entered the partner's area ", area,
                   (streamed ? " by streaming it (loaded and SHOWN here)"
                             : " with a world switch"));
             // Do not announce it back: the partner already knows, and an echo is how a
             // stale pin ends up winning (see the announcement block in TravelPump).
-            g_rigAreaAppliedFromPartner = true;
         } else {
+            g_rigAreaAppliedFromPartner = false;
             // A refusal is a named fact, never a silent divergence: the pair must not
             // continue believing they are in the same place.
             QDLOG(LOG_WARN, "travel: REFUSED the partner's area ", area, ": ", err);
@@ -10111,7 +10117,11 @@ void LootPendingDrain();
 // "the same drop".
 static const int      kDeathMarkMax = 48;
 static const uint32_t kDeathMarkMs  = 8000;    // a drop lands within ms of its death
-static const float    kDeathMarkCm  = 1500.0f; // the two copies die within a metre or so
+// The drop is the dying enemy's own roll, placed at its feet; the follower's copy follows
+// the owner's transform, so the two death points agree within centimetres.  600 cm is
+// slack for the spawn offset, tight enough that two enemies dying in different corners of
+// one fight are not confused for each other.
+static const float    kDeathMarkCm  = 600.0f;
 
 struct DeathMark {
     bool     used;
@@ -10362,29 +10372,6 @@ const LootSpawnDesc* LootSpawnGet(uint32_t hash, int32_t index)
     return nullptr;
 }
 
-// The follower's own rolls that were hidden because the partner owns that drop.  At file
-// scope, not in the scan: `__try` cannot live in a function that needs object unwinding.
-weak::Ref g_lootSuppressed[16];
-int       g_lootSuppressedN = 0;
-
-void LootSuppressionReset()
-{
-    for (int i = 0; i < g_lootSuppressedN; ++i) g_lootSuppressed[i] = weak::Ref();
-    g_lootSuppressedN = 0;
-}
-
-bool LootSuppressionSeen(void* a)
-{
-    for (int i = 0; i < g_lootSuppressedN; ++i) if (g_lootSuppressed[i] == a) return true;
-    return false;
-}
-
-void LootSuppressionAdd(void* a)
-{
-    if (g_lootSuppressedN < (int)(sizeof(g_lootSuppressed) / sizeof(g_lootSuppressed[0])))
-        g_lootSuppressed[g_lootSuppressedN++] = a;
-}
-
 LootActorRec* LootActorFind(uint32_t hash, int32_t index)
 {
     for (int i = 0; i < g_lootActorN; ++i) {
@@ -10500,28 +10487,15 @@ void LootScanStep()
         const float p[3] = {x.px, x.py, x.pz};
         const uint32_t nowMs = Net::Now();
 
-        // A drop belongs to a DEATH, and only the machine that RAN that death decides what
-        // the drop is (Session 22, R129).  The follower's own roll is a different item at a
-        // different centimetre, so keeping it would put two items on the floor for one kill
-        // and no key would ever match.  It is hidden here and replaced by the originator's
-        // description, which arrives on the LOOT lane and is built by LootMirrorSpawn.
+        // A drop belongs to a DEATH (Session 22, R129).  The originator is whichever
+        // machine actually ROLLED it -- and that is not always the machine that ran the
+        // death: measured, the enemy's own `Kill` runs the death but not the drop roll, so
+        // the only roll is the OTHER machine's, through the mod's applied death.  So both
+        // machines key their own rolls off the death and let the KEY do the deduplication:
+        // one death, ordinal 0, one key, one actor per machine.  A machine that rolled
+        // nothing receives the description and constructs the copy; a machine that rolled
+        // its own finds it already holds that key and builds nothing (LootActorFind).
         DeathMark* mark = DeathMarkNearest(p, nowMs);
-        if (mark && !mark->owned) {
-            // `SetActorHidden` is a reflective Blueprint call, and this scan re-examines
-            // every drop actor on every sweep; hide each suppressed copy ONCE.
-            if (!LootSuppressionSeen(o)) {
-                LootSuppressionAdd(o);
-                __try { SetActorHidden(o, true); } __except (EXCEPTION_EXECUTE_HANDLER) {}
-                static uint32_t lastSup = 0;
-                if (nowMs - lastSup > 3000) {
-                    lastSup = nowMs;
-                    QDLOG(LOG_INFO, "loot: suppressed this machine's own roll for a death the "
-                                    "partner ran (the partner's copy is the drop; keeping ours "
-                                    "would make a second one)");
-                }
-            }
-            continue;
-        }
 
         uint32_t hash = 0;
         int32_t index = 0;
@@ -10632,7 +10606,6 @@ void LootPump(uint32_t now)
         LootSpawnClear();
         DeathMarkReset();
         LootPendingClear();
-        LootSuppressionReset();
         g_lootActorN = 0;
         g_lootScanCursor = 0;
     }
