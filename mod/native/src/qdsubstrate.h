@@ -402,6 +402,71 @@ inline void* ObjectAtSafe(int i)
     return o;
 }
 
+// ---------------------------------------------------------------------------
+// May this object be the TARGET of a call?
+// ---------------------------------------------------------------------------
+// Session 19 / R140.  The 330 s death faults inside the game's own code, on a list of
+// objects the engine is destroying; our module appears only as the return address of
+// the tick it forwards.  So the module cannot fix that engine list directly -- what it
+// CAN do is stop handing the engine state it did not validate: an actor that is pending
+// kill, already being destroyed, or whose level is being streamed out must not be the
+// target of ProcessEvent/Destroy/SetHidden/spawn.
+//
+// THE BIT IS THE ENGINE'S OWN.  UObject::ProcessEvent's prologue is, measured in this
+// image at 0x011A7AA0:
+//
+//     mov eax,[FUObjectItem.Flags]   ; item+0x08, the slot's own flags
+//     shr eax,0x1d                   ; >> 29
+//     test al,1
+//     jne  <return>                  ; refuse
+//
+// So bit 29 is not a guess: it is the engine's "do not call into this object" bit, and
+// using the same one means the module refuses exactly the calls the engine would.
+// RF_BeginDestroyed / RF_FinishDestroyed (UObject::ObjectFlags, +0x08) are the second,
+// independent statement that destruction has started.
+static const int      kFUObjectItemFlagsOff = 0x08;
+static const uint32_t kItemFlagCallDenied   = 1u << 29;
+static const int      kObjFlagsOff          = 0x08;
+static const uint32_t kObjFlagBeginDestroyed  = 0x00008000u;
+static const uint32_t kObjFlagFinishDestroyed = 0x00010000u;
+
+// The slot's flags, index-first like everything else that reads GUObjectArray.
+inline uint32_t ObjectItemFlagsAt(int i)
+{
+    if (i < 0 || i >= ObjectCount()) return 0;
+    int c = i / kObjectsPerChunk;
+    if (c >= ObjectChunkCount()) return 0;
+    uint8_t** chunks = ObjectChunks();
+    if (!chunks) return 0;
+    uint8_t* chunk = chunks[c];
+    if (!chunk) return 0;
+    return *(uint32_t*)(chunk + (size_t)(i % kObjectsPerChunk) * kFUObjectItemStride +
+                        kFUObjectItemFlagsOff);
+}
+
+// The pure part of the decision, so the rule can be stated and tested without a live
+// GUObjectArray.  `itemFlags` is FUObjectItem::Flags, `objFlags` UObject::ObjectFlags.
+inline bool CallDeniedByFlags(uint32_t itemFlags, uint32_t objFlags)
+{
+    if (itemFlags & kItemFlagCallDenied) return true;
+    return (objFlags & (kObjFlagBeginDestroyed | kObjFlagFinishDestroyed)) != 0;
+}
+
+// Live AND not on a destruction path.  Every call into a game object goes through this
+// (qdreflect.h's ProcessEventGuarded), and the actor-specific callers add the level
+// check on top (proxy.cpp's ActorCallReady).
+inline bool ObjectCallable(const void* o)
+{
+    if (!o || !ObjectIsLive(o)) return false;
+    __try {
+        int i = ObjInternalIndex(o);
+        if (i < 0) return false;
+        return !CallDeniedByFlags(ObjectItemFlagsAt(i), *(const uint32_t*)((const uint8_t*)o + kObjFlagsOff));
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 // Class objects: native classes are of class "Class", Blueprint classes of class
 // "BlueprintGeneratedClass" (widgets/anim BPs have their own).  The first version
 // demanded exactly "Class", so FS_Full_PlayerChar_C -- a Blueprint -- could never be

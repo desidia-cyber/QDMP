@@ -534,8 +534,14 @@ inline void ErrSet(char* err, int cap, const char* a, const char* b = "")
 
 // ProcessEvent with a fault guard.  A Blueprint that faults inside the VM is a crash
 // either way, but a fault in OUR argument handling must be reported, not fatal.
+//
+// The target is validated FIRST (Session 19 / R140).  An object the engine has flagged
+// for destruction must not be dispatched into: the engine's own ProcessEvent refuses it
+// on the same bit, and a call the engine would have refused is a call the module must
+// not make either.  `ObjectCallable` is in qdsubstrate.h and states the measured rule.
 inline bool ProcessEventGuarded(void* obj, void* fn, void* parms)
 {
+    if (!ObjectCallable(obj)) return false;
     __try {
         ProcessEvent(obj, fn, parms);
         return true;

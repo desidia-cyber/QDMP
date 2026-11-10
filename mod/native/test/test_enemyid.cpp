@@ -25,6 +25,7 @@
 #include <string.h>
 
 #include "qdenemyid.h"
+#include "qdenemy.h"
 
 static int g_pass = 0;
 static int g_fail = 0;
@@ -89,23 +90,39 @@ static void TestSummonKeys()
     const uint32_t other[4]    = {0x11111111u, 0x22222222u, 0x33333333u, 0x44444444u};
     const int32_t p1[3] = {100, 200, 300};
     const int32_t p2[3] = {100, 200, 310};
+    const char* archer = "Enemies/Boner_Gray_Archer.Boner_Gray_Archer_BP_C";
+    const char* skull  = "Enemies/FlamingSkull.FlamingSkull_BP_C";
 
     uint32_t a1[4], a2[4], b1[4], again[4];
-    enemyid::SummonKey(summoner, p1, 0, a1);
-    enemyid::SummonKey(summoner, p2, 0, a2);
-    enemyid::SummonKey(other, p1, 0, b1);
-    enemyid::SummonKey(summoner, p1, 0, again);
+    enemyid::SummonKey(summoner, p1, 0, archer, a1);
+    enemyid::SummonKey(summoner, p2, 0, archer, a2);
+    enemyid::SummonKey(other, p1, 0, archer, b1);
+    enemyid::SummonKey(summoner, p1, 0, archer, again);
 
     CHECK(!Eq(a1, a2), "two summons of one summoner at different points have different keys");
     CHECK(!Eq(a1, b1), "the same point under two summoners has different keys");
     CHECK(Eq(a1, again), "a summon key is reproducible");
     CHECK(!enemyid::ZeroKey(a1), "a summon key is never the zero key");
 
+    // R137: the same summoner at the same point with a DIFFERENT class is a different
+    // enemy.  Without this the two keys collide and one machine's HP/row/kill applies to
+    // the other's enemy -- the measured `hp 85` vs `hp 30` on one key.
+    uint32_t s1[4], s2[4];
+    enemyid::SummonKey(summoner, p1, 0, archer, s1);
+    enemyid::SummonKey(summoner, p1, 0, skull, s2);
+    CHECK(!Eq(s1, s2), "two classes summoned at one point have different keys");
+    CHECK(Eq(s1, a1), "the class discriminator does not disturb the plain case");
+    // An empty class is still a valid, distinct discriminator (a caller that could not
+    // read the path must not collide with a class whose path is empty).
+    uint32_t e1[4];
+    enemyid::SummonKey(summoner, p1, 0, "", e1);
+    CHECK(!enemyid::ZeroKey(e1), "an empty class still yields a key");
+
     // The coincidence index separates summons at ONE point, and only there.
     uint32_t d0[4], d1[4], d2[4];
-    enemyid::SummonKey(summoner, p1, 0, d0);
-    enemyid::SummonKey(summoner, p1, 1, d1);
-    enemyid::SummonKey(summoner, p1, 2, d2);
+    enemyid::SummonKey(summoner, p1, 0, archer, d0);
+    enemyid::SummonKey(summoner, p1, 1, archer, d1);
+    enemyid::SummonKey(summoner, p1, 2, archer, d2);
     CHECK(!Eq(d0, d1) && !Eq(d1, d2) && !Eq(d0, d2),
           "coincident summons are separated by the index");
 
@@ -113,22 +130,22 @@ static void TestSummonKeys()
     const int32_t c1[3] = {1, 23, 0};
     const int32_t c2[3] = {12, 3, 0};
     uint32_t k1[4], k2[4];
-    enemyid::SummonKey(summoner, c1, 0, k1);
-    enemyid::SummonKey(summoner, c2, 0, k2);
+    enemyid::SummonKey(summoner, c1, 0, archer, k1);
+    enemyid::SummonKey(summoner, c2, 0, archer, k2);
     CHECK(!Eq(k1, k2), "coordinates are separated so 1,23 and 12,3 differ");
 
     // Negative coordinates are distinguishable from positive ones.
     const int32_t n1[3] = {-5, 0, 0};
     const int32_t n2[3] = {5, 0, 0};
     uint32_t kn1[4], kn2[4];
-    enemyid::SummonKey(summoner, n1, 0, kn1);
-    enemyid::SummonKey(summoner, n2, 0, kn2);
+    enemyid::SummonKey(summoner, n1, 0, archer, kn1);
+    enemyid::SummonKey(summoner, n2, 0, archer, kn2);
     CHECK(!Eq(kn1, kn2), "a negative coordinate differs from its positive twin");
 
     // A chain: a summon whose summoner is itself a summon stays reproducible.
     uint32_t chain[4], chainAgain[4];
-    enemyid::SummonKey(a1, p1, 0, chain);
-    enemyid::SummonKey(a1, p1, 0, chainAgain);
+    enemyid::SummonKey(a1, p1, 0, skull, chain);
+    enemyid::SummonKey(a1, p1, 0, skull, chainAgain);
     CHECK(Eq(chain, chainAgain), "a chained summon key is reproducible");
     CHECK(!Eq(chain, a1), "a chained summon key differs from its summoner's");
 }
@@ -142,11 +159,12 @@ static void TestOrderIndependence()
 {
     const uint32_t summoner[4] = {0xAAu, 0xBBu, 0xCCu, 0xDDu};
     const int32_t pts[3][3] = {{10, 20, 30}, {40, 50, 60}, {-70, 80, -90}};
+    const char* cls = "Enemies/RattyBugger.RattyBugger_BP_C";
 
     // Forward and reverse presentation.
     uint32_t fwd[3][4], rev[3][4];
-    for (int i = 0; i < 3; ++i) enemyid::SummonKey(summoner, pts[i], 0, fwd[i]);
-    for (int i = 2; i >= 0; --i) enemyid::SummonKey(summoner, pts[i], 0, rev[i]);
+    for (int i = 0; i < 3; ++i) enemyid::SummonKey(summoner, pts[i], 0, cls, fwd[i]);
+    for (int i = 2; i >= 0; --i) enemyid::SummonKey(summoner, pts[i], 0, cls, rev[i]);
 
     bool same = true;
     for (int i = 0; i < 3; ++i) if (!Eq(fwd[i], rev[i])) same = false;
@@ -264,6 +282,26 @@ static void TestAdoption()
     CHECK(kRadius == 300.0f, "the adoption radius is 3 m");
 }
 
+// ===========================================================================
+// Reporting a key's HP: unknown is not zero (Session 19, R137)
+// ===========================================================================
+static void TestHpReporting()
+{
+    using namespace enemy;
+    CHECK(!HpKnown(false, true, true), "a key with no live actor has no known HP");
+    CHECK(!HpKnown(true, false, true), "an unreadable HP is unknown");
+    CHECK(!HpKnown(true, true, false),
+          "a copy never seen alive has unknown HP (HP 0 is pre-activation)");
+    CHECK(HpKnown(true, true, true), "a live copy seen alive reports its HP");
+
+    CHECK(EffectivelyDead(false, false, true, 100.0f, true), "no actor is dead");
+    CHECK(EffectivelyDead(true, true, false, 0.0f, false), "the game's own dead flag is dead");
+    CHECK(EffectivelyDead(true, false, true, 0.0f, true), "HP 0 after being seen alive is dead");
+    CHECK(!EffectivelyDead(true, false, true, 0.0f, false),
+          "HP 0 before activation is NOT dead");
+    CHECK(!EffectivelyDead(true, false, true, 50.0f, true), "positive HP is alive");
+}
+
 int main()
 {
     TestHashIsDeterministic();
@@ -274,6 +312,7 @@ int main()
     TestFlags();
     TestCoincident();
     TestAdoption();
+    TestHpReporting();
 
     printf("\n=== %d passed, %d failed ===\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

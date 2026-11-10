@@ -29,9 +29,14 @@
 //            placed NPCs, which is proven for exactly this job.
 //
 //   SUMMON   the enemy is runtime-spawned: no free spawner GUID and no place in a
-//            level.  Key = FNV-1a 128 of "<summoner key hex>:<spawn x,y,z>#<n>", where
-//            the spawn coordinate is where the summon first appeared and `n` is 0
-//            unless a second summon of the same summoner appeared at the SAME point.
+//            level.  Key = FNV-1a 128 of "<summoner key hex>:<spawn x,y,z>#<n>:<class>",
+//            where the spawn coordinate is where the summon first appeared, `n` is 0
+//            unless a second summon of the same summoner appeared at the SAME point, and
+//            the class is its asset path.  The class is a discriminator, not decoration:
+//            one summoner can call two different classes at one point (measured: one key
+//            resolved to a Boner_Gray_Archer_BP_C at hp 85 on one machine and a
+//            FlamingSkull_BP_C at hp 30 on the other), and without it the pair names
+//            both enemies.
 //
 //            The spawn position, not a counter, is the discriminator, and that is the
 //            whole point: the incremental object scan discovers enemies in whatever
@@ -142,18 +147,26 @@ inline bool PlacedKey(const char* worldLevelPath, uint32_t out[4])
     return !ZeroKey(out);
 }
 
-// A summon's key from its summoner's key, where it appeared, and a coincidence index.
-// `summoner` may be any identity (a spawner GUID, a placed path, or another summon),
-// which is what lets a chain of summons stay deterministic.  `spawn` is the position the
-// summon first appeared at, in 1/100 cm, and `dup` is 0 unless another summon of the
-// same summoner appeared at the same point.
+// A summon's key from its summoner's key, where it appeared, a coincidence index, and
+// its CLASS.  `summoner` may be any identity (a spawner GUID, a placed path, or another
+// summon), which is what lets a chain of summons stay deterministic.  `spawn` is the
+// position the summon first appeared at, in 1/100 cm, and `dup` is 0 unless another
+// summon of the same summoner appeared at the same point.
+//
+// THE CLASS IS NOT OPTIONAL (Session 19, R137).  A summoner can call two DIFFERENT
+// classes at the same point -- the soak measured one key resolving to a
+// Boner_Gray_Archer_BP_C at hp 85 on one machine and a FlamingSkull_BP_C at hp 30 on
+// the other.  Without a class discriminator the pair (summoner, position) names both,
+// so the health bar, the row and the kill apply to whichever was seen last.  Both
+// machines run the same cooked class, so its asset path is shared by construction and
+// keeps the key deterministic.
 inline void SummonKey(const uint32_t summoner[4], const int32_t spawn[3], uint16_t dup,
-                      uint32_t out[4])
+                      const char* clsPath, uint32_t out[4])
 {
     // Spell the summoner key in hex, not as raw bytes: a byte string can contain a 0 and
     // would then silently hash a truncated prefix (the C-string hash above stops at 0).
     static const char* H = "0123456789abcdef";
-    char s[80];
+    char s[256];
     int k = 0;
     for (int i = 0; i < 4; ++i) {
         for (int b = 28; b >= 0; b -= 4) s[k++] = H[(summoner[i] >> b) & 0xF];
@@ -176,13 +189,18 @@ inline void SummonKey(const uint32_t summoner[4], const int32_t spawn[3], uint16
     }
     s[k++] = '#';
     // `dup` in decimal, and it is 0 for the overwhelmingly common case, so the steady
-    // spelling is "<hex>:x,y,z#0".
+    // spelling is "<hex>:x,y,z#0:<class>".
     char d[12];
     int n = 0;
     uint32_t u = dup;
     if (u == 0) d[n++] = '0';
     while (u) { d[n++] = (char)('0' + (u % 10)); u /= 10; }
     while (n) s[k++] = d[--n];
+    // The class separates two different summons that coincide exactly, which the
+    // position and the coincidence index cannot.  A ':' separator keeps an empty class
+    // from colliding with a class whose path starts with a digit.
+    s[k++] = ':';
+    for (int i = 0; clsPath && clsPath[i] && k < (int)sizeof(s) - 1; ++i) s[k++] = clsPath[i];
     s[k] = 0;
     Hash128(s, kSummonSeed, out);
 }
