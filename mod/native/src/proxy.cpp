@@ -13578,6 +13578,13 @@ void DevTeleportToTarget(const char* sub, float yawOverride, bool haveYaw)
         // teleports and a pawn parked on the drop for thirty seconds, all consumed nothing),
         // but FALLING THROUGH one is a real move and does.  It rides in the SPEC rather than
         // in `qd.near` because the near lever clamps a negative offset back to its default.
+        // :on means "be exactly ON it, and SWEEP there" (Session 23, R153).  A zero in
+        // qd.near cannot express this: the lever treats a non-positive offset as "not set"
+        // and substitutes its default (measured: standing offset=140 for every attempt the
+        // harness believed was offset 0), so the on-drop leg never happened and the sweep
+        // added for it never ran.
+        const bool forceOn = (strstr(sub, ":on") != nullptr);
+        if (forceOn) off = 0.0f;
         float above = 0.0f;
         {
             const char* z = strstr(sub, ":z");
@@ -13592,7 +13599,7 @@ void DevTeleportToTarget(const char* sub, float yawOverride, bool haveYaw)
         // from 3 m, and the class' own Pickup verb).  So the return leg is a SWEEP through
         // the volume, in 100 cm steps.
         const float yawUse = haveYaw ? yawOverride : me.yaw;
-        const bool sweepMove = (off <= 0.5f);
+        const bool sweepMove = (forceOn || off <= 0.5f);
         bool ok = sweepMove
             ? SweepPawnTo(g_localPawn, t.px, t.py, t.pz + above, yawUse)
             : SetActorXform(g_localPawn, t.px + dx * off, t.py + dy * off, t.pz + above, yawUse);
@@ -13601,7 +13608,8 @@ void DevTeleportToTarget(const char* sub, float yawOverride, bool haveYaw)
         if (ro >= 0) { float* r = (float*)((uint8_t*)pc + ro); r[0] = 0.0f; r[1] = me.yaw; }
         QDLOG(LOG_INFO, "dev teleport drop '", sub, "' -> ", nm, " at ", flt(t.px, 0), ",",
               flt(t.py, 0), ",", flt(t.pz, 0), " standing offset=", flt(off, 0),
-              " height=", flt(above, 0), (ok ? "" : " FAILED"));
+              " height=", flt(above, 0), " move=", (sweepMove ? "sweep" : "teleport"),
+              (ok ? "" : " FAILED"));
         return;
     }
     RigStandBeside(actor, t, sub, d, yawOverride, haveYaw);
@@ -14372,7 +14380,14 @@ void DevInteractBody(void* explicitTarget)
         // out-and-back teleports.  The class' own consume verb is `Pickup`, and it was
         // never reached because the loop stops at the first verb that RUNS.  So a drop is
         // offered its pickup verbs first.
-        static const char* const onDrop[] = {"Pickup", "TryPickup", "OnPickedUp", "Collect"};
+        // THE OVERLAP EVENT ITSELF (Session 23, R153).  `ReceiveActorBeginOverlap` is declared by
+// `AActor` (it is on the chain the `qd.efunc` walk now prints: `Actor has 132 UFUNCTIONs`)
+// and a Blueprint child's pickup body is its OVERRIDE of that event -- an override does not
+// create a new UFunction, which is why the child reports 0 of its own and why calling
+// `Pickup` on it ran nothing.  Dispatch with the pawn as `OtherActor`, which is exactly the
+// frame the engine builds when a capsule enters a pickup volume.
+static const char* const onDrop[] = {"ReceiveActorBeginOverlap", "Pickup", "TryPickup",
+                                     "OnPickedUp", "Collect"};
         // The gate is the loot scan's own class test as well as the actor's state: a drop
         // this machine CONSTRUCTED carries neither the roll's `IsADrop` nor an authored
         // GUID, and `LooksLikeADrop` alone did not admit it here (measured: the verb line
@@ -15299,6 +15314,12 @@ void DevEnemyDumpNow(uint32_t now)
             QDLOG(LOG_INFO, "enemykey ", hex32(r.guid[0]), " ALIVE local=",
                   dec(g_own.Running(r.guid) ? 1 : 0), " src=", dec((int)r.src),
                   " hp=", flt(rhp, 1), " mx=", flt(rmx, 1), " peers=", dec(EnemyKeyPeerCount(r.guid, &r)),
+                  // THE FULL 128-BIT KEY (Session 23, R154).  `enemykey <8hex>` is only the
+                  // LOW WORD of the key, and two different keys can share it -- measured in
+                  // the loot run: `55E0EA46` on both machines, one a 250-HP
+                  // `Boner_Black_Berserker_BP_C` and the other a 440-HP one of the SAME class,
+                  // which a reader keyed on 4 bytes calls an HP divergence between one enemy.
+                  " id=", hex32(r.guid[0]), hex32(r.guid[1]), hex32(r.guid[2]), hex32(r.guid[3]),
                   (r.mirror ? " mirrored=1" : ""),
                   " cls=", (cls[0] ? cls : "?"));
             ++alive;

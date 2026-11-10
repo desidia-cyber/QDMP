@@ -275,7 +275,7 @@ function Invoke-Go([int]$i, [string]$name, [int]$near = 140) {
 }
 # The LANE'S OWN key, not a class: `near:drop:<8hex>:<index>` is the lever Session 18 said
 # the next session needed (R129), and it is what makes this proof possible at all.
-function Invoke-GoDrop([int]$i, [string]$hash, [int]$index, [int]$near = 400, [int]$above = 0) {
+function Invoke-GoDrop([int]$i, [string]$hash, [int]$index, [int]$near = 400, [int]$above = 0, [switch]$On) {
     $script:goSeq++
     $yaw = ($script:goSeq * 37) % 360
     Set-Control $i 'qd.near' ([string]$near)
@@ -517,7 +517,15 @@ function Invoke-EnemyDump([int]$i, [string]$tag, [int]$timeoutSec = 60) {
         # HP is permanently different -- that is not a desync, and the comparison must skip it.
         $mx = $null; if ($s -match '\smx=([-0-9.]+)') { $mx = [double]$Matches[1] }
         $peers = 0;  if ($s -match '\speers=(\d+)')  { $peers = [int]$Matches[1] }
-        $out[$k] = [pscustomobject]@{
+        # THE FULL KEY WHEN THE DUMP GIVES ONE (Session 23, R154).  `enemykey <8hex>` is the
+        # LOW WORD of a 128-bit key; two different keys can share it, and one measured pair
+        # under `55E0EA46` was a 250-HP Boner_Black_Berserker_BP_C on one machine and a 440-HP
+        # one on the other.  `id=` is the whole key, so a comparison keyed on it cannot be a
+        # collision.
+        $id = $k
+        if ($s -match '\sid=([0-9A-Fa-f]{32})') { $id = $Matches[1].ToUpperInvariant() }
+        $out[$id] = [pscustomobject]@{
+            Id = $id;
             Key = $k; State = $st; Hp = $hp; Why = $why; Seen = $seen; InWorld = $iw
             Cls = $cls; Mx = $mx; Peers = $peers; Line = $s.Trim()
         }
@@ -531,7 +539,7 @@ function Invoke-EnemyDump([int]$i, [string]$tag, [int]$timeoutSec = 60) {
 function Compare-SharedHp([hashtable]$dh, [hashtable]$dp, [string]$tag) {
     $out = [pscustomobject]@{
         Tag = $tag; AliveBoth = 0; Compared = 0; Unequal = 0
-        Unreadable = 0; Ghosts = 0; Duplicates = 0; DupKeys = @(); Whys = @{}; Mismatches = @()
+        Unreadable = 0; Ghosts = 0; Duplicates = 0; DupKeys = @(); MxDiffer = 0; MxKeys = @(); Whys = @{}; Mismatches = @()
     }
     foreach ($k in @($dh.Keys)) {
         if (-not $dp.ContainsKey($k)) { continue }
@@ -547,6 +555,16 @@ function Compare-SharedHp([hashtable]$dh, [hashtable]$dp, [string]$tag) {
         # permanent.  Counting that as a mismatch is what made Session 22 report a standing
         # `530F7FD0: host=140 peer=30` about one enemy that never disagreed with itself.
         if (($dh[$k].Peers -gt 0) -or ($dp[$k].Peers -gt 0)) {
+            # A DIFFERENT MAX IS A DIFFERENT BODY (Session 23, R154).  Same key, same class,
+            # `mx=250` here and `440` there, both at full HP: the key does not name one enemy
+            # across the two machines, so their absolute HP is not a shared quantity.  Counted
+            # and named, never counted as unequal -- that would be a false desync.
+            if ($null -ne $dh[$k].Mx -and $null -ne $dp[$k].Mx -and
+                [math]::Abs($dh[$k].Mx - $dp[$k].Mx) -ge 0.5) {
+                $out.MxDiffer++
+                if ($out.MxKeys -notcontains $k) { $out.MxKeys += $k }
+                continue
+            }
             $out.Duplicates++
             if ($out.DupKeys -notcontains $k) { $out.DupKeys += $k }
             continue
@@ -946,9 +964,9 @@ function Invoke-SoakSegment([int]$H, [int]$P, [string]$label, [int]$seconds, [st
             # had them off by one and every printed number was its neighbour -- a sample read
             # "shared-alive=378 compared=0 unequal=0" when what it meant was elapsed=378 s,
             # shared-alive=0. A soak number nobody can attribute is worse than no number.
-            Note ("    hp sample {0}: shared-alive={1} compared={2} unequal={3} unreadable={4} ghosts={5} duplicates={7} why={6}" -f
+            Note ("    hp sample {0}: shared-alive={1} compared={2} unequal={3} unreadable={4} ghosts={5} duplicates={7} mx-differ={8} why={6}" -f
                   $cmp.Tag, $cmp.AliveBoth, $cmp.Compared,
-                  $cmp.Unequal, $cmp.Unreadable, $cmp.Ghosts, (Format-Whys $cmp.Whys), $cmp.Duplicates)
+                  $cmp.Unequal, $cmp.Unreadable, $cmp.Ghosts, (Format-Whys $cmp.Whys), $cmp.Duplicates, $cmp.MxDiffer)
             foreach ($mm in ($cmp.Mismatches | Select-Object -First 4)) { Note ("      HP MISMATCH " + $mm) }
         }
         Start-Sleep -Seconds 3
@@ -1116,6 +1134,10 @@ function Invoke-EndChecks([int]$H, [int]$P, [string]$step, [int]$m0) {
     Note ("  shared live keys at the end: {0}; comparable={1} unequal={2} unreadable={3} ghosts={4} why={5}" -f
           $end.AliveBoth, $end.Compared, $end.Unequal, $end.Unreadable, $end.Ghosts, (Format-Whys $end.Whys))
     foreach ($mm in ($end.Mismatches | Select-Object -First 8)) { Note ("    HP MISMATCH " + $mm) }
+    if ($end.MxDiffer -gt 0) {
+        Note ("  keys whose MAX HP differs between the machines (a different body under one key, not a desync): {0} -> {1}" -f
+              $end.MxDiffer, ($end.MxKeys -join ','))
+    }
     $script:hpSamples.Add($end) | Out-Null
 
     $cmpTotal = 0; $uneqTotal = 0; $unreadTotal = 0; $aliveTotal = 0; $ghostTotal = 0
