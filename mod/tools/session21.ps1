@@ -639,12 +639,23 @@ function Invoke-KillRounds([int]$H, [int]$P, [int]$rounds, [int]$mark) {
         # damage hit (`qd.hit`), which needs a class that implements TryApplyDamage: the
         # hub's mostly do not (`ran=0 hp 0.0 -> 0.0`, Session 14), 780_SZ_Depths' do.
         Note ("    round {0}: hitting the nearest enemy on both machines (damage, the path the drop roll runs on)" -f $r)
+        # STAND BACK BEFORE THE BLOW.  Twice measured this session: the drop actor appears
+        # only on the machine that did NOT land the killing blow (4 drops from a host kill
+        # all on the peer; 3 hub drops from a peer kill all on the host).  The obvious
+        # explanation is that the killer's pawn is standing 200 cm from the corpse, the drop
+        # spawns at its feet, and the killer's OWN overlap consumes it before the 1/30 s
+        # scan slice ever sees the actor -- so the killer never holds the drop it caused.
+        # A pickup is an overlap: at 9 m there is nothing to overlap, and the drop has to
+        # wait for whoever walks over it.
+        Invoke-Go $H 'enemy' 900
+        Invoke-Go $P 'enemy' 900
+        Start-Sleep -Seconds 6
         Set-Control $H 'qd.hit' '100000'
         Set-Control $P 'qd.hit' '100000'
         Start-Sleep -Seconds 7
         Set-Control $H 'qd.hit' $null
         Set-Control $P 'qd.hit' $null
-        Start-Sleep -Seconds 3
+        Start-Sleep -Seconds 5
         $all = @(Get-DropKeys $H $mark) + @(Get-DropKeys $P $mark)
         $uniq = @{}
         foreach ($k in $all) { $uniq["$($k.Hash)#$($k.Index)"] = $true }
@@ -857,8 +868,12 @@ function Invoke-SoakSegment([int]$H, [int]$P, [string]$label, [int]$seconds, [st
             $dp = Invoke-EnemyDump $P ($label + '-p-' + $n)
             $cmp = Compare-SharedHp $dh $dp ("{0} t+{1}s" -f $label, [int]((Get-Date) - $start).TotalSeconds)
             $script:hpSamples.Add($cmp) | Out-Null
-            Note ("    hp sample t+{0,4}s: shared-alive={1} compared={2} unequal={3} unreadable={4} ghosts={5} why={6}" -f
-                  $cmp.Tag, [int]((Get-Date) - $start).TotalSeconds, $cmp.AliveBoth, $cmp.Compared,
+            # The label/index pairs are spelled out one per line because the first version
+            # had them off by one and every printed number was its neighbour -- a sample read
+            # "shared-alive=378 compared=0 unequal=0" when what it meant was elapsed=378 s,
+            # shared-alive=0. A soak number nobody can attribute is worse than no number.
+            Note ("    hp sample {0}: shared-alive={1} compared={2} unequal={3} unreadable={4} ghosts={5} why={6}" -f
+                  $cmp.Tag, $cmp.AliveBoth, $cmp.Compared,
                   $cmp.Unequal, $cmp.Unreadable, $cmp.Ghosts, (Format-Whys $cmp.Whys))
             foreach ($mm in ($cmp.Mismatches | Select-Object -First 4)) { Note ("      HP MISMATCH " + $mm) }
         }
@@ -908,20 +923,45 @@ function Enter-Area([int]$H, [int]$P, [string]$area, [string]$anchor, [string]$s
 function Invoke-HardTravel([int]$H, [int]$P, [string]$map, [string]$step) {
     Step "$step -- HARD travel to $map, and the partner must land in it too" `
          'G6: the sender announces HARD_BEGIN, the partner loads the same world through GameInstance.LoadMapWithLoadingScreen, and the host releases the pair only when both arrived.'
-    $mH = Get-Mark $H
-    $mP = Get-Mark $P
-    Invoke-Hard $H $map
-    $ann = @(Wait-Since $H ('travel: HARD transition to ' + [regex]::Escape($map)) $mH 90)
-    Verdict $step $H ($ann.Count -gt 0) 'the host announced the hard transition' $(if ($ann.Count) { ([string]$ann[-1]).Trim() } else { '' })
-    $loaded = @(Wait-Since $P ('travel: hard transition: loading ' + [regex]::Escape($map)) $mP 120)
-    Verdict $step $P ($loaded.Count -gt 0) 'the peer loaded the same world' $(if ($loaded.Count) { ([string]$loaded[-1]).Trim() } else { '' })
-    $both = @(Wait-Since $H ('travel: both machines arrived in ' + [regex]::Escape($map)) $mH 120)
-    Verdict $step $H ($both.Count -gt 0) 'both machines arrived (the host released the pair)' $(if ($both.Count) { ([string]$both[-1]).Trim() } else { '' })
-    if ($both.Count -eq 0) { Show-Since $H 'travel:|arrive:' $mH 12; Show-Since $P 'travel:|arrive:' $mP 12 }
-    Start-Sleep -Seconds 12
-    $wH = Get-WorldState $H; $wP = Get-WorldState $P
-    Verdict $step $P ($wH.World -eq $map -and $wP.World -eq $map) 'both machines report the new world' ("host=$($wH.World) peer=$($wP.World)")
-    return ($wH.World -eq $map -and $wP.World -eq $map)
+    # A NAME THE HUB STREAMS IS NOT A HARD TRAVEL.  `FollowHardTravel` checks the level table
+    # first (StreamTravelTo) and a name that is a sublevel of this world is loaded and SHOWN
+    # instead of being loaded as a world.  So the step reports which happened: `streamed=1`
+    # is a named refusal of the hard path, not a failure of the handshake.  Callers pass the
+    # candidates in order, and only a candidate that really announced HARD_BEGIN counts.
+    foreach ($cand in @($map -split ',')) {
+        $m = $cand.Trim()
+        if (-not $m) { continue }
+        $mH = Get-Mark $H
+        $mP = Get-Mark $P
+        Invoke-Hard $H $m
+        $lever = @(Wait-Since $H ('rig: hard lever -> ' + [regex]::Escape($m)) $mH 60)
+        if ($lever.Count -eq 0) {
+            Note ("  [{0}] the hard lever printed nothing for {1}" -f $H, $m)
+            continue
+        }
+        $leverLine = ([string]$lever[-1]).Trim()
+        Note ("  [$H] " + $leverLine)
+        if ($leverLine -match 'streamed=1') {
+            Verdict $step $H $false "the HOST performed a HARD transition to $m" 'streamed as a sublevel of this world -- not a hard travel; trying the next candidate'
+            continue
+        }
+        $ann = @(Wait-Since $H ('travel: HARD transition to ' + [regex]::Escape($m)) $mH 60)
+        Verdict $step $H ($ann.Count -gt 0) "the host announced the hard transition to $m" $(if ($ann.Count) { ([string]$ann[-1]).Trim() } else { '' })
+        $loaded = @(Wait-Since $P ('travel: hard transition: loading ' + [regex]::Escape($m)) $mP 120)
+        Verdict $step $P ($loaded.Count -gt 0) "the peer loaded $m" $(if ($loaded.Count) { ([string]$loaded[-1]).Trim() } else { '' })
+        $both = @(Wait-Since $H ('travel: both machines arrived in ' + [regex]::Escape($m)) $mH 120)
+        Verdict $step $H ($both.Count -gt 0) "both machines arrived in $m (the host released the pair)" $(if ($both.Count) { ([string]$both[-1]).Trim() } else { '' })
+        Start-Sleep -Seconds 12
+        $wH = Get-WorldState $H; $wP = Get-WorldState $P
+        $ok = ($wH.World -eq $m -and $wP.World -eq $m)
+        Verdict $step $P $ok "both machines report $m" ("host=$($wH.World) peer=$($wP.World)")
+        if ($ok) { return $true }
+        Show-Since $H 'travel:|arrive:' $mH 10
+        Show-Since $P 'travel:|arrive:' $mP 10
+        return $false
+    }
+    Verdict $step $H $false 'a HARD transition was performed' 'every candidate name is a sublevel of this world'
+    return $false
 }
 
 # ---------------------------------------------------------------------------
@@ -1052,7 +1092,7 @@ function Invoke-Soak30([int]$H, [int]$P) {
     if ($ok2) { Invoke-SoakSegment $H $P 'area770' $area2 'enemy' 75 }
     # The hard travel is the one world switch; the return to the hub is what puts the pair
     # back on the play set for the end-of-run measurement.
-    $ok3 = Invoke-HardTravel $H $P '900_SipehaWorld' 'hard-out'
+    $ok3 = Invoke-HardTravel $H $P '990_B33sment,900_SipehaWorld' 'hard-out'
     if ($ok3) { Invoke-SoakSegment $H $P 'sipeha' $sipeha 'enemy' 60 }
     $ok4 = Invoke-HardTravel $H $P 'Ruins_Level_00' 'hard-back'
     if (-not $ok4) { Note '  (the return load did not confirm; the end checks run wherever the pair is)' }

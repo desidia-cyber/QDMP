@@ -12728,19 +12728,35 @@ void* RigFindNear(const char* sub, float* distOut, ActorXform* xfOut, char* name
         if (bestD >= 0.0f && d >= bestD) continue;
         bestD = d; best = owners[i].actor; bestXf = x;
     }
-    for (int i = 0; i < g_enN; ++i) {
-        EnemyRec& r = g_en[i];
-        if (!r.haveGuid || !ObjectIsLive(r.actor) || EnemyDead(r.actor)) continue;
-        // `near:enemy` means "the nearest enemy", not "an actor whose NAME contains
-        // 'enemy'" -- no enemy is called that.  Measured: the literal match made every
-        // G4/enemy step a no-op with "no live actor matches 'enemy'".
-        if (!wantEnemy && !RigNameMatches(r.actor, sub)) continue;
-        ActorXform x;
-        if (!ReadActorXform(r.actor, &x)) continue;
-        float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
-        float d = sqrtf(dx * dx + dy * dy + dz * dz);
-        if (bestD >= 0.0f && d >= bestD) continue;
-        bestD = d; best = r.actor; bestXf = x;
+    // `near:enemy` has to mean the nearest enemy that is actually THERE.  Measured
+    // (Session 21): a hub dump found 141 usable keys and 428 records the engine had marked
+    // for destruction, and this walk picked by distance alone -- so the rig stood the player
+    // beside a ghost, `qd.hit` reported `no CALLABLE live enemy within 15 m (skipped 576
+    // mid-teardown)`, and a loot phase and a kill set both looked like failures of the lanes
+    // rather than of the resolver.  Two passes: a usable enemy if there is one, and only if
+    // there is none does the old nearest-live answer stand (a caller may want to look at a
+    // dying actor).
+    for (int pass = 0; pass < 2 && !best; ++pass) {
+        for (int i = 0; i < g_enN; ++i) {
+            EnemyRec& r = g_en[i];
+            if (!r.haveGuid || !ObjectIsLive(r.actor) || EnemyDead(r.actor)) continue;
+            // `near:enemy` means "the nearest enemy", not "an actor whose NAME contains
+            // 'enemy'" -- no enemy is called that.  Measured: the literal match made every
+            // G4/enemy step a no-op with "no live actor matches 'enemy'".
+            if (!wantEnemy && !RigNameMatches(r.actor, sub)) continue;
+            if (pass == 0) {
+                // pass 0: a target the engine will actually run a UFunction on
+                if (!ObjectCallable(r.actor)) continue;
+                float hp0 = 0.0f, mx0 = 0.0f;
+                if (EnemyHp(r.actor, &hp0, &mx0) && !(hp0 > 0.0f)) continue;   // dormant
+            }
+            ActorXform x;
+            if (!ReadActorXform(r.actor, &x)) continue;
+            float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
+            float d = sqrtf(dx * dx + dy * dy + dz * dz);
+            if (bestD >= 0.0f && d >= bestD) continue;
+            bestD = d; best = r.actor; bestXf = x;
+        }
     }
 
     // Nothing in the two synced sets matched.  The remaining useful kinds are in neither
@@ -13873,9 +13889,23 @@ void DevKillNearest(uint32_t now)
     EnemyRec* cand[3] = {nullptr, nullptr, nullptr};
     float cd[3] = {-1.0f, -1.0f, -1.0f};
     bool cf[3] = {false, false, false};
+    int ghosts = 0, dormant = 0;
     for (int i = 0; i < g_enN; ++i) {
         EnemyRec& r = g_en[i];
         if (!r.haveGuid || !ObjectIsLive(r.actor) || EnemyDead(r.actor)) continue;
+        // A TARGET HAS TO BE ONE THE ENGINE WILL CALL.  Measured (Session 21): `qd.hit`
+        // logged `ran=0 hp 0.0 -> 0.0 (local-run)` on every swing in 780_SZ_Depths and on
+        // every swing in the hub, because `DevKillNearest` picks the nearest three records
+        // BY DISTANCE and almost all of them are copies the engine has marked for
+        // destruction (428 of the hub's 569 records: the same fact the per-key dump now
+        // reports as GONE).  The reflective damage call is refused on those, so the lever
+        // tested the one class of enemy that cannot be hit and reported it as a failure of
+        // the damage lane.  A dormant spawner enemy at HP 0 is the other unusable kind.
+        if (!ObjectCallable(r.actor)) { ++ghosts; continue; }
+        {
+            float hp0 = 0.0f, mx0 = 0.0f;
+            if (EnemyHp(r.actor, &hp0, &mx0) && !(hp0 > 0.0f)) { ++dormant; continue; }
+        }
         ActorXform x;
         if (!ReadActorXform(r.actor, &x)) continue;
         float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
@@ -13890,8 +13920,9 @@ void DevKillNearest(uint32_t now)
         }
     }
     if (!cand[0]) {
-        QDLOG(LOG_WARN, "rig: hit -- no live enemy within 15 m of ", flt(me.px, 0), ",", flt(me.py, 0),
-              ",", flt(me.pz, 0));
+        QDLOG(LOG_WARN, "rig: hit -- no CALLABLE live enemy within 15 m of ", flt(me.px, 0), ",",
+              flt(me.py, 0), ",", flt(me.pz, 0), " (skipped ", dec(ghosts),
+              " mid-teardown and ", dec(dormant), " dormant record(s))");
         return;
     }
     for (int k = 0; k < 3 && cand[k]; ++k) {
