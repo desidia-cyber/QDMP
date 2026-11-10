@@ -13391,20 +13391,27 @@ void DevTeleportToTarget(const char* sub, float yawOverride, bool haveYaw)
         ActorXform me = {};
         ReadActorXform(g_localPawn, &me);
         int wantOff = DevLever("QDCOOP_TEST_NEAR", "qd.near", 140, 140);
-        float off = (float)(wantOff < 0 ? 0 : wantOff);
+        float pz = t.pz;
+        float off = (float)wantOff;
+        // A NEGATIVE offset means "|offset| cm ABOVE the drop, then let gravity do it".  A
+        // teleport into a volume generates no BeginOverlap (measured: a pawn parked on a
+        // drop for thirty seconds, and three out-and-back teleports, all consumed nothing),
+        // but FALLING THROUGH one is a real move and does.  So the last resort is a drop
+        // from height rather than another position write.
+        if (off < 0.0f) { pz = t.pz - off; off = 0.0f; }
         if (off > 4000.0f) off = 4000.0f;
         float dx = me.px - t.px, dy = me.py - t.py;
         float len = sqrtf(dx * dx + dy * dy);
         if (len < 1.0f) { dx = 1.0f; dy = 0.0f; len = 1.0f; }
         dx /= len; dy /= len;
-        bool ok = SetActorXform(g_localPawn, t.px + dx * off, t.py + dy * off, t.pz,
+        bool ok = SetActorXform(g_localPawn, t.px + dx * off, t.py + dy * off, pz,
                                 haveYaw ? yawOverride : me.yaw);
         void* pc = LocalController();
         int ro = pc ? FindPropertyOffsetIn(ObjClass(pc), "ControlRotation") : -1;
         if (ro >= 0) { float* r = (float*)((uint8_t*)pc + ro); r[0] = 0.0f; r[1] = me.yaw; }
         QDLOG(LOG_INFO, "dev teleport drop '", sub, "' -> ", nm, " at ", flt(t.px, 0), ",",
               flt(t.py, 0), ",", flt(t.pz, 0), " standing offset=", flt(off, 0),
-              (ok ? "" : " FAILED"));
+              " height=", flt(pz - t.pz, 0), (ok ? "" : " FAILED"));
         return;
     }
     RigStandBeside(actor, t, sub, d, yawOverride, haveYaw);
@@ -15535,10 +15542,20 @@ void DevLevelLever(uint32_t now)
     if (now - g_devLevelPoll < 1000) return;
     g_devLevelPoll = now;
 
+    char raw[64];
     char name[64];
-    if (DevRigText("QDCOOP_TEST_LEVEL", "qd.level", name, sizeof(name))) {
-        if (strcmp(name, g_devLevelApplied) != 0) {
-            lstrcpynA(g_devLevelApplied, name, sizeof(g_devLevelApplied));
+    if (DevRigText("QDCOOP_TEST_LEVEL", "qd.level", raw, sizeof(raw))) {
+        // A trailing `#nonce` re-arms an unchanged instruction, exactly as `qd.hard` and
+        // `qd.tp` already do.  Session 22's soak measured why it is needed HERE: the smoke
+        // phase left the area once, and the soak's own leave could not, because writing the
+        // same `-` again compared equal to the value already applied and was ignored for the
+        // rest of the run (`FAIL [1] the HOST left its area`, with the pair still in 770).
+        lstrcpynA(name, raw, sizeof(name));
+        for (int i = 0; name[i] && i < (int)sizeof(name); ++i) {
+            if (name[i] == '#') { name[i] = 0; break; }
+        }
+        if (strcmp(raw, g_devLevelApplied) != 0) {
+            lstrcpynA(g_devLevelApplied, raw, sizeof(g_devLevelApplied));
             if (name[0] == '-' && name[1] == 0) {
                 // R150a: the rig can LEAVE an area.  Without this a session could enter one
                 // and never come back, because the pin had no way to be cleared.

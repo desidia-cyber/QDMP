@@ -182,12 +182,17 @@ function Test-Alive([int]$i) {
     return [bool](Get-Process -Id $script:pids[$i] -ErrorAction SilentlyContinue)
 }
 function Get-Since([int]$i, [int]$markMs) {
-    $out = @()
-    foreach ($ln in @(Get-RunLines $i)) {
+    # LINEAR APPEND.  `$out += $ln` is O(n) per append, so this function is O(n^2) -- and
+    # Session 21's end-of-run scan "did not finish" on a 92 k-line log for exactly that
+    # reason, twice: once for the log re-read (fixed by the cache) and once for the append
+    # (fixed here).  A 90 k-line window is 4 billion copies with `+=`.
+    $src = Get-RunLines $i
+    $out = New-Object System.Collections.Generic.List[string]
+    foreach ($ln in $src) {
         $t = Get-LineMs ([string]$ln)
-        if ($t -ge 0 -and $t -ge $markMs) { $out += $ln }
+        if ($t -ge 0 -and $t -ge $markMs) { $out.Add([string]$ln) }
     }
-    return $out
+    return $out.ToArray()
 }
 function Get-Window([int]$i, [int]$markMs, [switch]$Fresh) {
     return @(Get-Since $i $markMs)
@@ -596,6 +601,18 @@ function Invoke-TakeDrop([int]$i, [string]$hash, [int]$index) {
     # arrived, so no BeginOverlap was generated -- and a single teleport into it produced
     # none either.  So the taker STEPS OUT and back IN, three times.
     $consumed = ('loot: local pickup ' + $hash + '#' + [string]$index)
+    # DROP ONTO IT FIRST.  A teleport into a volume generates no BeginOverlap (measured:
+    # three out-and-back teleports, and a pawn parked on the drop for thirty seconds, all
+    # consumed nothing), and the class' `Interact` and `Pickup` verbs run and consume
+    # nothing either.  Falling through it is a real move.
+    foreach ($h in @(-300, -700)) {
+        $mark = Get-Mark $i
+        Invoke-GoDrop $i $hash $index $h
+        if (@(Wait-Since $i $consumed $mark 14).Count -gt 0) {
+            Say ("  act[$i] -> fell {0} cm onto near:drop:{1}:{2}; the overlap consumed it" -f (-$h), $hash, $index)
+            return
+        }
+    }
     foreach ($out in @(500, 800, 250)) {
         $mark = Get-Mark $i
         Invoke-GoDrop $i $hash $index $out
@@ -958,7 +975,10 @@ function Leave-Area([int]$H, [int]$P, [string]$step) {
          'R150a: the announcement used to run only while the pin was non-empty, so a machine could enter an area and never come out. The leave is announced as dest="-" and ClearAreaPin hides the sublevel through the same lever the pin used.'
     $mH = Get-Mark $H
     $mP = Get-Mark $P
-    Set-Control $H 'qd.level' '-'
+    # `#nonce` so a second leave in one session is not ignored as "the same instruction"
+    # (measured: the soak's leave was a no-op because the smoke phase had already written
+    # exactly `-`).
+    Set-Control $H 'qd.level' ('-#' + (Get-Date -Format 'HHmmssfff'))
     $left = @(Wait-Since $H 'travel: left the area ' $mH 60)
     Verdict $step $H ($left.Count -gt 0) 'the HOST left its area' $(if ($left.Count) { ([string]$left[-1]).Trim() } else { '' })
     $ann = @(Wait-Since $H 'travel: area announcement - ' $mH 60)
@@ -1173,7 +1193,7 @@ function Invoke-Soak30([int]$H, [int]$P) {
          'Session 21 ran 1327 s of soak body and said so. This run budgets the BODY at the full duration and reports the wall clock separately, because the transitions cost extra.'
     $m0 = Get-Mark $H
     $wall0 = Get-Date
-    $swm = @(Get-RunLines $H | Where-Object { $_ -match 'switches: ' })
+    $swm = @(Read-LogLines $inst[$H].Log | Where-Object { $_ -match 'switches: ' })
     $swLine = if ($swm.Count -gt 0) { ([string]$swm[-1]).Trim() } else { '' }
     if ($swLine) { Note ("  [$H] " + $swLine) }
     Verdict 'soak30' $H ($swLine -match 'enemy=1') 'the switch set under test is the documented PLAY set' $swLine
