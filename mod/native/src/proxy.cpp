@@ -1796,6 +1796,21 @@ int ScanLocalEquip(void* pawn, wire::EquipBody* out, bool verbose)
     for (int i = 0; i < n && out->n < wire::kMaxEquipItems; ++i) {
         void* o = ObjectAt(i);
         if (!o) continue;
+        // THE BODY IS FAULT-CONTAINED, per object (Session 18, R139).
+        //
+        // `ObjectAt(i)` returns the pointer in slot i, and UE only NULLS a slot when it
+        // destroys the object -- so between destruction and that write the slot can still hold
+        // an address whose memory has been freed and possibly reused.  Reading `ObjClass(o)` is
+        // then a read of freed memory, and the soak crashed on exactly that instruction:
+        //
+        //   WINMM+0x6fde1  ScanLocalEquip+0x371   mov rcx,[rax+0x10]   <- ObjClass(o), rax = o
+        //   reading 0x0000017efb13d040, from LocalEquipPump from HK_Tick
+        //
+        // A guard per object rather than per pass: this walk is ~70k slots every 500 ms, so a
+        // single bad slot must cost that ONE candidate, not the frame's whole scan.  This is
+        // the same containment qdwrite.h's BuildActorStateOwnersGuarded already uses, applied
+        // to the one GObjects walk that did not have it.
+        __try {
         void* cls = ObjClass(o);
         int32_t ci = cls ? (int32_t)ObjNameRaw(cls).comparison_index : -1;
         bool isSkel = ci == g_eqs.skcName && g_eqs.skcName >= 0 && g_eqs.skelMesh >= 0;
@@ -1837,6 +1852,10 @@ int ScanLocalEquip(void* pawn, wire::EquipBody* out, bool verbose)
                   " s=", flt(rel.sx, 2));
         }
         ++out->n;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            // A slot whose object is gone: skip the candidate, keep the scan.  `out->n` is only
+            // advanced after every read below succeeded, so a fault costs nothing it should not.
+        }
     }
     return out->n;
 }
