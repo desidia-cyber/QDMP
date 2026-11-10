@@ -4458,7 +4458,14 @@ bool StreamTravelTo(const char* name)
     return false;
 }
 
-bool FollowHardTravel(const char* map, char* err, int errCap, bool* streamed = nullptr)
+// `allowStream = false` is the R150b answer: "hard-load this world even if this machine's
+// level table claims to stream it".  Session 22 measured why it is needed -- the table is a
+// UNION of every ULevelStreaming object in the process, not just this world's, so
+// `997_FinalZoneCutscene`, `998_QueenCutscenes`, `999_SipehaCutscenes`, `Intro_Level_00` and
+// `Intro_Level_01` all answered "this world streams it" from the hub, and the hard path was
+// never reached by any name.  The caller that means "a real UWorld switch" says so.
+bool FollowHardTravel(const char* map, char* err, int errCap, bool* streamed = nullptr,
+                     bool allowStream = true)
 {
     if (streamed) *streamed = false;
     if (err && errCap > 0) err[0] = 0;
@@ -4484,7 +4491,7 @@ bool FollowHardTravel(const char* map, char* err, int errCap, bool* streamed = n
     }
     // Before the loader, and only after the "already here" refusal: a name this world
     // streams is a sublevel, and loading it as a world is the pawn-less path R102 measured.
-    if (StreamTravelTo(map)) {
+    if (allowStream && StreamTravelTo(map)) {
         if (streamed) *streamed = true;
         ErrSet(err, errCap, "streamed as a sublevel of this world", "");
         return true;
@@ -4874,7 +4881,14 @@ void OnTravel(wire::Reader& r, uint32_t now)
                 g_hard.Arm(now);
                 char err[160];
                 bool streamed = false;
-                bool ok = FollowHardTravel(t.map, err, sizeof(err), &streamed);
+                // A HARD_BEGIN MEANS THE SENDER REALLY LOADED A WORLD, so the follower must
+                // load the same world and must NOT take the streaming path.  Session 22
+                // measured what the old call did: the peer's level table claimed
+                // `997_FinalZoneCutscene` was a sublevel of the world it stood in, so it
+                // "entered it by streaming" (nothing changed), reported ARRIVED, and the host
+                // -- believing the pair was together -- released them into two different
+                // worlds.  `allowStream = false` is the same rule `qd.hard auto` uses.
+                bool ok = FollowHardTravel(t.map, err, sizeof(err), &streamed, false);
                 if (streamed) {
                     // The area is a sublevel of the world we are already in: it was loaded
                     // and SHOWN, the world name does not change, and there is nothing to
@@ -13368,18 +13382,28 @@ void DevTeleportToTarget(const char* sub, float yawOverride, bool haveYaw)
         QDLOG(LOG_WARN, "dev teleport near: no live actor matches '", sub, "'");
         return;
     }
-    // A DROP IS COLLECTED BY OVERLAP, so the pawn goes ON it, not `offset` cm beside it.
-    // `RigStandBeside`'s offset is right for a door (you press it from arm's length) and
-    // wrong for a pickup volume; Session 18's five attempts failed on exactly that.
+    // A DROP IS COLLECTED BY OVERLAP, and an overlap event fires on BEGIN.  Standing the
+    // pawn on the drop once is not enough: Session 22 measured a pawn parked exactly on a
+    // `Herb_Item_BP_C` for thirty seconds with no pickup, because it was ALREADY inside the
+    // volume when it arrived, so no BeginOverlap was generated.  So the offset is HONOURED
+    // here (0 means "on it"), and the rig steps OUT and back IN to make the delta.
     if (!strncmp(sub, "drop:", 5)) {
         ActorXform me = {};
         ReadActorXform(g_localPawn, &me);
-        bool ok = SetActorXform(g_localPawn, t.px, t.py, t.pz, haveYaw ? yawOverride : me.yaw);
+        int wantOff = DevLever("QDCOOP_TEST_NEAR", "qd.near", 140, 140);
+        float off = (float)(wantOff < 0 ? 0 : wantOff);
+        if (off > 4000.0f) off = 4000.0f;
+        float dx = me.px - t.px, dy = me.py - t.py;
+        float len = sqrtf(dx * dx + dy * dy);
+        if (len < 1.0f) { dx = 1.0f; dy = 0.0f; len = 1.0f; }
+        dx /= len; dy /= len;
+        bool ok = SetActorXform(g_localPawn, t.px + dx * off, t.py + dy * off, t.pz,
+                                haveYaw ? yawOverride : me.yaw);
         void* pc = LocalController();
         int ro = pc ? FindPropertyOffsetIn(ObjClass(pc), "ControlRotation") : -1;
         if (ro >= 0) { float* r = (float*)((uint8_t*)pc + ro); r[0] = 0.0f; r[1] = me.yaw; }
         QDLOG(LOG_INFO, "dev teleport drop '", sub, "' -> ", nm, " at ", flt(t.px, 0), ",",
-              flt(t.py, 0), ",", flt(t.pz, 0), " (standing ON it to trigger the overlap pickup)",
+              flt(t.py, 0), ",", flt(t.pz, 0), " standing offset=", flt(off, 0),
               (ok ? "" : " FAILED"));
         return;
     }
@@ -14145,6 +14169,22 @@ void DevInteractBody(void* explicitTarget)
                                              "StartDialogue", "Talk", "BeginDialogue", "StartConversation"};
         static const char* const onComp[] = {"Interact", "DoInteract"};
         static const char* const onPawn[] = {"Interact", "DoInteract"};
+        // A DROP IS NOT A DOOR.  `Interact` RUNS on an `ItemPickup_Base` and changes
+        // nothing -- measured Session 22: `the game's own gate says IsInteractible=1`, the
+        // event ran, the state stayed 0, and the drop was still on the floor after three
+        // out-and-back teleports.  The class' own consume verb is `Pickup`, and it was
+        // never reached because the loop stops at the first verb that RUNS.  So a drop is
+        // offered its pickup verbs first.
+        static const char* const onDrop[] = {"Pickup", "TryPickup", "OnPickedUp", "Collect"};
+        // The gate is the loot scan's own class test as well as the actor's state: a drop
+        // this machine CONSTRUCTED carries neither the roll's `IsADrop` nor an authored
+        // GUID, and `LooksLikeADrop` alone did not admit it here (measured: the verb line
+        // still said `Interact`).
+        if (tgt && (IsDropClass(ObjClass(tgt)) || LooksLikeADrop(tgt))) {
+            for (int i = 0; i < (int)(sizeof(onDrop) / sizeof(onDrop[0])) && !ran1; ++i)
+                RigCallVerb(tgt, onDrop[i], g_localPawn, &ran1);
+            QDLOG(LOG_INFO, "dev interact: drop verbs tried; ran=", (ran1 ? ran1 : "none"));
+        }
         for (int i = 0; i < (int)(sizeof(onTgt) / sizeof(onTgt[0])) && !ran1; ++i)
             RigCallVerb(tgt, onTgt[i], g_localPawn, &ran1);
         for (int i = 0; i < (int)(sizeof(onComp) / sizeof(onComp[0])) && !ran1; ++i)
@@ -14861,7 +14901,8 @@ static const int kRealWorldN = (int)(sizeof(kRealWorlds) / sizeof(kRealWorlds[0]
 bool DevHardTravelled(const char* map, bool* streamedOut, char* err, int errCap, bool* okOut)
 {
     bool streamed = false;
-    bool ok = FollowHardTravel(map, err, errCap, &streamed);
+    // A REAL world switch: the streaming path is skipped on purpose (R150b).
+    bool ok = FollowHardTravel(map, err, errCap, &streamed, false);
     if (streamedOut) *streamedOut = streamed;
     if (okOut) *okOut = ok;
     return ok && !streamed;
@@ -14909,16 +14950,11 @@ void DevHardLever(uint32_t now)
             bool real = DevHardTravelled(kRealWorlds[i], &streamed, err, sizeof(err), &ok);
             if (real) {
                 QDLOG(LOG_INFO, "rig: hard lever -> auto picked ", kRealWorlds[i],
-                      " (a real UWorld: this world does not stream it)");
+                      " (a real UWorld: LoadMapWithLoadingScreen, not a streamed sublevel)");
                 return;
             }
-            if (streamed) {
-                QDLOG(LOG_INFO, "rig: hard lever -> auto skipped ", kRealWorlds[i],
-                      " (this world streams it -- not a hard travel)");
-            } else {
-                QDLOG(LOG_WARN, "rig: hard lever -> auto tried ", kRealWorlds[i],
-                      " LoadMapWithLoadingScreen ran=0: ", err);
-            }
+            QDLOG(LOG_WARN, "rig: hard lever -> auto tried ", kRealWorlds[i],
+                  " LoadMapWithLoadingScreen ran=0: ", err);
         }
         QDLOG(LOG_WARN, "rig: hard lever -> auto found no real UWorld this machine is not "
                         "already in (of ", dec(kRealWorldN), " candidates)");
@@ -15532,12 +15568,18 @@ void DevLevelLever(uint32_t now)
         // and `LoadedLevel` (the package) are different questions, and R109's failure was
         // the first being 1 while the second stayed 0.
         {
-            static int lastState = -1;
+            static int  lastState = -1;
+            static char lastName[64] = "";
             uintptr_t ll = LevelLoadedLevel(g_levels[i].ls);
             bool av = LevelActuallyVisible(g_levels[i].ls);
             int st = (ll ? 1 : 0) | (av ? 2 : 0);
-            if (st != lastState) {
+            // The NAME is part of the state.  Session 22 measured why: the first area's
+            // state is (loaded|visible) = 3, and a second area reaches the same 3, so a
+            // change-only test printed NOTHING for the second area and the rig's own
+            // "loaded and shown" check failed on a level that was loaded and shown.
+            if (st != lastState || strcmp(lastName, g_rigLevelPin) != 0) {
                 lastState = st;
+                lstrcpynA(lastName, g_rigLevelPin, sizeof(lastName));
                 QDLOG(LOG_INFO, "rig: level engine state ", g_rigLevelPin,
                       " LoadedLevel=", dec(ll ? 1 : 0),
                       " actuallyVisible=", dec(av ? 1 : 0));
@@ -15710,10 +15752,15 @@ void DevEFuncLever(uint32_t now)
         float d = 0.0f;
         ActorXform x = {};
         char nm[64] = "-";
-        void* a = RigFindNear("enemy", &d, &x, nm, sizeof(nm));
-        if (!a) QDLOG(LOG_WARN, "rig: efunc -- no live enemy found");
+        // `drop:<8hex>:<index>` dumps THAT drop actor's surface, which is how Session 22
+        // asked a spawned drop what it actually exposes: standing on a `Herb_Item_BP_C` and
+        // running the interaction lever does nothing, so the consume entry has to be READ
+        // off the class rather than guessed.  A bare value keeps "nearest enemy".
+        const char* target = !strncmp(spec, "drop:", 5) ? spec : "enemy";
+        void* a = RigFindNear(target, &d, &x, nm, sizeof(nm));
+        if (!a) QDLOG(LOG_WARN, "rig: efunc -- no live actor matches '", target, "'");
         else {
-            QDLOG(LOG_INFO, "rig: efunc -> ", nm, " dist=", flt(d, 0));
+            QDLOG(LOG_INFO, "rig: efunc -> ", nm, " dist=", flt(d, 0), " target=", target);
             LogFunctionsOf(a, nm, 80);
         }
     }

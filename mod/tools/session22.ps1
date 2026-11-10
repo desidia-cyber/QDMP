@@ -49,7 +49,7 @@ param(
     [string]$Phase = 'all',
     [int]$BootSeconds = 300,
     [int]$SoakSeconds = 1800,
-    [int]$LootRounds = 8,
+    [int]$LootRounds = 12,
     [string]$Report = '',
     [switch]$ShippedDefaults
 )
@@ -589,17 +589,32 @@ function Test-DropHeld([int]$i, [string]$hash, [int]$index, [int]$timeoutSec = 2
 # Stand ON the drop (a pickup is an overlap, not a verb) and then run the game's own
 # Interact input event on that exact actor as the fallback the interaction lever documents.
 function Invoke-TakeDrop([int]$i, [string]$hash, [int]$index) {
-    $mark = Get-Mark $i
-    Invoke-GoDrop $i $hash $index 60
-    # Stand first, press second: the pickup is an overlap, so the pawn has to ARRIVE before
-    # the Interact event is worth sending.
-    $deadline = (Get-Date).AddSeconds(20)
-    while ((Get-Date) -lt $deadline) {
-        Start-Sleep -Milliseconds 700
-        if (@(Get-Since $i $mark | Where-Object { $_ -match 'dev teleport near ' }).Count -gt 0) { break }
+    # A PICKUP IS AN OVERLAP AND AN OVERLAP FIRES ON *BEGIN*.  Session 21 measured the
+    # consequence (the killer's own pawn consumed the drop because it was standing there)
+    # and Session 22 measured the converse: a pawn parked exactly on a `Herb_Item_BP_C` for
+    # thirty seconds picked nothing up, because it was already inside the volume when it
+    # arrived, so no BeginOverlap was generated -- and a single teleport into it produced
+    # none either.  So the taker STEPS OUT and back IN, three times.
+    $consumed = ('loot: local pickup ' + $hash + '#' + [string]$index)
+    foreach ($out in @(500, 800, 250)) {
+        $mark = Get-Mark $i
+        Invoke-GoDrop $i $hash $index $out
+        Start-Sleep -Seconds 2
+        Invoke-GoDrop $i $hash $index 0
+        if (@(Wait-Since $i $consumed $mark 12).Count -gt 0) {
+            Say ("  act[$i] -> out to {0} cm and back onto near:drop:{1}:{2}; the overlap consumed it" -f $out, $hash, $index)
+            return
+        }
     }
+    # Last resort: the interaction lever, which is what a key press runs.
+    $mark2 = Get-Mark $i
     Invoke-PressDrop $i $hash $index
-    Say ("  act[$i] -> near:drop:{0}:{1} (stood 60 cm away, then the real Interact event)" -f $hash, $index)
+    $null = Wait-Since $i $consumed $mark2 12
+    # And leave the evidence for the next session: the drop's own UFunction surface, read
+    # rather than guessed.  Nothing in the class is manufactured here.
+    Set-Control $i 'qd.efunc' ('drop:' + $hash + ':' + [string]$index)
+    Start-Sleep -Seconds 3
+    Say ("  act[$i] -> near:drop:{0}:{1} (stepping out and back did not consume it; the Interact event was the last resort, and the class surface was dumped)" -f $hash, $index)
 }
 
 function Find-SharedDrop([int]$H, [int]$P, $skip, [int]$mark, [int]$maxProbe = 6) {
@@ -973,7 +988,7 @@ function Invoke-HardTravel([int]$H, [int]$P, [string]$map, [string]$step) {
         # `auto` (R150b) makes the MOD pick the world: every name the rig used to try was a
         # sublevel of the world it stood in, so the hard path was never reached.  The lever
         # prints which candidate it picked; the step reads it and checks THAT name.
-        $lever = @(Wait-Since $H ('rig: hard lever -> ' + [regex]::Escape($m) + ' |rig: hard lever -> auto picked ') $mH 90)
+        $lever = @(Wait-Since $H ('rig: hard lever -> ' + [regex]::Escape($m)) $mH 90)
         if ($lever.Count -eq 0) {
             Note ("  [{0}] the hard lever printed nothing for {1}" -f $H, $m)
             continue
