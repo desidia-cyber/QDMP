@@ -804,20 +804,29 @@ mover, so the transform the other applies is the one the interacting player sees
 
 One shared drop set. The game's `UFS_ItemDropSystem::RollItemDrop` is keyed by
 `{sourceId, dropIndex}` with **no player dimension**, so a drop is shared by
-construction within one machine — but each machine rolls its own. The host publishes the
-set under that same key, so both machines spawn the same item for the same roll:
+construction within one machine — but each machine rolls its own, and the two rolls are
+not the same item and not the same centimetre. So the identity is the DEATH that caused
+the drop (Session 22):
 
 ```
 u32  rev
 u16  n
-n × { u32 source_hash, i32 drop_index, u8 taken, str item_path }
+n × { u32 source_hash, i32 drop_index, u8 taken, u8 flags, i16 yaw,
+      i32 px, i32 py, i32 pz, str item_path }
 ```
 
-`source_hash` is FNV-1a of the drop source's object name; `drop_index` is the game's own
-per-source index. `item_path` is the soft object path the roll produced, never a pointer.
-`taken` is a tombstone and **wins over any non-taken entry**: a drop one player picked up
-must disappear for the other, and a tombstone is never removed by a later body from the
-sender that still lists the item.
+`source_hash` is a mixed hash of the GUID of the enemy that died; `drop_index` is the
+ordinal of this drop within that death, in spawn order. Both machines run the same death
+for the same GUID, so both compute the same pair without negotiating. `item_path` is the
+soft object path the roll produced, never a pointer. `taken` is a tombstone and **wins over
+any non-taken entry**: a drop one player picked up must disappear for the other, and a
+tombstone is never removed by a later body from the sender that still lists the item.
+
+`flags` bit 0 (`LF_SPAWN`, value 1) says the entry carries a point: `px`/`py`/`pz` are
+`QuantizePos` units and `yaw` is `QuantizeAngle`. A receiver that holds no copy of that key
+constructs the item class at that point under that key; a receiver that already holds one
+builds nothing, so one death yields exactly one drop per machine. A tombstone carries no
+point, because there is nothing left to build.
 
 A peer's own rolls are sent as proposals and merged into the host's set; the host's body
 is the resolution. The body is absolute and re-sent at 1 Hz, so a lost datagram repairs

@@ -397,15 +397,27 @@ Two assumptions in that paragraph are unproven and each is one probe:
   followed the host into `780_SZ_Depths` in every measured entry, both machines reported
   `level engine state 780_SZ_Depths LoadedLevel=1 actuallyVisible=1`, and both stood 0-3 cm
   apart at the anchor.
-  **A SECOND area in one session does not follow (Session 21, R150a).** The host streamed
-  `770_SZ_Swamp` (`PASS` on its own machine) and the peer answered
-  `travel: area 780_SZ_Depths is already pinned on this machine` — an announcement for the
-  area it already holds, not for the new one — so the peer stayed in `780_SZ_Depths`. The
-  first entry of a session works; a later one is refused by the wrong name, which is a
-  worse failure than silence because it looks like agreement.
-- **A hard travel is not reachable from `Ruins_Level_00` through `qd.hard` (Session 21,
-  R150b).** Both real candidates are in the hub's level table, so `FollowHardTravel`
-  streams them instead of loading a world, and the third name is the current one:
+  **A SECOND area in one session did not follow (Session 21, R150a) — CLOSED in Session 22.**
+  The host streamed `770_SZ_Swamp` and the peer answered `travel: area 780_SZ_Depths is
+  already pinned on this machine` — an announcement for the area it already held. Three
+  causes, all measured:
+  1. the pin was a one-way latch. `g_rigLevelPin` was set and never cleared, so "back to the
+     hub" (no area) could never be expressed at all;
+  2. both machines re-announced their own pin every 2 s, so a STALE pin beat a fresh change:
+     the host streamed `770_SZ_Swamp` at 13:53:55.575 and was back in `780_SZ_Depths` at
+     13:53:57.167 because the peer's echo of its old area was applied;
+  3. a pin that came from the partner was echoed back, which is what closes the loop.
+  Now: leaving an area is a real operation (`ClearAreaPin` hides the sublevel through the
+  same `ForceLevel` the pin used), the leave is announced as `dest = "-"`, a
+  partner-applied pin is never announced back, a machine that chose its own area within the
+  last 8 s keeps it against an in-flight announcement, and the heal interval is 10 s.
+  Measured in Session 22, `780_SZ_Depths` -> `770_SZ_Swamp` -> hub, both machines:
+  `travel: entered the partner's area 770_SZ_Swamp by streaming it` and
+  `travel: left the area 770_SZ_Swamp (the partner left it)` 24 ms after the host.
+- **A hard travel is reachable from `Ruins_Level_00` again (Session 21 R150b, CLOSED in
+  Session 22).** This game is ONE persistent world plus streamed area sublevels; the only
+  separate `UWorld`s are the intro, the cutscenes and the title screen, and the hub's level
+  table lists all of them, so `FollowHardTravel` streamed every name the rig tried:
 
   ```
   rig: hard lever -> 990_B33sment    streamed=1 (a sublevel of this world ...)
@@ -413,9 +425,21 @@ Two assumptions in that paragraph are unproven and each is one probe:
   rig: hard lever -> Ruins_Level_00  LoadMapWithLoadingScreen ran=0: already in Ruins_Level_00
   ```
 
-  The report names which happened (`streamed=1` is a named refusal of the hard path, not a
-  failed handshake). The hard path therefore has to be reached the way a player reaches it
-  — a teleporter, or a map switch the game itself performs.
+  `qd.hard auto` now walks that list with the streaming path disabled and keeps going until
+  one really LOADS, and the FOLLOWER of a `HARD_BEGIN` does the same (it used to stream the
+  announced world, report ARRIVED, and leave the pair in two different worlds). Measured,
+  three times, out and back:
+
+  ```
+  rig: hard lever -> auto picked 997_FinalZoneCutscene (LoadMapWithLoadingScreen, not a sublevel)
+  travel: HARD transition to 997_FinalZoneCutscene -- announcing it so the partner loads the same world
+  peer: travel: hard transition: loading 997_FinalZoneCutscene through GameInstance.LoadMapWithLoadingScreen
+  travel: both machines arrived in 997_FinalZoneCutscene; host releasing the pair to resume
+  ```
+
+  and the same for the return load to `Ruins_Level_00`. A hard travel costs a `WORLD
+  DIVERGENCE` line while the two machines are mid-transition and one more when they agree
+  again; that is the transition, not a desync.
 
 ## 4. Not synced, lower stakes
 
@@ -423,27 +447,37 @@ Two assumptions in that paragraph are unproven and each is one probe:
   is `ReadActorXform` / `K2_SetActorLocationAndRotation`; the unproven part is the
   class-name filter that decides which actors are movers, so a live run must show the
   `movers: tracking …` lines for a real elevator.
-- **Loot pickups** share one host-authoritative drop set keyed by `{sourceId, dropIndex}`
-  (`LootSync`). A take is a permanent tombstone and the local copy is hidden, not
-  destroyed. **The lane's key is addressable now**: `qd.tp near:drop:<8hex>:<index>`
-  resolves exactly `{source_hash, drop_index}` (Session 18 asked for this lever; Session 21
-  built the proof on it and it answered on both machines —
-  `rig: drop FB6F664F#0 resolved to a live actor`, versus
-  `rig: no live loot-ledger drop matches 'drop:7DF53D72:0' (the scan has 2 drop(s))`).
-  **`loot: hiding local drop` is still NOT-REACHED, and the blockers are now measured
-  rather than guessed** (R129):
-  1. the hub cannot prove it, because the two machines' drop KEYS are disjoint — a key's
-     source is the enemy, and the hub's machines run their own spawner enemies. One run
-     produced 3 host-only keys and 2 peer-only keys with not one in common;
-  2. in `780_SZ_Depths`, where both machines DO hold the same authored enemy keys, the
-     drop actor appears on one machine at a time: a host kill rolled 4 drops, all on the
-     peer; a peer kill rolled 3, all on the host. Standing the pair 9 m back before the
-     blow makes the killer keep its own drops (a pickup is an overlap, so the killer's own
-     pawn was eating the drop it had caused) — but no key was held by both machines inside
-     the window.
-  The reconciliation code is not the blocker (Session 18's fix stands, pinned by
-  `test_loot.cpp`). The next probe: kill the same authored key on each machine in turn,
-  using a spawner respawn, and probe the key after each kill.
+- **Loot pickups** share ONE drop set, and a drop's identity is now the DEATH that caused
+  it (`LootSync`). A take is a permanent tombstone and the local copy is hidden, not
+  destroyed. **R129's root cause is fixed and measured** (Session 22): the key used to be
+  `{item class, quantized spawn point, coincidence ordinal}`, which two machines cannot
+  compute the same way -- they die at different centimetres and spend the coincidence
+  ordinal a different number of times (`loot: drop 9FB8B0A8#1` on the peer for a drop the
+  host called `#0`) -- and one machine often rolls NO drop at all for a death it only
+  applied, because the HP-write fallback does not run the Blueprint death branch
+  (`key 765952E9#0: host=absent peer=HELD`, four keys in one run). The key is now
+  `{mixed hash of the enemy GUID, ordinal within that death}`: both machines run the same
+  death for the same GUID, so both compute the same key with nothing negotiated. The machine
+  that rolled the drop owns it and describes it on the lane (item class, point, facing), and
+  a machine that holds no copy CONSTRUCTS the same class at the same point under the same
+  key. Measured in every run since:
+  `loot: drop 54F6FD50#0 = Herb_Item_BP_C (the death this machine ran)` on the peer,
+  `loot: constructed the partner's drop 54F6FD50#0 = Herb_Item_BP_C at -27846,-15403,-15339`
+  on the host, and `key 46FB326A#0: BOTH machines hold it` from the rig's own resolver --
+  the precondition Session 21 could never reach. The lane's key stays addressable:
+  `qd.tp near:drop:<8hex>:<index>`.
+  **Still open: the HIDE half is not live-proven, because the rig cannot make the game
+  consume a drop.** Four mechanisms were tried and all measured failing: a teleport into the
+  pickup volume generates no BeginOverlap (a pawn parked on a `Herb_Item_BP_C` for 30 s
+  picked nothing up); stepping out 500/800/250 cm and back generates none either; dropping
+  the pawn onto it from 3 m did not either; and the class' own `Interact` and `Pickup` verbs
+  both RUN and consume nothing (`dev interact: drop verbs tried; ran=Pickup`, state 0, actor
+  still there). So "taken on A, gone on B, refused a second time" is not measured. The
+  ledger half -- tombstone wins, no resurrection, one take only -- is pinned by
+  `test_loot.cpp`. The next probe is stated as one: read `ItemPickup_Base`'s own surface
+  through SuperStruct (the BP child has zero UFUNCTIONs of its own) and call the parent's
+  overlap entry with the pawn as `OtherActor`, or drive real player movement instead of a
+  position write.
 - **Shop, journal/bestiary, XP, weapon levels, grimoire ink.** Per-player by nature.
 - **Peer vitals.** The partner's HP and death are not shown; a death shows as the body
   falling. This is also why the damage lane's dead check is receive-side only.
@@ -504,10 +538,14 @@ Ordered, because each one makes the next diagnosable.
     the rider's machine logs owner rows, the other logs
     `movers: applied N owner row(s)`. **Pass:** the platform is under the rider on both
     screens.
-12. **Loot (`LootSync=1`).** `loot: drop <hash>#<n> = <path>` on the roller; the other
-    machine merges it; when one player picks it up, `loot: local pickup … -- tombstoned`
-    and `loot: hiding local drop … -- the partner took it`. **Pass:** the drop disappears
-    on both screens and only one copy enters an inventory.
+12. **Loot (`LootSync=1`).** `loot: drop <hash>#<n> = <path> (the death this machine ran)`
+    on the roller, and `loot: constructed the partner's drop <hash>#<n> = <path> at <x,y,z>`
+    on the machine that held no copy — the same key and the same point on both.  When one
+    player picks it up, `loot: local pickup … -- tombstoned` and
+    `loot: hiding local drop … -- the partner took it`.  **Pass:** the drop exists on both
+    screens under one key (MEASURED, Session 22), the drop disappears on both, and only one
+    copy enters an inventory.  The last two have never been observed: the rig cannot make
+    the game consume a drop, so the take half is still a human-only observation.
 13. **Dialogue (`DialogueSync=1`).** A crossed start logs
     `dialogue: PREVENTED a concurrent start on the same NPC … ending the local conversation`
     (peer) or `dialogue: the partner also started this NPC … the host keeps it` (host);

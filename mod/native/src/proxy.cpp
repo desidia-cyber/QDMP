@@ -7502,6 +7502,10 @@ static void ClearPendingMirrors()
 // constructed and destroyed again 70 ms later because "no row" was read as "the owner left".
 // An enemy the owner described is alive by construction, so a mirror is only judged stale
 // once it has had at least one full staleness window to hear from its owner.
+// Declared here because this pump marks the deaths it applies; the body lives with the
+// loot section, which owns the mark table.
+void DeathMarkFromRecord(EnemyRec& r, bool owned, uint32_t now);
+
 void EnemyMirrorPump(uint32_t now)
 {
     static Fn fMirrorTick = {};
@@ -7567,6 +7571,7 @@ void EnemyMirrorPump(uint32_t now)
             if (EnemyHp(r.actor, &hp, &mx) && hp > 0.0f) {
                 QDLOG(LOG_INFO, "enemy mirror: the owner says dead -- killing guid=",
                       hex32(r.guid[0]));
+                DeathMarkFromRecord(r, false, now);
                 g_inRemoteDeath = true;
                 ApplyEnemyDamage(r.actor, enemy::ConvergeDamage(hp, mx, 0, false), g_localPawn);
                 g_inRemoteDeath = false;
@@ -8396,6 +8401,7 @@ void EnemyOwnPump(uint32_t now)
                               ": still applying remote deaths (", dec(saidN), " since the last line)",
                               " -- these copies are the ones this machine held no record of");
                 }
+                DeathMarkFromRecord(r, false, now);
                 g_inRemoteDeath = true;
                 ApplyEnemyDamage(r.actor, enemy::ConvergeDamage(rhp, rmx, 0, false), g_localPawn);
                 g_inRemoteDeath = false;
@@ -8431,6 +8437,7 @@ void EnemyOwnPump(uint32_t now)
                         QDLOG(LOG_INFO, "enemy ", hex32(r.guid[0]), ": the owner says dead, killing the copy");
                         // This death must not be re-broadcast as our own (no echo of a
                         // kill the other machine already recorded).
+                        DeathMarkFromRecord(r, false, now);
                         g_inRemoteDeath = true;
                         ApplyEnemyDamage(r.actor, enemy::ConvergeDamage(hp, mx, 0, false), g_localPawn);
                         g_inRemoteDeath = false;
@@ -9189,6 +9196,11 @@ void EnemyDetectDeaths()
         QdGuid g = {r.guid[0], r.guid[1], r.guid[2], r.guid[3]};
         QDLOG(LOG_INFO, "enemy death detected guid=", hex32(r.guid[0]), " (", why, ", hp ",
               flt(haveHp ? hp : 0.0f, 1), "); recording it through StoreEnemySaveState");
+        // The mod's OWN detector is the most reliable place to mark a death for the loot
+        // key: it fires for every death this machine OBSERVES, including one the local
+        // player caused, whose save record the game may never write (measured Session 22:
+        // a whole run of drops fell back to the position key because no mark existed).
+        DeathMarkFromRecord(r, g_own.Running(r.guid), Net::Now());
         __try { StoreEnemySaveState(ctx, g, respawn, 0.0f); }
         __except (EXCEPTION_EXECUTE_HANDLER) {
             QDLOG(LOG_WARN, "enemy death detected guid=", hex32(r.guid[0]),
@@ -10213,6 +10225,27 @@ void DeathMarkReset()
 {
     for (int i = 0; i < kDeathMarkMax; ++i) g_deathMarks[i].used = false;
     g_deathMarkNext = 0;
+}
+
+// A death the MOD applies, marked where the mod applies it.  `HK_StoreEnemySaveState` is the
+// funnel for every death the GAME records, but the game does not record every death: a
+// follower's copy killed by the mod's damage, and a mirror killed on the owner's word, both
+// die through the Blueprint path without that hook firing on this machine.  Measured
+// (Session 22's third run): every drop of the session fell back to the position-derived key
+// because no mark existed, and the two machines' keys were disjoint again -- the exact
+// Session 21 symptom, from a different cause.  So the mod marks its own kills too.
+void DeathMarkFromRecord(EnemyRec& r, bool owned, uint32_t now)
+{
+    if (!r.haveGuid) return;
+    float p[3] = {0.0f, 0.0f, 0.0f};
+    bool have = false;
+    __try {
+        ActorXform x;
+        if (r.actor && ReadActorXform(r.actor, &x)) {
+            p[0] = x.px; p[1] = x.py; p[2] = x.pz; have = true;
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) { have = false; }
+    DeathMarkAdd(r.guid, owned, have ? p : nullptr, now);
 }
 
 bool IsDropClass(void* cls)
@@ -13391,27 +13424,32 @@ void DevTeleportToTarget(const char* sub, float yawOverride, bool haveYaw)
         ActorXform me = {};
         ReadActorXform(g_localPawn, &me);
         int wantOff = DevLever("QDCOOP_TEST_NEAR", "qd.near", 140, 140);
-        float pz = t.pz;
-        float off = (float)wantOff;
-        // A NEGATIVE offset means "|offset| cm ABOVE the drop, then let gravity do it".  A
-        // teleport into a volume generates no BeginOverlap (measured: a pawn parked on a
-        // drop for thirty seconds, and three out-and-back teleports, all consumed nothing),
-        // but FALLING THROUGH one is a real move and does.  So the last resort is a drop
-        // from height rather than another position write.
-        if (off < 0.0f) { pz = t.pz - off; off = 0.0f; }
+        float off = (float)(wantOff < 0 ? 0 : wantOff);
         if (off > 4000.0f) off = 4000.0f;
         float dx = me.px - t.px, dy = me.py - t.py;
         float len = sqrtf(dx * dx + dy * dy);
         if (len < 1.0f) { dx = 1.0f; dy = 0.0f; len = 1.0f; }
         dx /= len; dy /= len;
-        bool ok = SetActorXform(g_localPawn, t.px + dx * off, t.py + dy * off, pz,
+        // `:z<cm>` on the spec means "that many cm ABOVE the drop, then let gravity do it".
+        // A teleport into a volume generates no BeginOverlap (measured: three out-and-back
+        // teleports and a pawn parked on the drop for thirty seconds, all consumed nothing),
+        // but FALLING THROUGH one is a real move and does.  It rides in the SPEC rather than
+        // in `qd.near` because the near lever clamps a negative offset back to its default.
+        float above = 0.0f;
+        {
+            const char* z = strstr(sub, ":z");
+            if (z) above = (float)atoi(z + 2);
+            if (above < 0.0f) above = 0.0f;
+            if (above > 3000.0f) above = 3000.0f;
+        }
+        bool ok = SetActorXform(g_localPawn, t.px + dx * off, t.py + dy * off, t.pz + above,
                                 haveYaw ? yawOverride : me.yaw);
         void* pc = LocalController();
         int ro = pc ? FindPropertyOffsetIn(ObjClass(pc), "ControlRotation") : -1;
         if (ro >= 0) { float* r = (float*)((uint8_t*)pc + ro); r[0] = 0.0f; r[1] = me.yaw; }
         QDLOG(LOG_INFO, "dev teleport drop '", sub, "' -> ", nm, " at ", flt(t.px, 0), ",",
               flt(t.py, 0), ",", flt(t.pz, 0), " standing offset=", flt(off, 0),
-              " height=", flt(pz - t.pz, 0), (ok ? "" : " FAILED"));
+              " height=", flt(above, 0), (ok ? "" : " FAILED"));
         return;
     }
     RigStandBeside(actor, t, sub, d, yawOverride, haveYaw);

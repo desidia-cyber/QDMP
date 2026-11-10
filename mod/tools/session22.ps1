@@ -281,11 +281,13 @@ function Invoke-Go([int]$i, [string]$name, [int]$near = 140) {
 }
 # The LANE'S OWN key, not a class: `near:drop:<8hex>:<index>` is the lever Session 18 said
 # the next session needed (R129), and it is what makes this proof possible at all.
-function Invoke-GoDrop([int]$i, [string]$hash, [int]$index, [int]$near = 400) {
+function Invoke-GoDrop([int]$i, [string]$hash, [int]$index, [int]$near = 400, [int]$above = 0) {
     $script:goSeq++
     $yaw = ($script:goSeq * 37) % 360
     Set-Control $i 'qd.near' ([string]$near)
-    Set-Control $i 'qd.tp' ('near:drop:' + $hash + ':' + $index + ',' + $yaw + '#' + (Get-Date -Format 'HHmmssfff'))
+    $spec = 'near:drop:' + $hash + ':' + $index
+    if ($above -gt 0) { $spec += (':z' + [string]$above) }
+    Set-Control $i 'qd.tp' ($spec + ',' + $yaw + '#' + (Get-Date -Format 'HHmmssfff'))
 }
 function Invoke-PressDrop([int]$i, [string]$hash, [int]$index) {
     Set-Control $i 'qd.act' ('near:drop:' + $hash + ':' + $index + '#' + (Get-Date -Format 'HHmmssfff'))
@@ -605,11 +607,11 @@ function Invoke-TakeDrop([int]$i, [string]$hash, [int]$index) {
     # three out-and-back teleports, and a pawn parked on the drop for thirty seconds, all
     # consumed nothing), and the class' `Interact` and `Pickup` verbs run and consume
     # nothing either.  Falling through it is a real move.
-    foreach ($h in @(-300, -700)) {
+    foreach ($h in @(300, 700)) {
         $mark = Get-Mark $i
-        Invoke-GoDrop $i $hash $index $h
+        Invoke-GoDrop $i $hash $index 0 $h
         if (@(Wait-Since $i $consumed $mark 14).Count -gt 0) {
-            Say ("  act[$i] -> fell {0} cm onto near:drop:{1}:{2}; the overlap consumed it" -f (-$h), $hash, $index)
+            Say ("  act[$i] -> fell {0} cm onto near:drop:{1}:{2}; the overlap consumed it" -f $h, $hash, $index)
             return
         }
     }
