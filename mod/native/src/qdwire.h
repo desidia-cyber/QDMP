@@ -890,7 +890,9 @@ enum TravelPhase {
     // Session 20, R147: the AREA one machine has entered by streaming a sublevel of the
     // persistent world.  This is not a UWorld switch, so TP_HARD_BEGIN is the wrong
     // instruction: a hard load of an area is the pawn-less path R102 measured.  The
-    // sender names the area in `map`; the receiver streams it on its own machine (the
+    // sender names the area in `dest` (and the UWorld in `map`, as in every phase, because
+    // the divergence board consumes `map` before the phase is read); the receiver streams
+    // it on its own machine (the
     // game's own level-list mechanism) or refuses with a named error.  Measured failure
     // it closes: one 600 s run ended with the host showing 780_SZ_Depths and the peer
     // still in the hub area, because the area was only ever entered by a LOCAL lever on

@@ -130,8 +130,8 @@ static void TestWire()
                   "ack collides with no existing boss flag");
     static_assert((wire::kBossNack & (wire::kBossBarOn | wire::kBossBarOff | wire::kBossArenaExit)) == 0,
                   "nack collides with no existing boss flag");
-    CHECK((wire::kBossAsk | wire::kBossAck | wire::kBossNack) != 0,
-          "wire/the negotiation bits exist");
+    static_assert((wire::kBossAsk | wire::kBossAck | wire::kBossNack) != 0,
+                  "the negotiation bits exist");
 
     uint32_t key[4];
     Key(key, 0xABCD);
@@ -160,7 +160,7 @@ static void TestWire()
     static_assert(wire::TP_AREA != wire::TP_NONE && wire::TP_AREA != wire::TP_HARD_BEGIN &&
                   wire::TP_AREA != wire::TP_ARRIVED && wire::TP_AREA != wire::TP_RESUME,
                   "TP_AREA is its own phase");
-    CHECK(wire::TP_AREA == 4, "wire/TP_AREA keeps its documented value");
+    static_assert(wire::TP_AREA == 4, "TP_AREA keeps its documented value");
 
     wire::TravelBody t;
     memset(&t, 0, sizeof(t));

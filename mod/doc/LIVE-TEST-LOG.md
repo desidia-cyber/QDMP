@@ -4035,3 +4035,137 @@ now one bar bound to one key with rebinding — but a boss that exists on only o
 or whose liveness the two machines disagree about, can still show two different bars.
 Kill sets converge on the order of one stray key per ten minutes; keep the crash folder
 if the game vanishes.
+
+---
+
+## Session 20 — 2026-11-10 (the bar both machines can show; the stray key; the area that follows)
+
+This branch is `t3/coop-desync-boss-world-soak`, reset to `sync-fix`'s Session 19 merge
+(`118b9da`).  The body is `tools/session20.ps1` — Session 18's soak with the boss fight and
+the area follow added — run once per phase: `boss`, `soak-hub` (three back-to-back runs in
+one pair of processes), `soak-780`.  Every number below is from this branch's build.
+
+### R143. CLOSED — one bar, one key, and the peer must be able to SHOW it
+
+The measured failure (Session 19, the user's report): the host repaired `03FDBC21` at full
+HP every 3 s while the peer logged `no local copy`, and the peer's own `17181166` was a
+dragon the host held as a standing death — two different bosses, one bar each.
+
+**What was wrong, and what it took to close it.**  Three defects were needed, and the
+first two were only visible in the live pair:
+
+1. **The selection was unnegotiated.**  The host picked a key and published a bar for it;
+   nothing told it the peer could not show that key.  The lane is now a round trip: `ASK`
+   (host → peer), `ACK`/`NACK` (peer → host).  A `NACK`, or 1.5 s of silence, makes the key
+   ineligible for 3 s and the host chooses the next candidate; `BAR_ON` is sent only after
+   an `ACK`.  **If nothing is showable on both machines, no bar is raised on either** —
+   the honest agreement.
+2. **Liveness was read from the local copy.**  A follower's own respawned copy read ALIVE
+   while the owner held the key dead.  Liveness is now the owner's
+   (`enemyown::OwnerSet::Running`): the follower takes the owner's row verbatim, and an
+   explicit bar-on from the owner retracts a stale local death.
+3. **"Most-damaged live boss" was not enough by itself.**  A boss 71 m away whose encounter
+   was not running (`Whaleking_SZ_BP_C`, key `A8772963`) was ACKed, bound and sampled
+   `hp=0` for a whole run while the dragon was being killed.  A candidate now needs a
+   READABLE HP.  A "prefer the key already bound" rule was tried and removed: it held
+   `17E153F4` (8 km away, untouched) while the dragon died.
+4. **The peer had no copy of the dragon at all in one run.**  The host described its class
+   177 m away *before the peer's position was known*, marked `mirrorPathSent` forever, and
+   never re-sent it; the boss lane then correctly NACKed.  `EnemySpawnPump` now requires a
+   known audience, and a boss `NACK` re-arms that key's class description, so a peer that
+   gains a copy joins the fight.
+
+**Live proof, `780_SZ_Depths`, final build (11:10).**  One line a second from each machine,
+and the kill:
+
+```
+sample t+ 2s: host=17181166/50555  peer=17181166/50555
+sample t+ 4s: host=17181166/35576  peer=17181166/35576
+sample t+ 6s: host=17181166/20596  peer=17181166/20596
+sample t+ 8s: host=17181166/5616   peer=17181166/5616
+host  boss: sent bar off key=17181166 hp=0 (the active boss died or left)   11:10:59.285
+peer  boss: bar lowered for key=17181166 hp=0 (the partner says ...)        11:10:59.316
+```
+
+Same key on both bars, identical HP at every sample (max delta 0 of 65535), both bars to 0
+**31 ms apart**.  `=== 19 PASS, 0 FAIL ===`, zero faults.  `boss: bar key=<8hex> hp=<n>` is
+the standing sample; `-1` means "HP unreadable", never 0.
+
+### R146. CLOSED — the stray kill key was a death the lane never sent
+
+Session 19 left `FA2FC279` dead on the host only, once in a 601 s run.  The key is a
+**spawner GUID** (`enemy id: spawner FA2FC279 (Mossy_Fighter_BP_C)`), i.e. `SRC_SPAWNER`,
+and the peer held no copy of that spawner.  Two holes:
+
+- the death sweep ran only for keys the machine **owned**, so a death observed on a
+  non-owned copy was in no outgoing lane at all;
+- the per-key dump called "no live actor" a death even for a record it had **never seen
+  alive**, so the dump could claim a death the detector had correctly refused to broadcast.
+
+Now an observed death (the game's dead flag, HP ≤ 0 after being seen alive, or an actor
+that vanished after being seen alive) is broadcast as a death claim by the observing
+machine, without writing the save; a record with no live actor and no evidence is omitted
+from the dump and counted as `stale=`.  The mass-disappearance guard counts every
+non-mirror record, so a level unload is still one event, not N kills.
+
+### R147. CLOSED — the partner follows into the area, or the area is refused
+
+Session 19's run 3 ended with the host in `780_SZ_Depths` and the peer in the hub.  Entering
+an area is a *streamed sublevel*, not a `UWorld` switch, and the entry was a LOCAL lever on
+each machine — nothing carried it across.  Travel phase `4` (`TP_AREA`) now announces the
+area in `dest` (`map` stays the `UWorld`, because the divergence board consumes `map`
+before it reads the phase), and the receiver streams the same area through the game's own
+level-list path and pins it.  A name it cannot enter is
+`travel: REFUSED the partner's area <name>: <why>`.
+
+That last detail was found by the check this session added: the first version put the area
+in `map`, the divergence board compared a world against an area, and the `world:` line read
+`partner=780_SZ_Depths` while both machines stood in `Ruins_Level_00`.  The run's kill diff,
+HP and area all passed, but the same-world claim was **not** made; the encoding was fixed
+and the boss proof and the 780 soak were re-run on the fixed build.
+
+Live proof: in every area entry this session (boss and both 780 runs) the peer logged
+
+```
+travel: entered the partner's area 780_SZ_Depths by streaming it (loaded and SHOWN here)
+```
+
+and both machines then reported `rig: level engine state 780_SZ_Depths LoadedLevel=1
+actuallyVisible=1`, with the players 0–3 cm apart at the anchor.
+
+### The soak record, measured
+
+| run | duration | survived | kill diff | shared HP | world / area | boss bar | faults | ERR |
+|---|---|---|---|---|---|---|---|---|
+| hub 1 | 604 s | both | 0 (77/77) | equal, 4 checked | `Ruins_Level_00` / – | 16 paired, delta 0 | 0 | 0 |
+| hub 2 | 602 s | both | 0 (141/141) | 0 comparable | `Ruins_Level_00` / – | 16 paired, delta 0 | 0 | 0 |
+| hub 3 | 605 s | both | 0 (210/210) | 0 comparable | `Ruins_Level_00` / – | none existed | 0 | 0 |
+| 780 | 603 s | both | 0 (64/64) | equal, 3 checked | `Ruins_Level_00` / `780_SZ_Depths` | 14 paired, delta 0 | 0 | 0 |
+
+The three hub runs are back-to-back in ONE pair of processes, which is the claim Session 19
+could not meet (run 3 diverged).  **All three met every requirement.**  The `shared HP`
+column is honest about what the end-of-run dump could compare: run 1 ended with five keys
+alive on both and four readable HPs (all equal); runs 2 and 3 ended with one shared live key
+whose HP was not readable (`hp=?`), so there was no pair to compare — that is "no mismatch
+was observable", not "measured equal".  The boss-bar samples are the stronger per-run HP
+evidence where a bar existed (delta 0 over 16 samples).
+
+Hub run 3 is also the first live look at the **new** rule behaving correctly: after the
+dragon died, the only live hub boss was one the peer holds no copy of, so for the rest of
+the run **no** bar existed on either machine.  The old code's symptom — one screen full,
+the other empty — did not occur.
+
+### What is still open
+
+- **R138** (the EXECUTE-bit fault in the tick forward) still has not reproduced; Session 19
+  recorded it with the wrong-class UFunction as a candidate cause.
+- **R140**'s engine-side death did not occur in any Session 20 run (0 faults in five runs),
+  but that is "not seen", not "fixed".
+- **R136**'s `actor-state ... WRITE FAILED` symptom did not appear in the final 780 soak
+  (`ERR lines=0`); it was not fixed, only absent from this run.
+- **R129** (loot hiding) was not attempted this session.
+- **Boss phases** remain unexpressible (`Phase`/`bBoss`/`OnSubStateChanged` exist in no
+  cooked package); the sample carries an observed ordinal, 0 otherwise.
+- The boss negotiation is chatty by design: a key the peer genuinely lacks is re-asked
+  after the 3 s window.  The log line is now WARN once a minute per key (246 identical
+  lines in one 600 s soak buried the lines that mattered).

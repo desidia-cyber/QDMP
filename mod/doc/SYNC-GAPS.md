@@ -295,16 +295,25 @@ Two assumptions in that paragraph are unproven and each is one probe:
 ## 3. Inside the systems built so far
 
 **Enemies**
-- **Bosses have a lane of their own now (`BOSS`, 0x29), and one part of it is still
-  unprovable.** The health bar (`PlayerStatsAndUtils_C.ActivateBossHPBar`, whose
-  `__WorldContext` is the caller's world) and the arena exit
-  (`PlayerTeleportedOutOfBossArena`, a zero-argument spawner event) are both driven, each
-  machine making its own local call on its own copy. Boss membership is queried on the
-  enemy itself (`Enemy_IsPartOfBossEncounter` / `Enemy_GetBossInfo`). **Phases remain
-  unexpressible**: `Phase`, `bBoss` and `OnSubStateChanged` exist only in the exe name
-  block and in zero cooked packages, so `ENEMY_DETAIL.boss` carries only an observed
-  ordinal and is 0 when nothing could be observed — it is never fabricated, because a
-  guessed phase would run the wrong Blueprint branch on one machine only.
+- **Bosses share one bar, and the shared bar is now NEGOTIATED.** The game has one boss
+  HP bar and `ActivateBossHPBar` binds it to the actor it is given, so the host is the
+  single selector. Session 20 made the selection a round trip: the host asks the peer
+  whether it holds a live copy (`ASK`), the peer answers `ACK`/`NACK`, a NACK (or 1.5 s of
+  silence) makes the key ineligible for 3 s and the next candidate is tried, and `BAR_ON`
+  is only sent after an ACK. **If nothing is showable on both machines, no bar is raised
+  on either** — the honest agreement, not a full bar on one screen and an empty one on
+  the other. Liveness is the OWNER's (`enemyown::OwnerSet::Running`): a follower takes the
+  owner's row verbatim, and an explicit bar-on from the owner retracts a stale local
+  death. A candidate also needs a READABLE HP (measured: a boss 71 m away whose encounter
+  was not running was ACKed, bound and sampled `hp=0` forever while the dragon being
+  fought was never selected). A NACK also re-arms that key's `ENEMY_SPAWN` class
+  description, so a peer that gains a copy joins the fight. Live proof in
+  `780_SZ_Depths`: the same key `17181166` on both bars, identical HP at every sample
+  (65535 → 50555 → 35576 → 20596 → 5616), and both bars down 28 ms apart at 0.
+  **Phases remain unexpressible**: `Phase`, `bBoss` and `OnSubStateChanged` exist only in
+  the exe name block and in zero cooked packages, so `ENEMY_DETAIL.boss` carries only an
+  observed ordinal and is 0 when nothing could be observed — it is never fabricated,
+  because a guessed phase would run the wrong Blueprint branch on one machine only.
 - **`TryApplyDamage` is unproven.** Every field of the payload is walked and logged, and
   the amount is selected by name; if the payload needs a damage-type tag or a nested `Data`
   struct, HP will not move and the log says so. "enemy damage had NO effect" (and now
@@ -325,6 +334,17 @@ Two assumptions in that paragraph are unproven and each is one probe:
   applies a per-enemy interval by band plus the global rolling-second budget; a refused
   change stays pending and is retried, so the lane degrades to "later". The bound is
   asserted in `test_enemybw.cpp` (48 assertions) rather than measured.
+- **A death is a fact the observing machine can state, even when it does not run the
+  enemy.** Session 19's 601 s run left one key (`FA2FC279`, a spawner GUID) dead on the
+  host and absent from the peer. The death sweep only ran for keys the machine OWNED, so a
+  death seen on a non-owned copy was in no outgoing lane at all; and the per-key dump
+  called "no live actor" a death even for a record it had never seen alive, which is how a
+  claim could exist that the lane never sent. Now an actor this machine saw alive and can
+  no longer find, or that carries the game's own dead flag, is broadcast as a death claim
+  by the machine that observed it (no save write — the owner's spawner owns persistence),
+  and a record with no live actor and no evidence is reported as `stale=`, not DEAD. The
+  mass-disappearance guard counts every non-mirror record, so a level unload is still one
+  event rather than N kills.
 - **Hit attribution is noisy.** A peer hit is detected as an HP drop the mod did not cause,
   so damage-over-time arrives as a stream of small hits.
 - **Enemy projectiles are gated on ownership.** Only the machine running the shooter
@@ -351,6 +371,17 @@ Two assumptions in that paragraph are unproven and each is one probe:
 - **Travel following no longer depends on `StreamUnion`.** `TravelSync` carries the map
   announcement and the hard handshake on its own; the union's divergence gate is still
   consulted when both are on.
+- **Entering an AREA now follows, or is refused by name.** `780_SZ_Depths`, `760_SZ_AUT`
+  and the rest are sublevels of the persistent world, so entering one changes no `UWorld`
+  name and a local lever moves only one machine. Session 19's run 3 ended with the host in
+  `780_SZ_Depths` and the peer in the hub. `TP_AREA` (travel phase 4) announces the area in
+  `dest` — `map` stays the `UWorld`, because the divergence board consumes it first — and
+  the receiver streams the same area through the game's own level-list path
+  (`FollowHardTravel`'s sublevel branch) and pins it. A name it cannot enter is
+  `travel: REFUSED the partner's area <name>: <why>`, never silence. Measured: the peer
+  followed the host into `780_SZ_Depths` in every measured entry, both machines reported
+  `level engine state 780_SZ_Depths LoadedLevel=1 actuallyVisible=1`, and both stood 0-3 cm
+  apart at the anchor.
 
 ## 4. Not synced, lower stakes
 

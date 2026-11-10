@@ -314,10 +314,18 @@ The lines that answer most questions, verbatim:
   (both alive, kill-set diff 0, shared HP equal, zero fault lines); a 601 s run alive
   with diff 0 and one **caught** ProcessEvent fault (the process lived); a second 601 s
   run alive with **one** stray key (`FA2FC279`, dead only on the host); a third 600 s run
-  invalid because the two machines ended in different worlds. So a ten-minute session is
-  now expected to survive, kill sets converge to within one stray key, and a long session
-  is still not a guarantee. If the game vanishes, look in `<user dir>\Saved\Crashes\` —
-  `CrashContext.runtime-xml` names the faulting module, and a `WINMM` entry means the mod.
+  invalid because the two machines ended in different worlds.
+
+  **Session 20 measured the configuration that failed**: three 600 s hub runs back-to-back
+  in one pair of processes, then one 600 s run in `780_SZ_Depths`.  All four survived with
+  both processes alive, **kill-set diff 0** (77/77, 141/141, 210/210 hub; 64/64 in 780), the
+  same world and area on both machines, and **zero fault lines and zero ERR lines** in
+  every run.  The single stray key is closed (R146): it was a death observed on a copy the
+  machine did not run, which no lane carried and the per-key dump still reported.  So a
+  ten-minute session at this configuration is now expected to survive and converge; a
+  longer session is still not a guarantee.  If the game vanishes, look in
+  `<user dir>\Saved\Crashes\` — `CrashContext.runtime-xml` names the faulting module, and a
+  `WINMM` entry means the mod.
 - **Progress can still lag on the peer in a chest-dense area.** In `780_SZ_Depths` the peer
   logged about 8000 `actor-state: game writer ... (WRITE FAILED)` lines: it wrote a container
   value and read back a different one (±1 or ±2), so its write did not stick. Nothing crashed
@@ -328,20 +336,26 @@ The lines that answer most questions, verbatim:
   was recorded could be respawned by its own spawner (fixed: the death stands and the
   respawn is re-killed until a rest); a summon could mint a key that a *different* class
   also used (fixed: the class is part of the summon key); and a key with no row read as
-  HP 0 (fixed: it now reports unknown, `hp=?`).  Measured after the fixes: diff 0 in a
-  300 s and a 242 s hub soak, and one stray key (`FA2FC279`) in one 601 s run.  This does
-  not affect damage you deal or take — it affects the two screens agreeing about an enemy
-  neither of you is looking at.
-- **Boss HP bars can still show different bosses when the two machines disagree about
-  which boss exists.**  The bar itself is now one bar bound to one key (Session 19): the
-  host selects the most-damaged live boss, both machines bind their own bar to the actor
-  carrying that key, the bar rebinds when the actor changes (respawn, mirror, stream-in),
-  a dead key never holds it, and the active boss's death sends one explicit bar-off.  What
-  is still open is the *choice*: measured live, the host's active boss was `03FDBC21`
-  while the peer had no copy of it at all, and the peer's dragon `17181166` was a key the
-  host still held dead — so one screen showed a full bar and the other none.  Next: the
-  host must not select a boss the partner has no copy of (a refusal/ack on the boss lane),
-  and that alive-vs-dead disagreement must be reconciled.  This does not affect damage.
+  HP 0 (fixed: it now reports unknown, `hp=?`).  Session 20 measured the result: diff 0 at
+  77/77, 141/141 and 210/210 keys in three back-to-back 600 s hub runs, and diff 0 in a
+  600 s `780_SZ_Depths` run; the one stray key (`FA2FC279`) was a death the observing
+  machine never broadcast, now closed.  This does not affect damage you deal or take — it
+  affects the two screens agreeing about an enemy neither of you is looking at.
+- **Boss HP bars: fixed and proven (Session 20).**  The game has one bar, and the host now
+  asks the partner whether it holds a live copy before raising anything.  If the partner
+  says no (or does not answer), the host tries the next boss; if no boss is showable on
+  both machines, **no bar is raised on either**.  Liveness is the machine that runs the
+  enemy; a boss whose HP cannot be read never holds the bar.  Measured in
+  `780_SZ_Depths`: both screens named the same key (`17181166`), carried identical HP at
+  every one-second sample, and both bars went to 0 within 31 ms on the kill.  What is still
+  not expressible is a boss **phase**: the build exposes none, so that field is observed
+  and 0 otherwise, never guessed.
+- **Entering an area now moves BOTH machines (Session 20).**  `780_SZ_Depths`, `760_SZ_AUT`
+  and the rest are streamed sublevels, not worlds; entering one used to be a local action.
+  The machine that enters now announces the area, and the partner streams the same one (or
+  logs a named refusal).  Measured: the partner followed into `780_SZ_Depths` on every
+  attempt, both machines reported the level loaded and visible, and the players stood 0–3
+  cm apart at the anchor.
 - **Loot hiding** needs both machines to hold their own copy of the drop.  Session 17 measured
   that the drop often rolls on the machine that did NOT kill the enemy (`loot: drop
   90A52CF3#0 = …/Herb_Item_BP_C` appeared on the peer for a host kill), so the `loot: drop` line

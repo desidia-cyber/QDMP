@@ -4654,7 +4654,12 @@ void TravelPump(uint32_t now)
             t.seq = areaSeq;
             t.role = g_net.IsHost() ? 1 : 2;
             t.phase = wire::TP_AREA;
-            travel::CopyText(t.map, sizeof(t.map), g_rigLevelPin);
+            // `map` ALWAYS carries the UWorld, whichever phase this is: OnTravel feeds it
+            // to the divergence board before it looks at the phase, so an area name here
+            // made the board oscillate (measured: `world: partner=780_SZ_Depths` while
+            // both machines stood in Ruins_Level_00).  The AREA rides in `dest`.
+            travel::CopyText(t.map, sizeof(t.map), local);
+            travel::CopyText(t.dest, sizeof(t.dest), g_rigLevelPin);
             uint8_t body[wire::kMaxBody];
             wire::Writer w(body, sizeof(body));
             wire::WriteTravel(w, t);
@@ -4705,29 +4710,32 @@ void OnTravel(wire::Reader& r, uint32_t now)
               (t.map[0] ? t.map : "(no map)"), " seq=", dec((int)t.seq));
 
     // ---- the partner entered an AREA (R147) --------------------------------
+    // The area is in `dest`; `map` is the UWorld and was already given to the divergence
+    // board above.  Using `map` here would make the board compare a world against an area.
     if (Cfg().travel_sync && t.phase == wire::TP_AREA) {
-        if (!stream::PlausibleLevelName(t.map)) {
-            QDLOG(LOG_WARN, "travel: refused an implausible area name '", t.map, "'");
+        const char* area = t.dest;
+        if (!area[0] || !stream::PlausibleLevelName(area)) {
+            QDLOG(LOG_WARN, "travel: refused an implausible area name '", area, "'");
             return;
         }
-        if (travel::SameText(g_rigLevelPin, t.map)) {
+        if (travel::SameText(g_rigLevelPin, area)) {
             static uint32_t lastSaid = 0;
             if ((uint32_t)(now - lastSaid) > 10000) {
                 lastSaid = now;
-                QDLOG(LOG_INFO, "travel: area ", t.map, " is already pinned on this machine");
+                QDLOG(LOG_INFO, "travel: area ", area, " is already pinned on this machine");
             }
             return;
         }
         char err[160];
         bool streamed = false;
-        if (FollowHardTravel(t.map, err, sizeof(err), &streamed)) {
-            QDLOG(LOG_INFO, "travel: entered the partner's area ", t.map,
+        if (FollowHardTravel(area, err, sizeof(err), &streamed)) {
+            QDLOG(LOG_INFO, "travel: entered the partner's area ", area,
                   (streamed ? " by streaming it (loaded and SHOWN here)"
                             : " with a world switch"));
         } else {
             // A refusal is a named fact, never a silent divergence: the pair must not
             // continue believing they are in the same place.
-            QDLOG(LOG_WARN, "travel: REFUSED the partner's area ", t.map, ": ", err);
+            QDLOG(LOG_WARN, "travel: REFUSED the partner's area ", area, ": ", err);
         }
         return;
     }

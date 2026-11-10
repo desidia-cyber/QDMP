@@ -707,7 +707,10 @@ The `phase` field is what makes the handshake explicit:
   be applied again. Until then both machines hold their absolute bodies (the existing
   `MapBoard` divergence gate).
 - `4 AREA` — one machine has entered a streamed AREA (a sublevel of the persistent world:
-  `780_SZ_Depths`, `760_SZ_AUT`, …). `map` is the area name, `dest` is empty. The receiver
+  `780_SZ_Depths`, `760_SZ_AUT`, …). **`map` is still the UWorld and `dest` is the area**:
+  the divergence board consumes `map` before the phase is read, so an area name there made
+  it compare a world against an area and oscillate (measured: `world: partner=780_SZ_Depths`
+  while both machines stood in `Ruins_Level_00`). The receiver
   streams the same area through the game's own level-list mechanism (`FollowHardTravel`
   takes the sublevel path, which never loads the package as a world) and pins it; a name
   it cannot enter is a named `travel: REFUSED the partner's area …` line. This is not
