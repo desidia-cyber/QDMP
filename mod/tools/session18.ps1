@@ -220,12 +220,24 @@ function Wait-Since([int]$i, [string]$pattern, [int]$mark, [int]$seconds) {
     }
     return @()
 }
-# Writing a lever file is a plain Set-Content, but the GAME is reading the same file every
-# frame, so the write can collide with the reader and throw "Stream was not readable" (or a
-# sharing violation) for no bad reason.  Measured: one such throw aborted a soak at t+60 s
-# through the trap, which reports as a harness failure and throws away a live run.  A lever
-# instruction is idempotent, so the honest fix is to retry a few times before failing.
+function Wait-Gameplay([int]$i, [int]$seconds) {
+    $deadline = (Get-Date).AddSeconds($seconds)
+    while ((Get-Date) -lt $deadline) {
+        if (-not (Test-Alive $i)) { return $false }
+        $m = @(Get-Matches $i 'scan: local at|scan: health')
+        if ($m.Count -gt 0) { return $true }
+        Start-Sleep -Milliseconds 500
+    }
+    return $false
+}
+
 function Set-Control([int]$i, [string]$leaf, $value) {
+    # Writing a lever file is a plain Set-Content, but the GAME is reading the same file
+    # every frame, so the write can collide with the reader and throw "Stream was not
+    # readable" (or a sharing violation) for no bad reason.  Measured: one such throw
+    # aborted a soak at t+60 s through the trap, which reports as a harness failure and
+    # throws away a live run.  A lever instruction is idempotent, so the honest fix is to
+    # retry a few times before failing.
     $p = Join-Path -Path ([string]$inst[$i].Root) -ChildPath ([string]$leaf)
     for ($try = 0; $try -lt 6; $try++) {
         try {
@@ -435,6 +447,18 @@ function Start-Boot([string]$tag) {
         exit 2
     }
     Say "roles: HOST=inst$($script:H) PEER=inst$($script:P)"
+
+    # THE SAVE MUST BE LOADED BEFORE ANY LEVER TOUCHES THE WORLD.  Measured: without this
+    # wait, `qd.hard 780_SZ_Depths` fired 39 s in, while the title screen was still up, and
+    # the game answered `arrive: 780_SZ_Depths ended with no pawn to place` -- the level
+    # loaded with no GameMode to spawn a player, so every phase below silently had no pawn.
+    # `scan: local at` is the mod's own statement that it has a player to report.
+    Say "waiting for gameplay on both (up to $BootSeconds s)"
+    foreach ($i in @($script:H, $script:P)) {
+        $ok = Wait-Gameplay $i $BootSeconds
+        Say "inst${i} gameplay=$ok"
+        Verdict 'boot' $i $ok 'the machine reached gameplay (it has a pawn to report)' ''
+    }
 }
 
 function Enter-Area([int]$H, [int]$P, [string]$area, [string]$anchor, [string]$step) {
@@ -586,25 +610,33 @@ function Invoke-OneSoak([int]$H, [int]$P, [string]$step, [int]$run, [string]$anc
     Verdict $step $P ($unequal -eq 0) 'the HP of shared enemies is EQUAL on both machines' ("checked=$checked unequal=$unequal")
 
     # Warnings and errors, by class.
+    #
+    # FAULT AND ERROR ARE COUNTED SEPARATELY, and that distinction is the point of this
+    # session.  Session 17's gate was `ERR |EXCEPTION|ACCESS_VIOLATION|fatal` in one bucket,
+    # which cannot tell "the process faulted" from "a lane's own write was refused" -- and the
+    # 780 soak measured 8005 `ERR actor-state: game writer ... read back N (WRITE FAILED)`
+    # lines with ZERO ACCESS_VIOLATION and ZERO EXCEPTION in either log.  A shared gate would
+    # have reported that run as "a fault", which is the opposite of what happened.
     foreach ($i in @($H, $P)) {
-        $err = @(Get-Since $i $m0 | Where-Object { $_ -match 'ERR |EXCEPTION|ACCESS_VIOLATION|fatal' })
-        $warn = @(Get-Since $i $m0 | Where-Object { $_ -match '^.*WARN ' })
+        $fault = @(Get-Since $i $m0 | Where-Object { $_ -match 'ACCESS_VIOLATION|EXCEPTION|fatal|\bfault' })
+        $err = @(Get-Since $i $m0 | Where-Object { $_ -match ' ERR ' })
+        $warn = @(Get-Since $i $m0 | Where-Object { $_ -match ' WARN ' })
         $classes = @{}
-        foreach ($w in $warn) {
+        foreach ($w in ($warn + $err)) {
             $s = [string]$w
             $c = '(unlabelled)'
-            if ($s -match 'WARN (?:BLOCK )?([a-z\-]+)[: ]') { $c = $Matches[1] }
+            if ($s -match '(?:WARN|ERR)\s+([a-z\-]+):') { $c = $Matches[1] }
             if ($classes.ContainsKey($c)) { $classes[$c]++ } else { $classes[$c] = 1 }
         }
-        Note ("  [{0}] error/fault lines={1}" -f $i, $err.Count)
-        Note ("  [{0}] WARN lines={1} classes={2}" -f $i, $warn.Count,
+        Note ("  [{0}] FAULT lines (ACCESS_VIOLATION/EXCEPTION/fatal)={1}" -f $i, $fault.Count)
+        Note ("  [{0}] ERR lines={1}  WARN lines={2}  classes={3}" -f $i, $err.Count, $warn.Count,
               (($classes.GetEnumerator() | Sort-Object Value -Descending | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ' '))
-        foreach ($e in ($err | Select-Object -Last 4)) {
+        foreach ($e in ($fault | Select-Object -Last 4)) {
             $s = [string]$e
             if ($s.Length -gt 220) { $s = $s.Substring(0, 220) + ' ...' }
             Note "  [$i] $s"
         }
-        Verdict $step $i ($err.Count -eq 0) 'no error/fault lines during the soak' ("count=$($err.Count)")
+        Verdict $step $i ($fault.Count -eq 0) 'no FAULT lines during the soak (the crash claim)' ("faults=$($fault.Count)")
     }
 }
 
@@ -702,9 +734,9 @@ foreach ($i in @($H, $P)) {
     $alive = Test-Alive $i
     $script:verdicts.Add([pscustomobject]@{ Step = 'survival'; Inst = $i; What = 'alive at the end'; Ok = $alive; Line = '' }) | Out-Null
     Note "  $(if ($alive) { 'PASS' } else { 'FAIL' }) [$i] process alive=$alive"
-    $err = Get-Matches $i 'ERR |EXCEPTION|ACCESS_VIOLATION|fatal|\bfault'
-    Note "  [$i] error/fault lines: $($err.Count)"
-    $err | Select-Object -Last 4 | ForEach-Object {
+    $fault = Get-Matches $i 'ACCESS_VIOLATION|EXCEPTION|fatal|\bfault'
+    Note "  [$i] FAULT lines (ACCESS_VIOLATION/EXCEPTION/fatal): $($fault.Count)"
+    $fault | Select-Object -Last 4 | ForEach-Object {
         $s = [string]$_
         if ($s.Length -gt 220) { $s = $s.Substring(0, 220) + ' ...' }
         Note "  [$i] $s"

@@ -3424,3 +3424,223 @@ half is blocked on an API this build does not expose, not on a lane that has not
 The soak is the honest black mark: the shipped set is stable and does nothing, the play set does
 everything and is not yet stable for ten minutes. Two guards nearly doubled the window and the
 remaining fault is named by offset, not understood.
+
+
+## Session 18 — 2026-11-10 (the offset becomes a name, and the crash goes)
+
+This branch is `sync-fix` at `7d5ada2`. The soak phases run the **documented play set** from
+`PLAYTEST.md` section 4 with only the relay address pinned to loopback and `LogLevel=3`;
+`-ShippedDefaults` selects the control. `tools/session18.ps1` is the whole run in one process
+per phase (`-Phase smoke|soak-hub|soak-780|all`), and every phase re-seeds the pair from
+`analysis/save-backup-before-live`, so two phases cannot share a mutated save. Roles are read
+from `session established`: **host=inst1, peer=inst2**.
+
+Session 17 ended with the one number it could not fix: the play set died at 256 s, then 264 s,
+then 256 s, then 499 s, always in the same shape and always with an offset rather than a name.
+This session started by turning the offset into a name, and the name was a bug the whole
+codebase shared.
+
+### R133. THE CRASH, NAMED — three cached pointers, read after the engine freed them
+
+The build has emitted a `/MAP` since Session 7 and nobody had read it. `tools/map_lookup.py`
+turns an RVA into a symbol (the map's Address column is a section NUMBER, not a name — reading
+it as a name silently matches nothing, which is why it had never been used). With it:
+
+| report | resolves to |
+|---|---|
+| `WINMM+0x3b357` | `EnemySpawnPump` + 0x377 |
+| `WINMM+0x6f4d7` | `ScanLocalEquip` + 0xdd7 |
+| `WINMM+0x37988` | `EnemyIdentity` + 0x48 |
+| `WINMM+0x6f7f7` | `enemybw::Scheduler::Select` + 0x157 |
+
+`build.bat` now also passes `/Zi /DEBUG` and writes `winmm.pdb` (with `/OPT:REF /OPT:ICF
+/INCREMENTAL:NO` spelled out, so the release code layout is unchanged), and `session18.ps1`
+installs the PDB beside the DLL — a stack without symbols is the same list of offsets.
+
+All three are the same fault: a **cached `UObject*` dereferenced after the engine freed it.**
+`EnemySpawnPump` reads `EnemyRec::actor` over up to 1024 records every 100 ms while the hub's
+streaming frees actors underneath it; `ScanLocalEquip` walks GObjects and reads a cached pawn;
+`EnemyIdentity` reads `r->actor`'s `OwningSpawner`.
+
+**And the guard the code relied on was not a guard.** `ObjectIsLive(p)` is
+`ObjectAt(ObjInternalIndex(p)) == p`, which dereferences `p` to learn its slot — so "check
+liveness, then use" reads the same freed allocation twice:
+
+```
+0x0000000100000017   <- two 32-bit fields of a recycled heap block read as a pointer
+```
+
+`ObjectIsLive` is now `__try`-guarded and its comment says plainly that it is only valid for a
+pointer obtained this frame from the engine, never for a cached one.
+
+### R134. FIXED — one weak-handle pattern for every cached actor/object pointer
+
+`native/src/qdweak.h`. An object is identified by **where it lives in GUObjectArray**, not by
+its address: `{InternalIndex, slot SerialNumber}`, the same pair `TWeakObjectPtr` uses.
+Resolution is index-first —
+
+```
+p = table[slot];                                       // UE nulls the slot on destruction
+if (!p) return nullptr;
+if (table_serial(slot) != serial) return nullptr;      // the slot was REUSED
+return p;
+```
+
+— so a freed address is never read. `weak::Ref` converts to `void*` by **resolving** and from
+`void*` by **capturing**, which is what let one pattern replace every site instead of a
+per-site rewrite. It is exactly `sizeof(void*)`, so no record table grew.
+
+The index is stored **biased** (`slot + 1`) so an all-zero record is EMPTY. This is not
+cosmetic: these tables are static arrays and several are `memset`, and a `{slot = 0}` encoding
+would make a wiped record claim GUObjectArray slot 0 — a real slot — and silently resolve to
+some other object.
+
+Converted in one consistent pass: `g_localPawn`, `g_puppetActor`, `g_puppetClass`, `g_proxyCls`,
+`g_proxySeen`, `g_objTableWorld`, `g_enWorld`, `g_levelWorld`, `g_seqWorld`, `g_blockedNpc`,
+`g_blockedWorld`, `g_arrivePrevPawn`, `g_fxLastLocal`, `g_fxLastCopy`, `g_fxOurs`,
+`g_mirrorActor`, `g_seqActors`, `g_arcSeen`, `g_devPokeComp`, and the record fields
+`EnemyRec::actor`, `EnemyRec::spawner`, `ObjectActorRec::actor`, `LootActorRec::actor`,
+`MoverActorRec::actor`, `LootKeyMemoRec::actor`, `InvCached::obj`, `EquipScan::wvClass`,
+`ArrivalMarker::actor`, `FxCopy::actor`, `FxTrack::actor`.
+
+**A second instance of the same bug, found by the audit:** `g_devPokeComp` wrote a byte through
+a component pointer captured frames earlier (`*((uint8_t*)g_devPokeComp[i] + off) = 0`). It now
+resolves through the handle first, so a dead component is a no-op instead of a write into a
+recycled block.
+
+**Deliberately left raw, and why:** `g_enemyBaseCls`, `g_clsYes[]`, `g_clsNo[]`. These hold
+UClass objects, they live as long as the package, they are compared by pointer against classes
+read fresh from GObjects in the same pass, and the caches are dropped with the world. A weak
+handle would add a lookup to a hot inner loop and change nothing about safety.
+
+`test_weak.cpp` pins the case that crashed, as an invariant rather than an example: a handle
+captured from an object, resolved after that object was freed **and its slot reused by a
+different object**, must return null — and the fixture poisons the freed block, so a handle
+that peeked would resolve to the poison. 47 assertions, all green.
+
+### R135. THE PLAY SET NOW SURVIVES TEN MINUTES — TWICE, BACK TO BACK
+
+The soak body is Session 17's, unchanged, so the two sessions are comparable line for line.
+What is new is `-Repeat`: both runs happen inside **one** pair of processes, because a fix that
+merely moves the first crash later is only visible on the second run.
+
+```
+### soak-hub run 1 of 2
+  this soak ran the DOCUMENTED PLAY set
+  soak run 1: 603 s of 600 s, iterations=182
+  PASS [1] both processes survived the soak -- 603s
+  PASS [1] the process is alive at the end of the soak -- 603s
+  PASS [2] the process is alive at the end of the soak -- 603s
+  [1] error/fault lines=0        <- the harness's OLD combined gate, quoted as it printed
+  [2] error/fault lines=0
+
+### soak-hub run 2 of 2
+  soak run 2: 603 s of 600 s, iterations=184
+  PASS [1] both processes survived the soak -- 603s
+  PASS [1] the process is alive at the end of the soak -- 603s
+  PASS [2] the process is alive at the end of the soak -- 603s
+```
+
+(Those two `error/fault lines=0` lines are the run's own output at the time, from the combined
+gate; the 780 run below shows why that gate was wrong and what it was replaced with.)
+
+Against Session 17's 256 s → 499 s at the same configuration with the fault still present.
+Zero FAULT lines on either machine across 1206 s of play-set traffic (`ACCESS_VIOLATION=0`,
+`EXCEPTION(any)=0`). The `ERR` count in these runs was the actor-state write conflict, which is
+R136 below — it is a lane's own refusal, not a crash, and Session 18's harness reports the two
+separately for exactly that reason.
+
+### R136. THE 780 SOAK SURVIVES TOO — AND FINDS A THIRD, DIFFERENT BUG
+
+The same body after entering `780_SZ_Depths` through the game's own level list, where both
+machines hold the same authored enemy GUIDs, so the kill-set and shared-HP comparisons mean
+something there in a way they cannot in the hub:
+
+```
+PASS [1] the stream reports the area's list: level list 'SZ_Depths' added ... visible=1 loaded=1 engineLoaded=1 engineVisible=1
+PASS [1] the host stands at the anchor  dev teleport near 'SecretSword_Altar_BP' -> ... standing at -40920,13187,-15552 offset=140
+PASS [2] the peer stands at the same anchor  (same coordinates)
+soak run 1: 602 s of 600 s, iterations=175
+PASS [1] both processes survived the soak -- 602s
+PASS [2] the process is alive at the end of the soak -- 602s
+```
+
+**Faults: zero.** `ACCESS_VIOLATION=0`, `EXCEPTION(any)=0`, `fatal=0` in BOTH logs, across
+1206 s in the hub plus 602 s in 780. That is the R132 claim, measured in two worlds.
+
+**But 8005 `ERR` lines appeared on the peer, all of one class:**
+
+```
+[2] 2:16:40.234 ERR  actor-state: game writer for guid=3a159151-... value=16 read back 17 (WRITE FAILED)
+[2] 2:16:40.371 ERR  actor-state: game writer for guid=fd0297de-... value=13 read back 15 (WRITE FAILED)
+```
+
+13 distinct GUIDs, and every read-back is the written value **±1 or ±2**. That is two writers on
+one counter: the peer writes 16 and, by the time it reads back, something has written 17. The
+780 area's chests carry `GUIDs` entries and ride this lane, and the lane is `HostAuthoritative=1`
+— so a peer that writes and then reads back its own value is a lane bug, not a lost race.
+**It is the largest remaining issue and it is NOT the crash**: nothing faulted and the process
+survived. Named here so the next session starts from "why does the peer write actor state at
+all" instead of from zero.
+
+**It is also why the harness was changed.** Session 17's gate counted
+`ERR |EXCEPTION|ACCESS_VIOLATION|fatal` in one bucket, so a run with 8005 refused writes and no
+faults would have been reported as "a faulted run". `session18.ps1` now counts FAULT and ERR
+separately and asserts the crash claim (`faults=0`), reporting ERR as a number beside it.
+
+### R137. THE KILL SETS STILL DIVERGE ON A SHARED KEY — and the reason is not the crash
+
+`diff 3` in hub run 1, `diff 7` in hub run 2, `diff 34` in 780; and 1–5 shared keys with unequal
+HP. This is **not** a regression from R134 (the divergence was there in Session 17 too, where the
+dump could not even be read after the crash). It is two named lane bugs, both visible in the logs:
+
+* **A dead key comes back to life on the other machine.** `enemy record applied guid=A8E9D51C
+  hp=0.0` on the host, then `0:33:41 enemy id: spawner A8E9D51C` followed by `enemykey A8E9D51C
+  ALIVE local=1 hp=60.0` on the peer. The peer's own spawner respawned an enemy whose persisted
+  death record it already held. The death must outrank a local respawn for a shared key.
+* **A summon key collides with a different enemy's key.** One key resolves to a
+  `Boner_Gray_Archer_BP_C` at `hp=85` on the host and a `FlamingSkull_BP_C` at `hp=30` on the
+  peer. The HP "mismatch" is two different enemies on one key, which is worse than a stale HP:
+  `qdenemyid.h`'s summon key needs a class discriminator.
+* **In 780 the mismatches are mostly 0 vs the real HP**, e.g. `5D370AC1: host=909 peer=0`,
+  `AE6AFEB2: host=0 peer=240` — one machine holds the live enemy and the other a record whose HP
+  never arrived. Same family: a key without a row is read as HP 0.
+
+Note that `PLAYTEST.md` section 8 already says hub kill lists diverge **by design** (each machine
+runs its own spawner enemies) — but these are divergences *within one shared key*, which that
+note does not excuse.
+
+### Live proof, phase by phase
+
+| Claim | Verdict | Key line |
+|---|---|---|
+| The new binary loads and verifies | **PASS** | `targets: 36 byte-verified, 1 relocated-pointer, 6 runtime-validated, 0 mismatched` |
+| The substrate validates | **PASS** | `substrate: globals=1 fname=1(GameEngine) gobjects=1 objects=70103` |
+| The weak-resolved pawn is readable | **PASS** | `scan: local at 4106,-1744,140 yaw 174` |
+| `EnemyRec::actor` resolves across the churn | **PASS** | `enemykey n=627 alive=176 dead=451 killlog=324 ledger=61 mirrors=0` |
+| `ScanLocalEquip` (crash site 2) completes | **PASS** | `equip scan: RelativeScale3D@308 StaticMesh@1160 IsVisible=1` |
+| The play set survives 600 s, run 1 | **PASS** | `soak run 1: 603 s of 600 s, iterations=182` |
+| The play set survives 600 s, run 2 | **PASS** | `soak run 2: 603 s of 600 s, iterations=184` |
+| The play set survives 600 s in 780 | **PASS** | `soak run 1: 602 s of 600 s, iterations=175` |
+| Zero FAULT lines in all three soaks | **PASS** | `ACCESS_VIOLATION=0  EXCEPTION(any)=0` on both machines, all runs |
+| Kill sets diff 0 | **FAIL (open)** | `diff=3`, `diff=7`, `diff=34` — R137, three named lanes |
+| Shared-enemy HP equal | **FAIL (open)** | `HP MISMATCH 70F9CADA: host=85 peer=30`; `5D370AC1: host=909 peer=0` (R137) |
+| Peer actor-state writes land | **FAIL (open)** | 8005 × `actor-state: game writer ... (WRITE FAILED)` — R136 |
+
+### What this session settled
+
+The fault Session 17 could only name by offset is now a function, a line, and a cause, and the
+cause was not in one lane — it was the shape every lane used to hold an actor. Eleven records and
+eighteen globals cached a raw address and re-checked it with a test that reads the address it is
+checking. That is now one helper, one invariant, and a unit test that frees a slot, reuses it,
+and proves the handle refuses.
+
+The soak is no longer the black mark. 1808 s of play-set traffic (1206 s hub + 602 s 780), both
+machines alive in every run, zero faults. What is left is documented and different in kind: an
+actor-state lane where the peer's writes do not stick (R136), and three enemy-identity rules that
+let two machines disagree about one shared key (R137).
+
+**What a human tester needs to know:** the play-set configuration survived two consecutive
+ten-minute sessions in the hub and a ten-minute session in `780_SZ_Depths`. Progression may still
+lag on the peer in a chest-dense area, and an enemy's health can differ between the two screens
+for a shared key (R137).
