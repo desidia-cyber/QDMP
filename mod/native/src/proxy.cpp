@@ -3041,6 +3041,16 @@ stream::ForceBook    g_force;
 // lives here rather than beside its lever because the travel path below has to be able to
 // pin a name too (a streamed area is entered, not loaded).
 char                 g_rigLevelPin[64] = "";
+// R150a: WHEN a machine last chose an area ITSELF.  See the announcement block in
+// TravelPump: without this, one machine's stale pin re-pins the other on the 2 s timer and
+// the pair can never move past the first area (measured: the host streamed `770_SZ_Swamp`
+// at 13:53:55.575 and was pulled back to `780_SZ_Depths` 1.6 s later by the peer's echo).
+uint32_t             g_rigAreaLocalAt = 0;
+bool                 g_rigAreaAppliedFromPartner = false;
+// How long a machine defends the area it chose itself against an in-flight announcement
+// from the partner.  Long enough to cover a crossed datagram plus a stream-in, short
+// enough that a real partner-led change still lands.
+static const uint32_t kAreaLocalGraceMs = 8000;
 
 static const int kLevelVisByte = 0xBA;     // ULevelStreaming flags byte (setter bytes verify it)
 static const int kLevelVisBit  = 0x08;     // bShouldBeVisible
@@ -4373,6 +4383,40 @@ void ArrivalPump(uint32_t now);
 // Pinning the name re-asserts it every second (`DevLevelLever`), because the game's own
 // manager hides out-of-range levels on its own schedule and a hidden level's actors are not
 // in the world at all (the missing shop merchant, `analysis/21-streaming-ai-lesson.md`).
+// ---------------------------------------------------------------------------
+// Leaving an area (R150a)
+// ---------------------------------------------------------------------------
+// The pin was a one-way latch: `g_rigLevelPin` was set and never cleared, and the
+// announcement below only fires while it is non-empty.  Two consequences, both measured:
+//
+//   * "back to the hub" (no area) could never be announced at all, so a pair that had
+//     entered `780_SZ_Depths` stayed in it for the rest of the session;
+//   * a machine that left its area still had its OLD name pinned, and its 2 s
+//     re-announcement of that name pulled the partner back -- which is R150a's
+//     "a second TP_AREA entry is refused because the first area stays pinned".
+//
+// Unpinning is therefore a real operation: hide the sublevel through the same
+// `ForceLevel` the pin used, and clear the name.  It is deliberately NOT
+// `LoadMapWithLoadingScreen(Ruins_Level_00)` -- the hub is the persistent world this
+// machine never left, and hard-loading the world you are in is the fault R92 measured.
+void ClearAreaPin(const char* why)
+{
+    if (!g_rigLevelPin[0]) return;
+    char was[64];
+    lstrcpynA(was, g_rigLevelPin, sizeof(was));
+    LevelsRefresh();
+    for (int i = 0; i < g_levelN; ++i) {
+        if (!SameNameText(g_levels[i].name, was)) continue;
+        if (ObjectIsLive(g_levels[i].ls)) ForceLevel(g_levels[i], false, true);
+        break;
+    }
+    g_rigLevelPin[0] = 0;
+    g_rigAreaLocalAt = Net::Now();
+    QDLOG(LOG_INFO, "travel: left the area ", was, (why && why[0] ? " (" : ""),
+          (why && why[0] ? why : ""), (why && why[0] ? ")" : ""),
+          " -- the pin is cleared and the sublevel is hidden; the partner is told");
+}
+
 bool StreamTravelTo(const char* name)
 {
     if (!name || !name[0]) return false;
@@ -4381,6 +4425,7 @@ bool StreamTravelTo(const char* name)
         if (!SameNameText(g_levels[i].name, name)) continue;
         if (!ObjectIsLive(g_levels[i].ls)) continue;
         lstrcpynA(g_rigLevelPin, name, sizeof(g_rigLevelPin));
+        g_rigAreaLocalAt = Net::Now();
 
         // The game's own entry FIRST: push the list that carries this area onto the
         // manager's stack.  Its per-frame pass then resolves the stack, loads the level
@@ -4649,16 +4694,38 @@ void TravelPump(uint32_t now)
     // area.  The pin is therefore announced on the travel lane, and the receiver either
     // streams the same area or says why it cannot -- "the partner must follow, or travel
     // must be refused".  Re-announced while pinned so a reload or a lost datagram heals.
-    if (Cfg().travel_sync && g_rigLevelPin[0]) {
+    //
+    // THREE FIXES, ALL OF THEM R150a (Session 22):
+    //
+    //   * the announcement now runs when the pin is EMPTY as well, because "we left the
+    //     area" is a state the partner has to learn -- `dest = "-"` is the leave sentinel.
+    //     Before this, a pair that entered an area stayed in it for the rest of the run;
+    //   * a pin that came from the PARTNER is not announced back.  The old block echoed
+    //     every applied area, so two machines that disagreed re-pinned each other;
+    //   * the heal interval is 10 s, not 2 s.  A 2 s re-announcement is what let the peer's
+    //     STALE `780_SZ_Depths` override the host's fresh `770_SZ_Swamp` 1.6 s after the
+    //     host had moved there (measured 13:53:55.575 -> 13:53:57.167).
+    if (Cfg().travel_sync) {
         static char     lastArea[stream::kMaxNameLen] = "";
         static uint32_t lastAreaAt = 0;
         static uint32_t areaSeq = 0;
+        bool announce = false;
         bool areaChanged = !travel::SameText(g_rigLevelPin, lastArea);
         if (areaChanged) {
             travel::CopyText(lastArea, sizeof(lastArea), g_rigLevelPin);
-            ++areaSeq;
+            if (g_rigAreaAppliedFromPartner) {
+                // This machine did not choose it, so it must not publish it: that echo is
+                // the mechanism by which a stale pin wins.
+                g_rigAreaAppliedFromPartner = false;
+                lastAreaAt = now;
+            } else {
+                ++areaSeq;
+                announce = true;
+            }
+        } else if (g_rigLevelPin[0] && (uint32_t)(now - lastAreaAt) >= 10000) {
+            announce = true;
         }
-        if (areaChanged || (uint32_t)(now - lastAreaAt) >= 2000) {
+        if (announce) {
             wire::TravelBody t;
             memset(&t, 0, sizeof(t));
             t.seq = areaSeq;
@@ -4669,15 +4736,22 @@ void TravelPump(uint32_t now)
             // made the board oscillate (measured: `world: partner=780_SZ_Depths` while
             // both machines stood in Ruins_Level_00).  The AREA rides in `dest`.
             travel::CopyText(t.map, sizeof(t.map), local);
-            travel::CopyText(t.dest, sizeof(t.dest), g_rigLevelPin);
+            // `-` is "no area": the partner must clear its pin too.  A level name is never
+            // just a dash, so the sentinel cannot collide with content.
+            travel::CopyText(t.dest, sizeof(t.dest), g_rigLevelPin[0] ? g_rigLevelPin : "-");
             uint8_t body[wire::kMaxBody];
             wire::Writer w(body, sizeof(body));
             wire::WriteTravel(w, t);
             if (w.ok && g_net.SendReliable(wire::K_TRAVEL, body, w.len)) {
                 lastAreaAt = now;
-                if (areaChanged)
-                    QDLOG(LOG_INFO, "travel: area announcement ", g_rigLevelPin,
-                          " (the partner must enter it or refuse)");
+                if (areaChanged) {
+                    if (g_rigLevelPin[0])
+                        QDLOG(LOG_INFO, "travel: area announcement ", g_rigLevelPin,
+                              " (the partner must enter it or refuse)");
+                    else
+                        QDLOG(LOG_INFO, "travel: area announcement - (this machine left the "
+                                        "area; the partner must leave it too)");
+                }
             }
         }
     }
@@ -4724,6 +4798,16 @@ void OnTravel(wire::Reader& r, uint32_t now)
     // board above.  Using `map` here would make the board compare a world against an area.
     if (Cfg().travel_sync && t.phase == wire::TP_AREA) {
         const char* area = t.dest;
+        // `-` is the partner saying it LEFT its area (R150a).  Without this the pair could
+        // enter an area but never come back out: the pin was never cleared and an empty
+        // pin was never announced.
+        if (area[0] == '-' && area[1] == 0) {
+            if (g_rigLevelPin[0]) {
+                ClearAreaPin("the partner left it");
+                g_rigAreaAppliedFromPartner = true;
+            }
+            return;
+        }
         if (!area[0] || !stream::PlausibleLevelName(area)) {
             QDLOG(LOG_WARN, "travel: refused an implausible area name '", area, "'");
             return;
@@ -4732,7 +4816,23 @@ void OnTravel(wire::Reader& r, uint32_t now)
             static uint32_t lastSaid = 0;
             if ((uint32_t)(now - lastSaid) > 10000) {
                 lastSaid = now;
-                QDLOG(LOG_INFO, "travel: area ", area, " is already pinned on this machine");
+                QDLOG(LOG_DEBUG, "travel: area ", area, " is already pinned on this machine");
+            }
+            return;
+        }
+        // A MACHINE THAT JUST CHOSE AN AREA ITSELF KEEPS IT.  Announcements cross on the
+        // wire, so the partner's OLD area is often still in flight when the local change
+        // happens; applying it would undo the change that was just made.  Measured
+        // (Session 21): the host streamed `770_SZ_Swamp` at 13:53:55.575 and was back in
+        // `780_SZ_Depths` at 13:53:57.167, which is why the peer never followed into 770.
+        if (g_rigAreaLocalAt && (uint32_t)(now - g_rigAreaLocalAt) < kAreaLocalGraceMs) {
+            static uint32_t lastKept = 0;
+            if ((uint32_t)(now - lastKept) > 5000) {
+                lastKept = now;
+                QDLOG(LOG_INFO, "travel: kept this machine's own area ",
+                      (g_rigLevelPin[0] ? g_rigLevelPin : "-"),
+                      "; the partner's '", area, "' predates it (", dec((int)(now - g_rigAreaLocalAt)),
+                      " ms ago)");
             }
             return;
         }
@@ -4742,6 +4842,9 @@ void OnTravel(wire::Reader& r, uint32_t now)
             QDLOG(LOG_INFO, "travel: entered the partner's area ", area,
                   (streamed ? " by streaming it (loaded and SHOWN here)"
                             : " with a world switch"));
+            // Do not announce it back: the partner already knows, and an echo is how a
+            // stale pin ends up winning (see the announcement block in TravelPump).
+            g_rigAreaAppliedFromPartner = true;
         } else {
             // A refusal is a named fact, never a silent divergence: the pair must not
             // continue believing they are in the same place.
@@ -9912,6 +10015,9 @@ struct LootActorRec {
     // LootPump: the hide decision is re-derived every pass, but the Blueprint call happens at
     // most once per drop.
     bool     hideTried;
+    // This copy was CONSTRUCTED here from the partner's description (Session 22).  A mirror
+    // is never re-keyed and never suppressed: it carries the originator's key from birth.
+    bool     mirror;
 };
 LootActorRec g_lootActors[64];
 int          g_lootActorN = 0;
@@ -9973,6 +10079,117 @@ void LootKeyMemoStore(void* actor, uint32_t hash, int32_t index, const char* pat
 
 bool ActorHiddenNow(void* actor);
 bool LootActorGone(LootActorRec& r);
+void LootPendingClear();
+void LootPendingDrain();
+
+// ---------------------------------------------------------------------------
+// A DROP'S IDENTITY IS THE DEATH THAT CAUSED IT (Session 22, R129)
+// ---------------------------------------------------------------------------
+// Measured on the pair (Session 21, `780_SZ_Depths`): a host kill put all four drops on
+// the PEER, a peer kill put all three on the HOST, and in the hub one run produced three
+// keys only the host held and two only the peer held -- not one in common.  Two causes,
+// both measured:
+//
+//   * the key was derived from the item CLASS and the spawn POINT, quantized to 100 cm,
+//     and the two machines' copies of one enemy die at different centimetres and spend
+//     the coincidence ordinal a different number of times (`loot: drop 9FB8B0A8#1` on the
+//     peer for the same class and place);
+//   * one machine often spawns NO drop at all for a death it applied: the HP-write
+//     fallback ("the class has no callable damage entry") does not run the Blueprint
+//     death branch, so the roll never happens (`key 765952E9#0: host=absent peer=HELD`).
+//
+// So a drop's identity is the DEATH: `{hash(death guid), ordinal within that death}`.
+// Both machines run the same death for the same guid -- qdenemyown makes one the owner
+// and the other the follower -- so both compute the same key without negotiating.  The
+// machine that RAN the death (the originator) owns the drop and describes it on the LOOT
+// lane (item class, point, facing); a machine that holds no copy materialises it, and a
+// machine that does hold one hides its own copy instead of keeping a second item the
+// originator never rolled.  That is the killer-spawns-and-the-lane-replicates rule, and
+// it is the only version true on this content: the game's own roll runs per machine and
+// produces a DIFFERENT item on each side (measured `HealingPotion` on the host against
+// `Coin` on the peer inside one 50 ms window), so two independent rolls can never be
+// "the same drop".
+static const int      kDeathMarkMax = 48;
+static const uint32_t kDeathMarkMs  = 8000;    // a drop lands within ms of its death
+static const float    kDeathMarkCm  = 1500.0f; // the two copies die within a metre or so
+
+struct DeathMark {
+    bool     used;
+    uint32_t guid[4];
+    bool     owned;         // this machine RAN the death (it is the originator)
+    float    x, y, z;
+    uint32_t at;
+    uint16_t next;          // the next drop ordinal for this death
+};
+DeathMark g_deathMarks[kDeathMarkMax];
+int      g_deathMarkNext = 0;
+
+inline bool DeathSameGuid(const DeathMark& m, const uint32_t g[4])
+{
+    return m.guid[0] == g[0] && m.guid[1] == g[1] && m.guid[2] == g[2] && m.guid[3] == g[3];
+}
+
+// The wire's 32-bit half of a death key.  A mix rather than `guid[0]`: two enemies that
+// share their first word must not share a drop key.
+uint32_t DeathKeyHash(const uint32_t g[4])
+{
+    uint32_t h = 2166136261u;
+    for (int i = 0; i < 4; ++i) {
+        uint32_t v = g[i];
+        for (int b = 0; b < 4; ++b) {
+            h ^= (uint8_t)(v >> (b * 8));
+            h *= 16777619u;
+        }
+    }
+    return h ? h : 1u;
+}
+
+// Record a death.  Idempotent within the window for one guid: the same death reaches this
+// function from more than one place (the save-record hook and the pump that applied it),
+// and re-adding it would reset the drop ordinal and let two drops claim one key.
+void DeathMarkAdd(const uint32_t g[4], bool owned, const float* p, uint32_t now)
+{
+    for (int i = 0; i < kDeathMarkMax; ++i) {
+        DeathMark& m = g_deathMarks[i];
+        if (!m.used || !DeathSameGuid(m, g)) continue;
+        if ((uint32_t)(now - m.at) > kDeathMarkMs) break;   // stale: fall through and replace
+        m.at = now;
+        m.owned = m.owned || owned;      // an owner claim outranks a follower's
+        if (p) { m.x = p[0]; m.y = p[1]; m.z = p[2]; }
+        return;
+    }
+    DeathMark& m = g_deathMarks[g_deathMarkNext++ % kDeathMarkMax];
+    m.used  = true;
+    memcpy(m.guid, g, sizeof(m.guid));
+    m.owned = owned;
+    m.x = p ? p[0] : 0.0f;
+    m.y = p ? p[1] : 0.0f;
+    m.z = p ? p[2] : 0.0f;
+    m.at = now;
+    m.next = 0;
+}
+
+// The nearest death this drop could belong to, if any.
+DeathMark* DeathMarkNearest(const float* p, uint32_t now)
+{
+    DeathMark* best = nullptr;
+    float bestD = kDeathMarkCm;
+    for (int i = 0; i < kDeathMarkMax; ++i) {
+        DeathMark& m = g_deathMarks[i];
+        if (!m.used) continue;
+        if ((uint32_t)(now - m.at) > kDeathMarkMs) continue;
+        float dx = p[0] - m.x, dy = p[1] - m.y, dz = p[2] - m.z;
+        float d = dx * dx + dy * dy + dz * dz;
+        if (d <= bestD * bestD) { bestD = sqrtf(d); best = &m; }
+    }
+    return best;
+}
+
+void DeathMarkReset()
+{
+    for (int i = 0; i < kDeathMarkMax; ++i) g_deathMarks[i].used = false;
+    g_deathMarkNext = 0;
+}
 
 bool IsDropClass(void* cls)
 {
@@ -10087,6 +10304,175 @@ bool LootKeyOf(void* actor, uint32_t* hash, int32_t* index, char* path, int cap)
     return DerivedLootKey(actor, hash, index, path, cap);
 }
 
+// ---------------------------------------------------------------------------
+// The originator's description of a drop, and the construction of the partner's copy
+// ---------------------------------------------------------------------------
+// One entry per drop the ledger holds.  It is NOT part of `loot::Entry` on purpose: the
+// ledger stays a pure, tested container of identities and tombstones, and the spawn half
+// only ever feeds a machine that has to build an actor.
+static const int kLootSpawnMax = loot::kMaxDrops;
+
+struct LootSpawnDesc {
+    bool     used;
+    uint32_t hash;
+    int32_t  index;
+    uint32_t at;                 // when the originator recorded it
+    float    x, y, z, yaw;
+    char     item[loot::kMaxPathLen];
+};
+LootSpawnDesc g_lootSpawn[kLootSpawnMax];
+
+void LootSpawnClear()
+{
+    for (int i = 0; i < kLootSpawnMax; ++i) g_lootSpawn[i].used = false;
+}
+
+void LootSpawnPut(uint32_t hash, int32_t index, const char* item,
+                  const float* p, float yaw, uint32_t now)
+{
+    for (int i = 0; i < kLootSpawnMax; ++i) {
+        if (!g_lootSpawn[i].used) continue;
+        if (g_lootSpawn[i].hash != hash || g_lootSpawn[i].index != index) continue;
+        g_lootSpawn[i].at = now;
+        g_lootSpawn[i].x = p[0]; g_lootSpawn[i].y = p[1]; g_lootSpawn[i].z = p[2];
+        g_lootSpawn[i].yaw = yaw;
+        loot::CopyPath(g_lootSpawn[i].item, loot::kMaxPathLen, item);
+        return;
+    }
+    for (int i = 0; i < kLootSpawnMax; ++i) {
+        if (g_lootSpawn[i].used) continue;
+        LootSpawnDesc& d = g_lootSpawn[i];
+        d.used = true;
+        d.hash = hash;
+        d.index = index;
+        d.at = now;
+        d.x = p[0]; d.y = p[1]; d.z = p[2];
+        d.yaw = yaw;
+        loot::CopyPath(d.item, loot::kMaxPathLen, item);
+        return;
+    }
+}
+
+const LootSpawnDesc* LootSpawnGet(uint32_t hash, int32_t index)
+{
+    for (int i = 0; i < kLootSpawnMax; ++i) {
+        if (!g_lootSpawn[i].used) continue;
+        if (g_lootSpawn[i].hash == hash && g_lootSpawn[i].index == index) return &g_lootSpawn[i];
+    }
+    return nullptr;
+}
+
+// The follower's own rolls that were hidden because the partner owns that drop.  At file
+// scope, not in the scan: `__try` cannot live in a function that needs object unwinding.
+weak::Ref g_lootSuppressed[16];
+int       g_lootSuppressedN = 0;
+
+void LootSuppressionReset()
+{
+    for (int i = 0; i < g_lootSuppressedN; ++i) g_lootSuppressed[i] = weak::Ref();
+    g_lootSuppressedN = 0;
+}
+
+bool LootSuppressionSeen(void* a)
+{
+    for (int i = 0; i < g_lootSuppressedN; ++i) if (g_lootSuppressed[i] == a) return true;
+    return false;
+}
+
+void LootSuppressionAdd(void* a)
+{
+    if (g_lootSuppressedN < (int)(sizeof(g_lootSuppressed) / sizeof(g_lootSuppressed[0])))
+        g_lootSuppressed[g_lootSuppressedN++] = a;
+}
+
+LootActorRec* LootActorFind(uint32_t hash, int32_t index)
+{
+    for (int i = 0; i < g_lootActorN; ++i) {
+        if (g_lootActors[i].source_hash == hash && g_lootActors[i].drop_index == index)
+            return &g_lootActors[i];
+    }
+    return nullptr;
+}
+
+// A drop's `item_path` is the item's CLASS asset (`/Game/.../Herb_Item_BP.Herb_Item_BP_C`),
+// which is what `avatar::AssetPath` produces for the class; the object name after the dot
+// is the class's own name in the FName table, so `FindClassByName` resolves it back.  The
+// class is already loaded on both machines (it is in the same cooked package), so this
+// costs one GObjects walk per distinct drop, not per pass.
+void* LootClassFromPath(const char* path)
+{
+    char nm[96];
+    if (!ObjectNameFromPath(path, nm, sizeof(nm))) return nullptr;
+    void* c = FindClassByName(nm);
+    if (c && IsClassObject(c)) return c;
+    return nullptr;
+}
+
+// Construct the partner's copy of a drop.  The same engine pair the enemy mirrors use
+// (`BeginDeferredSpawning`/`FinishSpawning`), but with none of the enemy-only properties:
+// a pickup must be able to tick, be visible and be overlapped, because that overlap is how
+// the game grants the item.
+void* SpawnPickupActor(void* cls, float x, float y, float z, float yawRad)
+{
+    void* world = GWorldPtr();
+    if (!world || !cls) return nullptr;
+    FnBeginDeferred begin = (FnBeginDeferred)Ptr<void*>(0x028D3C90u);
+    FnFinishSpawning finish = (FnFinishSpawning)Ptr<void*>(0x028DCD50u);
+    avatar::Xf xf = avatar::XfIdentity();
+    xf.qz = sinf(yawRad * 0.5f); xf.qw = cosf(yawRad * 0.5f);
+    xf.tx = x; xf.ty = y; xf.tz = z;
+    alignas(16) uint8_t buf[48];
+    memcpy(buf, &xf, 48);
+    __try {
+        void* actor = begin(world, cls, buf, 1, nullptr);
+        if (!actor) return nullptr;
+        void* out = finish(actor, buf);
+        return out ? out : actor;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        QDLOG(LOG_WARN, "loot: the engine's spawn pair faulted on the drop's class (exception "
+                        "0x", hex32((uint32_t)GetExceptionCode()), "); the drop exists on the "
+                        "partner only until the next world change");
+        return nullptr;
+    }
+}
+
+// Materialise the partner's copy of a drop this machine does not hold.  Returns the actor,
+// already registered under the ORIGINATOR's key so the scan can never mint a second identity
+// for it and a tombstone finds it.
+void* LootMirrorSpawn(uint32_t hash, int32_t index, const char* item,
+                      const float* p, float yaw)
+{
+    if (LootActorFind(hash, index)) return nullptr;
+    if (g_lootActorN >= (int)(sizeof(g_lootActors) / sizeof(g_lootActors[0]))) return nullptr;
+    void* cls = LootClassFromPath(item);
+    if (!cls) {
+        static uint32_t lastWarn = 0;
+        uint32_t now = Net::Now();
+        if (now - lastWarn > 5000) {
+            lastWarn = now;
+            QDLOG(LOG_WARN, "loot: the partner's drop names an item class this machine cannot "
+                            "resolve ('", item, "'); no copy is constructed");
+        }
+        return nullptr;
+    }
+    void* actor = SpawnPickupActor(cls, p[0], p[1], p[2], yaw);
+    if (!actor) return nullptr;
+    LootActorRec& r = g_lootActors[g_lootActorN++];
+    r.actor = actor;
+    r.source_hash = hash;
+    r.drop_index = index;
+    loot::CopyPath(r.path, loot::kMaxPathLen, item);
+    r.gone = false;
+    r.visible = !ActorHiddenNow(actor);
+    r.hideTried = false;
+    r.mirror = true;
+    QDLOG(LOG_INFO, "loot: constructed the partner's drop ", hex32(hash), "#", dec((int)index),
+          " = ", item, " at ", flt(p[0], 0), ",", flt(p[1], 0), ",", flt(p[2], 0),
+          " (the originator ran the death)");
+    return actor;
+}
+
 void LootScanStep()
 {
     static void* actorBase = nullptr;
@@ -10109,23 +10495,65 @@ void LootScanStep()
         for (int i = 0; i < g_lootActorN; ++i) if (g_lootActors[i].actor == o) { have = true; break; }
         if (have) continue;
         if (g_lootActorN >= (int)(sizeof(g_lootActors) / sizeof(g_lootActors[0]))) continue;
+        ActorXform x;
+        if (!ReadActorXform(o, &x)) continue;
+        const float p[3] = {x.px, x.py, x.pz};
+        const uint32_t nowMs = Net::Now();
+
+        // A drop belongs to a DEATH, and only the machine that RAN that death decides what
+        // the drop is (Session 22, R129).  The follower's own roll is a different item at a
+        // different centimetre, so keeping it would put two items on the floor for one kill
+        // and no key would ever match.  It is hidden here and replaced by the originator's
+        // description, which arrives on the LOOT lane and is built by LootMirrorSpawn.
+        DeathMark* mark = DeathMarkNearest(p, nowMs);
+        if (mark && !mark->owned) {
+            // `SetActorHidden` is a reflective Blueprint call, and this scan re-examines
+            // every drop actor on every sweep; hide each suppressed copy ONCE.
+            if (!LootSuppressionSeen(o)) {
+                LootSuppressionAdd(o);
+                __try { SetActorHidden(o, true); } __except (EXCEPTION_EXECUTE_HANDLER) {}
+                static uint32_t lastSup = 0;
+                if (nowMs - lastSup > 3000) {
+                    lastSup = nowMs;
+                    QDLOG(LOG_INFO, "loot: suppressed this machine's own roll for a death the "
+                                    "partner ran (the partner's copy is the drop; keeping ours "
+                                    "would make a second one)");
+                }
+            }
+            continue;
+        }
+
         uint32_t hash = 0;
         int32_t index = 0;
         char path[loot::kMaxPathLen];
-        bool haveKey = false;
-        // The derived identity reads the actor's class, transform and (on the game-key
-        // path) its properties.  A world load frees those between the class test above and
-        // this read; the same containment as the class test keeps one dying actor from
-        // taking the session down on the frame the world is torn down.
-        __try { haveKey = LootKeyOf(o, &hash, &index, path, sizeof(path)); }
-        __except (EXCEPTION_EXECUTE_HANDLER) { haveKey = false; }
-        if (!haveKey) {
-            if (!g_lootSaidUnrepresented) {
-                g_lootSaidUnrepresented = true;
-                QDLOG(LOG_WARN, "loot: a drop actor exposes no source/item property; "
-                                "it is not represented on the wire (first occurrence)");
+        if (mark) {
+            // THE ORIGINATOR.  The identity is the death, so the item class only names the
+            // thing; `next` numbers the drops of this one death in spawn order, which both
+            // machines run identically because both run the same Blueprint death.
+            char cls[192];
+            if (avatar::AssetPath(ObjClass(o), cls, sizeof(cls)) <= 0 || !cls[0]) continue;
+            hash = DeathKeyHash(mark->guid);
+            index = (int32_t)mark->next;
+            if (mark->next != 0xFFFF) ++mark->next;
+            loot::CopyPath(path, sizeof(path), cls);
+            LootSpawnPut(hash, index, path, p, x.yaw, nowMs);
+        } else {
+            bool haveKey = false;
+            // The derived identity reads the actor's class, transform and (on the game-key
+            // path) its properties.  A world load frees those between the class test above
+            // and this read; the same containment as the class test keeps one dying actor
+            // from taking the session down on the frame the world is torn down.
+            __try { haveKey = LootKeyOf(o, &hash, &index, path, sizeof(path)); }
+            __except (EXCEPTION_EXECUTE_HANDLER) { haveKey = false; }
+            if (!haveKey) {
+                if (!g_lootSaidUnrepresented) {
+                    g_lootSaidUnrepresented = true;
+                    QDLOG(LOG_WARN, "loot: a drop actor exposes no source/item property and no "
+                                    "recent death; it is not represented on the wire (first "
+                                    "occurrence)");
+                }
+                continue;
             }
-            continue;
         }
         LootActorRec& r = g_lootActors[g_lootActorN++];
         r.actor = o;
@@ -10134,8 +10562,11 @@ void LootScanStep()
         CopyText2(r.path, sizeof(r.path), path);
         r.gone = false;
         r.visible = !ActorHiddenNow(o);
+        r.hideTried = false;
+        r.mirror = false;
         if (g_loot.Offer(hash, index, path)) {
-            QDLOG(LOG_INFO, "loot: drop ", hex32(hash), "#", dec((int)index), " = ", path);
+            QDLOG(LOG_INFO, "loot: drop ", hex32(hash), "#", dec((int)index), " = ", path,
+                  (mark ? " (the death this machine ran)" : ""));
             g_lootRev = g_loot.Revision();
         }
     }
@@ -10198,10 +10629,15 @@ void LootPump(uint32_t now)
         g_loot.Reset();          // drops are per-world; a stale tombstone is not a fact
         g_lootOrd.Reset();
         LootKeyMemoReset();
+        LootSpawnClear();
+        DeathMarkReset();
+        LootPendingClear();
+        LootSuppressionReset();
         g_lootActorN = 0;
         g_lootScanCursor = 0;
     }
     LootScanStep();
+    LootPendingDrain();
 
     // A recorded drop that has gone from the world was picked up here.  "Gone" is the
     // measured pair of facts (LootActorGone), not just the object slot: a pickup that
@@ -10278,10 +10714,23 @@ void LootPump(uint32_t now)
     wire::LootEntry out[wire::kLootMax];
     int m = 0;
     for (int i = cursor; i < n && m < wire::kLootMax; ++i) {
+        memset(&out[m], 0, sizeof(out[m]));
         out[m].source_hash = e[i].source_hash;
         out[m].drop_index = e[i].drop_index;
         out[m].taken = e[i].taken ? 1 : 0;
         CopyText2(out[m].item_path, sizeof(out[m].item_path), e[i].item_path);
+        // The spawn half: a drop this machine RAN that has not been taken carries the point
+        // it stands on, so a machine that holds no copy can build the same one.  A
+        // tombstone carries no point -- there is nothing left to build.
+        if (!e[i].taken) {
+            if (const LootSpawnDesc* d = LootSpawnGet(e[i].source_hash, e[i].drop_index)) {
+                out[m].flags = wire::LF_SPAWN;
+                out[m].px = wire::QuantizePos(d->x);
+                out[m].py = wire::QuantizePos(d->y);
+                out[m].pz = wire::QuantizePos(d->z);
+                out[m].yaw = wire::QuantizeAngle(d->yaw * 57.29577951f);
+            }
+        }
         ++m;
     }
     uint8_t body[wire::kMaxBody];
@@ -10301,6 +10750,59 @@ void LootPump(uint32_t now)
     }
 }
 
+// Drops the partner described that this machine has to build.  Queued from the inbound
+// body and drained in LootPump: constructing an actor belongs on the tick, not inside a
+// datagram's dispatch, and the enemy mirror lane is queued for the same reason.
+static const int kLootPendingMax = 16;
+struct LootPendingSpawn {
+    bool     used;
+    uint32_t hash;
+    int32_t  index;
+    float    x, y, z, yaw;
+    char     item[loot::kMaxPathLen];
+};
+LootPendingSpawn g_lootPending[kLootPendingMax];
+
+void LootPendingPut(uint32_t hash, int32_t index, const char* item,
+                    float x, float y, float z, float yaw)
+{
+    int slot = -1;
+    for (int i = 0; i < kLootPendingMax; ++i) {
+        if (g_lootPending[i].used &&
+            g_lootPending[i].hash == hash && g_lootPending[i].index == index) return;
+        if (!g_lootPending[i].used && slot < 0) slot = i;
+    }
+    if (slot < 0) return;                    // the 1 Hz pass re-offers it
+    LootPendingSpawn& s = g_lootPending[slot];
+    s.used = true;
+    s.hash = hash;
+    s.index = index;
+    s.x = x; s.y = y; s.z = z; s.yaw = yaw;
+    loot::CopyPath(s.item, loot::kMaxPathLen, item);
+}
+
+void LootPendingClear()
+{
+    for (int i = 0; i < kLootPendingMax; ++i) g_lootPending[i].used = false;
+}
+
+void LootPendingDrain()
+{
+    int budget = 2;                          // a spawn is not free; two per tick is plenty
+    for (int i = 0; i < kLootPendingMax && budget > 0; ++i) {
+        LootPendingSpawn& s = g_lootPending[i];
+        if (!s.used) continue;
+        if (g_loot.IsTaken(s.hash, s.index)) { s.used = false; continue; }
+        if (LootActorFind(s.hash, s.index)) { s.used = false; continue; }
+        s.used = false;
+        --budget;
+        const float p[3] = {s.x, s.y, s.z};
+        if (!LootMirrorSpawn(s.hash, s.index, s.item, p, s.yaw))
+            QDLOG(LOG_WARN, "loot: could not construct the partner's drop ", hex32(s.hash), "#",
+                  dec((int)s.index), " (", s.item, ")");
+    }
+}
+
 void OnLoot(wire::Reader& r)
 {
     static wire::LootBody b;
@@ -10316,6 +10818,20 @@ void OnLoot(wire::Reader& r)
         ++n;
     }
     int changed = g_loot.Merge(in, n, !g_net.IsHost());   // the peer's inbound body is the host's
+    // THE SPAWN HALF.  An entry the partner says it OWNS and has not been taken is a drop
+    // this machine may be missing entirely (its own copy of the death ran through the
+    // HP-write fallback and never rolled).  Queue the build; LootPendingDrain constructs it
+    // under the partner's key.
+    for (int i = 0; i < b.n; ++i) {
+        const wire::LootEntry& e = b.entry[i];
+        if (e.taken || !(e.flags & wire::LF_SPAWN) || !e.item_path[0]) continue;
+        if (g_loot.IsTaken(e.source_hash, e.drop_index)) continue;
+        if (LootActorFind(e.source_hash, e.drop_index)) continue;
+        LootPendingPut(e.source_hash, e.drop_index, e.item_path,
+                       wire::DequantizePos(e.px), wire::DequantizePos(e.py),
+                       wire::DequantizePos(e.pz),
+                       wire::DequantizeAngle(e.yaw) * 0.01745329252f);
+    }
     if (changed) {
         g_lootRev = g_loot.Revision();
         for (int i = 0; i < b.n; ++i)
@@ -14350,6 +14866,34 @@ void DevTravelLever(uint32_t now)
 char     g_devHardApplied[64] = "";
 uint32_t g_devHardPoll = 0;
 
+// THE REAL UWORLDS (R150b).  `analysis/02-pak-inventory.md` sec 5: this game is ONE
+// persistent world (`Ruins_Level_00`) plus streamed area sublevels; the only separate
+// `UWorld`s are the intro, the cutscenes and the title screen.  `FollowHardTravel` tries
+// the streaming path first, so every name the rig had tried from the hub
+// (`990_B33sment`, `900_SipehaWorld`, `Ruins_Level_00`) was either a sublevel of the
+// world it stood in or that world itself -- which is exactly R150b: "no hard travel is
+// reachable through `qd.hard`".  These are the names that take
+// `LoadMapWithLoadingScreen`, all four proven live in Session 10 R88.
+// `qd.hard auto` picks the first one this machine is not already in and keeps going until
+// one really loads, so the rig no longer has to know a name.
+static const char* const kRealWorlds[] = {
+    "997_FinalZoneCutscene",
+    "998_QueenCutscenes",
+    "999_SipehaCutscenes",
+    "Intro_Level_00",
+    "Intro_Level_01",
+};
+static const int kRealWorldN = (int)(sizeof(kRealWorlds) / sizeof(kRealWorlds[0]));
+
+bool DevHardTravelled(const char* map, bool* streamedOut, char* err, int errCap, bool* okOut)
+{
+    bool streamed = false;
+    bool ok = FollowHardTravel(map, err, errCap, &streamed);
+    if (streamedOut) *streamedOut = streamed;
+    if (okOut) *okOut = ok;
+    return ok && !streamed;
+}
+
 void DevHardLever(uint32_t now)
 {
     static char path[MAX_PATH];
@@ -14380,7 +14924,34 @@ void DevHardLever(uint32_t now)
 
     char err[160];
     bool streamed = false;
-    bool ok = FollowHardTravel(map, err, sizeof(err), &streamed);
+    bool ok = false;
+    if (strcmp(map, "auto") == 0) {
+        // R150b: walk the real-world list until one actually LOADS as a world.  A name this
+        // world streams answers `streamed=1`, which is not a hard travel and is skipped.
+        char here[stream::kMaxNameLen];
+        LocalMapName(here, sizeof(here));
+        for (int i = 0; i < kRealWorldN; ++i) {
+            if (here[0] && SameNameText(kRealWorlds[i], here)) continue;
+            err[0] = 0;
+            bool real = DevHardTravelled(kRealWorlds[i], &streamed, err, sizeof(err), &ok);
+            if (real) {
+                QDLOG(LOG_INFO, "rig: hard lever -> auto picked ", kRealWorlds[i],
+                      " (a real UWorld: this world does not stream it)");
+                return;
+            }
+            if (streamed) {
+                QDLOG(LOG_INFO, "rig: hard lever -> auto skipped ", kRealWorlds[i],
+                      " (this world streams it -- not a hard travel)");
+            } else {
+                QDLOG(LOG_WARN, "rig: hard lever -> auto tried ", kRealWorlds[i],
+                      " LoadMapWithLoadingScreen ran=0: ", err);
+            }
+        }
+        QDLOG(LOG_WARN, "rig: hard lever -> auto found no real UWorld this machine is not "
+                        "already in (of ", dec(kRealWorldN), " candidates)");
+        return;
+    }
+    ok = FollowHardTravel(map, err, sizeof(err), &streamed);
     if (streamed)
         QDLOG(LOG_INFO, "rig: hard lever -> ", map, " streamed=1 (a sublevel of this world: "
               "loaded and SHOWN; the game enters these by streaming, never by loading the "
@@ -14959,7 +15530,16 @@ void DevLevelLever(uint32_t now)
     if (DevRigText("QDCOOP_TEST_LEVEL", "qd.level", name, sizeof(name))) {
         if (strcmp(name, g_devLevelApplied) != 0) {
             lstrcpynA(g_devLevelApplied, name, sizeof(g_devLevelApplied));
-            lstrcpynA(g_rigLevelPin, name, sizeof(g_rigLevelPin));
+            if (name[0] == '-' && name[1] == 0) {
+                // R150a: the rig can LEAVE an area.  Without this a session could enter one
+                // and never come back, because the pin had no way to be cleared.
+                ClearAreaPin("the rig asked to leave it");
+                return;
+            }
+            if (name[0]) {
+                lstrcpynA(g_rigLevelPin, name, sizeof(g_rigLevelPin));
+                g_rigAreaLocalAt = Net::Now();
+            }
         }
     }
     if (!g_rigLevelPin[0]) return;
@@ -16281,6 +16861,25 @@ void HK_StoreEnemySaveState(void* self, const QdGuid* guid, float respawn, float
     // GUID (D5 closed live: a kill is hp 0).
     if (!Cfg().enemy_sync || !guid || !g_net.Connected()) return;
     uint32_t g[4] = {guid->a, guid->b, guid->c, guid->d};
+    // A DEATH IS THE EVENT A DROP IS KEYED ON (Session 22, R129).  This hook is the one
+    // funnel every death reaches -- the owner's real kill, the follower's applied death and
+    // the death sweep -- so it is where the mark is written.  It is placed BEFORE the mirror
+    // refusal: a follower's copy of the partner's enemy dies through the same path, and that
+    // death must be marked as NOT owned, because it is the partner's drop to describe.
+    // `hp < 0` is "this spawner has no record at level load", not a death (see below).
+    if (hp == 0.0f) {
+        float p[3] = {0.0f, 0.0f, 0.0f};
+        bool have = false;
+        __try {
+            if (EnemyRec* rr = EnemyByGuid(g)) {
+                ActorXform x;
+                if (rr->actor && ReadActorXform(rr->actor, &x)) {
+                    p[0] = x.px; p[1] = x.py; p[2] = x.pz; have = true;
+                }
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) { have = false; }
+        DeathMarkAdd(g, g_own.Running(g), have ? p : nullptr, Net::Now());
+    }
     // A MIRRORED copy must never reach the save.  The key belongs to an enemy the other
     // machine runs, and that machine's own spawner records the persistence fact; writing it
     // here would put a death into THIS machine's save for an enemy it never ran, and a rest
