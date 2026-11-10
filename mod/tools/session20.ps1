@@ -688,8 +688,12 @@ function Invoke-BossFight([int]$H, [int]$P, [string]$step) {
     Set-Control $H 'qd.hit' '400'
     Set-Control $P 'qd.hit' '400'
     $samples = New-Object System.Collections.Generic.List[object]
-    $sameKey = 0; $paired = 0; $maxDelta = 0; $lastSame = $null
-    $clearedH = $null; $clearedP = $null
+    $paired = 0
+    # The boss the fight is ABOUT: the same-key sample with the LOWEST HP.  The bar may
+    # legitimately move to another full boss once this one dies, so "the last same-key
+    # sample" is the wrong answer -- measured: it reported the post-kill key and made a
+    # successful dragon fight look like a bar that never left full HP.
+    $fightKey = $null; $fightMin = 70000; $missing = 0
     $deadline = (Get-Date).AddSeconds($BossSeconds)
     $i = 0
     while ((Get-Date) -lt $deadline) {
@@ -706,47 +710,62 @@ function Invoke-BossFight([int]$H, [int]$P, [string]$step) {
         }
         $samples.Add($row) | Out-Null
         Note ("  sample t+{0,4}s: host={1}/{2}  peer={3}/{4}" -f $row.T, $row.HostKey, $row.HostHp, $row.PeerKey, $row.PeerHp)
-        if ($bh -and $bp -and $bh.Hp -ge 0 -and $bp.Hp -ge 0) {
+        if ($bh -and $bp -and $bh.Hp -ge 0 -and $bp.Hp -ge 0 -and $bh.Key -eq $bp.Key) {
             $paired++
-            if ($bh.Key -eq $bp.Key) {
-                $sameKey++
-                $d = [math]::Abs($bh.Hp - $bp.Hp)
-                if ($d -gt $maxDelta) { $maxDelta = $d }
-                $lastSame = $row
-            }
+            if ($row.HostHp -lt $fightMin) { $fightMin = $row.HostHp; $fightKey = $row.HostKey }
+            if ($fightKey -eq $row.HostKey) { $missing = 0 } else { $missing++ }
+            # The bar moved to another boss after this one died: the fight is over.
+            if ($fightMin -lt 60000 -and $missing -ge 3) { break }
         }
-        if (-not $clearedH) {
-            $c = @($winH | Where-Object { $_ -match 'boss: bar key=.*hp=0 \(lowered' })
-            if ($c.Count -gt 0) { $clearedH = [string]$c[-1] }
-        }
-        if (-not $clearedP) {
-            $c = @($winP | Where-Object { $_ -match 'boss: bar key=.*hp=0 \(lowered|boss: bar lowered for key=' })
-            if ($c.Count -gt 0) { $clearedP = [string]$c[-1] }
-        }
-        if ($clearedH -and $clearedP) { break }
     }
     Set-Control $H 'qd.hit' $null
     Set-Control $P 'qd.hit' $null
+    Start-Sleep -Seconds 3
 
     $csv = Join-Path $outDir 'boss-fight.csv'
     $samples | Export-Csv -LiteralPath $csv -NoTypeInformation
-    Note ("  boss fight samples: {0} rows, {1} paired, {2} same key, max hp delta {3}; csv={4}" -f
-          $samples.Count, $paired, $sameKey, $maxDelta, $csv)
+    $fightRows = @($samples | Where-Object {
+        $_.HostKey -eq $fightKey -and $_.PeerKey -eq $fightKey -and
+        $_.HostHp -ge 0 -and $_.PeerHp -ge 0 })
+    $maxDelta = 0
+    foreach ($s in $fightRows) {
+        $d = [math]::Abs($s.HostHp - $s.PeerHp)
+        if ($d -gt $maxDelta) { $maxDelta = $d }
+    }
+    Note ("  boss fight samples: {0} rows, {1} paired, fight key={2} ({3} rows), max hp delta {4}; csv={5}" -f
+          $samples.Count, $paired, $(if ($fightKey) { $fightKey } else { '-' }), $fightRows.Count, $maxDelta, $csv)
 
-    $barH = @(Get-Since $H $mS | Where-Object { $_ -match 'boss: (bar key=|active key ->|peer (ACK|NACK)|asked the partner|no answer for)' })
-    $barP = @(Get-Since $P $mS | Where-Object { $_ -match 'boss: (bar key=|peer answer|follower raised|bar lowered|no local copy)' })
+    $winH = @(Get-Since $H $mS)
+    $winP = @(Get-Since $P $mS)
+    $clearedH = $null; $clearedP = $null
+    if ($fightKey) {
+        $c = @($winH | Where-Object { $_ -match ('boss: (sent bar off|bar key=) key=' + $fightKey + '.*hp=0') })
+        if ($c.Count -eq 0) {
+            # The last read may be -1 because the actor was gone before it could be read.
+            # The bar-off is still the event; the number is reported, never invented.
+            $c = @($winH | Where-Object { $_ -match ('boss: sent bar off key=' + $fightKey) })
+        }
+        if ($c.Count -gt 0) { $clearedH = [string]$c[0] }
+        $d = @($winP | Where-Object {
+            $_ -match ('boss: bar lowered for key=' + $fightKey) -or
+            $_ -match ('boss: bar key=' + $fightKey + '.*hp=0 \(lowered') })
+        if ($d.Count -gt 0) { $clearedP = [string]$d[0] }
+    }
+
     Note '  selection negotiation, host:'
-    $barH | Select-Object -First 8 | ForEach-Object { Note ("    " + ([string]$_).Trim()) }
+    $winH | Where-Object { $_ -match 'boss: (active key ->|peer (ACK|NACK)|asked the partner|no answer for|sent bar off)' } |
+        Select-Object -Last 8 | ForEach-Object { Note ("    " + ([string]$_).Trim()) }
     Note '  selection negotiation, peer:'
-    $barP | Select-Object -First 8 | ForEach-Object { Note ("    " + ([string]$_).Trim()) }
+    $winP | Where-Object { $_ -match 'boss: (peer answer|follower raised|bar lowered|no local copy)' } |
+        Select-Object -Last 8 | ForEach-Object { Note ("    " + ([string]$_).Trim()) }
 
     Verdict $step $H ($paired -gt 0) 'a boss bar sample exists on BOTH machines' ("paired=$paired")
-    Verdict $step $H ($sameKey -gt 0 -and $lastSame -ne $null) 'both bars name the SAME key' $(if ($lastSame) { ("key=" + $lastSame.HostKey) } else { '' })
-    if ($lastSame) {
-        Verdict $step $H ($maxDelta -le 1200) 'the bars carry the SAME HP (within 1200/65535)' ("max delta=$maxDelta")
+    Verdict $step $H ($null -ne $fightKey) 'both bars name the SAME key during the fight' $(if ($fightKey) { ("key=" + $fightKey + " samples=" + $fightRows.Count) } else { '' })
+    if ($fightKey) {
+        Verdict $step $H ($maxDelta -le 1200) 'the bars carry the SAME HP (within 1200/65535)' ("max delta=$maxDelta over $($fightRows.Count) samples")
     }
-    Verdict $step $H ($null -ne $clearedH) 'the host bar reached 0 on the kill' $(if ($clearedH) { $clearedH.Trim() } else { '' })
-    Verdict $step $P ($null -ne $clearedP) 'the peer bar reached 0 on the kill' $(if ($clearedP) { $clearedP.Trim() } else { '' })
+    Verdict $step $H ($clearedH -ne $null -and $clearedH -match 'hp=0') 'the host bar reached 0 on the kill' $(if ($clearedH) { $clearedH.Trim() } else { '' })
+    Verdict $step $P ($clearedP -ne $null -and $clearedP -match 'hp=0') 'the peer bar reached 0 on the kill' $(if ($clearedP) { $clearedP.Trim() } else { '' })
     if ($clearedH -and $clearedP) {
         $dh = Get-LineMs $clearedH; $dp = Get-LineMs $clearedP
         $gap = [math]::Abs($dh - $dp)

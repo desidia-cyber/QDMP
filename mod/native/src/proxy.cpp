@@ -7864,9 +7864,15 @@ void BossPump(uint32_t now)
             for (int i = 0; i < g_enN; ++i)
                 if (g_en[i].haveGuid && BossKeyIs(g_en[i].guid)) { ci = i; break; }
             if (ci < 0 || !alive[ci]) {
-                if (!BossSend(g_bossKey, wire::kBossBarOff, 0, 0))
+                // The last value the shared bar carried: 0 is a kill, -1 is "gone before
+                // it could be read".  A scenario compares this number on both machines.
+                float lhp = 0, lmx = 0;
+                bool lhave = ci >= 0 && ObjectIsLive(g_en[ci].actor) &&
+                             EnemyHp(g_en[ci].actor, &lhp, &lmx) && lmx > 0.0f;
+                int lf = lhave ? (int)enemy::HpFrac(lhp, lmx) : -1;
+                if (!BossSend(g_bossKey, wire::kBossBarOff, 0, (uint16_t)(lf < 0 ? 0 : lf)))
                     QDLOG(LOG_WARN, "boss: bar-off send failed for key=", hex32(g_bossKey[0]));
-                QDLOG(LOG_INFO, "boss: sent bar off key=", hex32(g_bossKey[0]),
+                QDLOG(LOG_INFO, "boss: sent bar off key=", hex32(g_bossKey[0]), " hp=", dec(lf),
                       " (the active boss died or left)");
                 BossKeyClear(now);
             }
@@ -8128,7 +8134,7 @@ void OnBoss(wire::Reader& r, uint32_t now)
         g_bossKeyMs = now;
         g_bossAck.OnAck(b.guid);      // remembered, so this machine's own samples are stable
     } else {
-        QDLOG(LOG_INFO, "boss: bar lowered for key=", hex32(b.guid[0]),
+        QDLOG(LOG_INFO, "boss: bar lowered for key=", hex32(b.guid[0]), " hp=", dec((int)b.hp),
               " (the partner says the key is dead or gone)");
         BossKeyClear(now);
     }
@@ -8905,7 +8911,10 @@ void EnemyDetectDeaths()
     int vanished = 0;
     for (int i = 0; i < g_enN; ++i) {
         EnemyRec& r = g_en[i];
-        if (!r.haveGuid || r.mirror || !g_own.Running(r.guid)) continue;
+        // Every non-mirror record, not only the ones this machine runs: a follower's copy
+        // can vanish in the same unload, and counting only owned records made a mass
+        // disappearance look like one kill per owned record.
+        if (!r.haveGuid || r.mirror) continue;
         if (r.seenAlive && !ObjectIsLive(r.actor)) ++vanished;
     }
     static const int kMassGoneMax = 8;
@@ -8956,9 +8965,11 @@ void EnemyDetectDeaths()
         } else {
             // R140: an actor that vanished before it was ever seen alive is a record whose
             // spawner never activated, or a level unload -- not a corpse.  Same rule the
-            // HP-0 branch already used.  R146: a follower's copy vanishing is a stream-out,
-            // not a kill, so "actor gone" stays an owner-only signal.
-            if (!r.seenAlive || !ownerHere) continue;
+            // HP-0 branch already used.  R146: an actor this machine SAW ALIVE and now
+            // cannot find is a death it can state even when it does not run the enemy; the
+            // mass-disappearance guard above is what keeps a level unload from being read
+            // as N kills.
+            if (!r.seenAlive) continue;
             dead = true;
             why = "actor gone";
         }
@@ -14320,7 +14331,7 @@ uint32_t g_devEnemiesPoll = 0;
 
 void DevEnemyDumpNow(uint32_t now)
 {
-    int alive = 0, dead = 0;
+    int alive = 0, dead = 0, stale = 0;
     int ledgerLive = g_remoteDead.Count(now);
     int killLive = g_killLog.Count();
     int mirrorLive = 0;
@@ -14343,11 +14354,17 @@ void DevEnemyDumpNow(uint32_t now)
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             live = false; gameDead = false; haveHp = false; cls[0] = 0;
         }
+        // R146: a record with no live actor that this machine NEVER saw alive has no state
+        // to report -- its spawner never activated, or a level unload took it.  Printing
+        // it as DEAD made the diff claim a death the lane never broadcast, which is the
+        // shape of the FA2FC279 residual.  A death this machine knows by key (its own kill
+        // log or the partner's ledger) still wins: that IS a state.
+        bool knownDead = g_remoteDead.Has(r.guid, now) || KillLogHas(r.guid);
+        if (!live && !r.seenAlive && !knownDead) { ++stale; continue; }
         // R137: HP <= 0 counts only for a copy seen alive; a spawner's inactive enemy at
         // HP 0 and an un-converged follower are not corpses.  See qdenemy.h.
         bool isDead = enemy::EffectivelyDead(live, gameDead, haveHp, rhp, r.seenAlive);
-        if (!isDead && g_remoteDead.Has(r.guid, now)) isDead = true;
-        if (!isDead && KillLogHas(r.guid)) isDead = true;
+        if (!isDead && knownDead) isDead = true;
         // R137: a key with no readable row (or one never seen alive) has UNKNOWN HP, not
         // HP 0.  Printing "?" keeps the shared-HP comparison from failing on a value this
         // machine does not have -- measured in 780 as `host=909 peer=0`, `host=0 peer=240`.
@@ -14389,7 +14406,7 @@ void DevEnemyDumpNow(uint32_t now)
     }
     QDLOG(LOG_INFO, "enemykey n=", dec(alive + dead), " alive=", dec(alive), " dead=",
           dec(dead), " killlog=", dec(killLive), " ledger=", dec(ledgerLive),
-          " mirrors=", dec(g_mirrorN));
+          " mirrors=", dec(g_mirrorN), " stale=", dec(stale));
     // The mirror lane's own state, so a run can tell "the peer constructed nothing" from
     // "the peer constructed it and lost it again".
     int pendingN = 0;
