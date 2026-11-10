@@ -117,6 +117,22 @@ inline bool HpKnown(bool live, bool haveHp, bool seenAlive, float hp)
 }
 
 // ---------------------------------------------------------------------------
+// -- a key answers with ONE body, or it is not comparable (Session 23, R151) ---------
+// `peers` is the number of OTHER records on this machine that answer for the same key (the
+// per-key dump prints it).  A non-zero number is the defect Session 22 recorded as a standing
+// HP divergence: one host dump held a CONSTRUCTED copy at 140 and the real enemy at 30 under
+// `530F7FD0`, and a reader that keeps one line per key compares whichever came last.
+//
+// The repair is one live body per key (`DropMirrorForKey` / `HoldsOwnLiveBody` in the module).
+// While that does not hold, the honest answer is to compare nothing: two bodies with one key
+// and different MaxHP sit at the same FRACTION, so the fraction-based convergence has nothing
+// to move and the absolute difference is permanent -- it is not a desync and must not be
+// reported as one.  The rule lives beside `HpKnown` so the dump, the harness and the tests
+// cannot disagree about what "comparable" means.
+inline bool HpComparable(bool aliveBoth, int peersHere, int peersThere)
+{
+    return aliveBoth && peersHere <= 0 && peersThere <= 0;
+}
 // WHY a key's HP could not be read (Session 21)
 // ---------------------------------------------------------------------------
 // Session 20's hub runs 2 and 3 ended with one shared live key printing `hp=?` on both

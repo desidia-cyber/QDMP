@@ -425,6 +425,52 @@ inline int LogFunctionsOf(void* owner, const char* label, int limit)
     return total;
 }
 
+// The same list for a CLASS, and for the whole SuperStruct chain (Session 23, R129).
+// A BP child can declare ZERO UFUNCTIONs while the entry it answers lives on its parent --
+// measured in Session 22: `Herb_Item_BP_C has 0 UFUNCTIONs`.  Reflecting on the child alone
+// therefore reports "there is no surface", which is false: it is the ancestor's surface,
+// and `Call::Run(childObj)` dispatches it with the child as `this`.  The chain is what makes
+// the next step a name instead of a guess.
+inline int LogFunctionsOfClass(const void* cls, const char* label, int limit)
+{
+    if (!cls) return 0;
+    int total = 0, shown = 0;
+    __try {
+        const void* f = *(const void* const*)((const uint8_t*)cls + kStructChildren);
+        int guard = 0;
+        while (f && guard++ < 4096 && LooksLikeUObject(f) && ObjOuter(f) == cls) {
+            if (IsFunctionObject(f)) {
+                ++total;
+                if (shown < limit) {
+                    char nm[96];
+                    if (FNameToString(ObjNameRaw(f), nm, sizeof(nm)) > 0) {
+                        QDLOG(LOG_INFO, "    fn ", label, ".", nm);
+                        ++shown;
+                    }
+                }
+            }
+            f = *(const void* const*)((const uint8_t*)f + kUFieldNext);
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    QDLOG(LOG_INFO, "  ", label, " has ", dec(total), " UFUNCTIONs (showing ", dec(shown), ")");
+    return total;
+}
+
+inline int LogFunctionChain(void* owner, int limit)
+{
+    if (!owner) return 0;
+    int total = 0;
+    const void* cls = ObjClass(owner);
+    for (int d = 0; cls && d < 16; ++d, cls = SuperOf(cls)) {
+        char cn[96];
+        if (FNameToString(ObjNameRaw(cls), cn, sizeof(cn)) <= 0) break;
+        total += LogFunctionsOfClass(cls, cn, limit);
+        if (NameEquals(cn, "Actor") || NameEquals(cn, "Object")) break;
+    }
+    return total;
+}
 // ---------------------------------------------------------------------------
 // Argument packing
 // ---------------------------------------------------------------------------

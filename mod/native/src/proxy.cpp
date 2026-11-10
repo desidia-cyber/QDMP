@@ -100,6 +100,26 @@ using namespace qd;
 // the others rather than keeping keys that no longer mean anything.
 void ObjectsReset();
 
+// Session 23: the world-teardown reset.  Defined once, late (every table it drops is
+// declared between here and there), and called from two places: the hard-load path BEFORE
+// it asks the engine for a load, and the tick's world-change block.  `why` is the log line's
+// reason, kept as a string because "the module dropped the world on the way into a load"
+// and "the world changed under the module" are different events in a log.
+void WorldTeardownReset(uint32_t now, const char* why);
+
+// Defined late (they are part of the world-teardown block), used by the enemy scan below.
+void HideWorldActor(void* a);
+void ForgetMirror(void* actor);
+
+// TRUE between "we asked the engine for a hard load" and "the world pointer changed".
+// While it is set the module does nothing at all: the old world is being destroyed inside
+// the engine's own tick, and every cached actor in the module names an object that is about
+// to be freed.  Session 22's peer died in exactly that window (see the dump analysis in the
+// Session 23 log).
+bool  g_worldTransition = false;
+void* g_worldTransitionWorld = nullptr;
+uint32_t g_worldTransitionAt = 0;
+
 struct Hook {
     const char* name;
     uint32_t    rva;
@@ -1212,6 +1232,54 @@ bool SetActorXform(void* actor, float px, float py, float pz, float yaw)
         return false;
     }
     return true;
+}
+
+// A MOVE the engine can see (Session 23, R129).  `SetActorXform` above asks for
+// `bSweep=false, bTeleport=true`, which is right for a puppet being put where the partner
+// says it is -- and wrong for anything that has to notice an overlap, because the engine
+// generates `BeginOverlap` from a MOVE and not from a teleport.  This is the same call with
+// the flags the other way round: the capsule travels through whatever stands between the two
+// points and the engine dispatches the overlap events on the way.
+bool SetActorXformSweep(void* actor, float px, float py, float pz, float yaw)
+{
+    if (!actor || !g_actor.sigSetLocRot.valid || !ObjectCallable(actor)) return false;
+    ArgList a;
+    a.AddVector("NewLocation", px, py, pz);
+    a.AddRotator("NewRotation", 0.0f, yaw, 0.0f);
+    a.AddBool("bSweep", true);
+    a.AddBool("bTeleport", false);
+    char err[128];
+    if (!Invoke(actor, g_actor.fnSetLocRot, g_actor.sigSetLocRot, a, nullptr, err, sizeof(err))) {
+        static uint32_t lastLog = 0;
+        uint32_t now = Net::Now();
+        if (now - lastLog > 5000) { lastLog = now; QDLOG(LOG_WARN, "sweep move failed: ", err); }
+        return false;
+    }
+    return true;
+}
+
+// Walk the pawn to a point in steps of at most `kSweepStepCm`, sweeping each one.  One long
+// sweep is a single MoveComponent and a thin pickup volume can sit entirely between the two
+// samples the engine takes; a short step per call keeps every centimetre of the path a move
+// the engine can see.
+bool SweepPawnTo(void* pawn, float px, float py, float pz, float yaw)
+{
+    ActorXform me = {};
+    if (!ReadActorXform(pawn, &me)) return false;
+    float dx = px - me.px, dy = py - me.py, dz = pz - me.pz;
+    float dist = sqrtf(dx * dx + dy * dy + dz * dz);
+    const float kStep = 100.0f;
+    int steps = (int)(dist / kStep) + 1;
+    if (steps > 24) steps = 24;
+    bool ok = true;
+    for (int s = 1; s <= steps; ++s) {
+        float f = (float)s / (float)steps;
+        if (!SetActorXformSweep(pawn, me.px + dx * f, me.py + dy * f, me.pz + dz * f, yaw)) {
+            ok = false;
+            break;
+        }
+    }
+    return ok;
 }
 
 // ---------------------------------------------------------------------------
@@ -4563,7 +4631,22 @@ bool FollowHardTravel(const char* map, char* err, int errCap, bool* streamed = n
     // deaths arrived in the frame between the teardown starting and this function
     // returning, which is why the window has to be opened first.
     g_enDeathSuppressUntil = Net::Now() + 20000;
-    if (!c.Run(gi)) { ErrSet(err, errCap, "LoadMapWithLoadingScreen faulted", ""); return false; }
+    // AND THE MODULE GOES QUIET FOR THE TEARDOWN (Session 23).  The comment above already
+    // knew that the world is destroyed INSIDE this call; what it did not do was stop the
+    // module from holding objects that live in it.  Session 22's peer died on the fourth
+    // load in one process, inside the engine's own container destroy, with the module's
+    // ProcessEvent forward in the stack: a world-scoped handle that outlived the world it
+    // named.  So every handle is dropped here, before the call, and HK_Tick stays at the
+    // gate until the world pointer moves.
+    g_worldTransitionWorld = GWorldPtr();
+    g_worldTransitionAt = Net::Now();
+    g_worldTransition = true;
+    WorldTeardownReset(Net::Now(), "a hard load was requested; the old world is going");
+    if (!c.Run(gi)) {
+        g_worldTransition = false;
+        ErrSet(err, errCap, "LoadMapWithLoadingScreen faulted", "");
+        return false;
+    }
     return true;
 }
 
@@ -5479,6 +5562,50 @@ void AdoptOnRespawn(EnemyRec& r);
 // Incremental discovery: 16 K object slots per frame, so a full pass costs no single
 // frame more than a fraction of a millisecond.  At the end of a pass, records whose
 // actor was not seen are dropped.
+// ---------------------------------------------------------------------------
+// ONE KEY, ONE LIVE BODY (Session 23, R151)
+// ---------------------------------------------------------------------------
+// A key that names two live records on one machine is a key the two machines can disagree
+// about without either of them being wrong: the per-key dump prints one line per RECORD, and
+// a reader that keeps one line per key compares whichever record came last.  MEASURED in
+// Session 22's second run, in one host dump:
+//
+//     enemykey 530F7FD0 ALIVE local=1 src=0 hp=140.0 mirrored=1 cls=BookBug_Magic_BP_C
+//     enemykey 530F7FD0 ALIVE local=1 src=0 hp=30.0              cls=BookBug_Magic_BP_C
+//
+// -- the same spawner GUID held by a CONSTRUCTED copy at full HP and by the real enemy at
+// 30.  The harness reported `host=140 peer=30` for three segments and it was recorded as a
+// standing HP divergence; it was never a divergence of one enemy's health.
+//
+// The real enemy always wins.  It is the body the game simulates, the one whose death the
+// loot key is derived from, and the one the partner's rows are about.
+static bool HoldsOwnLiveBody(const uint32_t g[4])
+{
+    for (int i = 0; i < g_enN; ++i) {
+        EnemyRec& r = g_en[i];
+        if (r.mirror || !r.haveGuid || !enemy::SameGuid(r.guid, g)) continue;
+        if (r.actor && ObjectIsLive(r.actor)) return true;
+    }
+    return false;
+}
+
+// A real enemy the scan just met takes its key back from a copy the module constructed
+// before that enemy was scanned.  Hide the copy and forget it; the real actor stays.
+void DropMirrorForKey(const uint32_t g[4], void* keep)
+{
+    for (int i = 0; i < g_enN; ++i) {
+        EnemyRec& r = g_en[i];
+        if (!r.mirror || !r.haveGuid || !enemy::SameGuid(r.guid, g)) continue;
+        if (r.actor == keep) continue;
+        QDLOG(LOG_INFO, "enemy mirror: the real enemy for guid=", hex32(g[0]),
+              " is on this machine too; dropping the constructed copy (one key, one body)");
+        HideWorldActor(r.actor);
+        ForgetMirror(r.actor);
+        g_en[i] = g_en[--g_enN];
+        --i;
+    }
+}
+
 void EnemyScanStep()
 {
     if (!g_enemyBaseCls) {
@@ -5535,6 +5662,10 @@ void EnemyScanStep()
         // into a summon (qdenemyid.h's rule).
         void* sp = ObjPropC(o, "OwningSpawner");
         if (!r->haveGuid || sp != r->spawner) EnemyIdentity(*r);
+        // ONE KEY, ONE LIVE BODY.  A copy constructed earlier for this key (the partner
+        // described the enemy before this machine's scan met it) goes now that the real
+        // enemy is here.  See DropMirrorForKey for the measured 140-against-30 this removes.
+        if (r->haveGuid && !r->mirror) DropMirrorForKey(r->guid, r->actor);
         // The key is only known now, so this is the first moment the partner's row for
         // the same enemy can be consulted.  Once per actor.  Only a SPAWNER-keyed enemy
         // can be adopted: that is the only identity the partner's own spawner re-creates
@@ -7403,7 +7534,19 @@ void OnEnemySpawn(wire::Reader& r, uint32_t now)
         }
         return;
     }
-    // EVERY body that reaches this point is announced, so "the peer constructed nothing"
+    // ONE KEY, ONE LIVE BODY (Session 23, R151).  `EnemyByGuid` answers with the FIRST
+    // record for the key, so a key whose first record is a swept corpse still looks
+    // unheld and a second body gets constructed beside a live enemy.  Ask about every
+    // record instead, and refuse: a key this machine already runs needs no copy.
+    if (HoldsOwnLiveBody(s.guid)) {
+        static uint32_t lastOwn = 0;
+        if (now - lastOwn > 5000) {
+            lastOwn = now;
+            QDLOG(LOG_INFO, "enemy spawn: guid=", hex32(s.guid[0]),
+                  " is ALREADY a live enemy on this machine; no second body is constructed");
+        }
+        return;
+    }    // EVERY body that reaches this point is announced, so "the peer constructed nothing"
     // is never a silence -- the guards below each say which one refused, and a run can
     // grep one line per receipt.
     QDLOG(LOG_INFO, "enemy spawn: received guid=", hex32(s.guid[0]), " class=", s.path,
@@ -13442,8 +13585,17 @@ void DevTeleportToTarget(const char* sub, float yawOverride, bool haveYaw)
             if (above < 0.0f) above = 0.0f;
             if (above > 3000.0f) above = 3000.0f;
         }
-        bool ok = SetActorXform(g_localPawn, t.px + dx * off, t.py + dy * off, t.pz + above,
-                                haveYaw ? yawOverride : me.yaw);
+        // WHICH MOVE.  A non-zero offset is "stand this far away", and a teleport is right for it.
+        // Offset 0 is "be ON the drop", and THAT move has to be a real move: the runner steps
+        // out to `off` first and back to 0, and a teleport back produces no BeginOverlap --
+        // measured four ways in Sessions 21-22 (a park, three out-and-back teleports, a fall
+        // from 3 m, and the class' own Pickup verb).  So the return leg is a SWEEP through
+        // the volume, in 100 cm steps.
+        const float yawUse = haveYaw ? yawOverride : me.yaw;
+        const bool sweepMove = (off <= 0.5f);
+        bool ok = sweepMove
+            ? SweepPawnTo(g_localPawn, t.px, t.py, t.pz + above, yawUse)
+            : SetActorXform(g_localPawn, t.px + dx * off, t.py + dy * off, t.pz + above, yawUse);
         void* pc = LocalController();
         int ro = pc ? FindPropertyOffsetIn(ObjClass(pc), "ControlRotation") : -1;
         if (ro >= 0) { float* r = (float*)((uint8_t*)pc + ro); r[0] = 0.0f; r[1] = me.yaw; }
@@ -15037,6 +15189,19 @@ void DevHardLever(uint32_t now)
 char     g_devEnemiesApplied[64] = "";
 uint32_t g_devEnemiesPoll = 0;
 
+// How many OTHER records answer for this key on this machine.  0 is the healthy answer; a
+// number above 0 means the dump is printing one of several bodies under one name, which is
+// the Session 22 defect (`DropMirrorForKey` / `HoldsOwnLiveBody` are the repair, this is the
+// evidence that it happened).
+int EnemyKeyPeerCount(const uint32_t g[4], const EnemyRec* self)
+{
+    int n = 0;
+    for (int i = 0; i < g_enN; ++i) {
+        if (&g_en[i] == self) continue;
+        if (g_en[i].haveGuid && enemy::SameGuid(g_en[i].guid, g)) ++n;
+    }
+    return n;
+}
 void DevEnemyDumpNow(uint32_t now)
 {
     int alive = 0, dead = 0, stale = 0, gone = 0;
@@ -15133,7 +15298,7 @@ void DevEnemyDumpNow(uint32_t now)
         if (!isDead && hpKnown) {
             QDLOG(LOG_INFO, "enemykey ", hex32(r.guid[0]), " ALIVE local=",
                   dec(g_own.Running(r.guid) ? 1 : 0), " src=", dec((int)r.src),
-                  " hp=", flt(rhp, 1),
+                  " hp=", flt(rhp, 1), " mx=", flt(rmx, 1), " peers=", dec(EnemyKeyPeerCount(r.guid, &r)),
                   (r.mirror ? " mirrored=1" : ""),
                   " cls=", (cls[0] ? cls : "?"));
             ++alive;
@@ -15816,7 +15981,14 @@ void DevEFuncLever(uint32_t now)
         if (!a) QDLOG(LOG_WARN, "rig: efunc -- no live actor matches '", target, "'");
         else {
             QDLOG(LOG_INFO, "rig: efunc -> ", nm, " dist=", flt(d, 0), " target=", target);
-            LogFunctionsOf(a, nm, 80);
+            int ownFns = LogFunctionsOf(a, nm, 80);
+            if (ownFns == 0) {
+                // Zero on the class itself is exactly where Session 22 stopped.  The pickup
+                // entry a child answers can be declared by an ancestor, so list the chain.
+                QDLOG(LOG_INFO, "rig: efunc -- ", nm,
+                      " declares none of its own; walking SuperStruct");
+                LogFunctionChain(a, 40);
+            }
         }
     }
 
@@ -16790,6 +16962,127 @@ void MenuDilationPump(uint32_t now)
     }
 }
 
+// ---------------------------------------------------------------------------
+// World teardown: drop everything that names an object in the world being replaced
+// ---------------------------------------------------------------------------
+// A hard map load (`LoadMapWithLoadingScreen`) tears the UWorld down and builds a new one.
+// Every pointer, handle and board the module keeps about the old world -- an enemy record's
+// actor and spawner, a copy it constructed, the partner's body, a loot drop it built, an fx
+// copy, a cached class or property offset -- becomes a number that names nothing, and the
+// engine's own destruction pass runs BEFORE the module's next tick.  Session 22 lost the
+// peer exactly there, on the fourth load in one process: the fault was a reference-count
+// decrement inside the engine's container destroy, on a store that had already been freed.
+//
+// So the module drops all of it, twice:
+//   * BEFORE it asks for a hard load, so nothing of ours is alive during the teardown;
+//   * and again when the world pointer actually changes, because a load can also be started
+//     by the game itself and the pointer is the only signal the module gets.
+//
+// The rule for actors stays R140's: HIDE, never destroy a gameplay Blueprint from native
+// code.  A native destroy leaves the engine's own object list inconsistent, and that is the
+// same family of fault as the one this reset exists to avoid.
+void HideWorldActor(void* a)
+{
+    if (!a) return;
+    // `ObjectCallable` decides from the object's slot flags in GUObjectArray, not from the
+    // object, so an actor the engine has already flagged for destruction is refused rather
+    // than dereferenced.
+    if (!ObjectCallable(a)) return;
+    __try { SetActorHidden(a, true); } __except (EXCEPTION_EXECUTE_HANDLER) {}
+}
+
+void WorldTeardownReset(uint32_t now, const char* why)
+{
+    QDLOG(LOG_INFO, "world: dropping every world-scoped handle (", why, ")");
+
+    // 1. The actors of ours that are standing in the world being torn down.
+    HideWorldActor(g_puppetActor);
+    for (int i = 0; i < g_enN; ++i) if (g_en[i].mirror) HideWorldActor(g_en[i].actor);
+    for (int i = 0; i < g_lootActorN; ++i) if (g_lootActors[i].mirror) HideWorldActor(g_lootActors[i].actor);
+    for (int i = 0; i < 16; ++i) HideWorldActor(g_fxCopies[i].actor);
+
+    // 2. The partner's body.  The pump clears this only while it still holds the actor, so a
+    //    body whose actor has already gone kept raw component pointers; clear it either way.
+    g_puppetActor = nullptr;
+    memset(&g_body, 0, sizeof(g_body));
+    g_puppet.LocalWorldChanged(now);
+
+    // 3. The enemy lane: records, ownership, kill log, per-class caches, boss key and bar.
+    for (int i = 0; i < g_enN; ++i) BossBarSet(g_en[i], false, now);
+    BossKeyClear(now);
+    g_bossAck.Reset();
+    g_enN = 0;
+    g_enCursor = 0;
+    g_enWorld = nullptr;
+    g_own.Reset();
+    g_hostView.Reset();
+    g_killLog.Clear();
+    g_remoteDead.Reset();
+    g_deadCursor = 0;
+    g_dmgGate.Reset();
+    g_detailBw.Reset();
+    g_summonOrd.Reset();
+    g_proxySeen = nullptr;
+    g_proxyCls.Reset();
+    g_proxyClsTried = false;
+    g_propCacheN = 0;
+    g_tgtApiN = 0;
+    g_clsYesN = g_clsNoN = 0;
+    g_enemyBaseCls = nullptr;
+    ForgetAllMirrors();
+    ClearPendingMirrors();
+
+    // 4. Loot: the ledger names deaths in the old world and the actor table names drops.
+    g_loot.Reset();
+    g_lootOrd.Reset();
+    LootKeyMemoReset();
+    LootSpawnClear();
+    DeathMarkReset();
+    LootPendingClear();
+    g_lootActorN = 0;
+    g_lootScanCursor = 0;
+
+    // 5. The other actor-scoped lanes.
+    g_moverActorN = 0;
+    g_moverScanCursor = 0;
+    g_movers.Reset();
+    g_seqActorN = 0;
+    g_seqWorld = nullptr;
+    g_blockedNpc = nullptr;
+    g_blockedWorld = nullptr;
+    // Actor/object state: the SNAPSHOT names actors, so it goes.  The save-scoped halves
+    // (flags, inventory) do not: a hard load keeps the same save, and the host re-applies
+    // them on arrival.
+    g_actorPub.Reset();
+    g_pendingActors.Reset();
+    g_actorMirror.Reset();
+    g_actorNow.Clear();
+    ObjectsReset();
+    // The level table is world-scoped, and it is only refreshed by StreamPump, which is off
+    // unless StreamUnion=1.  Reset it here so a world change cannot leave old names behind.
+    LevelsReset();
+    g_levelWorld = nullptr;
+
+    // 6. Pure boards that cannot span a world.
+    g_cutscene.Reset();
+    g_talk.Reset();
+    g_dialogue.Reset();
+    g_suspend.Reset();
+
+    // 7. Raw caches.  `g_fxRing` was the last array of raw actor pointers in the module and
+    //    it was re-read through `ObjectIsLive` -- the read-and-then-test idiom qdweak.h was
+    //    written to remove.
+    for (int i = 0; i < 64; ++i) g_fxRing[i] = nullptr;
+    for (int i = 0; i < 32; ++i) g_fxOurs[i] = nullptr;
+    g_fxOursN = 0;
+    g_fxCopyNext = 0;
+    g_fxLastLocal = nullptr;
+    g_fxLastCopy = nullptr;
+    for (int i = 0; i < 16; ++i) g_arcSeen[i] = nullptr;
+    g_arcSeenN = 0;
+    g_localAct.last = nullptr;
+}
+
 bool HK_Tick(void* engineLoop)
 {
     // Forward first and keep the answer: the pump below must never change the engine's
@@ -16802,6 +17095,21 @@ bool HK_Tick(void* engineLoop)
 
     // Substrate first: nothing below is safe until the engine globals are proven.
     if (!g_substrateReady && !ValidateSubstrateOnGameThread()) return keepRunning;
+
+    // THE TRANSITION GATE (Session 23).  A hard load returns while the world it replaces is
+    // still standing; the engine destroys that world on a later frame, inside its own tick.
+    // Between the request and the observed world change every cached actor names an object
+    // that may already be freed, so the module stays completely quiet until the pointer
+    // moves.  The 20 s bound is the escape hatch for a load the engine refused: a machine
+    // that silently stopped pumping would look exactly like the hang this project keeps
+    // chasing, and a refusal has to end in the module resuming, not in a dead session.
+    if (g_worldTransition) {
+        void* t = GWorldPtr();
+        if (t == g_worldTransitionWorld && (int32_t)(now - g_worldTransitionAt) <= 20000) {
+            return keepRunning;
+        }
+        g_worldTransition = false;
+    }
 
     // Inbound first: applying before sending means a round trip completes in one
     // frame rather than two.
@@ -16830,7 +17138,17 @@ bool HK_Tick(void* engineLoop)
         static void* pawnWorld = nullptr;
         // The pawn from the world being replaced is remembered BEFORE it is dropped: the
         // arrival board treats it as "not the arriving player" (see g_arrivePrevPawn).
-        if (w != pawnWorld) { pawnWorld = w; g_arrivePrevPawn = g_localPawn; g_localPawn = nullptr; }
+        if (w != pawnWorld) {
+            pawnWorld = w;
+            g_arrivePrevPawn = g_localPawn;
+            g_localPawn = nullptr;
+            // THE ONE PLACE A WORLD CHANGE IS ACTED ON (Session 23).  Every lane has its own
+            // `lastWorld` snapshot and they all reset themselves, but they do it one pump at
+            // a time and only if their switch is on -- the level table, for one, is reset
+            // only by StreamPump, which is off unless StreamUnion=1.  This drops all of it,
+            // once, before anything below can read an actor from the world that just went.
+            WorldTeardownReset(now, "the world pointer changed");
+        }
         void* p = LocalPawn();
         if (p == g_puppetActor) p = nullptr;
         g_localPawn = p;
@@ -16931,6 +17249,12 @@ bool HK_SetGamePaused(void* worldContext, bool paused)
 void HK_StoreEnemySaveState(void* self, const QdGuid* guid, float respawn, float hp)
 {
     if (g_oStoreEnemy) g_oStoreEnemy(self, guid, respawn, hp);
+
+    // The engine's own write above stands; the module's bookkeeping does not run while a
+    // world it asked to replace is being torn down.  Every record it would read names an
+    // actor in that world (Session 23: this hook is the one the death funnel reaches, and it
+    // reads `EnemyByGuid(...)->actor`).
+    if (g_worldTransition) return;
 
     // The record is {bValid, RespawnTime, RemainingHP} keyed by the spawner's authored
     // GUID (D5 closed live: a kill is hp 0).
