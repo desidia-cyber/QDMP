@@ -4397,7 +4397,7 @@ down**, so a `?` in a dump is information about the engine, not about sync.
   `LogLevel=3` produces ~92 k lines per machine and the end checks did not finish.
 ---
 
-## Session 22 - 2026-11-11 (the drop's identity, the area that can be left, and a hard travel that lands)
+## Session 22 - 2026-11-10 (the drop's identity, the area that can be left, and a hard travel that lands)
 
 This branch is `t3/fix-loot-desync-area-soak`, reset to `sync-fix`'s Session 21 merge
 (`1229c40`).  The body is `tools/session22.ps1`, one phase per invocation: `probe` (lever
@@ -4548,8 +4548,8 @@ Two full sessions were run.  Both are reported, including the one that failed.
 
 | run | wall / soak body | both alive | kill diff | shared HP | world / area | area changes | hard travel | faults / ERR |
 |---|---|---|---|---|---|---|---|---|
-| `s22-all` #1 (16:53 to 17:37) | 2049 s / 1581 s | **yes** | **0** (60 / 60) | 68 compared, **4 unequal** (worst 600 HP) | `Ruins_Level_00` / `770_SZ_Swamp`, both | **2 of 2** | 1 out + 1 back | 0 / 0 |
-| `s22-all` #2 (16:53 to 17:59) | 1941 s / 1496 s | **NO - the peer crashed** | not measured | 101 compared, 3 unequal (all `530F7FD0`, 140 vs 30) | host `Ruins_Level_00`, peer dead in `997_FinalZoneCutscene` | **2 of 2** | 1 out + 1 back | 0 / 0 |
+| `s22-all` #1 (soak phase) | 2049 s / 1581 s | **yes** | **0** (60 / 60) | 68 compared, **4 unequal** (worst 600 HP) | `Ruins_Level_00` / `770_SZ_Swamp`, both | **2 of 2** | 1 out + 1 back | 0 / 0 |
+| `s22-all` #2 (soak phase) | 1941 s / 1496 s | **NO - the peer crashed** | not measured | 101 compared, 3 unequal (all `530F7FD0`, 140 vs 30) | host `Ruins_Level_00`, peer dead in `997_FinalZoneCutscene` | **2 of 2** | 1 out + 1 back | 0 / 0 |
 
 Segment detail, run #2 (the longer of the two on the final build):
 
