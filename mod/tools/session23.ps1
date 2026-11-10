@@ -281,6 +281,10 @@ function Invoke-GoDrop([int]$i, [string]$hash, [int]$index, [int]$near = 400, [i
     Set-Control $i 'qd.near' ([string]$near)
     $spec = 'near:drop:' + $hash + ':' + $index
     if ($above -gt 0) { $spec += (':z' + [string]$above) }
+    # :on is the only way to ask for offset 0: qd.near treats a non-positive value as "not
+    # set" and substitutes its default, so every on-drop leg the old harness asked for stood
+    # 140 cm away (measured nine times in one take: standing offset=140 move=teleport).
+    if ($On) { $spec += ':on' }
     Set-Control $i 'qd.tp' ($spec + ',' + $yaw + '#' + (Get-Date -Format 'HHmmssfff'))
 }
 function Invoke-PressDrop([int]$i, [string]$hash, [int]$index) {
@@ -658,7 +662,7 @@ function Invoke-TakeDrop([int]$i, [string]$hash, [int]$index) {
         $mark = Get-Mark $i
         Invoke-GoDrop $i $hash $index $out
         Start-Sleep -Seconds 2
-        Invoke-GoDrop $i $hash $index 0
+        Invoke-GoDrop $i $hash $index 0 -On
         if (@(Wait-Since $i $consumed $mark 12).Count -gt 0) {
             Say ("  act[$i] -> out to {0} cm and back onto near:drop:{1}:{2}; the overlap consumed it" -f $out, $hash, $index)
             return

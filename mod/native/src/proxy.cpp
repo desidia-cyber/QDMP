@@ -15213,7 +15213,14 @@ int EnemyKeyPeerCount(const uint32_t g[4], const EnemyRec* self)
     int n = 0;
     for (int i = 0; i < g_enN; ++i) {
         if (&g_en[i] == self) continue;
-        if (g_en[i].haveGuid && enemy::SameGuid(g_en[i].guid, g)) ++n;
+        if (!g_en[i].haveGuid || !enemy::SameGuid(g_en[i].guid, g)) continue;
+        // ONLY A LIVE, CALLABLE BODY COUNTS.  A record whose actor is gone is the NORMAL case
+        // for a key that died and respawned; counting it made the hub report every respawn as a
+        // duplicate (measured in this session's first soak: `duplicates=45` in one sample, for
+        // keys with exactly one live enemy).
+        void* a = g_en[i].actor;
+        if (!a || !ObjectIsLive(a) || !ObjectCallable(a)) continue;
+        ++n;
     }
     return n;
 }
