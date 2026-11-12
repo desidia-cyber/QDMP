@@ -1388,6 +1388,33 @@ bool ActorCallReady(void* actor)
     }
 }
 
+// IS THE ACTOR'S LEVEL ON SCREEN?  The rig's placement rule (user report, 2026-11-12:
+// "spawns player in darkness, no map visible, or in empty space where he just falls").
+// MEASURED (Session 24 peer log, 21:43-21:47): standing in the hub (`area=-`) the rig
+// teleported to a chest at z=-14047 and enemies at z=-15775..-15806 -- actors of a
+// sublevel that is still RESIDENT in the object array but not SHOWN.  A level that is not
+// visible has no rendered geometry and no collision, so the pawn stands in the dark or
+// falls.  `ULevel::bIsVisible` is +0x1F4 bit 0x20 (the same bit LevelActuallyVisible reads
+// off `LoadedLevel`; the persistent level carries it set once the world is initialised).
+bool ActorLevelVisible(void* actor)
+{
+    if (!actor) return false;
+    __try {
+        void* lvl = ActorLevelOf(actor);
+        if (!lvl) return false;
+        return (*(uint8_t*)((uint8_t*)lvl + 0x1F4) & 0x20) != 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+// A rig target is one the player can actually stand beside: callable, resident, and in a
+// level that is on screen.
+bool RigActorVisible(void* actor)
+{
+    return actor && ActorCallReady(actor) && ActorLevelVisible(actor);
+}
+
 // One refusal line per call class, rate-limited: a refusal is a fact the run must show,
 // but a world teardown would otherwise print it for every actor.  The reason is named:
 // "pending kill" and "level not resident" are different findings, and a run has to be
@@ -1484,6 +1511,7 @@ bool WriteBytePropC(void* obj, const char* name, uint8_t v);
 // Defined with the rig levers further down; the enemy-kill lever sits before them because
 // it belongs with the other enemy rig verbs.
 bool DevRigText(const char* envName, const char* leaf, char* out, int cap);
+void RigArmFallGuard(float targetZ);
 
 bool IsGameplayPawn(void* pawn)
 {
@@ -12982,6 +13010,7 @@ void DevTeleport(uint32_t now)
     lstrcpynA(work, spec, sizeof(work));
     int n = 0;
     for (char* t = strtok_s(work, ",", &save); t && n < 4; t = strtok_s(nullptr, ",", &save)) v[n++] = (float)atof(t);
+    RigArmFallGuard(v[2]);
     bool ok = SetActorXform(g_localPawn, v[0], v[1], v[2], v[3]);
     void* pc = LocalController();
     int ro = pc ? FindPropertyOffsetIn(ObjClass(pc), "ControlRotation") : -1;
@@ -13100,6 +13129,7 @@ void* RigNearestOfClass(const char* clsName, const char* sub, const ActorXform& 
         if (!member) continue;
         if (sub && sub[0] && !RigNameMatches(o, sub)) continue;
         ActorXform x;
+        if (!RigActorVisible(o)) continue;
         if (!ReadActorXform(o, &x)) continue;
         float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
         float d = sqrtf(dx * dx + dy * dy + dz * dz);
@@ -13171,6 +13201,7 @@ bool FindArrivalMarker(ArrivalMarker* out)
             if (!member) continue;
             if (!ActorInThisWorld(o, world)) continue;   // a CDO / another world
             ActorXform x;
+            if (!RigActorVisible(o)) continue;
             if (!ReadActorXform(o, &x)) continue;
             float d = sqrtf(x.px * x.px + x.py * x.py + x.pz * x.pz);
             if (!(d == d)) continue;
@@ -13365,6 +13396,7 @@ void* RigFindNear(const char* sub, float* distOut, ActorXform* xfOut, char* name
                 } __except (EXCEPTION_EXECUTE_HANDLER) { member = false; }
                 if (!member) continue;
                 ActorXform x;
+                if (!RigActorVisible(o)) continue;
                 if (!ReadActorXform(o, &x)) continue;
                 if (distOut) {
                     float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
@@ -13412,6 +13444,7 @@ void* RigFindNear(const char* sub, float* distOut, ActorXform* xfOut, char* name
                 void* a = guidOwners[i].actor;
                 if (!a || !ObjectIsLive(a)) continue;
                 ActorXform x;
+                if (!RigActorVisible(a)) { QDLOG(LOG_WARN, "rig: target '", sub, "' is in a level that is not shown here; refused"); continue; }
                 if (!ReadActorXform(a, &x)) continue;
                 if (distOut) {
                     float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
@@ -13464,6 +13497,7 @@ void* RigFindNear(const char* sub, float* distOut, ActorXform* xfOut, char* name
                 void* a = r.actor;
                 if (!a || !ObjectIsLive(a)) continue;
                 ActorXform x;
+                if (!RigActorVisible(a)) { QDLOG(LOG_WARN, "rig: target '", sub, "' is in a level that is not shown here; refused"); continue; }
                 if (!ReadActorXform(a, &x)) continue;
                 if (distOut) {
                     float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
@@ -13498,6 +13532,7 @@ void* RigFindNear(const char* sub, float* distOut, ActorXform* xfOut, char* name
             void* a = g_lootActors[i].actor;
             if (!a || !ObjectIsLive(a)) continue;
             ActorXform lx;
+            if (!RigActorVisible(a)) continue;
             if (!ReadActorXform(a, &lx)) continue;
             float dx = lx.px - me.px, dy = lx.py - me.py, dz = lx.pz - me.pz;
             float d = sqrtf(dx * dx + dy * dy + dz * dz);
@@ -13533,6 +13568,7 @@ void* RigFindNear(const char* sub, float* distOut, ActorXform* xfOut, char* name
             if (isSet && v != 0) continue;
         } else if (!RigNameMatches(owners[i].actor, sub)) continue;
         ActorXform x;
+        if (!RigActorVisible(owners[i].actor)) continue;
         if (!ReadActorXform(owners[i].actor, &x)) continue;
         float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
         float d = sqrtf(dx * dx + dy * dy + dz * dz);
@@ -13565,6 +13601,7 @@ void* RigFindNear(const char* sub, float* distOut, ActorXform* xfOut, char* name
                 if (EnemyHp(ea, &hp0, &mx0) && !(hp0 > 0.0f)) continue;   // dormant
             }
             ActorXform x;
+            if (!RigActorVisible(ea)) continue;
             if (!ReadActorXform(ea, &x)) continue;
             float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
             float d = sqrtf(dx * dx + dy * dy + dz * dz);
@@ -13628,6 +13665,7 @@ void* RigFindNear(const char* sub, float* distOut, ActorXform* xfOut, char* name
                 } __except (EXCEPTION_EXECUTE_HANDLER) { member = false; }
                 if (!member) continue;
                 ActorXform x;
+                if (!RigActorVisible(o)) continue;
                 if (!ReadActorXform(o, &x)) continue;
                 float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
                 float d = sqrtf(dx * dx + dy * dy + dz * dz);
@@ -13647,6 +13685,49 @@ void* RigFindNear(const char* sub, float* distOut, ActorXform* xfOut, char* name
         FNameToString(ObjNameRaw(best), nameOut, nameCap);
     }
     return best;
+}
+
+// THE FALL GUARD.  Every rig move of the local pawn arms it with the spot the pawn stood
+// on before the move.  If the pawn then drops more than kRigFallCm below the place it was
+// put within kRigFallWindowMs, the move put it where there is no floor (a level that is
+// resident but not shown, a pivot below the ground, a streamed area still loading) and
+// the pawn is put back.  Chained moves inside one window keep the FIRST safe spot, because
+// the intermediate ones are exactly the ones not yet proven to have a floor.
+static const float    kRigFallCm = 1500.0f;
+static const uint32_t kRigFallWindowMs = 6000;
+struct RigFallGuardState { bool armed; uint32_t t0; ActorXform safe; float targetZ; };
+static RigFallGuardState g_rigFall = {};
+
+void RigArmFallGuard(float targetZ)
+{
+    if (!g_localPawn) return;
+    uint32_t now = Net::Now();
+    if (!g_rigFall.armed) {
+        ActorXform me = {};
+        if (!ReadActorXform(g_localPawn, &me)) return;
+        g_rigFall.safe = me;
+    }
+    g_rigFall.armed = true;
+    g_rigFall.t0 = now;
+    g_rigFall.targetZ = targetZ;
+}
+
+void RigFallGuardPump(uint32_t now)
+{
+    if (!g_rigFall.armed) return;
+    if (!g_localPawn) { g_rigFall.armed = false; return; }
+    ActorXform me = {};
+    if (!ReadActorXform(g_localPawn, &me)) return;
+    if (me.pz < g_rigFall.targetZ - kRigFallCm) {
+        const ActorXform& sv = g_rigFall.safe;
+        bool ok = SetActorXform(g_localPawn, sv.px, sv.py, sv.pz, sv.yaw);
+        QDLOG(LOG_WARN, "rig: FELL after a rig move (placed at z=", flt(g_rigFall.targetZ, 0),
+              ", now z=", flt(me.pz, 0), "); put back at ", flt(sv.px, 0), ",", flt(sv.py, 0),
+              ",", flt(sv.pz, 0), (ok ? "" : " FAILED"));
+        g_rigFall.armed = false;
+        return;
+    }
+    if (now - g_rigFall.t0 > kRigFallWindowMs) g_rigFall.armed = false;
 }
 
 // QDCOOP_TEST_NEAR: cm to stand from a `near:` target.  Far enough not to spawn inside
@@ -13674,6 +13755,11 @@ void RigStandBeside(void* actor, const ActorXform& t, const char* label, float d
     float py = t.py + dy * off;
     float pz = t.pz;
     float yaw = haveYaw ? yawOverride : atan2f(-dx, -dy) * 57.29578f;  // face the target
+    if (!RigActorVisible(actor)) {
+        QDLOG(LOG_WARN, "dev teleport near '", label, "': the target's level is not shown here; refused");
+        return;
+    }
+    RigArmFallGuard(pz);
     bool ok = SetActorXform(g_localPawn, px, py, pz, yaw);
     void* pc = LocalController();
     int ro = pc ? FindPropertyOffsetIn(ObjClass(pc), "ControlRotation") : -1;
@@ -13735,6 +13821,7 @@ void DevTeleportToTarget(const char* sub, float yawOverride, bool haveYaw)
         // the volume, in 100 cm steps.
         const float yawUse = haveYaw ? yawOverride : me.yaw;
         const bool sweepMove = (forceOn || off <= 0.5f);
+        RigArmFallGuard(t.pz + above);
         bool ok = sweepMove
             ? SweepPawnTo(g_localPawn, t.px, t.py, t.pz + above, yawUse)
             : SetActorXform(g_localPawn, t.px + dx * off, t.py + dy * off, t.pz + above, yawUse);
@@ -13885,6 +13972,7 @@ void DevTeleportFile(uint32_t now)
     for (char* t = strtok_s(buf, ",", &save); t && n < 4; t = strtok_s(nullptr, ",", &save))
         v[n++] = (float)atof(t);
     if (n < 3) { QDLOG(LOG_WARN, "dev teleport file: need x,y,z[,yaw]"); return; }
+    RigArmFallGuard(v[2]);
     bool ok = SetActorXform(g_localPawn, v[0], v[1], v[2], v[3]);
     void* pc = LocalController();
     int ro = pc ? FindPropertyOffsetIn(ObjClass(pc), "ControlRotation") : -1;
@@ -14428,6 +14516,7 @@ void RigFaceTarget(void* target)
         pz = t.pz;
     }
     float yaw = atan2f(-(dx / len), -(dy / len)) * 57.29578f;
+    RigArmFallGuard(pz);
     bool ok = SetActorXform(g_localPawn, px, py, pz, yaw);
     void* pc = LocalController();
     int ro = pc ? FindPropertyOffsetIn(ObjClass(pc), "ControlRotation") : -1;
@@ -16397,6 +16486,7 @@ void DevTakeLever(uint32_t now)
         RigTakeForget();
         return;
     }
+    RigArmFallGuard(xf.pz);
     RigStepOutFrom(g_localPawn, xf.px, xf.py, xf.pz, 300.0f);
     const float yaw = 0.0f;
     // ONTO IT, THEN THROUGH IT.  Session 24's instrumented run measured something none of
@@ -17678,6 +17768,7 @@ bool HK_Tick(void* engineLoop)
     DevTestFire(now);
     DevTeleport(now);
     DevTeleportFile(now);
+    RigFallGuardPump(now);
     DevScanNearest(now);
     DevEnemyDump(now);
     DevObjectLever(now);
