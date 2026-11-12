@@ -1568,7 +1568,7 @@ function Get-CrashFolders([int]$i) {
     $base = $inst[$i].Crashes
     if (-not (Test-Path -LiteralPath $base)) { return @() }
     return @(Get-ChildItem -LiteralPath $base -Directory -ErrorAction SilentlyContinue |
-             Where-Object { $_.LastWriteTime -gt (Get-Date).AddHours(-3) } |
+             Where-Object { $_.LastWriteTime -gt $script:RunStartedAt } |
              ForEach-Object { $_.FullName })
 }
 function Show-CrashSummary([string]$folder) {
@@ -2017,7 +2017,7 @@ function Invoke-OneBoss([int]$H, [int]$P, $b) {
             $m = Get-Mark $i
             Set-Control $i 'qd.flag' ($b.Flag + '#' + (Get-Date -Format 'HHmmssfff'))
             $ln = @(Wait-Since $i ('rig: flag dump -- ' + $b.Flag + ' = ') $m 15)
-            $ok = $ln.Count -gt 0 -and ([string]$ln[-1]) -match (' = ([1-9]\d*)$')
+            $ok = $ln.Count -gt 0 -and ([string]$ln[-1]) -match (' = ([1-9]\d*)( \(game bank.*\))?$')
             Verdict $step $i $ok ("$($b.Flag) >= 1 in this machine's bank") $(if ($ln.Count) { ([string]$ln[-1]).Trim() } else { 'no answer' })
         }
     }
@@ -2047,6 +2047,7 @@ function Invoke-BossTour([int]$H, [int]$P) {
 # ===========================================================================
 # main
 # ===========================================================================
+$script:RunStartedAt = Get-Date   # a crash folder older than this run is not this run's crash
 Say ("session26 start: phase={0} switches={1} soak={2}s rigHops={3}" -f $Phase,
      $(if ($ShippedDefaults) { 'SHIPPED' } else { 'DOCUMENTED PLAY' }), $SoakSeconds, $RigHops)
 Stop-All ("phase start: clearing anything left running before the pair is seeded (phase '$Phase')")
