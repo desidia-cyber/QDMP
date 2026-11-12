@@ -1512,6 +1512,7 @@ bool WriteBytePropC(void* obj, const char* name, uint8_t v);
 // it belongs with the other enemy rig verbs.
 bool DevRigText(const char* envName, const char* leaf, char* out, int cap);
 void RigArmFallGuard(float targetZ);
+int ObjectCallFn(void* actor, const char* fnName, bool haveValue, bool value, char* why, int cap);
 
 bool IsGameplayPawn(void* pawn)
 {
@@ -10353,6 +10354,13 @@ struct LootActorRec {
     // This copy was CONSTRUCTED here from the partner's description (Session 22).  A mirror
     // is never re-keyed and never suppressed: it carries the originator's key from birth.
     bool     mirror;
+    // `ItemPickup_Base_C.Acquired` when the scan recorded it.  R129 (Session 25 reading of
+    // the Session 24 log): the game's own `Interact` on a drop sets Acquired 0 -> 1, grants
+    // the item at once (`inventory host set` 20 ms later) and starts the pickup showcase,
+    // which zeroes time dilation and then WAITS FOR A DISMISS PRESS before `PutAway` hides
+    // the actor.  So "hidden or destroyed" comes seconds late, or never when nobody presses.
+    // The flip of Acquired IS the take; a drop recorded already-acquired never counts.
+    bool     acquiredAtRecord;
 };
 LootActorRec g_lootActors[64];
 int          g_lootActorN = 0;
@@ -10804,6 +10812,10 @@ void* LootMirrorSpawn(uint32_t hash, int32_t index, const char* item,
     r.visible = !ActorHiddenNow(actor);
     r.hideTried = false;
     r.mirror = true;
+    {
+        uint8_t acq = 0;
+        r.acquiredAtRecord = BytePropC(actor, "Acquired", &acq) && acq != 0;
+    }
     QDLOG(LOG_INFO, "loot: constructed the partner's drop ", hex32(hash), "#", dec((int)index),
           " = ", item, " at ", flt(p[0], 0), ",", flt(p[1], 0), ",", flt(p[2], 0),
           " (the originator ran the death)");
@@ -10888,6 +10900,10 @@ void LootScanStep()
         r.visible = !ActorHiddenNow(o);
         r.hideTried = false;
         r.mirror = false;
+        {
+            uint8_t acq = 0;
+            r.acquiredAtRecord = BytePropC(o, "Acquired", &acq) && acq != 0;
+        }
         if (g_loot.Offer(hash, index, path)) {
             QDLOG(LOG_INFO, "loot: drop ", hex32(hash), "#", dec((int)index), " = ", path,
                   (mark ? " (the death this machine ran)" : ""));
@@ -10908,6 +10924,12 @@ void LootHide(uint32_t hash, int32_t index)
         g_lootActors[i].gone = true;
         if (ObjectIsLive(g_lootActors[i].actor)) {
             SetActorHidden(g_lootActors[i].actor, true);
+            // Hidden is not untouchable: the interaction trace still finds a hidden actor.
+            // Stop it colliding and mark it acquired, the same gate the game's own
+            // `Interact` set on the machine that took it, so this copy cannot pay out twice.
+            char w1[160];
+            ObjectCallFn(g_lootActors[i].actor, "SetActorEnableCollision", true, false, w1, sizeof(w1));
+            WriteBytePropC(g_lootActors[i].actor, "Acquired", 1);
             QDLOG(LOG_INFO, "loot: hiding local drop ", hex32(hash), "#", dec((int)index),
                   " -- the partner took it");
         }
@@ -10940,6 +10962,10 @@ bool LootActorGone(LootActorRec& r)
 {
     if (!ObjectIsLive(r.actor)) return true;
     if (r.visible && ActorHiddenNow(r.actor)) return true;
+    if (!r.acquiredAtRecord) {
+        uint8_t acq = 0;
+        if (BytePropC(r.actor, "Acquired", &acq) && acq != 0) return true;
+    }
     return false;
 }
 
@@ -16437,38 +16463,40 @@ void DevTakeLever(uint32_t now)
         const char* what = "?";
         switch (g_take.stage) {
         case 0:
-            // THE ACTIVATION STEP.  `ItemPickup_Base_C` declares `HideToWaitForActivation`,
-            // `Activate` and `SetState`; a drop that waits for activation has no state for
-            // `Pickup` to act on.
-            what = "the pickup's Activate";
-            RigCallVerb(drop, "Activate", g_localPawn, &ran);
-            break;
-        case 1:
-            // The pickup's OWN compiled entry for the Interact action.
-            what = "the pickup's InpActEvt_Interact";
-            RigCallVerbPrefix(drop, "InpActEvt_Interact", g_localPawn, &ran);
-            break;
-        case 2:
-            // The game's interaction verb, pressed the way the player's event would press it.
-            what = "the pickup's Interact";
+            // THE TAKE.  R129, read off the Session 24 log (21:21:29): the game's own
+            // `Interact` on the drop sets `Acquired` 0 -> 1, the inventory changes 20 ms later
+            // (the item is GRANTED), and the pickup showcase starts (it zeroes time dilation,
+            // which the session guard blocks).  Every earlier order pressed the showcase's
+            // dismiss input BEFORE this, against a pickup that had nothing to dismiss.
+            what = "the pickup's Interact (the take)";
             RigCallVerb(drop, "Interact", g_localPawn, &ran);
             break;
-        case 3:
-            // The route the engine uses when a capsule enters the volume.
-            what = "ReceiveActorBeginOverlap";
-            RigCallVerb(drop, "ReceiveActorBeginOverlap", g_localPawn, &ran);
+        case 1:
+        case 2:
+        case 3: {
+            // THE DISMISS.  The showcase waits for the player's input before `PutAway`
+            // hides the actor; the pickup declares its own compiled events for the actions
+            // it listens to (Interact, Attack, Jump).  One per pass, until the actor goes.
+            static const char* const kDismiss[] = {"InpActEvt_Interact", "InpActEvt_Attack",
+                                                   "InpActEvt_Jump"};
+            const char* ev = kDismiss[g_take.stage - 1];
+            what = ev;
+            RigCallVerbPrefix(drop, ev, g_localPawn, &ran);
             break;
-        case 4:
-            // The class' own consume verb, last: it is the payout-adjacent one.
-            what = "the pickup's Pickup";
-            RigCallVerb(drop, "Pickup", g_localPawn, &ran);
-            break;
-        default:
-            QDLOG(LOG_WARN, "take: '", g_take.spec, "' is still standing after every entry "
-                  "the class declares (Activate, InpActEvt_Interact, Interact, "
-                  "ReceiveActorBeginOverlap, Pickup); the take is not reachable from this lever");
+        }
+        default: {
+            uint8_t acq = 0;
+            bool taken = BytePropC(drop, "Acquired", &acq) && acq != 0;
+            if (taken)
+                QDLOG(LOG_INFO, "take: '", g_take.spec, "' TAKEN (Acquired=1, item granted); the "
+                      "showcase was not dismissed by any press, so the actor still stands -- the "
+                      "loot lane counts the Acquired flip as the take");
+            else
+                QDLOG(LOG_WARN, "take: '", g_take.spec, "' was not taken: Interact did not set "
+                      "Acquired and no dismiss press removed it");
             RigTakeForget();
             return;
+        }
         }
         QDLOG(LOG_INFO, "take: stage ", dec(g_take.stage), " ", what, " ran=", (ran ? ran : "none"),
               " drop=", (RigDropConsumed(drop, g_take.hiddenAtStart) ? "GONE" : "standing"));
