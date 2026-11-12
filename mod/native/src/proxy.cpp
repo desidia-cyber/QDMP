@@ -5629,12 +5629,22 @@ void* SummonerOf(void* actor)
 bool ActorIsPlaced(void* actor)
 {
     if (!actor) return false;
-    // RF_WasLoaded FIRST (Session 26).  The FName number is NOT a placed/spawned test on its
-    // own: the engine splits a trailing number off every name, so the cooked placed actor
-    // `ActivationTrigger4` is ("ActivationTrigger", 5) -- measured live, 740's Red Lords
-    // trigger read placed=0, was never indexed, and the partner's entry into it would have
-    // been refused.  An object deserialized from its level package carries RF_WasLoaded; a
-    // runtime spawn never does.  The number rule stays as the second, older answer.
+    QdName n = ObjNameRaw(actor);
+    if (n.number != 0) return false;              // engine-generated unique name
+    // A CDO or an asset is not a placed actor either; the caller's world test covers the
+    // remaining case (a live actor in a level this machine has not streamed in).
+    return true;
+}
+
+// Loaded from its level package (RF_WasLoaded), whatever its FName number.  The FName
+// number is NOT a placed/spawned test: the engine splits a trailing number off every name,
+// so the cooked placed `ActivationTrigger4` is ("ActivationTrigger", 5) -- measured live
+// (Session 26), 740's Red Lords trigger read placed=0 and was never indexed.  Used by the
+// TRIGGER lane only: widening ActorIsPlaced itself made the object lane apply `Activated`
+// to dozens of never-tested levers, and the peer died in a Blueprint shortly after (run 15).
+bool ActorWasLoaded(void* actor)
+{
+    if (!actor) return false;
     __try {
         const uint32_t kRF_WasLoaded = 0x00080000u;
         uint32_t of = *(const uint32_t*)((const uint8_t*)actor + kObjFlagsOff);
@@ -5642,9 +5652,7 @@ bool ActorIsPlaced(void* actor)
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }
-    QdName n = ObjNameRaw(actor);
-    if (n.number != 0) return false;              // engine-generated unique name
-    return true;
+    return ActorIsPlaced(actor);
 }
 
 // Is this the enemy its spawner is actually MANAGING?  `CurrentManagedEnemy` is the one
@@ -18692,7 +18700,7 @@ static void BuildTable(uint32_t now)
     for (int i = 0; i < total && g_tabN < (int)(sizeof(g_tab) / sizeof(g_tab[0])); ++i) {
         void* o = ObjectAtSafe(i);
         if (!o || !LooksLikeUObject(o)) continue;
-        if (!IsTriggerActor(o, world, actorBase) || !ActorIsPlaced(o)) continue;
+        if (!IsTriggerActor(o, world, actorBase) || !ActorWasLoaded(o)) continue;
         Rec& r = g_tab[g_tabN];
         if (!KeyOf(o, r.key, nullptr, 0)) continue;
         r.actor = o;
