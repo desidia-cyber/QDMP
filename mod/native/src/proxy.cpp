@@ -8788,7 +8788,8 @@ void EnemyOwnPump(uint32_t now)
               ex[0] = x.px; ex[1] = x.py; ex[2] = x.pz; exYaw = x.yaw; haveEx = true; } }
 
         enemyown::OwnerState st = g_own.Tick(r.guid, true, ex, haveEx,
-                                            mine, haveMine, theirs, haveTheirs, now);
+                                            mine, haveMine, theirs, haveTheirs, now,
+                                            r.isBoss);
         // A mirrored copy NEVER runs its own AI, whatever this machine's distance says.  It
         // exists because the owner holds that key, and two simulations of one enemy is the
         // exact failure ownership exists to prevent; on the machine that constructed a copy
@@ -16795,6 +16796,104 @@ void DevEFuncLever(uint32_t now)
 }
 
 
+// QDCOOP_TEST_EPROPS: TEST INSTANCES ONLY -- read one enemy's phase/state surface.
+//
+// WHY THIS LEVER EXISTS (story round, after Session 25).  SYNC-GAPS called boss phases
+// "unexpressible" because no generic `Phase` property exists.  The boss Blueprints' own name
+// tables say otherwise, per boss: `PhaseIndex`/`ActivePhaseIndex` + `DoPhaseTransition1/2`
+// (JosamiLord), `PhaseIndex` (the Blood Lords), `NewPhase` + `OnPhaseChanged` (Queen), book /
+// demon / eater forms with `TransitionToDemonForm` / `TransitionToEater` (Necronomicon),
+// `CurrentStateIndex` (the dragons and most bosses).  Which of those is the phase, and what
+// values it takes, is a measurement, not a guess: this prints every scalar whose name says
+// phase / state / mode / form / transition / stage, with its value, on THIS machine's copy.
+// `qd.eprops <8hex key>[#nonce]`.  The class field walk is uncapped (a boss Blueprint has more
+// properties than the signature walker's 160) and tolerant: a field it cannot read is skipped.
+char g_devEPropsApplied[64] = "";
+uint32_t g_devEPropsPoll = 0;
+
+static bool EPropsNameWanted(const char* n)
+{
+    static const char* const kWords[] = {"phase", "state", "mode", "form", "transition",
+                                         "stage", "desired", "enrage", "eater", "demon",
+                                         "book", "flying"};
+    for (unsigned i = 0; i < sizeof(kWords) / sizeof(kWords[0]); ++i)
+        if (objects::HasCI(n, kWords[i])) return true;
+    return false;
+}
+
+int LogPhaseSurface(void* actor, const char* tag)
+{
+    const Layout& L = Lay();
+    if (!L.valid || !actor) return 0;
+    int shown = 0;
+    for (const void* s = ObjClass(actor); s; s = SuperOf(s)) {
+        char sn[64] = "";
+        FNameToString(ObjNameRaw(s), sn, sizeof(sn));
+        if (!strcmp(sn, "Actor") || !strcmp(sn, "Pawn") || !strcmp(sn, "Character")) break;
+        __try {
+            const uint8_t* f = *(const uint8_t* const*)((const uint8_t*)s + L.child_props);
+            for (int guard = 0; f && guard < 2048; ++guard,
+                 f = *(const uint8_t* const*)(f + L.field_next)) {
+                if (!LooksLikeUObject(f)) break;
+                char nm[64] = "", ty[32] = "";
+                if (FNameToString(*(const QdName*)(f + L.field_name), nm, sizeof(nm)) <= 0) continue;
+                if (!EPropsNameWanted(nm)) continue;
+                const uint8_t* fc = *(const uint8_t* const*)(f + 0x08);
+                if (fc) FNameToString(*(const QdName*)fc, ty, sizeof(ty));
+                int32_t off = *(const int32_t*)(f + L.offset_internal);
+                if (off < 0 || off > (1 << 20)) continue;
+                const uint8_t* v = (const uint8_t*)actor + off;
+                char val[48] = "?";
+                if (!strcmp(ty, "IntProperty")) wsprintfA(val, "%d", *(const int32_t*)v);
+                else if (!strcmp(ty, "ByteProperty") || !strcmp(ty, "EnumProperty") ||
+                         !strcmp(ty, "BoolProperty")) wsprintfA(val, "%u", (unsigned)*v);
+                else if (!strcmp(ty, "FloatProperty")) {
+                    float fv; memcpy(&fv, v, 4);
+                    QDLOG(LOG_INFO, "eprops ", tag, " ", sn, ".", nm, " : ", ty, " = ", flt(fv, 2));
+                    ++shown;
+                    continue;
+                } else continue;                 // objects, structs, delegates: not a phase
+                QDLOG(LOG_INFO, "eprops ", tag, " ", sn, ".", nm, " : ", ty, " = ", val);
+                ++shown;
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            QDLOG(LOG_WARN, "eprops ", tag, ": the field walk faulted in ", sn);
+        }
+    }
+    return shown;
+}
+
+void DevEPropsLever(uint32_t now)
+{
+    static char path[MAX_PATH];
+    static int on = -1;
+    if (on < 0) {
+        DevRigPath("QDCOOP_TEST_EPROPS", "qd.eprops", path, sizeof(path));
+        on = path[0] ? 1 : 0;
+    }
+    if (!on || now - g_devEPropsPoll < 300) return;
+    g_devEPropsPoll = now;
+    char raw[64] = "";
+    if (!DevRigText("QDCOOP_TEST_EPROPS", "qd.eprops", raw, sizeof(raw)) || !raw[0]) return;
+    if (!strcmp(raw, g_devEPropsApplied)) return;
+    lstrcpynA(g_devEPropsApplied, raw, sizeof(g_devEPropsApplied));
+    uint32_t key = (uint32_t)strtoul(raw, nullptr, 16);
+    EnemyRec* r = nullptr;
+    for (int i = 0; i < g_enN; ++i)
+        if (g_en[i].haveGuid && g_en[i].guid[0] == key && ObjectIsLive(g_en[i].actor)) { r = &g_en[i]; break; }
+    if (!r) { QDLOG(LOG_WARN, "rig: eprops -- no live enemy with key=", hex32(key)); return; }
+    char tag[24];
+    wsprintfA(tag, "%08X", key);
+    float hp = 0, mx = 0;
+    bool haveHp = EnemyHp(r->actor, &hp, &mx);
+    QDLOG(LOG_INFO, "rig: eprops -> key=", tag, " owner=", dec(g_own.Running(r->guid) ? 1 : 0),
+          " mirror=", dec(r->mirror ? 1 : 0), " hp=", (haveHp ? flt(hp, 1) : flt(-1.0f, 1)),
+          "/", flt(mx, 1));
+    int n = LogPhaseSurface(r->actor, tag);
+    QDLOG(LOG_INFO, "rig: eprops key=", tag, " -- ", dec(n), " phase/state scalar(s)");
+}
+
+
 uint32_t g_devDropLast = 0;
 
 // QDCOOP_TEST_USE / QDCOOP_TEST_PDMG: TEST INSTANCES ONLY.
@@ -17992,6 +18091,7 @@ bool HK_Tick(void* engineLoop)
     DevEFuncLever(now);
     DevTakeLever(now);
     DevTriggerLever(now);
+    DevEPropsLever(now);
     DevUseLever(now);
     DevDropProbe(now);
     TravelPump(now);
@@ -18339,6 +18439,45 @@ static bool TargetsABoss(void* trig, char* bossOut, int bossCap)
     return found != nullptr;
 }
 
+// One line per target of a placed trigger: what it is, and -- for a spawner -- the gates
+// that decide whether activating it spawns anything.  Measured need (Session 26): the 760
+// trigger fired on both machines and no ROSDragon appeared, and "fired" alone does not say
+// whether the target is the spawner, whether its data says Boss, or what the spawner waits on.
+static void LogTargets(void* trig, const char* label)
+{
+    int off = PropOff(ObjClass(trig), "ActivationTargets");
+    if (off < 0) { QDLOG(LOG_INFO, "trigger targets ", label, ": no ActivationTargets property"); return; }
+    void* objs[16];
+    int n = 0, total = -1;
+    __try {
+        uint8_t* arr = (uint8_t*)trig + off;
+        uint8_t* data = *(uint8_t**)arr;
+        total = *(int32_t*)(arr + 8);
+        for (int i = 0; data && i < total && i < 16; ++i) objs[n++] = *(void**)(data + (size_t)i * 16);
+    } __except (EXCEPTION_EXECUTE_HANDLER) { n = 0; }
+    QDLOG(LOG_INFO, "trigger targets ", label, ": ", dec(total), " target(s)");
+    for (int i = 0; i < n; ++i) {
+        void* t = objs[i];
+        if (!t || !LooksLikeUObject(t) || !ObjectIsLive(t)) {
+            QDLOG(LOG_INFO, "  target[", dec(i), "] is not a live object (unloaded level?)");
+            continue;
+        }
+        char nm[64] = "", cn[64] = "";
+        FNameToString(ObjNameRaw(t), nm, sizeof(nm));
+        FNameToString(ObjNameRaw(ObjClass(t)), cn, sizeof(cn));
+        void* ed = ObjPropC(t, "EnemyData");
+        uint8_t boss = 0, req = 0, onAct = 0;
+        bool haveBoss = ed && BytePropC(ed, "Boss", &boss);
+        BytePropC(t, "RequireNamedSaveDataToSpawn", &req);
+        BytePropC(t, "SpawnOnActivate", &onAct);
+        void* managed = ObjPropC(t, "CurrentManagedEnemy");
+        QDLOG(LOG_INFO, "  target[", dec(i), "] ", nm, " [", cn, "] enemyData=", (ed ? "yes" : "no"),
+              " boss=", (haveBoss ? dec(boss) : dec(-1)), " requireNSD=", dec(req),
+              " spawnOnActivate=", dec(onAct), " managed=", (managed ? "live" : "none"),
+              " shown=", dec(ActorLevelVisible(t) ? 1 : 0));
+    }
+}
+
 static bool IsTriggerActor(void* o, void* world, void* actorBase)
 {
     void* c = ObjClass(o);
@@ -18628,6 +18767,7 @@ void DevTriggerLever(uint32_t now)
     QDLOG(LOG_INFO, "rig: trigger '", spec, "' -> standing at ", flt(at.px, 0), ",", flt(at.py, 0),
           ",", flt(at.pz, 0), " (", trig::kSlotComp[slot], ")", (moved ? "" : " (move FAILED)"),
           (isBoss ? " -- targets boss spawner " : ""), boss);
+    if (!trig::IsSpawner(t)) trig::LogTargets(t, spec);
     uint8_t before = 0, after = 0;
     BytePropC(t, "HasAlreadybeenTriggered", &before);
     char how[64] = "";

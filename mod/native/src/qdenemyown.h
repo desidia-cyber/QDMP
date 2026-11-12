@@ -119,10 +119,16 @@ public:
     // Advance one enemy's ownership.  `haveLocal` is false when this machine has no
     // live actor for the GUID (its spawner never activated here): it must not own it.
     // Any of the positions may be missing; the preference then holds (no switch).
+    //
+    // `sticky` (a boss): ownership never moves by distance once settled -- an owner never
+    // hands off and a follower never takes over except on silence.  A boss fight is the
+    // one place both players stand together for minutes, and every hand-off mid-fight is a
+    // visible jump of the whole model on the follower's screen.
     OwnerState Tick(const uint32_t guid[4], bool haveLocal,
                     const float enemy[3], bool haveEnemy,
                     const float mine[3], bool haveMine,
-                    const float theirs[3], bool haveTheirs, uint32_t now)
+                    const float theirs[3], bool haveTheirs, uint32_t now,
+                    bool sticky = false)
     {
         if (!(guid[0] | guid[1] | guid[2] | guid[3])) return O_LOCAL;   // not an enemy
         Rec* r = Touch(guid, now);
@@ -157,7 +163,8 @@ public:
             // Hand off only to a machine that has shown it holds this enemy (it has
             // sent us at least one row for the GUID).  Handing to a machine without
             // the actor would leave the enemy simulated by nobody.
-            if (p == P_THEM && held >= kHoldMs && r->sawRemote && (host_ || !r->disputed)) {
+            if (!sticky && p == P_THEM && held >= kHoldMs && r->sawRemote &&
+                (host_ || !r->disputed)) {
                 r->state = O_HANDOFF;
                 r->handoffSince = now;
                 r->stateSince = now;
@@ -173,13 +180,17 @@ public:
             }
             break;
         case O_FROZEN:
-            // Release when the partner goes quiet, or when OUR own preference now says we
-            // should run it.  The second half matters because the role tie-break above
-            // makes the host prefer ownership everywhere: a host that is frozen must be
-            // able to take an enemy back, or it deadlocks against a peer that is handing
-            // the same enemy over.
-            if (!r->sawRemote || now - r->lastRemoteMs >= kReleaseMs ||
-                (p == P_ME && held >= kHoldMs)) {
+            // Release ONLY when the owner goes quiet.  A frozen copy used to take the enemy
+            // back on its own preference as well -- and the owner, which had not handed
+            // anything over, kept simulating: MEASURED in Session 26 on the Green Dragon,
+            // both machines ran it for ten seconds, a hit on one never reached the other
+            // (host 3300 / peer 3100) and the follower's model jumped between the two
+            // simulations ("flickering, visible on one instance").  A follower that should
+            // own it gets it the safe way: the owner's own distance test hands it over
+            // (O_HANDOFF), and OnRemoteRow honours that claim.  No deadlock: a peer that is
+            // handing over sets the claim bit, and the frozen host takes it the moment it
+            // reads it.
+            if (!r->sawRemote || now - r->lastRemoteMs >= kReleaseMs) {
                 r->state = O_LOCAL; r->stateSince = now; r->disputed = 0;
             }
             break;
