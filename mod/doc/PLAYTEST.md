@@ -410,6 +410,25 @@ The lines that answer most questions, verbatim:
   `ReceiveActorBeginOverlap` and `Pickup`) - and the drop stays, because the pickup's own
   `Acquired` bool is already 1 before anything presses it. That is where the next session
   starts; the details are in the Session 24 log.
+  **Session 25 ran the long session with the cutscene worlds taken out of it, and it survived.**
+  One pair of processes, the documented play set, **1824 s of measured body** (hub 578 s, a
+  `780_SZ_Depths` loot step with two takes, `770_SZ_Swamp` 290 s, a leave, hub 255 s, then 701 s
+  of hub-final) and 2370 s of wall clock: **both machines alive at the end, zero `FAULT` lines,
+  no crash dump, zero `WORLD DIVERGENCE` lines**, three area changes that all followed on both
+  machines. Three things did not pass, and they are the honest state of a long session: **one
+  key out of 298 died on the host only** (`24848FF5`), **11 of 307 shared-HP comparisons were
+  unequal** (seven of them `host=140 peer=40` on a `BookBug_Popcorn_C` -- full health on one
+  screen, damaged on the other, with no duplicate record and no MaxHP difference), and **one
+  container write failed and said so** (`ERR actor-state: ... read back -999999`). A hard map
+  transition is no longer part of this soak: it is the `hardloop` phase's job, because a
+  cutscene map is dark, empty and costs a whole-world teardown that a play soak should not
+  spend. So: **ten to thirty minutes of ordinary play with areas is now expected to survive and
+  converge, with a few HP pairs and one kill per long session still capable of disagreeing.**
+  **And you will no longer be placed in the dark.** The rig refuses a spot inside a teleporter's
+  volume (the hub's NPCs stand on one; that is what used to drop you 190 m into the stacked maps
+  and leave you falling), and any move that leaves you more than 15 m below where your feet were
+  is undone within seconds, with `rig: FELL ... put back at ...` in the log. The details, with
+  every number, are in the Session 25 log.
 - **An enemy's HP reads `?` when the engine is tearing that copy down — not a sync fault.**
   Session 21 traced it: the mod refuses a reflective call on an object the engine has
   flagged for destruction, and in the hub that was 428 of 569 enemy records.  A `?` in a
@@ -444,6 +463,15 @@ The lines that answer most questions, verbatim:
   attempt in five sessions stood 3 m away and reported that the drop was not consumed. With the
   pawn standing on the drop and the pickup's own event being pressed, all five entries run and
   the drop still stays, because the pickup's `Acquired` bool is already 1 before any press.
+  **Session 25 proved the take, in both directions.** That `Acquired` reads 0 before the first
+  press; the pickup's own `Interact` sets it to 1 and the item is granted 20-70 ms later; the
+  partner hides its copy 49 ms after that; and a second attempt on the partner's copy is refused
+  by name (`rig: drop <key> is already gone on this machine`) with **no** inventory change on
+  either machine. The three earlier sessions' "the verb runs and consumes nothing" was the
+  ORDER: the dismiss presses were being sent before the press that actually takes the item.
+  What a player may still see is the pickup actor itself standing after a take (its showcase
+  wants a dismiss press the rig never lands), so a drop that has stopped paying can be on the
+  ground for a moment.
   That is the next thing to look at.  **A pickup's HP that reads 140 on one screen and
   30 on the other is a different bug, and it is fixed**: one machine was holding two bodies for
   one enemy (a constructed copy beside the real one).
