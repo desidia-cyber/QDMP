@@ -329,6 +329,21 @@ Two assumptions in that paragraph are unproven and each is one probe:
   the exe name block and in zero cooked packages, so `ENEMY_DETAIL.boss` carries only an
   observed ordinal and is 0 when nothing could be observed — it is never fabricated,
   because a guessed phase would run the wrong Blueprint branch on one machine only.
+- **Boss fights start together (Session 26, `K_TRIGGER` 0x2C).** A boss fight starts when
+  ONE player overlaps a placed `ActivationTrigger_C` or a spawner's own trap volume, and the
+  volume answers only its own machine's player. The trigger lane carries that overlap
+  (key = the trigger's placed path) and the partner replays the same bound event on its
+  own copy; for a boss trigger the partner is first pulled in beside the player (`BossPullIn`,
+  1500 cm). Ownership of a boss is sticky (no unilateral take, no mid-fight hand-off), which
+  removed the "boss flickers, visible on one screen" fault. The bar is raised only for a boss
+  in the fight (its level shown, and damaged or within 60 m of a player). Live, end to end on
+  both machines -- one key, one HP, both bars up and down, the death on both, and the death
+  flag in both banks: **green dragon + rider (`DragonLordDead`), Red Lords (`RedLordsDead`)**.
+  Shared HP and the death also proven for the Shrine Boss, Whale King and Demon Bosses.
+  **Open:** the death flag for Whale King / Demon Bosses; the 760 dragon, Necronomicon,
+  Bridge Lord and Giant Fish did not spawn from the rig (their spawners do not spawn on
+  activation -- a rig gap, the gates are "not yet dead" and pass); boss phases are still not
+  synced as such (each machine runs its own copy's phase script on shared HP).
 - **`TryApplyDamage` is unproven.** Every field of the payload is walked and logged, and
   the amount is selected by name; if the payload needs a damage-type tag or a nested `Data`
   struct, HP will not move and the log says so. "enemy damage had NO effect" (and now

@@ -5703,3 +5703,70 @@ you take the same drop twice you will get nothing the second time, by design. **
 still has two rough edges**: an enemy can read 140 HP on one screen and 40 on the other, and one
 key out of 298 died on only one machine -- if a kill looks one-sided or an enemy's health looks
 stale, that is the open item and the log will name the key.
+
+## Session 26 - 2026-11-12 (bosses started together, and the three crashes it took to get there)
+
+Harness: `mod/tools/session26.ps1 -Phase bosses [-Only ...]`; eighteen runs (s26-run1..18).
+Each boss is entered with both machines, the HOST is walked into the fight's start volume
+(`qd.trigger Name@Area`), and the verdicts read: the peer replayed the entry, one boss key alive
+on both, one bar, a hit from each player moves one HP, the death on both, both bars down, and
+the death flag in both banks.
+
+### What is proven, live, on both machines
+
+| Boss | Start replayed | Same key | One HP | Bars up/down | Dead on both | Death flag in both banks |
+|---|---|---|---|---|---|---|
+| Green dragon + rider (780) | yes | 17181166 | 3500->3300 both | yes | yes | `DragonLordDead = 1` (runs 10, 13, 14) |
+| Red Lords (740) | yes | DBF4FFD3 / 17E153F4 | 6000->5800 both | yes | yes | `RedLordsDead = 1` (runs 14, 16) |
+| Shrine Boss (100) | yes | 03FDBC21 | 260->60 both | yes | yes | (no flag in the content) |
+| Whale King (210) | yes | 6AEFB87A | 1500->1300 both | no bar | yes | **missing** |
+| Demon Bosses (450) | yes (run 15) | 30CACF5B | 2300->1900 both | yes | yes | **missing** |
+
+### The faults found and fixed, in the order the runs exposed them
+
+1. **Boss flicker / visible on one screen** (user report): a frozen follower took the dragon
+   unilaterally while the owner still ran it, so both simulated it. Fix: no unilateral take;
+   a boss is sticky (never handed off mid-fight). `qdenemyown.h`, 70 checks.
+2. **Partner "fell under the map, came back elsewhere"**: the rig's own fall guard read the
+   boss pull-in (a 170 m drop into the arena) as a fall and put the partner back in the hub.
+   A mod placement now disarms the guard; the trigger lever guards only a drop past the volume.
+3. **Darkness for two minutes after an area loads** (user report): a summoner without
+   `GetSaveGUID` fell through to a GObjects-wide search per super class, ~0.55 s a call, one
+   call per new enemy per frame -- the host ran at ~2 fps. Classes without it are remembered.
+4. **A rider is not its mount**: `JosamiLord_Green.GetHP` answers the dragon's HP while riding
+   and after (-496900 after the kill), so HP<=0 recorded the lord dead and the spawner never
+   wrote `DragonLordDead` (it waits for both). When the game exposes its own dead bit, that bit
+   is the answer (death sweep, enemy dump, bar liveness; `qdenemy.h EffectivelyDead`).
+5. **Records cleared by a teleport that never loaded**: the teardown gate for a game-started
+   teleporter cleared the enemy records, the world did not change, and every partner boss/kill
+   row was refused "for another world" for the rest of the run. The scan rebinds when the
+   records were cleared; the gate no longer fires within 15 s of arriving.
+6. **Startup crash, three in a row (runs 5-7, R140 family)**: the engine's timer manager
+   (`FTimerManager::Tick`, read in Ghidra at 0x142CC9D00) executed a timer whose delegate memory
+   had been freed and reused, on the first engine frame after the module's third frame in a
+   fresh world. The module now leaves a new world alone for 5 s; runs 8-18 never repeated it.
+   The engine fault itself is not fixed.
+7. **The bar from another area**: every boss is resident, and an untouched Red Lord took the
+   shared bar while the pair fought the dragon (the "bar that never disappeared"). A boss is a
+   bar candidate only when its level is shown and it is damaged or within 60 m of a player.
+8. **Trigger names repeat across sublevels, and the placed test was wrong**: the FName number
+   split makes the cooked `ActivationTrigger4` ("ActivationTrigger", 5) read as a runtime spawn,
+   so 740's Red Lords trigger was never indexed. The trigger lane now uses `RF_WasLoaded`
+   (`ActorWasLoaded`); the lever takes `Name@Area`; the table is 4096 with a FULL error.
+   Widening the placed test for EVERY lane made the object lane write `Activated` on levers it
+   had never handled, so it was narrowed back to the trigger lane.
+9. **Crash entering 500_AUT, twice (runs 15 peer, 16 host)**: an access violation inside a
+   Blueprint on the frame after the object lane set `Activated 0->1` on lift / elevator levers.
+   Lift and elevator controls left the object lane (they drive a mover the mover lane carries);
+   run 17 and 18 crossed 500_AUT with zero faults.
+10. **The Red Lords revive a lone death**: one sister killed alone is stood up by the other.
+    The rig kills a boss group within a second; `qd.flag` reads the game bank, not the lane.
+
+### Open
+
+- Death flag for Whale King and Demon Bosses (the kill path ran; the flag write did not).
+- The 760 dragon, Necronomicon, Bridge Lord and Giant Fish did not spawn from the rig: their
+  spawners have `SpawnOnActivate=0` (or the boss needs its own trap), and their story gates are
+  "not yet dead" and pass. A rig gap, not a measured sync fault.
+- Boss phases are not a synced value; each machine runs its own copy's phase script on shared HP.
+- R140 (engine timer use-after-free) is avoided at startup, not fixed.
