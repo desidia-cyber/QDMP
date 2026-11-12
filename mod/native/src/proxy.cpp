@@ -18640,6 +18640,33 @@ static bool TargetsABoss(void* trig, char* bossOut, int bossCap)
 // that decide whether activating it spawns anything.  Measured need (Session 26): the 760
 // trigger fired on both machines and no ROSDragon appeared, and "fired" alone does not say
 // whether the target is the spawner, whether its data says Boss, or what the spawner waits on.
+// The story gate a spawner waits on: `RequireNamedSaveDataToSpawn` with the key it reads
+// (`NamedSaveDataToCheck`) and the bound (`NamedSaveDataMax`), beside this machine's bank
+// value.  Session 26: the 760 dragon, the Demon Bosses, the Bridge Lord and the Giant Fish all
+// "did not spawn" with requireNSD=1 -- whether that is content (the save has not reached the
+// boss yet) or sync is exactly this line.
+static void LogSpawnGate(void* sp, const char* label)
+{
+    uint8_t req = 0;
+    if (!BytePropC(sp, "RequireNamedSaveDataToSpawn", &req) || !req) return;
+    int off = PropOff(ObjClass(sp), "NamedSaveDataToCheck");
+    char key[96] = "?";
+    if (off >= 0) {
+        __try { FNameToString(*(const QdName*)((const uint8_t*)sp + off), key, sizeof(key)); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { lstrcpynA(key, "?", sizeof(key)); }
+    }
+    int32_t mx = 0;
+    int moff = PropOff(ObjClass(sp), "NamedSaveDataMax");
+    if (moff >= 0) { __try { mx = *(const int32_t*)((const uint8_t*)sp + moff); } __except (EXCEPTION_EXECUTE_HANDLER) { mx = 0; } }
+    int mi = MirrorFind(key);
+    if (mi >= 0)
+        QDLOG(LOG_INFO, "  spawn gate ", label, ": needs NamedSaveData '", key, "' (max ", dec((int)mx),
+              ") -- this bank: ", dec((int)g_mirror[mi].last_value));
+    else
+        QDLOG(LOG_INFO, "  spawn gate ", label, ": needs NamedSaveData '", key, "' (max ", dec((int)mx),
+              ") -- this bank: absent");
+}
+
 static void LogTargets(void* trig, const char* label)
 {
     int off = PropOff(ObjClass(trig), "ActivationTargets");
@@ -18668,6 +18695,7 @@ static void LogTargets(void* trig, const char* label)
         BytePropC(t, "RequireNamedSaveDataToSpawn", &req);
         BytePropC(t, "SpawnOnActivate", &onAct);
         void* managed = ObjPropC(t, "CurrentManagedEnemy");
+        LogSpawnGate(t, nm);
         QDLOG(LOG_INFO, "  target[", dec(i), "] ", nm, " [", cn, "] enemyData=", (ed ? "yes" : "no"),
               " boss=", (haveBoss ? dec(boss) : dec(-1)), " requireNSD=", dec(req),
               " spawnOnActivate=", dec(onAct), " managed=", (managed ? "live" : "none"),
@@ -19025,6 +19053,7 @@ void DevTriggerLever(uint32_t now)
           ",", flt(at.pz, 0), " (", trig::kSlotComp[slot], ")", (moved ? "" : " (move FAILED)"),
           (isBoss ? " -- targets boss spawner " : ""), boss);
     if (!trig::IsSpawner(t)) trig::LogTargets(t, spec);
+    else trig::LogSpawnGate(t, spec);
     uint8_t before = 0, after = 0;
     BytePropC(t, "HasAlreadybeenTriggered", &before);
     char how[64] = "";
