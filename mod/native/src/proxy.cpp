@@ -13136,6 +13136,17 @@ bool RigNameMatches(void* actor, const char* sub)
 // are not in `SavableActorStates` at all: an NPC to talk to, a checkpoint (whose unlock
 // IS a NamedSaveData flag), a sub-level door.  A CDO or a component has no transform and
 // is skipped, so this never reports a class default as a place to stand.
+//
+// HOW MANY CANDIDATES A RESOLUTION REFUSED FOR BEING ON A HIDDEN LEVEL (Session 25).
+// A silent `continue` is invisible in a log: a hop whose only candidates sit in a
+// resident-but-not-shown sublevel would print "no live actor matches", which is
+// indistinguishable from "there is no such actor here" -- and that is exactly the
+// measurement the user's "in the dark / he just falls" report needs.  The counter is a
+// diagnostic only: `RigFindNear` resets it at entry, both resolvers bump it, and the
+// refusal is logged once per call before the resolver returns.  The rig runs on the game
+// tick, so a plain static is safe here.
+static int g_rigHiddenSkipped = 0;
+
 void* RigNearestOfClass(const char* clsName, const char* sub, const ActorXform& me, float* distOut,
                         ActorXform* xfOut, char* nameOut, int nameCap)
 {
@@ -13155,7 +13166,7 @@ void* RigNearestOfClass(const char* clsName, const char* sub, const ActorXform& 
         if (!member) continue;
         if (sub && sub[0] && !RigNameMatches(o, sub)) continue;
         ActorXform x;
-        if (!RigActorVisible(o)) continue;
+        if (!RigActorVisible(o)) { ++g_rigHiddenSkipped; continue; }
         if (!ReadActorXform(o, &x)) continue;
         float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
         float d = sqrtf(dx * dx + dy * dy + dz * dz);
@@ -13396,6 +13407,7 @@ void* RigFindNear(const char* sub, float* distOut, ActorXform* xfOut, char* name
     if (!sub || !sub[0]) return nullptr;
     ActorXform me;
     if (!ReadActorXform(g_localPawn, &me)) return nullptr;
+    g_rigHiddenSkipped = 0;
 
     // AN EXACT INSTANCE NAME IS AN INSTRUCTION ABOUT ONE ACTOR, and it must be honoured
     // before the curated KIND walks.  Session 13 measured the failure this prevents:
@@ -13422,7 +13434,7 @@ void* RigFindNear(const char* sub, float* distOut, ActorXform* xfOut, char* name
                 } __except (EXCEPTION_EXECUTE_HANDLER) { member = false; }
                 if (!member) continue;
                 ActorXform x;
-                if (!RigActorVisible(o)) continue;
+                if (!RigActorVisible(o)) { ++g_rigHiddenSkipped; continue; }
                 if (!ReadActorXform(o, &x)) continue;
                 if (distOut) {
                     float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
@@ -13558,7 +13570,7 @@ void* RigFindNear(const char* sub, float* distOut, ActorXform* xfOut, char* name
             void* a = g_lootActors[i].actor;
             if (!a || !ObjectIsLive(a)) continue;
             ActorXform lx;
-            if (!RigActorVisible(a)) continue;
+            if (!RigActorVisible(a)) { ++g_rigHiddenSkipped; continue; }
             if (!ReadActorXform(a, &lx)) continue;
             float dx = lx.px - me.px, dy = lx.py - me.py, dz = lx.pz - me.pz;
             float d = sqrtf(dx * dx + dy * dy + dz * dz);
@@ -13594,7 +13606,7 @@ void* RigFindNear(const char* sub, float* distOut, ActorXform* xfOut, char* name
             if (isSet && v != 0) continue;
         } else if (!RigNameMatches(owners[i].actor, sub)) continue;
         ActorXform x;
-        if (!RigActorVisible(owners[i].actor)) continue;
+        if (!RigActorVisible(owners[i].actor)) { ++g_rigHiddenSkipped; continue; }
         if (!ReadActorXform(owners[i].actor, &x)) continue;
         float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
         float d = sqrtf(dx * dx + dy * dy + dz * dz);
@@ -13627,7 +13639,7 @@ void* RigFindNear(const char* sub, float* distOut, ActorXform* xfOut, char* name
                 if (EnemyHp(ea, &hp0, &mx0) && !(hp0 > 0.0f)) continue;   // dormant
             }
             ActorXform x;
-            if (!RigActorVisible(ea)) continue;
+            if (!RigActorVisible(ea)) { ++g_rigHiddenSkipped; continue; }
             if (!ReadActorXform(ea, &x)) continue;
             float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
             float d = sqrtf(dx * dx + dy * dy + dz * dz);
@@ -13691,7 +13703,7 @@ void* RigFindNear(const char* sub, float* distOut, ActorXform* xfOut, char* name
                 } __except (EXCEPTION_EXECUTE_HANDLER) { member = false; }
                 if (!member) continue;
                 ActorXform x;
-                if (!RigActorVisible(o)) continue;
+                if (!RigActorVisible(o)) { ++g_rigHiddenSkipped; continue; }
                 if (!ReadActorXform(o, &x)) continue;
                 float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
                 float d = sqrtf(dx * dx + dy * dy + dz * dz);
@@ -13702,6 +13714,13 @@ void* RigFindNear(const char* sub, float* distOut, ActorXform* xfOut, char* name
                 QDLOG(LOG_INFO, "rig: near '", sub, "' matched a placed actor by name (the curated "
                       "sets did not carry it)");
         }
+    }
+    // A REFUSAL HAS TO BE COUNTABLE.  Without this line a hop that had candidates and refused
+    // every one of them (their level is resident but not shown) prints only the caller's
+    // "no live actor matches", which reads exactly like "nothing of that kind exists here".
+    if (!best && g_rigHiddenSkipped > 0) {
+        QDLOG(LOG_WARN, "rig: near '", sub, "': ", dec(g_rigHiddenSkipped),
+              " candidate(s) refused -- their level is not shown here");
     }
     if (!best) return nullptr;
     if (distOut) *distOut = bestD;
