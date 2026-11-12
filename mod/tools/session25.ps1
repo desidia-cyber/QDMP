@@ -422,7 +422,15 @@ function Stop-All([string]$Reason) {
         try {
             $l = @(Get-RunLines $i)
             if ($l.Count -gt 0) { $last = ([string]$l[-1]).Trim() }
-        } catch { $last = '(the log could not be read: ' + $_.Exception.Message + ')' }
+        } catch { $last = '' }
+        if (-not $last) {
+            # Get-RunLines can come back empty if the file was mid-rewrite; a plain tail
+            # read is a second, independent way to get the machine's last words.
+            try {
+                $tail = @(Get-Content -LiteralPath $inst[$i].Log -Tail 3 -ErrorAction Stop)
+                if ($tail.Count -gt 0) { $last = (($tail | Where-Object { $_ }) -join ' | ') }
+            } catch { $last = '(the log could not be read: ' + $_.Exception.Message + ')' }
+        }
         if ($last.Length -gt 300) { $last = $last.Substring(0, 300) + ' ...' }
         Say ("  killing inst{0} pid={1}; its last log line was: {2}" -f $i, $script:pids[$i], $last)
     }
@@ -598,6 +606,22 @@ function Get-WorldState([int]$i) {
     $pin = @(Get-Matches $i 'rig: hard lever -> (\S+) streamed')
     if ($pin.Count -gt 0 -and [string]$pin[-1] -match 'rig: hard lever -> (\S+) streamed') { $out.Area = $Matches[1] }
     return $out
+}
+
+# WAIT FOR THE WORLD, NOT FOR A PAWN.  Measured on this phase's first run: `scan: local at`
+# is printed on the TITLE SCREEN too (the save is still loading), so the old gameplay wait
+# returned true with the world at `title_screen` and the first hops landed at 0,0,0.  A rig
+# test has to start in the world the player plays in.
+function Wait-Hub([int]$i, [int]$seconds = 300) {
+    $deadline = (Get-Date).AddSeconds($seconds)
+    $last = [pscustomobject]@{ World = ''; Area = ''; Partner = ''; Agree = '' }
+    while ((Get-Date) -lt $deadline) {
+        $last = Get-WorldState $i
+        if ($last.World -and $last.World -ne 'title_screen') { return $last }
+        if (-not (Test-Alive $i)) { return $last }
+        Start-Sleep -Seconds 2
+    }
+    return $last
 }
 
 # ---------------------------------------------------------------------------
@@ -1544,10 +1568,17 @@ function Show-CrashSummary([string]$folder) {
 function Invoke-RigPhase([int]$H, [int]$P) {
     Step ("RIG -- {0} hops per machine in the hub; every one must land on a level that is SHOWN" -f $RigHops) `
          'Session 24 on the unfixed build: 265 hops, 18 ended >30 m below the target, worst 259 m (sublevel resident but not rendered). Every resolver now requires ULevel::bIsVisible and every move arms a 15 m / 6 s fall guard.'
-    $wH = Get-WorldState $H; $wP = Get-WorldState $P
+    # THE HUB, NOT THE TITLE SCREEN.  Measured on this phase's first run: a `scan: local at`
+    # line exists on the title screen too, so "the machine reached gameplay" was true 2 s
+    # before the save finished loading and the first hops landed at 0,0,0 in `title_screen`.
+    # A hop test has to start where the player actually is.
+    $wH = Wait-Hub $H 300
+    $wP = Wait-Hub $P 300
     Note ("  start: host world='{0}' area='{1}'; peer world='{2}' area='{3}'" -f
           $wH.World, $wH.Area, $wP.World, $wP.Area)
-    Verdict 'rig' $H ($wH.Area -eq '') 'the hops are run in the hub (no area pinned)' ("host area='$($wH.Area)'")
+    Verdict 'rig' $H ($wH.World -ne '' -and $wH.World -ne 'title_screen') 'the HOST is in the game world, not the title screen' ("world='$($wH.World)'")
+    Verdict 'rig' $P ($wP.World -ne '' -and $wP.World -ne 'title_screen') 'the PEER is in the game world, not the title screen' ("world='$($wP.World)'")
+    Verdict 'rig' $H (($wH.Area -eq '') -or ($wH.Area -eq '-')) 'the hops are run in the hub (no area pinned)' ("host area='$($wH.Area)'")
     $m0 = Get-Mark $H
     $kinds = @('enemy', 'chest', 'npc')
     $tally = @{ landed = 0; refused = 0; 'no-target' = 0; failed = 0; 'no-answer' = 0; dead = 0 }
@@ -1556,9 +1587,12 @@ function Invoke-RigPhase([int]$H, [int]$P) {
     $attempted = 0
     for ($n = 1; $n -le $RigHops; $n++) {
         $kind = $kinds[($n - 1) % $kinds.Count]
-        $h = Invoke-Hop $H $kind 200
-        $p = Invoke-Hop $P $kind 200
-        foreach ($r in @($h, $p)) {
+        # NOT $h / $p: PowerShell variable names are case-insensitive, so `$h = ...` would
+        # OVERWRITE the `$H` parameter and the next call would pass a record as an Int32.
+        # (Measured: the first run of this phase died on exactly that.)
+        $hopH = Invoke-Hop $H $kind 200
+        $hopP = Invoke-Hop $P $kind 200
+        foreach ($r in @($hopH, $hopP)) {
             $attempted++
             if ($tally.ContainsKey($r.Answer)) { $tally[$r.Answer] = [int]$tally[$r.Answer] + 1 }
             if ($null -ne $r.Delta) {
@@ -1733,8 +1767,9 @@ function Invoke-Soak([int]$H, [int]$P) {
     if ($swLine) { Note ("  [$H] " + $swLine) }
     Verdict 'soak' $H ($swLine -match 'enemy=1') 'the switch set under test is the documented PLAY set' $swLine
 
-    $wH0 = Get-WorldState $H; $wP0 = Get-WorldState $P
+    $wH0 = Wait-Hub $H 300; $wP0 = Wait-Hub $P 300
     Note ("  world at start: host='{0}' area='{1}' peer='{2}' area='{3}'" -f $wH0.World, $wH0.Area, $wP0.World, $wP0.Area)
+    Verdict 'soak' $H ($wH0.World -ne '' -and $wH0.World -ne 'title_screen') 'the soak starts in the game world, not the title screen' ("world='$($wH0.World)'")
 
     # The body is the budget.  Transitions are between the segments and their cost is
     # reported as wall clock, never folded into the soak number.
