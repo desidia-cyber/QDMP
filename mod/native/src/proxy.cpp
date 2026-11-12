@@ -4809,11 +4809,13 @@ void TravelPump(uint32_t now)
     // from the hard board's verdict, because the game's own transitions (OpenLevel from a
     // menu, a death, a cheat) never pass through the board and strand the player the
     // same way.
+    static uint32_t arrivedAt = 0;
     {
         static char arrivalMap[stream::kMaxNameLen] = "";
         if (!travel::SameText(local, arrivalMap)) {
             travel::CopyText(arrivalMap, sizeof(arrivalMap), local);
             if (local[0]) ArrivalArm(local, now);
+            arrivedAt = now;
         }
     }
     bool changed = g_map.OnLocal(local, now);
@@ -4842,7 +4844,17 @@ void TravelPump(uint32_t now)
     // world-change path a second later with the module still holding the old world.  The
     // gate releases itself on the world pointer moving or after 20 s, so a teleport that
     // turns out not to change the world costs at most that.
-    if (travelling && destChanged && dest[0] && !g_worldTransition) {
+    // NOT ON ARRIVAL (Session 26 run 5).  The pawn still reports the teleport that BROUGHT
+    // it for a moment after the load -- the boot's `TempTeleporter/Ruins_Level_00` is read
+    // in the very tick the map name lands.  The gate then tore down a world that had just
+    // been built and silenced the module for 20 s, and the host died in R140 inside that
+    // window; boots without the gate (Session 25, 8 loads) never did.  A travel that starts
+    // within 15 s of arriving is the tail of the arrival, not a new load.
+    const bool justArrived = (int32_t)(now - arrivedAt) < 15000;
+    if (travelling && destChanged && dest[0] && justArrived && !g_worldTransition)
+        QDLOG(LOG_INFO, "travel: ", dest, " seen ", dec((int32_t)(now - arrivedAt)),
+              " ms after arriving in ", local, " -- the tail of the arrival, not a new load; no teardown");
+    if (travelling && destChanged && dest[0] && !justArrived && !g_worldTransition) {
         QDLOG(LOG_INFO, "travel: the game is taking this player through ", dest,
               " -- dropping the world's handles before the engine tears it down");
         g_worldTransitionWorld = GWorldPtr();
