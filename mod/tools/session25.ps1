@@ -1124,7 +1124,10 @@ function Invoke-LootDirection([int]$H, [int]$P, [int]$taker, [int]$other, [strin
             ("bad lines={0}" -f $invT.Bad.Count)
 
 
-    $hide = Wait-Since $other ('loot: hiding local drop ' + $key.Hash + '#' + [string]$key.Index) $mOther 40
+    # @(...) IS NOT COSMETIC: Wait-Since returns a SCALAR when it has one match, and
+    # `$scalar[-1]` indexes CHARACTERS, so the report read "the OTHER machine hid its own
+    # copy -- t" (the last letter of the line) in the first live run of this phase.
+    $hide = @(Wait-Since $other ('loot: hiding local drop ' + $key.Hash + '#' + [string]$key.Index) $mOther 40)
     Verdict $step $other ($hide.Count -gt 0) 'the OTHER machine hid its own copy (the measured hiding half)' $(if ($hide.Count) { ([string]$hide[-1]).Trim() } else { '' })
     if ($hide.Count -eq 0) {
         Show-Since $other 'loot:|rig: drop|rig: near|dev interact' $mOther 20
@@ -1845,8 +1848,12 @@ function Invoke-Soak([int]$H, [int]$P) {
 # LOOT -- R129's take half on its own, so it can be iterated without a soak
 # ===========================================================================
 function Invoke-LootPhase([int]$H, [int]$P) {
+    # The mark is taken at the START: EndChecks counts the rig over [mark, now], and a mark
+    # taken at the end measures nothing (measured: "hops that landed=0" after a phase that
+    # had hopped all the way into 780_SZ_Depths).
+    $m0 = Get-Mark $H
     Invoke-LootDrop $H $P
-    Invoke-EndChecks $H $P 'loot' (Get-Mark $H)
+    Invoke-EndChecks $H $P 'loot' $m0
 }
 
 # ===========================================================================
