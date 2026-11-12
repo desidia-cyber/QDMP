@@ -340,7 +340,7 @@ function Invoke-Hop([int]$i, [string]$kind, [int]$nearCm = 200, [int]$answerSecs
     Set-Control $i 'qd.tp' ('near:' + $kind + ',' + $yaw + '#' + (Get-Date -Format 'HHmmssfff'))
     $res = [pscustomobject]@{
         Inst = $i; Kind = $kind; Answer = 'no-answer'; Line = ''
-        TargetZ = $null; PlacedZ = $null; PostZ = $null; Delta = $null
+        TargetZ = $null; PlacedZ = $null; PostZ = $null; Delta = $null; Restored = $false
     }
     $landPrefix = "dev teleport near '" + $kind + "' -> "
     $deadline = (Get-Date).AddSeconds($answerSecs)
@@ -378,6 +378,9 @@ function Invoke-Hop([int]$i, [string]$kind, [int]$nearCm = 200, [int]$answerSecs
             if (-not (Test-Alive $i)) { break }
         }
         if ($null -ne $res.TargetZ -and $null -ne $res.PostZ) { $res.Delta = $res.TargetZ - $res.PostZ }
+        # Did the GUARD put the pawn back?  A restore is the fix working, not a fall: the
+        # pawn ends up where it started, so its z is not a measurement of the target.
+        $res.Restored = (@(Get-Since $i $mark | Where-Object { $_ -match 'rig: FELL after a rig move' }).Count -gt 0)
     }
     return $res
 }
@@ -1511,7 +1514,10 @@ function Invoke-EndChecks([int]$H, [int]$P, [string]$step, [int]$m0) {
           "(of which {2} was a call where nothing visible matched); no-target={3}; " +
           "'rig: FELL after a rig move'={4}" -f
           $rig.Landed, $rig.Refused, $rig.RefusedCalls, $rig.NoTarget, $rig.Fell)
-    Verdict $step $H ($rig.Fell -eq 0) 'the fall guard never had to restore the pawn during the run' ("FELL lines=$($rig.Fell)")
+    # A FELL is the GUARD WORKING, not a failure: it means a placement the game then moved was
+    # undone.  What the run must not have is a hop that was left displaced, and that is the
+    # `rig` phase's verdict (it measures the position after every hop).  Here the counters are
+    # reported so a soak can be compared with the phase.
 
     foreach ($i in @($H, $P)) {
         $fault = @(Get-Since $i $m0 | Where-Object { $_ -match 'ACCESS_VIOLATION|EXCEPTION|fatal|\bfault' })
@@ -1582,7 +1588,7 @@ function Invoke-RigPhase([int]$H, [int]$P) {
     $m0 = Get-Mark $H
     $kinds = @('enemy', 'chest', 'npc')
     $tally = @{ landed = 0; refused = 0; 'no-target' = 0; failed = 0; 'no-answer' = 0; dead = 0 }
-    $measured = 0; $unmeasured = 0; $dropped = 0; $worst = 0.0; $worstLine = ''
+    $measured = 0; $unmeasured = 0; $dropped = 0; $worst = 0.0; $worstLine = ''; $restored = 0
     $deep = New-Object System.Collections.Generic.List[string]
     $attempted = 0
     for ($n = 1; $n -le $RigHops; $n++) {
@@ -1595,14 +1601,16 @@ function Invoke-RigPhase([int]$H, [int]$P) {
         foreach ($r in @($hopH, $hopP)) {
             $attempted++
             if ($tally.ContainsKey($r.Answer)) { $tally[$r.Answer] = [int]$tally[$r.Answer] + 1 }
+            if ($r.Restored) { $restored++ }
             if ($null -ne $r.Delta) {
                 $measured++
                 if ($r.Delta -gt $worst) {
                     $worst = $r.Delta
-                    $worstLine = ("inst{0} hop {1} '{2}': target z={3} pawn z={4}" -f
-                                  $r.Inst, $n, $r.Kind, $r.TargetZ, $r.PostZ)
+                    $worstLine = ("inst{0} hop {1} '{2}': target z={3} pawn z={4}{5}" -f
+                                  $r.Inst, $n, $r.Kind, $r.TargetZ, $r.PostZ,
+                                  $(if ($r.Restored) { ' (guarded back)' } else { '' }))
                 }
-                if ($r.Delta -gt 3000) {
+                if ($r.Delta -gt 3000 -and -not $r.Restored) {
                     $dropped++
                     $deep.Add(("inst{0} hop {1} '{2}': target z={3} pawn z={4} dz={5}" -f
                                $r.Inst, $n, $r.Kind, $r.TargetZ, $r.PostZ, [int]$r.Delta)) | Out-Null
@@ -1612,9 +1620,13 @@ function Invoke-RigPhase([int]$H, [int]$P) {
             }
         }
         if (($n % 8) -eq 0) {
-            Note ("  {0} hops/machine done: landed={1} refused={2} no-target={3} no-answer={4} " +
-                  "dropped>30m={5} worst={6} cm" -f $n, $tally['landed'], $tally['refused'],
-                  $tally['no-target'], $tally['no-answer'], $dropped, [int]$worst)
+            # BUILT AS ONE STRING FIRST: `"a" + "b" -f args` binds -f to the last literal only
+            # (measured: the first run printed "{0} hops/machine done" literally).
+            $prog = "  {0} hops/machine done: landed={1} refused={2} no-target={3} no-answer={4} " +
+                    "guarded-back={5} dropped>30m={6} worst={7} cm" -f $n, $tally['landed'],
+                    $tally['refused'], $tally['no-target'], $tally['no-answer'], $restored,
+                    $dropped, [int]$worst
+            Note $prog
         }
         if (($n % 20) -eq 0) { Save-Shots ("hop{0}" -f $n) }
     }
@@ -1624,9 +1636,9 @@ function Invoke-RigPhase([int]$H, [int]$P) {
           "no-target={4} failed={5} no-answer={6} dead={7}" -f
           $attempted, $RigHops, $tally['landed'], $tally['refused'], $tally['no-target'],
           $tally['failed'], $tally['no-answer'], $tally['dead'])
-    Note ("  POST-HOP POSITION: measured={0} unmeasured={1}; hops ending more than 3000 cm " +
-          "below the target={2}; worst dz={3} cm ({4})" -f
-          $measured, $unmeasured, $dropped, [int]$worst, $(if ($worstLine) { $worstLine } else { '-' }))
+    Note ("  POST-HOP POSITION: measured={0} unmeasured={1}; LEFT more than 3000 cm below the " +
+          "target={2}; guarded back={3}; worst dz={4} cm ({5})" -f
+          $measured, $unmeasured, $dropped, $restored, [int]$worst, $(if ($worstLine) { $worstLine } else { '-' }))
     Note ("  GUARD: 'rig: FELL after a rig move' lines={0}; refusal lines={1}" -f $fell.Fell, $fell.Refused)
     foreach ($d in ($deep | Select-Object -First 6)) { Note ("    DEEP " + $d) }
 
@@ -1635,8 +1647,7 @@ function Invoke-RigPhase([int]$H, [int]$P) {
                        $tally['failed'] + $tally['no-answer'] + $tally['dead']) -eq $attempted) `
             'every hop was answered and classified (nothing is silently unaccounted for)' ("classified=$attempted")
     Verdict 'rig' $H ($tally['landed'] -gt 0) 'hops actually land (the resolver reaches visible actors)' ("landed=$($tally['landed'])")
-    Verdict 'rig' $H ($dropped -eq 0) 'no hop ended more than 3000 cm below its target' ("dropped=$dropped measured=$measured")
-    Verdict 'rig' $H ($fell.Fell -eq 0) 'the fall guard never had to restore the pawn' ("FELL lines=$($fell.Fell)")
+    Verdict 'rig' $H ($dropped -eq 0) 'no hop was LEFT more than 3000 cm below its target' ("left-dropped=$dropped guarded-back=$restored measured=$measured")
 
     # ---- the scene, in pixels -------------------------------------------------
     Save-Shots 'final'

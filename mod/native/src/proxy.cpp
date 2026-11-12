@@ -13749,12 +13749,22 @@ void RigArmFallGuard(float targetZ)
     uint32_t now = Net::Now();
     if (!g_rigFall.armed) {
         ActorXform me = {};
-        if (!ReadActorXform(g_localPawn, &me)) return;
+        if (!ReadActorXform(g_localPawn, &me)) {
+            // WHY THIS LINE EXISTS (Session 25): a rig move that could not read the spot it
+            // is about to leave cannot arm a guard, and the pawn is then unguarded for a
+            // placement nobody has proven has a floor.  It has to be visible in a log.
+            QDLOG(LOG_WARN, "rig: could not read the pawn's position; the fall guard is NOT armed "
+                  "for this move");
+            return;
+        }
         g_rigFall.safe = me;
     }
     g_rigFall.armed = true;
     g_rigFall.t0 = now;
     g_rigFall.targetZ = targetZ;
+    QDLOG(LOG_INFO, "guard: armed for a placement at z=", flt(targetZ, 0), " (safe spot ",
+          flt(g_rigFall.safe.px, 0), ",", flt(g_rigFall.safe.py, 0), ",",
+          flt(g_rigFall.safe.pz, 0), ")");
 }
 
 void RigFallGuardPump(uint32_t now)
@@ -13763,6 +13773,17 @@ void RigFallGuardPump(uint32_t now)
     if (!g_localPawn) { g_rigFall.armed = false; return; }
     ActorXform me = {};
     if (!ReadActorXform(g_localPawn, &me)) return;
+    // ONE LINE A SECOND WHILE THE GUARD IS LIVE.  The age is printed SIGNED, because that is
+    // the bug this line found: `t0` is a fresh Net::Now() taken later in the SAME tick than
+    // the `now` the pump is handed, so `now - t0` is negative and, read as uint32, enormous.
+    // The first version compared it unsigned and therefore disarmed the guard on the very
+    // tick it armed -- every `near:` placement was unguarded and nothing said so.
+    static uint32_t lastSaid = 0;
+    if (now - lastSaid >= 1000) {
+        lastSaid = now;
+        QDLOG(LOG_INFO, "guard: armed, placement z=", flt(g_rigFall.targetZ, 0),
+              " pawn z=", flt(me.pz, 0), " (", dec((int32_t)(now - g_rigFall.t0)), " ms in)");
+    }
     if (me.pz < g_rigFall.targetZ - kRigFallCm) {
         const ActorXform& sv = g_rigFall.safe;
         bool ok = SetActorXform(g_localPawn, sv.px, sv.py, sv.pz, sv.yaw);
@@ -13772,7 +13793,12 @@ void RigFallGuardPump(uint32_t now)
         g_rigFall.armed = false;
         return;
     }
-    if (now - g_rigFall.t0 > kRigFallWindowMs) g_rigFall.armed = false;
+    // SIGNED, and that is the whole fix: `t0` is taken with Net::Now() later in the arm's own
+    // tick than the `now` this pump is handed, so the difference is a small NEGATIVE number.
+    // Compared as uint32 it is > 4e9, i.e. "six seconds have passed", and the guard disarmed
+    // itself on the tick it was armed -- measured in Session 25 as `-109 ms in` followed by no
+    // guard line ever again and no FELL after a 19 000 cm displacement.
+    if ((int32_t)(now - g_rigFall.t0) > (int32_t)kRigFallWindowMs) g_rigFall.armed = false;
 }
 
 // QDCOOP_TEST_NEAR: cm to stand from a `near:` target.  Far enough not to spawn inside
@@ -13780,6 +13806,27 @@ void RigFallGuardPump(uint32_t now)
 // The placement half, shared by the name resolver and the key resolver below: the offset
 // is horizontal along the approach direction, at the TARGET's own height (the actor is the
 // authority on where the ground is), facing the target unless a yaw was given.
+// THE TARGET'S LEVEL, NAMED IN THE LOG (Session 25).  The rig's placement rule refuses a
+// target whose level is not shown; whether that rule can even SEE the bad targets is a fact
+// about the content, not about the rule, so the accept line carries the level's own name and
+// its bIsVisible bit.  Measured with it: the hub's actors 190 m below the surface answer
+// `level=PersistentLevel shown=1`, which is why a visibility test alone never refused one.
+static void RigLevelTag(void* actor, char* out, int cap)
+{
+    if (!out || cap < 16) return;
+    out[0] = 0;
+    void* lvl = ActorLevelOf(actor);
+    if (!lvl) { lstrcpynA(out, " level=? shown=?", cap); return; }
+    char nm[64] = "";
+    FNameToString(ObjNameRaw(lvl), nm, sizeof(nm));
+    int shown = -1;
+    __try { shown = (*(uint8_t*)((uint8_t*)lvl + 0x1F4) & 0x20) ? 1 : 0; }
+    __except (EXCEPTION_EXECUTE_HANDLER) { shown = -1; }
+    lstrcpynA(out, " level=", cap);
+    lstrcatA(out, nm[0] ? nm : "?");
+    lstrcatA(out, shown == 1 ? " shown=1" : (shown == 0 ? " shown=0" : " shown=?"));
+}
+
 void RigStandBeside(void* actor, const ActorXform& t, const char* label, float d,
                     float yawOverride, bool haveYaw)
 {
@@ -13809,9 +13856,11 @@ void RigStandBeside(void* actor, const ActorXform& t, const char* label, float d
     void* pc = LocalController();
     int ro = pc ? FindPropertyOffsetIn(ObjClass(pc), "ControlRotation") : -1;
     if (ro >= 0) { float* r = (float*)((uint8_t*)pc + ro); r[0] = 0.0f; r[1] = yaw; }
+    char lvlTag[128];
+    RigLevelTag(actor, lvlTag, sizeof(lvlTag));
     QDLOG(LOG_INFO, "dev teleport near '", label, "' -> ", label, " at ", flt(t.px, 0), ",",
           flt(t.py, 0), ",", flt(t.pz, 0), " dist=", flt(d, 0), "; standing at ", flt(px, 0), ",",
-          flt(py, 0), ",", flt(pz, 0), " offset=", flt(off, 0), (ok ? "" : " FAILED"));
+          flt(py, 0), ",", flt(pz, 0), " offset=", flt(off, 0), lvlTag, (ok ? "" : " FAILED"));
 }
 
 void DevTeleportToTarget(const char* sub, float yawOverride, bool haveYaw)
