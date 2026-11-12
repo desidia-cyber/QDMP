@@ -555,6 +555,22 @@ Two assumptions in that paragraph are unproven and each is one probe:
   mod constructed (`take: gate before stage requireActivation=0 activated=0 acquired=1 ...`).
   Nothing in the module writes that property. Next: read it on the class default object, read
   the `PickedUp` delegate, and ask `GetInteractInfo` for every out-parameter.
+  **Session 25 closed the take half: the order was the whole of it.** The lever presses
+  `Interact` FIRST and the pickup's own dismiss events after it, and the first gate of a real
+  take now reads `acquired=0`; `Interact` sets it to 1, the loot lane tombstones 13 ms later
+  (`loot: local pickup DD452DFD#0 (Herb_Item_BP_C) -- tombstoned for the partner`), and the item
+  is granted 70 ms after that (`inventory host set 2 entries (live 2) rev=214` on the host,
+  `item intent queued ...HealingHerb x2` on the peer). The partner hides its copy under the
+  lane's own key (`loot: hiding local drop DD452DFD#0 -- the partner took it`, 49 ms after the
+  take) and the tombstone makes it untouchable -- `LootHide` now also disables its collision and
+  sets `Acquired`, and a second attempt is refused by name (`rig: drop DD452DFD#0 is already
+  gone on this machine`) with **no inventory change on either machine**. Measured in both
+  directions in `780_SZ_Depths` (host takes `DD452DFD#0`, peer takes `54F6FD50#0`), 39 PASS /
+  0 FAIL, kill sets diff 0, shared HP 26 compared / 0 unequal. Three earlier sessions of "the
+  verb runs and consumes nothing" were the dismiss-before-Interact order, not a content gate.
+  Still true about a drop: the pickup ACTOR stays standing after a take when its showcase is
+  never dismissed (the lane counts the `Acquired` flip, which is the item), so "the drop is on
+  the ground" and "the drop has not been taken" are now different facts.
 - **Shop, journal/bestiary, XP, weapon levels, grimoire ink.** Per-player by nature.
 - **Peer vitals.** The partner's HP and death are not shown; a death shows as the body
   falling. This is also why the damage lane's dead check is receive-side only.

@@ -5360,3 +5360,346 @@ anything presses it.
   evidence that would settle it (the UE engine log) is not being captured - -AbsLog names
   out/<phase>-inst<N>-ue.log and no such file is ever written.
 - **Boss phases, hit reactions, the shop door, peer vitals** - unchanged from Sessions 20-23.
+
+---
+
+## Session 25 - 2026-11-12 (the rig that stayed on screen, the take that paid, and a soak with no cutscene in it)
+
+This branch is `t3/rig-placement-loot-take-soak-1`, reset to `sync-fix` (`b26dec7`). Body:
+`tools/session25.ps1`, one phase per invocation (`probe`, `rig`, `hardloop`, `loot`, `smoke`,
+`soak`, `all`). Configuration is the documented PLAY set with `LogLevel=3`; roles are read from
+`session established`: **host=inst1, peer=inst2**. The branch carries the two coordinator fixes
+under test (`3769c21` the rig placement rule and fall guard, `b26dec7` the take) plus three
+fixes this session's measurements forced, one in each of those two areas and one in the
+harness.
+
+### R156. THE RIG: the user's report, the fix's assumption, and what the log actually shows
+
+The report was "spawns player in darkness, no map visible, or in empty space where he just
+falls". `3769c21` named the cause from Session 24's peer log -- the rig teleporting to actors of
+a sublevel that is resident but not **shown** (z -14047..-15806) -- and fixed it by requiring
+`ULevel::bIsVisible` at every resolver plus a fall guard. Both halves were tested this session
+and **both were inert on this content, for two different reasons**. The state the user
+described is real: it was produced and caught 42 times in one phase.
+
+The baseline is measured from Session 24's own host log, the file the diagnosis came from:
+**265 hub hops, 18 ended more than 30 m below the target, worst 25937 cm**
+(`target_z=-14047 pawn_z=-32606`; also `target_z=-108 pawn_z=-15755`).
+
+**(1) The fall guard disarmed itself on the very tick it armed.** The first instrumented phase
+printed this once per hop and then nothing at all:
+
+```
+9:29:00.126 INFO guard: armed for a placement at z=-9 (safe spot 4106,-1744,140)
+9:29:00.126 INFO guard: armed, placement z=-9 pawn z=-9 (-109 ms in)
+```
+
+`RigArmFallGuard` read its start time with a fresh `Net::Now()` while the pump is handed the
+`now` captured at the top of the same tick, so `now - t0` is a small **negative** number; read
+as `uint32` it is > 4e9, i.e. "the six-second window has long passed", and the guard cleared
+`armed`. Every `near:` placement was therefore unguarded -- a 19 000 cm displacement produced
+no `FELL` line. The comparison is signed now, and the guard works:
+
+```
+9:36:04.113 dev teleport near 'chest' -> chest at 1473,327,-1437 ... standing at 1455,466,-1437 level=PersistentLevel shown=1
+9:36:05.906 WARN rig: FELL after a rig move (placed at z=-1437, now z=-2966); put back at 1450,509,-1339
+```
+
+**(2) The visibility refusal never fired: 0 of 128 hops.** Every accept line now names the
+target's own level and its visibility bit, and on both machines, for every kind of target, in
+the hub and inside `780_SZ_Depths`, the answer was identical: `level=PersistentLevel shown=1`.
+128 hops, 128 of those, **0 refusals**. So the rule cannot see the bad targets on this content:
+they are not in a hidden level, they are 140-190 m **below** the persistent level's floor, in
+the stacked maps that only have geometry when the sublevel which owns that geometry is shown.
+Either the game really places these actors in the persistent level, or `ActorLevelOf` answers
+"persistent level" for everything; this session cannot separate those two, and it does not have
+to -- the rule as written has no effect here, and claiming otherwise would be false.
+
+**(3) What actually moves the player is the GAME, and it is a teleporter.** The host's log has
+it 30 times in one 15-minute phase, always about 1.5 s after a `near:npc` placement:
+
+```
+9:24:23.595 INFO dev teleport near 'npc' -> npc at -9,177,-0 ... standing at 40,308,-0
+9:24:24.726 INFO travel: local destination TempTeleporter/Ruins_Level_00 seq=13
+9:24:28.444 INFO scan: local at 1477,-269,-19067
+```
+
+The hub's NPC stands on a `TempTeleporter`. The rig places the player beside it, the game
+teleports him 190 m down, and from that moment every later hop resolves the nearest actor *down
+there* (the scan of that region lists the same spawner names at z -19150). A 64-hop phase walks
+the host from z=140 to z=-19060 that way, one hop at a time: the guard undoes each individual
+drop, but it restores to a "safe" spot that is itself deep, so the descent survives hop by hop.
+
+**Fixed: a rig spot inside a teleporter's volume is refused, and named:**
+
+```
+dev teleport near 'npc': the spot beside it is inside a teleporter's volume, and the game would move the player out of the level; refused
+```
+
+That is the same class of rule as the level refusal: a rig target has to be somewhere the
+player can stand **and stay**.
+
+**Measured: 64 hops per machine, one pair of processes, in the hub.** This run used the build
+with (1) and (2) fixed; the teleporter refusal (3) was added afterwards and is measured in the
+soak below (`relusals` column).
+
+| | HOST (inst1) | PEER (inst2) | both |
+|---|---|---|---|
+| hops driven | 64 | 64 | **128** |
+| hops that landed | 64 | 64 | **128** |
+| refused: level not shown | 0 | 0 | **0** |
+| refused: no target / no answer | 0 | 0 | **0** |
+| `rig: FELL` restores | **23** | **19** | **42** |
+| hops LEFT more than 3000 cm below target | **0** | **0** | **0** |
+| targets whose level answered `shown=1` | 64 | 64 | **128** |
+| game teleporter destinations during the phase | 30 | 2 | **32** |
+| pawn z, start -> end | 140 -> **-19060** | 140 -> **-503** | |
+| screenshots (mean luminance / stddev) | 4, 39.2 / 25.4 | 4, 42.0 / 26.1 | lit 8 of 8 |
+
+The per-hop z test is the one the user asked for: after each hop the pawn's own
+`scan: local at` (10 s cadence) is compared with the target's z. **No hop was left more than
+3000 cm below its target**; 37 of the 128 were caught mid-drop by the guard and put back
+(`worst dz=19121 cm` is one of those, on a hop whose safe spot was already deep -- the restore
+is why it is not counted as "left").
+
+**The scene, in pixels.** `capture-hidden.ps1` (PrintWindow, the off-screen window) was called
+at hops 20, 40, 60 and at the end, and every image was measured for mean luminance and
+standard deviation. The host's four: 29.1/26.6, 27.5/20.5, 42.7/23.5 and 39.2/25.4 means/stds;
+the peer's: 34.9/22.4, 37.8/25.0, 58.7/32.9 and 42.0/26.1. All eight are lit and non-uniform.
+Looked at, not just measured: the peer's frames show the hub's stone stairs, a seated NPC, a
+campfire, chests and the held sword; the host's are darker interiors (a cave mouth, a stone
+pillar, a wall) but geometry is visible in each and none is a black screen. The host's darker
+frames are the reason its average is 39 and not 60 -- they are the lit interiors of the hub, not
+the "darkness" of an unshown level, which measures as a nearly uniform near-black.
+
+### R129. THE TAKE, BOTH DIRECTIONS - the drop is taken when `Acquired` flips, and the item is paid once
+
+`b26dec7` reordered the lever: `Interact` first (it IS the take), then the pickup's own dismiss
+presses. Measured in `780_SZ_Depths`, two drops both machines held (`DD452DFD#0` and
+`54F6FD50#0`, `Herb_Item_BP_C`), one take each direction. **Every line below is from the run.**
+
+Direction 1, the HOST takes `DD452DFD#0`:
+
+```
+9:58:5x  key DD452DFD#0: BOTH machines hold it
+9:59:01.084 take: gate before stage requireActivation=0 activated=0 acquired=0 isADrop=1 validGUID=n/a
+9:59:02.697 take: stage 0 the pickup's Interact (the take) ran=Interact drop=standing
+9:59:02.697 take: gate after the press requireActivation=0 activated=0 acquired=1 isADrop=1 validGUID=n/a
+9:59:02.710 loot: local pickup DD452DFD#0 (Herb_Item_BP_C) -- tombstoned for the partner
+9:59:02.767 inventory host set 2 entries (live 2) rev=214
+9:59:14.953 take: 'drop:DD452DFD:0' TAKEN (Acquired=1, item granted); the showcase was not dismissed by any press, so the actor still stands -- the loot lane counts the Acquired flip as the take
+```
+
+and on the PEER, 49 ms later:
+
+```
+9:59:02.759 loot: hiding local drop DD452DFD#0 -- the partner took it
+9:59:02.984 inventory grant applied: /Game/Items/Consumables/Herb/HealingHerb.HealingHerb +1 (host 1, peer 0)
+```
+
+The same drop, taken again on the PEER (the "it must not pay twice" half):
+
+```
+9:59:23.996 WARN take: 'drop:DD452DFD:0' resolves to no live drop on this machine
+10:00:11.634 WARN rig: drop DD452DFD#0 is already gone on this machine
+```
+
+Direction 2, the PEER takes `54F6FD50#0`:
+
+```
+10:00:42.812 take: gate before stage requireActivation=0 activated=0 acquired=0 isADrop=1 validGUID=n/a
+10:00:44.502 take: stage 0 the pickup's Interact (the take) ran=Interact drop=standing
+10:00:44.502 take: gate after the press requireActivation=0 activated=0 acquired=1 isADrop=1 validGUID=n/a
+10:00:44.522 loot: local pickup 54F6FD50#0 (Herb_Item_BP_C) -- tombstoned for the partner
+10:00:44.542 item intent queued /Game/Items/Consumables/Herb/HealingHerb.HealingHerb x2
+10:00:57.038 take: 'drop:54F6FD50:0' TAKEN (Acquired=1, item granted); ...
+```
+
+and on the HOST, 28 ms later:
+
+```
+10:00:44.550 loot: hiding local drop 54F6FD50#0 -- the partner took it
+10:00:44.665 inventory grant applied: /Game/Items/Consumables/Herb/HealingHerb.HealingHerb x1 (peer total 1 rev=313)
+10:00:44.665 inventory host set 2 entries (live 2) rev=314
+10:01:57.349 WARN rig: drop 54F6FD50#0 is already gone on this machine     <- the second take, refused
+```
+
+**The one number that settles Session 24's question.** Session 24 ended with "`acquired=1`
+before any press". Here the first gate of a real take reads **`acquired=0`**, and `Interact` is
+what sets it: 0 -> 1 in the same line, the lane's tombstone 13 ms later, the inventory 70 ms
+after that. The three earlier sessions' "the verb runs and consumes nothing" is explained
+exactly: the press that matters is the pickup's own `Interact`, and it was never the first
+press.
+
+**The inventory half, per machine and not inferred.** The taker's own lines, in the take
+window: one (`inventory host set 2 entries (live 2) rev=214` on the host; `item intent queued
+... x2` on the peer), with **0 duplicate and 0 refused** lines. The partner's lines, in the
+repeat-take window: **0**. Direction 2's neutral check on the host after its own refusal:
+0 gain lines. The verify was `39 PASS, 0 FAIL` for the phase, with kill sets diff 0
+(39 dead keys each), shared HP 26 compared / 0 unequal, both machines alive, zero fault and
+zero `ERR` lines.
+
+**What is still not proven about R129.** The showcase actor stays standing unless a dismiss
+press removes it -- the lever's own line says so ("the showcase was not dismissed by any press,
+so the actor still stands"). On this content the dismiss presses run and the actor persists, so
+a drop's actor is *consumed by state* (`Acquired`) rather than removed, and a human sees a
+pickup that stops paying but may still be on the ground until it hides. That is a content
+behaviour the lane handles; it is not the same as "the take did not happen", and the inventory
+is the proof that it did.
+
+### The harness: the four fixes this session came for, and one more
+
+(a) **The soak no longer enters the cutscene worlds.** `997_FinalZoneCutscene` is a dark, empty
+cutscene map; every hard load costs a whole-world teardown whose only dividend in a play soak is
+crash risk. Hard loads stay in the dedicated `hardloop` phase, which does nothing else. The
+soak's segments are hub / 780 (inside the loot step) / 770 / leave / hub-again / hub-final.
+
+(b) **Every Stop-All logs WHY before it kills anything**, with the phase, the reason and the
+last line each machine wrote:
+
+```
+STOP-ALL #3 phase=rig reason=UNHANDLED exception in phase 'rig': Cannot convert ...
+  killing inst1 pid=79084; its last log line was: ...
+```
+
+That is the missing evidence for Session 24's "both processes gone in the same second, logs cut
+mid-line, no fault" -- which is what this harness looks like from outside when it cleans up
+after an error. In this session it caught two of its own defects in exactly that shape (a
+`$H`/`$h` case-insensitive shadowing and a `-f` precedence bug), and both were fixed rather
+than left as "the run died mysteriously".
+
+(c) **`WORLD DIVERGENCE` is counted outside a travel transition** (+/- 20 s around any hard
+load or area entry/leave on either machine). Session 24's strict `count == 0` failed on four
+lines that each resolved by themselves. This session: 0 total in the loot phase, 0 outside a
+transition; the soak's numbers are in its table.
+
+(d) **Shared HP is not sampled for 40 s after a hard load or an area change**, and every
+suppressed sample is printed with the time left on the gate. Session 24's `hub-final` opened
+with `shared-alive=0` because the tables were still rebuilding.
+
+(e) (brought forward, not asked for) **the per-hop measurement in the `rig` phase**: every hop
+is classified, and the pawn's own position after it is read, so "did he fall" is a number and
+"the guard caught it" is a different number.
+
+### The soak, measured
+
+One pair of processes, the documented PLAY set (`switches: flags=1 inventory=1 actors=1
+enemy=1 puppet=1 playerBody=1 dialogue=1 stream=1 travel=1 cutscene=1 movers=1 loot=1
+suspend=1 pause=1`), `soak` phase, 10:04:18 -> 10:43:48. No hard travel, by design (3a).
+
+| segment | ran | iterations | both alive |
+|---|---|---|---|
+| hub | 578 s of 576 s | 166 | yes |
+| loot step (`780_SZ_Depths`, entered by the step itself) | ~9 min | - | yes, both takes |
+| area770 (`770_SZ_Swamp`) | 290 s of 288 s | 81 | yes |
+| leave (back to the hub) | - | - | yes, the peer followed 17 ms later |
+| hub-again | 255 s of 252 s | 62 | yes |
+| hub-final | 701 s of 684 s | 145 | yes |
+
+**MEASURED BODY: 1824 s of 1800 s.** Wall clock including the loot step and the transitions:
+2370 s. `=== 56 PASS, 3 FAIL ===` -- the three failures are the last three bullets below.
+
+| the run's answers | measured |
+|---|---|
+| both machines alive at the end | **yes** -- 0 `FAULT` lines, no crash dump on either |
+| kill sets | host-dead=**298**, peer-dead=**297**, **diff=1** (`24848FF5` dead only on the host) |
+| shared HP | 25 samples, **307 compared, 11 unequal**, 0 unreadable, 0 ghosts, `duplicates=0`, `mx-differ=0` |
+| same world | `Ruins_Level_00` on both, `agree=1`, area `-` on both |
+| `WORLD DIVERGENCE` | **0 total, 0 in a transition, 0 outside one** (11 travel events seen) |
+| faults / `ERR` | 0 `FAULT` lines on both; **1 `ERR` line on the host**, 0 on the peer |
+| area changes | 3 (780, 770, leave) -- the counter prints "2" because it counts ENTRIES and the leave is its own verdict |
+| loot takes | 2 more, one each direction (`3EEBDB47#0` host takes, `826B568F#0` peer takes), all `r129-*` verdicts PASS |
+| rig hops | 475 landed; **0 refused-not-shown**, 2 no-target, **18 `rig: FELL` restores**, 452 of them counted by the soak's own hop counter |
+| HP sampling gate | armed at the 780 entry, the 770 entry and the leave; **no sample fell inside a gate** (the 75 s rhythm never landed in the 40 s), so nothing was suppressed -- stated rather than claimed as a save |
+
+**What passed, with numbers.** 1824 s of body in one pair of processes with 475 rig hops
+driven, three area changes that all followed on both machines, two more loot takes, **zero
+fault lines and no dump**, and **zero `WORLD DIVERGENCE` lines at all** -- (c) has nothing to
+excuse in this run because the run never had the pair apart. The area entries and the leave are
+in the report with the `rig: level engine state ... LoadedLevel=1 actuallyVisible=1` line from
+BOTH machines.
+
+**What failed, precisely.**
+
+* **One key is dead on the host only** (`24848FF5`), so the kill sets diff by 1 where Sessions
+  22-24 got 0. The end-of-run dump explains the shape: `host keys=298 (dead 298); peer keys=306
+  (dead 297)` -- the host had killed **every** key it knew and the peer had 9 alive. A single
+  one-sided death out of 298 is the same class as R146 (a death observed on a copy the machine
+  did not run) and is not explained here.
+* **11 of 307 shared-HP comparisons are unequal (3.6%), all in the hub.** Seven of the eleven
+  comparisons are the same shape: **host 140, peer 40** (six keys) and **host 140, peer 30**
+  (one key, `FB667C1A`). 140 is exactly `BookBug_Popcorn_C`'s MaxHP, so the host holds one of
+  these at full health while the peer has it damaged. `duplicates=0` and `mx-differ=0` say it is
+  NOT Session 23's "two bodies under one key" -- one record on each machine, and they disagree.
+  The other shape is one key (`7506BDBA`) at **host 199 / peer 208**, then **189 / 198**: a
+  9 HP offset that persists and shrinks as the enemy is damaged. Neither is explained, neither
+  is claimed fixed, and together they are this session's top sync item.
+* **One `ERR` line on the host**, at 10:23:23 (inside `area770`):
+  `ERR actor-state: game writer for guid=14fe95ef-... value=1 read back -999999 (WRITE FAILED)`.
+  That is the container-write read-back guard reporting a write that did not stick -- a real
+  write failure in `770_SZ_Swamp`, counted as a failure rather than waved through, and the same
+  shape PLAYTEST's "progress can lag in a chest-dense area" describes.
+
+**About the end-of-run line `shared live keys at the end: 0`.** It is true and it is not a sync
+failure: the host's final dump is 298 keys and **every one is DEAD**, the peer's has 9 alive, so
+there is nothing left to compare at that instant. The 307 comparisons above are the 25 samples
+taken through the run.
+
+### The live-proof table
+
+| Claim | Verdict | Key line |
+|---|---|---|
+| The rig never leaves the pawn more than 30 m below its target | **PASS** | 128 hops, `left-dropped=0`, `guarded-back=37` |
+| The fall guard actually runs | **FAIL (the defect), then PASS (fixed)** | `guard: armed ... (-109 ms in)` then nothing; after the signed fix, 42 `rig: FELL` in one phase |
+| A rig placement the game then moves is undone | **PASS** | `rig: FELL ... placed at z=-1437, now z=-2966; put back at 1450,509,-1339` |
+| The scene is lit and has geometry | **PASS** | 8 screenshots, mean luminance 39.2 / 42.0, stddev 25.4 / 26.1, lit 8/8, and looked at |
+| A target's level is NAMED, so the visibility rule can be judged | **PASS** | `level=PersistentLevel shown=1` on 128 of 128 hops |
+| The visibility rule refuses something on this content | **NO -- 0 of 128** | all 128 targets answered `shown=1`; the rule has no effect here |
+| A drop both machines hold can be TAKEN | **PASS, both directions** | `loot: local pickup DD452DFD#0 (Herb_Item_BP_C) -- tombstoned for the partner` / `... 54F6FD50#0 ...` |
+| `Acquired` is 0 before the take and 1 after | **PASS** | `gate before ... acquired=0` -> `stage 0 ... Interact` -> `gate after ... acquired=1` |
+| The taker's inventory changes exactly once | **PASS** | `inventory host set 2 entries (live 2) rev=214`; peer: `item intent queued ... x2`; `bad lines=0` |
+| The partner hides its copy and cannot pay it out again | **PASS** | `loot: hiding local drop DD452DFD#0 -- the partner took it`, then `rig: drop DD452DFD#0 is already gone on this machine`, `gain lines=0` |
+| Both alive after >= 1800 s of body | **PASS** | 1824 s of 1800 s |
+| Two area changes follow | **PASS** - 3 of 3 | `travel: entered the partner's area 780_SZ_Depths/770_SZ_Swamp`, `travel: left the area 770_SZ_Swamp` |
+| Kill sets diff 0 | **FAIL** - diff 1 | `host-dead=298 peer-dead=297 diff=1` (`24848FF5`) |
+| Shared HP equal | **FAIL** - 11 of 307 | `host=140 peer=40` x6, `140/30` x1, `7506BDBA` 199/208 then 189/198 |
+| Zero uncaught faults | **PASS** | 0 `FAULT` lines, no dump, both machines alive |
+| Zero `ERR` | **FAIL on the host** - 1 | `ERR actor-state: game writer ... (WRITE FAILED)` |
+| `WORLD DIVERGENCE` outside a transition | **PASS** | 0 total, 0 outside |
+
+### What is still open
+
+- **The visibility rule is inert on this content.** 0 refusals in 128 hops, because every
+  target answers `level=PersistentLevel shown=1` -- in the hub AND inside a streamed, shown
+  area. Either these actors really live in the persistent level or `ActorLevelOf` answers
+  "persistent" for everything; the two cannot be told apart from these runs, and until one is,
+  `bIsVisible` is not the test that protects the player. What protects him is the fall guard
+  (42 restores) and the teleporter refusal.
+- **The rig can still descend in steps.** With the teleporter refusal the soak's pawns stayed in
+  the hub's own height band (host z 762-3522 while hopping, peer 1167-2311), which is the fix
+  working; but a chain of placements each under the 15 m guard threshold can still walk a pawn
+  downhill, and nothing in the lane forbids that.
+- **11 of 307 shared-HP pairs disagree** (the `140/40` and `199/208` shapes above), with no
+  duplicate record and no MaxHP difference to explain them.
+- **One one-sided death** (`24848FF5`) and **one failed container write** (`ERR actor-state`).
+- **The play soak has no hard travel in it any more** (3a). Hard loads are covered only by
+  `hardloop`, which this session did not run -- so R152's containment is unchanged from
+  Session 24 and was not re-measured.
+- **The pickup's showcase is never dismissed by the rig**, so a taken drop's actor can stay
+  standing. The lane counts the `Acquired` flip (the item is granted once and the tombstone is
+  permanent), so this is a visual residue, not a second payout -- but it has not been driven to
+  a hidden actor by a human-visible input.
+- **Boss phases, hit reactions, the shop door, peer vitals** -- unchanged from Sessions 20-24.
+
+### What a human tester needs to know
+
+Three things changed. **You should no longer end up in the dark**: the placement rule now
+refuses a spot that is inside a teleporter's volume (the hub's NPCs stand on one, and that is
+what used to drop you 190 m into the stacked maps), and any rig move that leaves you more than
+15 m below where your feet were is undone within a few seconds -- measured 42 times in one
+phase, each one logged as `rig: FELL ...`. **Picking up a drop works**: walk onto one and it is
+taken, the item is granted once, and your partner's copy hides and cannot be taken again. If
+you take the same drop twice you will get nothing the second time, by design. **A long session
+still has two rough edges**: an enemy can read 140 HP on one screen and 40 on the other, and one
+key out of 298 died on only one machine -- if a kill looks one-sided or an enemy's health looks
+stale, that is the open item and the log will name the key.

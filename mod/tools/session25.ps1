@@ -1770,12 +1770,13 @@ function Invoke-HardLoop([int]$H, [int]$P, [int]$loads) {
 # ===========================================================================
 # The order is chosen so every requirement is reached even if a later one fails:
 #   hub -> the loot take (which is what entering 780_SZ_Depths is for) -> 770 -> leave ->
-#   hub -> two hard round trips -> hub.
-# Area changes are `780` (inside the loot step) and `770`; the hard travels are two round
-# trips, i.e. four world loads, in the same pair of processes that ran the body.
+#   hub-final.
+# Area changes are `780` (inside the loot step), `770` and the leave.  There is NO hard travel
+# in this phase (3a): the cutscene worlds are the `hardloop` phase's job, and every hard load
+# costs a whole-world teardown the soak has no reason to spend on a cutscene map.
 function Invoke-Soak([int]$H, [int]$P) {
     Step ("SOAK -- {0} s of measured body on the documented play set" -f $SoakSeconds) `
-         'Session 22 ran 1581 s and 1496 s of body and said so. This one budgets the BODY at the full duration, reports the wall clock separately, and puts the two hard round trips INSIDE the run because that is where the crash lives.'
+         'Session 22 ran 1581 s and 1496 s of body and said so; Session 24 reached 1816 s. This one budgets the BODY at the full duration, reports the wall clock separately, and leaves the cutscene worlds to the hardloop phase (3a): a hard load is a world teardown, and this phase is here to measure PLAY.'
     $m0 = Get-Mark $H
     $wall0 = Get-Date
     $swm = @(Read-LogLines $inst[$H].Log | Where-Object { $_ -match 'switches: ' })
