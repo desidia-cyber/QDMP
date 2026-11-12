@@ -4833,6 +4833,23 @@ void TravelPump(uint32_t now)
     bool travelling = LocalTeleporting(g_localPawn);
     if (travelling) LocalTravelDest(g_localPawn, local, dest, sizeof(dest));
     bool destChanged = g_travel.NoteLocal(dest, travelling, now);
+    // THE GAME'S OWN TRAVEL GETS THE SAME QUIET TEARDOWN AS THE MODULE'S (Session 26).
+    // Session 23 (R152) made the module drop every world-scoped handle and stand at the gate
+    // before IT asked for a hard load.  A load the GAME starts -- this game's teleporters load
+    // the world (`TempTeleporter/Ruins_Level_00` reloads Ruins_Level_00) -- never passed
+    // through that path: measured in Session 26 run 2, the peer stepped into the hub
+    // teleporter while following an area, and both processes died in the engine's
+    // world-change path a second later with the module still holding the old world.  The
+    // gate releases itself on the world pointer moving or after 20 s, so a teleport that
+    // turns out not to change the world costs at most that.
+    if (travelling && destChanged && dest[0] && !g_worldTransition) {
+        QDLOG(LOG_INFO, "travel: the game is taking this player through ", dest,
+              " -- dropping the world's handles before the engine tears it down");
+        g_worldTransitionWorld = GWorldPtr();
+        g_worldTransitionAt = now;
+        g_worldTransition = true;
+        WorldTeardownReset(now, "the game started a teleporter travel");
+    }
 
     if (changed || destChanged) ++g_travelSeq;
     // One line per change, so a live run can see the announcement the partner is about
@@ -18122,6 +18139,9 @@ bool HK_Tick(void* engineLoop)
     DevUseLever(now);
     DevDropProbe(now);
     TravelPump(now);
+    // TravelPump may have just opened the world-transition gate for the game's own travel;
+    // nothing below may pick a world handle back up in the same frame.
+    if (g_worldTransition) { g_lastTickMs = now; return keepRunning; }
     ArrivalPump(now);
     StreamPump(now);
     EnemyPump(now);
