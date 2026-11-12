@@ -18932,6 +18932,33 @@ void DevTriggerLever(uint32_t now)
             if (pk) FNameToString(ObjNameRaw(pk), lvl, sizeof(lvl));
             QDLOG(LOG_INFO, "  candidate ", nm, " path='", path, "' level outer='", lvl, "'");
         }
+        // Not in the table at all: say what the object space holds under that name, of any
+        // class, so the miss is a fact (wrong class? other world? not loaded?).
+        int total = ObjectCount(), shown = 0, inArea = 0;
+        for (int i = 0; i < total && shown < 12; ++i) {
+            void* o = ObjectAtSafe(i);
+            if (!o || !LooksLikeUObject(o)) continue;
+            char nm[96] = "";
+            FNameToString(ObjNameRaw(o), nm, sizeof(nm));
+            if (_stricmp(nm, spec) != 0) continue;
+            char cn[64] = "", path[192] = "";
+            FNameToString(ObjNameRaw(ObjClass(o)), cn, sizeof(cn));
+            ActorLevelPath(o, GWorldPtr(), path, sizeof(path));
+            bool hit = area[0] && objects::HasCI(path, area);
+            if (hit) ++inArea;
+            QDLOG(LOG_INFO, "  object ", nm, " [", cn, "] path='", path, "' inWorld=",
+                  dec(ActorInThisWorld(o, GWorldPtr()) ? 1 : 0), " shown=", dec(ActorLevelVisible(o) ? 1 : 0),
+                  " placed=", dec(ActorIsPlaced(o) ? 1 : 0), (hit ? " <- in the area" : ""));
+            ++shown;
+        }
+        int areaRows = 0;
+        for (int i = 0; area[0] && i < trig::g_tabN; ++i) {
+            char path[192] = "";
+            if (ActorLevelPath(trig::g_tab[i].actor, GWorldPtr(), path, sizeof(path)) > 0 &&
+                objects::HasCI(path, area)) ++areaRows;
+        }
+        QDLOG(LOG_INFO, "rig: trigger miss -- ", dec(shown), " object(s) named ", spec, " (", dec(inArea),
+              " in ", area, "); the table holds ", dec(areaRows), " trigger(s) from that area");
         return;
     }
     if (!ActorLevelVisible(t)) {
