@@ -8466,9 +8466,36 @@ void BossPump(uint32_t now)
         uint32_t rowAge = row ? (uint32_t)(now - row->rx_ms) : 0xFFFFFFFFu;
         bool haveRow = row && rowAge <= enemy::HostView::kDeadStaleMs;
         bool rowAlive = haveRow && (row->flags & enemy::kAlive) != 0;
-        bool localAlive = !(EnemyDead(r.actor) || (haveHp && hp <= 0.0f) || KillLogHas(r.guid));
+        uint8_t db = 0;
+        bool haveDeadBit = BytePropC(r.actor, "bDead", &db) || BytePropC(r.actor, "IsDead", &db);
+        bool localAlive = !(EnemyDead(r.actor) || (!haveDeadBit && haveHp && hp <= 0.0f) ||
+                            KillLogHas(r.guid));
         alive[i] = haveHp && boss::AliveByAuthority(ownerHere, localAlive, haveRow, rowAlive);
         if (haveHp) frac[i] = hp / mx;
+        // ONLY A BOSS IN THE FIGHT GETS THE BAR (Session 26).  Every boss of the world is
+        // resident (the areas are sublevels of one map), and an untouched one counted as a
+        // candidate: run 8 raised the Red Lords' bar while both players stood in the green
+        // dragon's arena, and the user saw a boss bar that "never disappeared".  A candidate
+        // must be on a level that is shown here AND be in the fight -- damaged, or within
+        // 60 m of either player.
+        if (alive[i]) {
+            bool engaged = haveHp && hp < mx - 0.5f;
+            if (!engaged) {
+                ActorXform bx = {}, me = {};
+                if (ReadActorXform(r.actor, &bx)) {
+                    const float kNear = 6000.0f;
+                    auto nearTo = [&](float x, float y, float z) {
+                        float dx = bx.px - x, dy = bx.py - y, dz = bx.pz - z;
+                        return dx * dx + dy * dy + dz * dz < kNear * kNear;
+                    };
+                    if (g_localPawn && ReadActorXform(g_localPawn, &me) && nearTo(me.px, me.py, me.pz))
+                        engaged = true;
+                    motion::MoveOut m = g_peerInterp.Sample(now);
+                    if (!engaged && m.valid && nearTo(m.px, m.py, m.pz)) engaged = true;
+                }
+            }
+            if (!engaged || !ActorLevelVisible(r.actor)) alive[i] = false;
+        }
     }
 
     if (g_net.IsHost()) {
@@ -18860,6 +18887,12 @@ void DevTriggerLever(uint32_t now)
     char spec[96];
     lstrcpynA(spec, raw, sizeof(spec));
     for (int i = 0; spec[i]; ++i) if (spec[i] == '#') { spec[i] = 0; break; }
+    // `Name@Area`: instance names repeat across sublevels (Session 26 run 8: the
+    // ActivationTrigger4 the lever found first was a Stoner_Boner trigger, not 740's
+    // Red Lords one), so the area narrows the match to the trigger placed in that map.
+    char area[64] = "";
+    for (int i = 0; spec[i]; ++i)
+        if (spec[i] == '@') { lstrcpynA(area, spec + i + 1, sizeof(area)); spec[i] = 0; break; }
     trig::g_cls.lastTry = 0;
     if (!trig::ResolveClass(now)) {
         QDLOG(LOG_WARN, "rig: trigger '", spec, "': ActivationTrigger_C is not loaded");
@@ -18870,7 +18903,15 @@ void DevTriggerLever(uint32_t now)
     for (int i = 0; i < trig::g_tabN; ++i) {
         char nm[96] = "";
         FNameToString(ObjNameRaw(trig::g_tab[i].actor), nm, sizeof(nm));
-        if (_stricmp(nm, spec) == 0) { t = trig::g_tab[i].actor; break; }
+        if (_stricmp(nm, spec) != 0) continue;
+        if (area[0]) {
+            char path[192] = "";
+            if (ActorLevelPath(trig::g_tab[i].actor, GWorldPtr(), path, sizeof(path)) <= 0 ||
+                !objects::HasCI(path, area))
+                continue;
+        }
+        t = trig::g_tab[i].actor;
+        break;
     }
     if (!t) {
         QDLOG(LOG_WARN, "rig: trigger '", spec, "' is not a placed trigger in this world");

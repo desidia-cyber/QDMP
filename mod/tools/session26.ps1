@@ -1925,7 +1925,7 @@ function Invoke-OneBoss([int]$H, [int]$P, $b) {
     # overlap would; the lane must carry it to the peer.
     $mH = Get-Mark $H
     $mP = Get-Mark $P
-    Set-Control $H 'qd.trigger' ($b.Start + '#' + (Get-Date -Format 'HHmmssfff'))
+    Set-Control $H 'qd.trigger' ($b.Start + '@' + $b.Area + '#' + (Get-Date -Format 'HHmmssfff'))
     [void](Check $step $H ("rig: trigger '" + [regex]::Escape($b.Start) + "' begin event: dispatched") 30 'the HOST walked into the start volume' $mH)
     [void](Check $step $H ('trigger: local player entered ' + [regex]::Escape($b.Start) + '.*sent to the partner') 15 'the HOST sent the entry to the partner' $mH)
     [void](Check $step $P ("trigger: replayed the partner's entered " + [regex]::Escape($b.Start) + '.*: dispatched') 20 "the PEER replayed the entry on its own copy" $mP)
@@ -1947,9 +1947,14 @@ function Invoke-OneBoss([int]$H, [int]$P, $b) {
     if (-not $bh) { Show-Since $H 'boss|spawn|trigger' $mH 12; Leave-Area $H $P $step | Out-Null; Start-Sleep -Seconds 5; return }
     $key = $bh.Key
 
-    # One bar, the same key.
-    [void](Check $step $H ('boss: (bar key=|active key -> )' + $key) 40 'the HOST raised the shared bar for this boss' $mH)
-    [void](Check $step $P ('ActivateBossHPBar called|boss: follower raised its own bar for guid=' + $key + '|boss: bar key=' + $key) 40 'the PEER shows a bar' $mP)
+    # One bar, for a member of this boss's group (the Red Lords are two actors and the
+    # game's bar names one of them).
+    $grpRx = if ($b.PSObject.Properties['Group'] -and $b.Group) { $b.Group } else { [regex]::Escape($b.Cls) }
+    $keys = @($dh.Values | Where-Object { $_.Cls -match $grpRx } | ForEach-Object { $_.Key })
+    if ($keys.Count -eq 0) { $keys = @($key) }
+    $keyRx = '(' + ($keys -join '|') + ')'
+    [void](Check $step $H ('boss: (bar key=|active key -> )' + $keyRx) 40 'the HOST raised the shared bar for this boss' $mH)
+    [void](Check $step $P ('ActivateBossHPBar called|boss: follower raised its own bar for guid=' + $keyRx + '|boss: bar key=' + $keyRx) 40 'the PEER shows a bar' $mP)
 
     # Damage from BOTH players moves one HP.
     $hp0 = $bh.Hp
