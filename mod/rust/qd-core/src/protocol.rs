@@ -533,6 +533,25 @@ pub struct Equipment {
 pub struct Status {
     pub rev: u32,
     pub mask: u32,
+    /// Optional tail (WIRE.md §3.15, vitals tail): the sender's own player HP.  `None` from an older
+    /// sender whose body ends after `mask`.
+    pub vitals: Option<Vitals>,
+}
+
+/// `STATUS` vitals tail (WIRE.md §3.15, vitals tail): whole HP points, clamped to `u16`.  This build
+/// has no player stamina, so there is none to carry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Vitals {
+    pub hp: u16,
+    pub hp_max: u16,
+    /// [`vitals_flag`] bits.
+    pub flags: u8,
+}
+
+/// `STATUS` vitals `flags` bits.
+pub mod vitals_flag {
+    pub const VALID: u8 = 1;
+    pub const DEAD: u8 = 2;
 }
 
 /// `STATUS.mask` bits (WIRE.md §3.15).
@@ -778,7 +797,7 @@ pub struct Travel {
     pub dest: String,
 }
 
-/// `TRAVEL.phase` (WIRE.md §3.15a).
+/// `TRAVEL.phase` (WIRE.md §3.15, vitals tail).
 ///
 /// The in-world half is a single announcement. A hard transition is a handshake
 /// because both machines must arrive before either resumes applying absolute state:
@@ -1451,6 +1470,11 @@ pub fn encode_body(body: &Body) -> Result<Vec<u8>> {
         Body::Status(st) => {
             w.write_u32(st.rev)?;
             w.write_u32(st.mask)?;
+            if let Some(v) = st.vitals {
+                w.write_u16(v.hp)?;
+                w.write_u16(v.hp_max)?;
+                w.write_u8(v.flags)?;
+            }
         }
         Body::EnemyDetail(d) => {
             write_guid(&mut w, &d.id)?;
@@ -1817,7 +1841,16 @@ pub fn decode_body(kind: Kind, bytes: &[u8]) -> Result<Body> {
             }
             Body::Equipment(Equipment { rev, items })
         }
-        Kind::Status => Body::Status(Status { rev: r.read_u32()?, mask: r.read_u32()? }),
+        Kind::Status => {
+            let rev = r.read_u32()?;
+            let mask = r.read_u32()?;
+            let vitals = if r.is_empty() {
+                None
+            } else {
+                Some(Vitals { hp: r.read_u16()?, hp_max: r.read_u16()?, flags: r.read_u8()? })
+            };
+            Body::Status(Status { rev, mask, vitals })
+        }
         Kind::EnemyDetail => Body::EnemyDetail(EnemyDetail {
             id: read_guid(&mut r)?,
             anim: r.read_u8()?,
@@ -2279,7 +2312,12 @@ mod tests {
                 ..Default::default()
             }),
             Body::Effect(Effect { kind: effect_kind::PROJECTILE_ENDED, id: 7, x: 59_584, y: -29_744, z: 5_784, ..Default::default() }),
-            Body::Status(Status { rev: 4, mask: status_bit::MAGIC_FIRE | status_bit::POISON }),
+            Body::Status(Status { rev: 4, mask: status_bit::MAGIC_FIRE | status_bit::POISON, vitals: None }),
+            Body::Status(Status {
+                rev: 5,
+                mask: 0,
+                vitals: Some(Vitals { hp: 37, hp_max: 120, flags: vitals_flag::VALID }),
+            }),
             Body::Travel(Travel {
                 seq: 0x123,
                 role: roles::HOST,

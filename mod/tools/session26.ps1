@@ -68,7 +68,7 @@
 # NEVER counted as equal.
 [CmdletBinding()]
 param(
-    [ValidateSet('probe', 'rig', 'hardloop', 'loot', 'smoke', 'soak', 'all', 'bosses')]
+    [ValidateSet('probe', 'rig', 'hardloop', 'loot', 'smoke', 'soak', 'all', 'bosses', 'gaps')]
     [string]$Phase = 'all',
     [int]$BootSeconds = 300,
     [int]$SoakSeconds = 1800,
@@ -529,7 +529,7 @@ function Start-Boot([string]$tag) {
         foreach ($leaf in 'qd.tp','qd.act','qd.hit','qd.cheat','qd.cheatarg','qd.travel','qd.hard',
                           'qd.level','qd.list','qd.near','qd.drops','qd.menu','qd.efunc','qd.eattack',
                           'qd.use','qd.pdmg','qd.kill','qd.petrace','qd.enemies','qd.sequence',
-                          'qd.enemykill','qd.hitguid','qd.obj','qd.flag','qd.gate','qd.take','qd.trigger') {
+                          'qd.enemykill','qd.hitguid','qd.obj','qd.flag','qd.gate','qd.take','qd.trigger','qd.selfhp','qd.nohit') {
             Set-Control $i $leaf $null
         }
         Set-Control $i 'qd.scan' '1'
@@ -984,6 +984,12 @@ function Invoke-TakeDrop([int]$i, [string]$hash, [int]$index) {
         Set-Control $i 'qd.efunc' ('drop:' + $hash + ':' + [string]$index)
         Start-Sleep -Seconds 3
     }
+    if ($ok) {
+        # THE TAKEN ACTOR LEAVES (after Session 26): the lever's stage 2 runs the pickup's own
+        # PutAway (the showcase dismiss); the loot lane's 15 s safety net runs it otherwise.
+        $gone = @(Wait-Since $i 'take: THE GAME CONSUMED THE DROP|loot: taken drop .*(PutAway ran|is gone from this screen)' $mark 30)
+        Verdict 'loot' $i ([bool]($gone.Count -gt 0)) "the taken drop $key left the TAKER's screen" $(if ($gone.Count) { ([string]$gone[-1]).Trim() } else { 'the actor still stands' })
+    }
     Set-Control $i 'qd.take' $null
     $line = ''
     if ($pick.Count -gt 0) { $line = ([string]$pick[-1]).Trim() }
@@ -1199,6 +1205,9 @@ function Invoke-LootDrop([int]$H, [int]$P) {
     # level's initial spawn set is still being torn down and rebuilt.
     Note '  settling 20 s so the area''s spawn set is live and callable before the first hit'
     Start-Sleep -Seconds 20
+    # The gaps phase measures the hit reaction HERE, before the kill rounds take the area's
+    # enemies (and the green dragon) down.
+    if ($script:ReactInLoot) { Invoke-HitReaction $H $P; Invoke-Go $H 'enemy' 200; Invoke-Go $P 'enemy' 200; Start-Sleep -Seconds 4 }
     $rolled = Invoke-KillRounds $H $P $LootRounds $mark
     $all = @(Get-DropKeys $H $mark) + @(Get-DropKeys $P $mark)
     $uniq = @{}
@@ -1874,6 +1883,151 @@ function Invoke-LootPhase([int]$H, [int]$P) {
 
 
 # ===========================================================================
+# THE SMALL GAPS (after Session 26): partner vitals, the shop door, hit reactions, loot
+# ===========================================================================
+function Invoke-GapsPhase([int]$H, [int]$P) {
+    $m0 = Get-Mark $H
+    Step 'GAP: the partner''s HP on screen' 'Each machine sends its own HP on the STATUS tail; the other draws it on its HUD after AHUD.ReceiveDrawHUD.'
+    [void](Check 'vitals' $H 'vitals: HUD .* ReceiveDrawHUD resolved' 60 'the HOST resolved its HUD draw' 0)
+    [void](Check 'vitals' $P 'vitals: HUD .* ReceiveDrawHUD resolved' 60 'the PEER resolved its HUD draw' 0)
+    [void](Check 'vitals' $H 'vitals: drew the partner bar PARTNER  \d+ / \d+' 60 'the HOST drew the partner bar' 0)
+    [void](Check 'vitals' $P 'vitals: drew the partner bar PARTNER  \d+ / \d+' 60 'the PEER drew the partner bar' 0)
+    $mH = Get-Mark $H
+    $mP = Get-Mark $P
+    Set-Control $P 'qd.selfhp' ('37#' + (Get-Date -Format 'HHmmssfff'))
+    [void](Check 'vitals' $P 'rig: selfhp -> 37' 15 'the PEER dropped its own HP to 37' $mP)
+    [void](Check 'vitals' $H 'vitals: partner hp 3[7-9]/' 15 'the HOST received the partner''s new HP' $mH)
+    [void](Check 'vitals' $H 'vitals: drew the partner bar PARTNER  3[7-9] / ' 15 'the HOST drew the new HP on screen' $mH)
+    Save-Shots 'vitals'
+    Start-Sleep -Seconds 22      # the selfhp hold ends; god mode restores the peer
+
+    Step 'GAP: the shop door' 'Shop_Door_00_BP_C is one-sided; it opens through its own Activate(ActorThatTriggered).  The host opens it; the peer must see it open and get ShopDoorOpened.'
+    # BOTH STAND AT THE DOOR.  Measured (run 2): from 458 m away `Activate` ran and nothing
+    # moved -- the door's level was not shown, so its open timeline (whose finish saves the
+    # state) never ticked, and the savable owner table did not even list it.
+    Invoke-Go $H 'Shop_Door_00_SM' 250
+    Invoke-Go $P 'Shop_Door_00_SM' 400
+    Start-Sleep -Seconds 8
+    $mH = Get-Mark $H
+    $mP = Get-Mark $P
+    Set-Control $H 'qd.act' ('near:Shop_Door_00_SM!GetInteractInfo#' + (Get-Date -Format 'HHmmssfff'))
+    Start-Sleep -Seconds 1
+    # THE DOOR'S OWN VERBS, in the order Door_Base names them.  Measured (run 3): standing at
+    # the door, `Activate` runs and the state stays 0.  `OpenDoor` is Door_Base's activation
+    # verb; `Open` is the chest-style name.  Each is followed by a state read 5 s later.
+    $mH = Get-Mark $H
+    $opened = $false
+    $tries = @()
+    foreach ($v in @('OpenDoor', 'Activate')) { foreach ($sd in 0..3) { $tries += ($v + '@' + $sd) } }
+    foreach ($verb in $tries) {
+        $mv = Get-Mark $H
+        Set-Control $H 'qd.act' ('near:Shop_Door_00_SM!' + $verb + '#' + (Get-Date -Format 'HHmmssfff'))
+        $ran = @(Wait-Since $H ('dev interact: forced verb ' + ($verb -replace '@\d$', '') + ' on Shop_Door_00_SM') $mv 15)
+        Note ("    verb {0}: {1}" -f $verb, $(if ($ran.Count) { ([string]$ran[-1]).Trim() } else { 'no answer' }))
+        Start-Sleep -Seconds 5
+        $mv = Get-Mark $H
+        Set-Control $H 'qd.act' ('near:Shop_Door_00_SM!GetInteractInfo#' + (Get-Date -Format 'HHmmssfff'))
+        $st = @(Wait-Since $H 'dev state: Shop_Door_00_SM ' $mv 15)
+        Note ("    after {0}: {1}" -f $verb, $(if ($st.Count) { ([string]$st[-1]).Trim() } else { 'no state' }))
+        if (@(Get-Since $H $mH | Where-Object { $_ -match 'flag NEW ShopDoorOpened = 1' }).Count) { $opened = $true; break }
+    }
+
+    [void](Check 'shopdoor' $H 'flag NEW ShopDoorOpened = 1' 20 'the HOST door saved ShopDoorOpened (its open state)' $mH)
+    [void](Check 'shopdoor' $P 'flag refresh: ShopDoorOpened=1 -> .* ran .* yaw' 30 'the PEER door ran its own load path on the partner''s flag' $mP)
+    Show-Since $P 'flag refresh:' $mP 4
+
+    Show-Since $H 'Shop_Door|ShopDoorOpened' $mH 6
+    Show-Since $P 'Shop_Door|ShopDoorOpened' $mP 6
+    Start-Sleep -Seconds 4
+    foreach ($i in @($H, $P)) {
+        $m = Get-Mark $i
+        Set-Control $i 'qd.flag' ('ShopDoorOpened#' + (Get-Date -Format 'HHmmssfff'))
+        $ln = @(Wait-Since $i 'rig: flag dump -- ShopDoorOpened = ' $m 15)
+        $ok = $ln.Count -gt 0 -and ([string]$ln[-1]) -match (' = ([1-9]\d*)( \(game bank.*\))?$')
+        Verdict 'shopdoor' $i $ok 'ShopDoorOpened >= 1 in this machine''s bank' $(if ($ln.Count) { ([string]$ln[-1]).Trim() } else { 'no answer' })
+    }
+    Save-Shots 'shopdoor'
+
+    # THE LOOT: the taken actor leaves the taker's screen (780_SZ_Depths).
+    # THE BOSS IN ITS FIGHT.  Measured (run 5): a hit on the green dragon OUTSIDE its fight is
+    # refused by the game's own gate (its override calls the parent TryApplyDamage, then
+    # CheckForSplit; the idle dragon is still in its intro).  So the dragon is measured inside
+    # the started fight: Invoke-OneBoss lands one hit from each player and records which path
+    # moved its HP.
+    $b = $script:Bosses | Where-Object { $_.Name -eq 'GreenDragon' } | Select-Object -First 1
+    if ($b -and (Test-Alive $H) -and (Test-Alive $P)) { Invoke-OneBoss $H $P $b }
+
+    # THE HIT REACTION runs inside it, before the kill rounds: a NON-lethal hit from the player
+    # who does not run the enemy, applied by the owner through the class's own entry.
+    $script:ReactInLoot = $true
+    if ((Test-Alive $H) -and (Test-Alive $P)) { Invoke-LootDrop $H $P }
+    $script:ReactInLoot = $false
+    Invoke-EndChecks $H $P 'gaps' $m0
+}
+
+function Invoke-HitReaction([int]$H, [int]$P) {
+    Step 'GAP: the enemy reacts to the partner''s hit' 'The non-owner lands a small hit on a shared live enemy; the owner applies it through the class''s own damage entry.'
+    Invoke-Go $H 'enemy' 600
+    Invoke-Go $P 'enemy' 600
+    Start-Sleep -Seconds 8
+    $dh = Invoke-EnemyDump $H 'react-h'
+    $dp = Invoke-EnemyDump $P 'react-p'
+    $pick = $null
+    foreach ($k in $dh.Keys) {
+        $r = $dh[$k]
+        if ($r.State -ne 'ALIVE' -or $null -eq $r.Hp -or $r.Hp -lt 60) { continue }
+        if (-not $dp.ContainsKey($k) -or $dp[$k].State -ne 'ALIVE') { continue }
+        if ($r.Cls -match 'Dragon|Josami.*Lord|Boss') { continue }
+        $pick = $r; break
+    }
+    if (-not $pick) { Verdict 'react' $H $false 'a shared live ordinary enemy to hit' 'none alive on both'; return }
+    Note ("  target {0} {1} hp={2}" -f $pick.Key, $pick.Cls, $pick.Hp)
+    $amt = [int][math]::Max(5, [math]::Floor($pick.Hp * 0.2))
+    $mH = Get-Mark $H
+    $mP = Get-Mark $P
+    # Both machines send it; whichever does NOT run the enemy sends the intent, the owner's own
+    # lever applies locally -- one of the two is the partner's hit.
+    Set-Control $P 'qd.hitguid' ($pick.Key + ':' + $amt + '#' + (Get-Date -Format 'HHmmssfff'))
+    Start-Sleep -Seconds 6
+    $all = @(@(Get-Since $H $mH) + @(Get-Since $P $mP))
+    $intent = @($all | Where-Object { $_ -match ('hit on enemy ' + $pick.Key + ' from the other player') })
+    $local = @($all | Where-Object { $_ -match ('rig: hitguid -> key=' + $pick.Key + ' LOCAL hit') })
+    $path = @($all | Where-Object { $_ -match 'damage: enemy hp via TryApplyDamage|reaction: fallback presentation' })
+    Verdict 'react' $P ([bool](($intent.Count + $local.Count) -gt 0)) 'the PEER''s hit reached the enemy''s owner' $(if ($intent.Count) { ([string]$intent[-1]).Trim() } elseif ($local.Count) { ([string]$local[-1]).Trim() } else { 'no line' })
+    # Either the game's own pipeline ran (its reaction is the game's), or the class refused
+    # every payload and the owner played the class's own damaged FX (measured on
+    # Guardian_Fishman_BP_C, run 4).  Which one is recorded in the line.
+    $ok = $path.Count -gt 0 -and ([string]$path[-1]) -match 'via TryApplyDamage|customFX=played|flash=played'
+    Verdict 'react' $H ([bool]$ok) 'the owner played a reaction (game pipeline, or the class''s own damaged FX)' $(if ($path.Count) { ([string]$path[-1]).Trim() } else { 'no damage line' })
+    Start-Sleep -Seconds 3
+    $dh2 = Invoke-EnemyDump $H 'react-h2'
+    $dp2 = Invoke-EnemyDump $P 'react-p2'
+    $a = $dh2[$pick.Id]; $b2 = $dp2[$pick.Id]
+    $hpOk = $a -and $b2 -and $null -ne $a.Hp -and $a.Hp -lt $pick.Hp -and [math]::Abs($a.Hp - $b2.Hp) -le [math]::Max(1.0, 0.02 * $pick.Hp)
+    Verdict 'react' $H ([bool]$hpOk) ("one HP on both after the hit: start={0} host={1} peer={2}" -f $pick.Hp, $(if ($a) { $a.Hp }), $(if ($b2) { $b2.Hp })) ''
+    Save-Shots 'react'
+
+    # THE MOUNT.  The green dragon forwards a hit to its MountedLord; the partner's hit must
+    # take the same path (rider HP moves), not the clamped write on the dragon.
+    $drag = $null
+    foreach ($k in $dh2.Keys) {
+        $r = $dh2[$k]
+        if ($r.State -eq 'ALIVE' -and $r.Cls -match 'Dragon_Green' -and $dp2.ContainsKey($k) -and $dp2[$k].State -eq 'ALIVE') { $drag = $r; break }
+    }
+    if (-not $drag) { Note '  no live green dragon on both machines; the mount case is not measured this run'; return }
+    Note ("  mount target {0} {1} hp={2}" -f $drag.Key, $drag.Cls, $drag.Hp)
+    $mH = Get-Mark $H
+    $mP = Get-Mark $P
+    Set-Control $P 'qd.hitguid' ($drag.Key + ':50#' + (Get-Date -Format 'HHmmssfff'))
+    Start-Sleep -Seconds 6
+    $all = @(@(Get-Since $H $mH) + @(Get-Since $P $mP))
+    $path = @($all | Where-Object { $_ -match 'damage: enemy hp via|reaction: fallback presentation' })
+    $ok = $path.Count -gt 0 -and ([string]$path[0]) -match 'via TryApplyDamage'
+    Verdict 'react' $H ([bool]$ok) 'the dragon took the partner''s hit through its own forward to the rider' $(if ($path.Count) { ([string]$path[0]).Trim() } else { 'no damage line' })
+}
+
+
+# ===========================================================================
 # THE BOSS TOUR (Session 26)
 # ===========================================================================
 # One row per boss the content places, decoded from the shipped maps (spawner, the volume
@@ -1958,6 +2112,8 @@ function Invoke-OneBoss([int]$H, [int]$P, $b) {
 
     # Damage from BOTH players moves one HP.
     $hp0 = $bh.Hp
+    $mHh = Get-Mark $H
+    $mPh = Get-Mark $P
     Set-Control $H 'qd.hitguid' ($key + ':200#' + (Get-Date -Format 'HHmmssfff'))
     Start-Sleep -Seconds 3
     Set-Control $P 'qd.hitguid' ($key + ':200#' + (Get-Date -Format 'HHmmssfff'))
@@ -1967,6 +2123,15 @@ function Invoke-OneBoss([int]$H, [int]$P, $b) {
     $h2 = $dh2[$bh.Id]; $p2 = $dp2[$bh.Id]
     $hpOk = $h2 -and $p2 -and $null -ne $h2.Hp -and $null -ne $p2.Hp -and $h2.Hp -lt $hp0 -and [math]::Abs($h2.Hp - $p2.Hp) -le [math]::Max(1.0, 0.02 * $hp0)
     Verdict $step $H ([bool]$hpOk) ("both hits landed on ONE HP: start={0} host={1} peer={2}" -f $hp0, $(if ($h2) { $h2.Hp }), $(if ($p2) { $p2.Hp })) ''
+    # THE HIT REACTION.  The owner applies both hits; the line says which path moved the HP --
+    # the game's own TryApplyDamage with a built hit (its whole on-hit pipeline) or the clamped
+    # write plus the class's own flash/FX.
+    $rx = 'damage: enemy hp via TryApplyDamage|reaction: fallback presentation'
+    $rl = @(@(Get-Since $H $mHh) + @(Get-Since $P $mPh) | Where-Object { $_ -match $rx })
+    $rOk = $rl.Count -gt 0 -and ([string]$rl[-1]) -match 'hit=built|flash=played|customFX=played'
+    Verdict $step $H ([bool]$rOk) 'the owner played the hit reaction for the hits' $(if ($rl.Count) { ([string]$rl[-1]).Trim() } else { 'no reaction line' })
+    Show-Since $H 'damage: hit built|damage: FHitResult|damage: enemy hp via|reaction:' $mHh 6
+    Show-Since $P 'damage: hit built|damage: FHitResult|damage: enemy hp via|reaction:' $mPh 6
 
     # The death, on both, and the flag in both banks.
     $mH = Get-Mark $H
@@ -2082,6 +2247,10 @@ if ($Phase -eq 'soak' -or $Phase -eq 'all') {
 
 if ($Phase -eq 'bosses') {
     Invoke-BossTour $H $P
+}
+
+if ($Phase -eq 'gaps') {
+    Invoke-GapsPhase $H $P
 }
 
 Step 'SESSION SURVIVAL'

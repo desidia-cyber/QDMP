@@ -332,6 +332,21 @@ enum StatusBit : uint32_t {
 inline void WriteStatus(Writer& w, uint32_t rev, uint32_t mask) { w.U32(rev); w.U32(mask); }
 inline bool ReadStatus(Reader& r, uint32_t* rev, uint32_t* mask) { *rev = r.U32(); *mask = r.U32(); return r.ok; }
 
+// Optional VITALS tail on STATUS (WIRE.md 3.15, vitals tail): hp(u16) hp_max(u16) flags(u8), the
+// sender's own player, whole HP points clamped to 65535.  A body that ends after `mask` is
+// an older sender and carries no vitals; that is not an error.  This build has no player
+// stamina (the player Blueprint declares none; only a leftover `BaseJumpStaminaCost` in
+// PlayerBalance), so there is no stamina field to carry.
+enum VitalsFlag : uint8_t { VF_VALID = 1, VF_DEAD = 2 };
+struct Vitals { uint16_t hp; uint16_t hp_max; uint8_t flags; };
+inline void WriteVitals(Writer& w, const Vitals& v) { w.U16(v.hp); w.U16(v.hp_max); w.U8(v.flags); }
+inline bool ReadVitals(Reader& r, Vitals* v)
+{
+    if (!r.Room(5)) { v->hp = 0; v->hp_max = 0; v->flags = 0; return false; }
+    v->hp = r.U16(); v->hp_max = r.U16(); v->flags = r.U8();
+    return r.ok;
+}
+
 // ---- flags ----------------------------------------------------------------
 // Body: rev(u32), n(u16), then as many entries as fit.
 //
@@ -880,7 +895,7 @@ struct TravelBody {
     char     dest[96];
 };
 
-// TRAVEL.phase (WIRE.md 3.15a).  An in-world travel is one announcement; a hard
+// TRAVEL.phase (WIRE.md 3.15, vitals tail).  An in-world travel is one announcement; a hard
 // transition is a handshake because both machines must be in the new UWorld before
 // either resumes applying absolute state.
 enum TravelPhase {

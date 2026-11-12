@@ -5770,3 +5770,64 @@ the death flag in both banks.
   "not yet dead" and pass. A rig gap, not a measured sync fault.
 - Boss phases are not a synced value; each machine runs its own copy's phase script on shared HP.
 - R140 (engine timer use-after-free) is avoided at startup, not fixed.
+
+## Session 27 - 2026-11-12/13 (the small gaps: partner vitals, loot actor, hit reactions, shop door)
+
+Branch `sync-fix`. Phase `tools/session26.ps1 -Phase gaps`, documented play set, roles
+host=inst1, peer=inst2. Six runs (`s27-run1..6`); run 1 was aborted when the relay was found
+dropping the new STATUS body.
+
+| Gap | Result | Evidence |
+|---|---|---|
+| Partner HP on screen | **closed** (runs 2, 3, 5, 6) | peer `rig: selfhp -> 37.0`; host `vitals: partner hp 37/100` 53 ms later, `vitals: drew the partner bar PARTNER  37 / 100 on 1920x1080`; the host screenshot shows the bar at the top centre |
+| Partner stamina | **does not exist** | the player Blueprint declares no stamina; only `PlayerBalance.BaseJumpStaminaCost` remains |
+| Taken drop actor still standing | **closed** (runs 3, 5, both directions) | `loot: taken drop 54F6FD50#0 still stood 15 s after the take; PutAway ran -- hidden instead`, verdict "left the TAKER's screen" PASS |
+| Enemy reaction to a partner hit | **closed** (runs 3, 5, 6) | ordinary enemy: `hit on enemy 1C5045C7 from the other player, 44.0` then `damage: enemy hp via TryApplyDamage (the game's own hit pipeline, hit=empty) 220.0 -> 176.0`, host 176 / peer 176; green dragon IN its fight: `via TryApplyDamage ... 3500.0 -> 3300.0`; a class that refuses every payload (`Guardian_Fishman_BP_C`) plays its own `DoCustomDamagedFX` (`reaction: fallback presentation ... customFX=played`) |
+| Shop door (R105) | **closed** (runs 4-6) | host `OpenDoor` from the door's side 0 -> `flag NEW ShopDoorOpened = 1`; peer bank `ShopDoorOpened = 1 (game bank 1, lane table 1)` 40 ms later; peer `flag refresh: ShopDoorOpened=1 -> Shop_Door_00_SM [Shop_Door_00_BP_C].SetToOpenState ran`; both screenshots look into the shop through the open doorway |
+
+### What was wrong, and what changed
+
+1. **The partner's HP was never sent.** STATUS now carries an optional vitals tail (`hp`,
+   `hp_max`, `flags` valid/dead; WIRE.md 3.15). The receiver draws a bar with the HUD's own
+   `DrawRect`/`DrawText` right after `FS_HUD_C.ReceiveDrawHUD` crosses the ProcessEvent hook.
+   **The relay validates every body** and logged `status has 5 byte(s) left over` for the new
+   tail, so `qd-core` decodes the optional tail and the relay was rebuilt.
+2. **The taken drop**: 15 s after a local take the loot lane runs the pickup's own `PutAway`
+   once and hides the actor if it still stands. `PutAway` alone does not complete outside a
+   showcase; the hide is what removes it. The take lever's stage 2 is now `PutAway`.
+3. **Hit reactions.** Ordinary enemies always took the module's payload through
+   `TryApplyDamage`, the game's whole on-hit pipeline. Bosses fell to the clamped HP write.
+   Two findings:
+   - **A built `FHitResult` sent FIRST stopped drops**: 24 kills in 780 rolled no drop (run 2).
+     The empty-hit call is first again (drops back, run 3), and the built hit (enemy, its mesh,
+     a point on its body, by reflected field name) is only the retry.
+   - **The green dragon's override** (761 bytes) calls the parent `TryApplyDamage` and then
+     `CheckForSplit`, and references its intro montage and `DoFlyingStateEntry`. Outside its
+     fight the game's own gate refuses every payload; inside the started fight it applies
+     (run 6). The HP write remains the last resort and now plays the class's own
+     `DoCustomDamagedFX` (and `TookDamageFlash` where a class has it).
+   - A `MountedLord` HP drop is also accepted as the game applying the hit, for a mount that
+     forwards its hit to a rider. On the green dragon this did not trigger: its override calls
+     its parent, so it does not forward.
+4. **The shop door was never a lane failure.** `Shop_Door_00_BP_C` is one-sided. Its `Activate`
+   takes `(ActivateByLoad, ActorThatTriggered)` and opens nothing from a press; the player's
+   open is `OpenDoor`, which saves the NamedSaveData flag `ShopDoorOpened`. The door keeps no
+   `Opened` state of its own, and it lives in `VideoConfigMap`, a streamed sublevel of
+   `Ruins_Level_00` despite its name. The flag lane carried the flag, but the partner's door had
+   been loaded before it and reads the flag only on load. **`FlagRefreshWorld`** (new): when a
+   flag from the partner is applied on either side, actors listed for that flag run their own
+   load path (`Activate` with `ActivateByLoad=1`, then the visual `SetToOpenState`). The table
+   has one entry today; it is the mechanism for the wider "world refreshes when a flag
+   applies" story gap.
+5. **Rig levers added**: `qd.act near:<name>!<Verb>[@side]` (a named verb, optionally from one
+   of four sides of the object), `qd.selfhp`, `qd.nohit` (A/B the hit payload).
+
+### Open from this session
+
+- Run 6: the peer did not replay the green dragon's start trigger once (`trigger: replayed`
+  missing), ran its own copy and HP-wrote it locally. That is a boss trigger-replay flake, not
+  this lane.
+- Run 5 crossed midnight and the harness's time-of-day marks counted two pre-midnight inventory
+  lines as "since" (one false FAIL).
+- The HP write still overrides a boss's own immunity outside its fight (it was the design: the
+  last resort). Whether a partner hit on an immune boss should be dropped instead is open.

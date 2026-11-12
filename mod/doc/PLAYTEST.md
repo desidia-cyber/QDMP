@@ -513,14 +513,13 @@ The lines that answer most questions, verbatim:
   any run: the tombstone needs the taker's ledger to reach the machine holding the visible copy,
   and that convergence was not observed inside the window.  The drop still disappears from the
   world on both screens; the *line* is what is missing.
-- **Hit reactions for mod-applied damage are blocked on an API, not a lane.**  Session 17 called
-  `ApplyDamageToHitboxTarget` — the entry Session 16 named as the next target — and its signature
-  settles the question: `Target`, `Hit`, `PositionOverride`, `UseOverride`.  That is the entry an
-  *attacker* calls to deal damage, not one a victim implements to take it, so calling it on a
-  victim runs and applies nothing (correctly).  This build exposes no take-damage entry that
-  carries an amount: `TryApplyDamage` refuses a module-built payload, `DamageHP` is out-only.  HP
-  still converges through the documented clamped write, so a shared enemy's health is right on
-  both screens — only the *reaction animation* is missing.
+- **Hit reactions to the partner's hits** run through the enemy's own `TryApplyDamage` on the
+  machine that owns it, which is the game's own on-hit pipeline (Session 27). A boss outside its
+  fight refuses every payload, as it does for a local hit; the module then writes the shared HP
+  and plays the class's own damaged FX instead.
+- **Your partner's HP** is drawn as a bar at the top centre of your screen (`PARTNER hp / max`,
+  or `PARTNER DOWN`). The game has no player stamina, so there is none to show. The relay must
+  be the Session 27 build or newer; an older relay drops the status message that carries it.
 - **Cutscenes** are ideal when the game starts them through a cutscene *manager*: the
   partner plays the same sequence.  A sequence started directly by an altar/egg Blueprint
   has no manager to hand over, so the partner is **held consistently** (input locked) for
@@ -550,12 +549,9 @@ The lines that answer most questions, verbatim:
   and `Teleporter_GR` answer `IsInteractible=0` even at point-blank range and after
   `UnlockAllTeleporters`; the `Interact` event runs but no travel verb follows.  Fast travel
   therefore has to be done from the game's own UI, not by asking the mod to press the node.
-- **The shop door is interactible but does not open on a press.**  `Shop_Door_00_SM` says
-  `IsInteractible=1`, the real interact event runs, its own `Interact` runs, and
-  `opened=0` stays — even with `GiveAllKeys`.  The lane is fine (a pickup's
-  `actor-state refresh ok` lands on the host); the door's own handler is the open question.
-  **`IsInteractible=0` is not the same as "this cannot be opened"**: the area chests say 0 and
-  open normally when pressed.  Report what the *object* did, not what the gate said.
+- **The shop door is one-sided.** It opens from its own side; the other player's door opens
+  with it, because the door's flag (`ShopDoorOpened`) syncs and the mod runs the door's own
+  load path when the flag arrives (Session 27).
 - **Loot hiding needs the SAME enemy on both machines.**  In `900_SipehaWorld` both
   machines hold the same `Sipeha_BP_C` (`guid=BB49E51D`), but that enemy drops nothing.  In
   the hub the two machines' spawner enemies may have different authored GUIDs, so the drop keys

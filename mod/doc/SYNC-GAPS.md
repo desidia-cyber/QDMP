@@ -583,12 +583,39 @@ Two assumptions in that paragraph are unproven and each is one probe:
   directions in `780_SZ_Depths` (host takes `DD452DFD#0`, peer takes `54F6FD50#0`), 39 PASS /
   0 FAIL, kill sets diff 0, shared HP 26 compared / 0 unequal. Three earlier sessions of "the
   verb runs and consumes nothing" were the dismiss-before-Interact order, not a content gate.
-  Still true about a drop: the pickup ACTOR stays standing after a take when its showcase is
-  never dismissed (the lane counts the `Acquired` flip, which is the item), so "the drop is on
-  the ground" and "the drop has not been taken" are now different facts.
+  **Session 27 closed the standing actor.** A take whose showcase is never dismissed left the
+  pickup actor on the taker's screen. Fifteen seconds after a local take, the loot lane runs the
+  pickup's own `PutAway` (the dismiss path) once. If the actor still stands, the lane hides it
+  and disables its collision (`loot: taken drop 54F6FD50#0 still stood 15 s after the take;
+  PutAway ran -- hidden instead`). Measured in both directions in `780_SZ_Depths` (run 3).
+  `PutAway` alone does not finish the hide outside a showcase, so the hide is what removes it.
+- **Hit reactions to the partner's hits (closed, Session 27).** The owner applies the partner's
+  hit through the class's own `TryApplyDamage`, the game's whole on-hit pipeline. The call goes
+  first with the empty hit that has always worked: sent first, a built `FHitResult` stopped drop
+  rolls (24 kills, 0 drops). If the class refuses, the call is retried with a built hit (the
+  enemy, its mesh, a point on its body). If that is refused too, the clamped HP write runs and
+  the class's own `DoCustomDamagedFX` plays. Measured: an ordinary enemy took the hit at
+  220 -> 176 on both machines, and the green dragon took it inside its fight at 3500 -> 3300.
+  Outside its fight the dragon refuses every payload: its 761-byte override calls the parent
+  `TryApplyDamage` and then `CheckForSplit`.
+- **Flags that only an actor's load path reads (Session 27, `FlagRefreshWorld`).** Some placed
+  actors keep their state only as a NamedSaveData flag and apply it only on load. When such a
+  flag is applied from the partner (peer flag apply, host intent apply), the actors listed for
+  it run their own load path. First entry: `ShopDoorOpened` makes `Shop_Door_00_BP_C` run
+  `Activate(ActivateByLoad=1)` and then `SetToOpenState`. The shop door (R105) was a one-sided
+  door opened by `OpenDoor`, not a lane failure. It now opens on both machines: the host opens
+  it, and the peer's copy opens when the flag arrives.
 - **Shop, journal/bestiary, XP, weapon levels, grimoire ink.** Per-player by nature.
-- **Peer vitals.** The partner's HP and death are not shown; a death shows as the body
-  falling. This is also why the damage lane's dead check is receive-side only.
+- **Peer vitals (closed, Session 27).** Each machine reads its own player's `Health` and
+  `GetMaxHP` and sends them on the STATUS tail (WIRE.md 3.15, vitals tail: `hp`, `hp_max`,
+  `flags` valid/dead). The receiver draws `PARTNER  hp / max`, or `PARTNER  DOWN`, as a bar
+  at the top centre of its HUD. It draws through the HUD's own `DrawRect`/`DrawText`, right
+  after the engine's `FS_HUD_C.ReceiveDrawHUD` dispatch crosses the ProcessEvent hook.
+  Measured: the peer set its HP to 37, the host logged `vitals: partner hp 37/100` 53 ms later,
+  and the bar showed 37 / 100 in the host's screenshot. **There is no stamina to show**: this
+  build's player has no stamina stat (the player Blueprint declares none, and `PlayerBalance`
+  keeps only a leftover `BaseJumpStaminaCost`). The relay validates every body, so it had to
+  be rebuilt to accept the tail (an old relay drops the longer STATUS as malformed).
 - **Cutscenes / sequencer** are synced as a play-or-hold (`CutsceneSync`); the receiver
   either resolves the same manager or is held consistently. A cutscene whose manager is
   spawned at runtime is held, not replicated.

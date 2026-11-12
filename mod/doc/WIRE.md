@@ -641,7 +641,17 @@ The sender's visible status effects, absolute, latest-wins.
 u32  rev
 u32  mask    bit 0 magic fire, 1 magic poison, 2 poison, 3 disease, 4 weaken,
              5 heavy, 6 binding, 7 berserk, 8 ironskin, 9 radiant fruit
+-- optional vitals tail (a body that ends after `mask` carries none) --
+u16  hp      the sender's own player HP, whole points, clamped to 65535
+u16  hp_max  its GetMaxHP
+u8   flags   bit 0 valid, bit 1 dead (IsDead or hp <= 0)
 ```
+
+The vitals tail is sent on change and with the 1 s refresh; the receiver draws the
+partner's bar on its own HUD (`PARTNER  hp / max`, or `PARTNER  DOWN`) right after the
+engine's `AHUD.ReceiveDrawHUD` dispatch, with the HUD's own `DrawRect`/`DrawText`. There
+is no stamina field: this build's player has no stamina (the player Blueprint declares
+none; `PlayerBalance` keeps only a leftover `BaseJumpStaminaCost`).
 
 Read from the player's own components: `StatusEffectComponent_C.Applied` (by component
 name: `PoisonStatusEffect`, `DiseaseStatusEffect`, ...),

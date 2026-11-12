@@ -828,6 +828,88 @@ void HostPushFlags(uint32_t now)
     }
 }
 
+// THE WORLD FOLLOWS A FLAG THE PARTNER SET (Session 27).  Some placed actors keep their state
+// ONLY as a NamedSaveData flag and read it back in their `ActivateByLoad` event, which the
+// game runs on a load and never again.  The flag lane puts the partner's flag in this bank,
+// but the actor standing here was loaded before it and stays as it was.  Measured: the host
+// opened the shop door, `ShopDoorOpened = 1` reached the peer's bank 40 ms later, and the
+// peer's door stayed shut.  For each flag listed here, a change that arrives from the partner
+// runs the listed event on every live actor of the listed class in this world -- the same
+// event the game itself would run on the next load, so nothing new is invented.
+void* ObjPropC(void* obj, const char* name);
+bool ActorInThisWorld(void* actor, void* world);
+// `verb` is called with its bool `loadParam` set (the game's own load path), and `fallback`
+// (a no-parameter visual event) only if the probed component did not turn.
+struct FlagRefresh { const char* flag; const char* cls; const char* verb; const char* loadParam;
+                     const char* fallback; const char* probe; };
+static const FlagRefresh kFlagRefresh[] = {
+    // Shop_Door_00_BP_C (measured from the cooked class): `Activate(ActivateByLoad,
+    // ActorThatTriggered)` -- `ActivateByLoad` is a BOOL PARAMETER, not an event; the load
+    // path is `Activate` with it true.  `SetToOpenState` is the no-parameter visual event.
+    // `OpenDoor` (the player's open) saves ShopDoorOpened; `Lib_FrontDoor_Door_00_SM` is the leaf that turns (`DoorMesh` read 0 -> 0 on an open door, run 6).
+    {"ShopDoorOpened", "Shop_Door_00_BP_C", "Activate", "ActivateByLoad", "SetToOpenState", "Lib_FrontDoor_Door_00_SM"},
+};
+
+static bool ComponentYaw(void* actor, const char* comp, float* yaw)
+{
+    void* c = comp ? ObjPropC(actor, comp) : nullptr;
+    if (!c || !LooksLikeUObject(c)) return false;
+    int sz = 0;
+    int off = FindPropertyOffsetIn(ObjClass(c), "RelativeRotation", &sz);
+    if (off < 0 || sz < 12) return false;
+    __try { *yaw = *(const float*)((const uint8_t*)c + off + 4); return true; }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+void FlagRefreshWorld(const char* name, int32_t value)
+{
+    if (!name || value <= 0) return;
+    for (unsigned t = 0; t < sizeof(kFlagRefresh) / sizeof(kFlagRefresh[0]); ++t) {
+        const FlagRefresh& f = kFlagRefresh[t];
+        if (strcmp(f.flag, name) != 0) continue;
+        void* world = GWorldPtr();
+        if (!world) return;
+        int total = ObjectCount(), found = 0, ran = 0;
+        for (int i = 0; i < total; ++i) {
+            void* o = ObjectAtSafe(i);
+            if (!o || !LooksLikeUObject(o)) continue;
+            void* c = ObjClass(o);
+            char cn[96];
+            if (!c || FNameToString(ObjNameRaw(c), cn, sizeof(cn)) <= 0 || strcmp(cn, f.cls) != 0) continue;
+            bool inWorld = false;
+            __try { inWorld = ActorInThisWorld(o, world); } __except (EXCEPTION_EXECUTE_HANDLER) { inWorld = false; }
+            if (!inWorld || !ObjectIsLive(o)) continue;
+            ++found;
+            float y0 = 0.0f, y1 = 0.0f;
+            bool h0 = ComponentYaw(o, f.probe, &y0);
+            Fn fn = {};
+            bool ok = false;
+            if (fn.Resolve(o, f.verb)) {
+                Call cl(fn);
+                if (f.loadParam && fn.Off(f.loadParam) >= 0) cl.U8(f.loadParam, 1);
+                ok = cl.Run(o);
+            }
+            bool h1 = ComponentYaw(o, f.probe, &y1);
+            const char* how = f.verb;
+            if (f.fallback && (!ok || !h0 || !h1 || y0 == y1)) {
+                Fn fb = {};
+                if (fb.Resolve(o, f.fallback)) {
+                    Call cf(fb);
+                    if (cf.Run(o)) { ok = true; how = f.fallback; }
+                }
+                h1 = ComponentYaw(o, f.probe, &y1);
+            }
+            if (ok) ++ran;
+            char nm[64] = "?";
+            FNameToString(ObjNameRaw(o), nm, sizeof(nm));
+            QDLOG(LOG_INFO, "flag refresh: ", name, "=", dec(value), " -> ", nm, " [", f.cls, "].", how,
+                  (ok ? " ran" : " DID NOT RUN"), " ", f.probe, " yaw ",
+                  (h0 ? flt(y0, 1) : flt(-999.0f, 0)), " -> ", (h1 ? flt(y1, 1) : flt(-999.0f, 0)));
+        }
+        if (!found) QDLOG(LOG_INFO, "flag refresh: ", name, " has no live ", f.cls, " in this world (it loads with the flag)");
+    }
+}
+
 // Peer side: apply what the host sent.  Never lower, never invent.
 void PeerApplyFlags(wire::Reader& r)
 {
@@ -865,6 +947,7 @@ void PeerApplyFlags(wire::Reader& r)
                     // within the second as a local change.  Remember the echo; otherwise
                     // that observation becomes an intent and the machines ping-pong.
                     g_pendingFlags.RememberEcho(name, value);
+                    FlagRefreshWorld(name, value);
                 } else {
                     QDLOG(LOG_WARN, "apply failed for ", name, ": ", err);
                 }
@@ -958,6 +1041,7 @@ void HostApplyIntent(wire::Reader& r)
         char err[128];
         if (NsdWrite(b.name, b.value, err, sizeof(err))) {
             QDLOG(LOG_INFO, "intent applied: ", b.name, "=", dec(b.value));
+            FlagRefreshWorld(b.name, b.value);
             g_flagsDirty = true;          // echo to everybody, including the asker
         } else {
             QDLOG(LOG_WARN, "intent write failed: ", b.name, " ", err);
@@ -3021,8 +3105,37 @@ void ApplyStatus(avatar::Body* b, uint32_t mask)
     QDLOG(LOG_INFO, "status: body now shows mask ", hex32(mask), " (was ", hex32(was), ")");
 }
 
+bool ActorHp(void* actor, bool player, float* hp, float* maxHp);
+uint32_t g_selfHpHoldUntil = 0;
+bool g_hitFillOff = false;    // qd.nohit (rig A/B): send TryApplyDamage the old empty hit
+bool BytePropC(void* obj, const char* name, uint8_t* out);
+void VitalsResolveHud(uint32_t now);
 uint32_t g_localStatus = 0, g_localStatusRev = 0;
 uint32_t g_peerStatus = 0, g_peerStatusRev = 0;
+
+// THE PARTNER'S VITALS (after Session 26).  SYNC-GAPS 4 said "the partner's HP and death are
+// not shown".  Each machine reads its OWN player's HP (`Health`, and `GetMaxHP`) and sends it
+// on the STATUS tail; the receiver draws it on its HUD (VitalsDraw, from the ProcessEvent hook
+// on `AHUD.ReceiveDrawHUD`).
+wire::Vitals g_localVitals = {};
+wire::Vitals g_peerVitals = {};
+uint32_t     g_peerVitalsAt = 0;
+
+static wire::Vitals ReadLocalVitals()
+{
+    wire::Vitals v = {};
+    if (!IsGameplayPawn(g_localPawn)) return v;
+    float hp = 0.0f, mx = 0.0f;
+    if (!ActorHp(g_localPawn, true, &hp, &mx)) return v;
+    if (hp < 0.0f) hp = 0.0f;
+    if (mx < hp) mx = hp;
+    v.hp = (uint16_t)(hp > 65535.0f ? 65535 : (int)(hp + 0.5f));
+    v.hp_max = (uint16_t)(mx > 65535.0f ? 65535 : (int)(mx + 0.5f));
+    uint8_t dead = 0;
+    bool isDead = (BytePropC(g_localPawn, "IsDead", &dead) && dead != 0) || hp <= 0.0f;
+    v.flags = (uint8_t)(wire::VF_VALID | (isDead ? wire::VF_DEAD : 0));
+    return v;
+}
 
 void StatusPump(uint32_t now)
 {
@@ -3030,6 +3143,10 @@ void StatusPump(uint32_t now)
     if (now - lastScan < 200) return;
     lastScan = now;
     uint32_t m = LocalStatusMask();
+    wire::Vitals vt = ReadLocalVitals();
+    bool vitalsChanged = vt.hp != g_localVitals.hp || vt.hp_max != g_localVitals.hp_max ||
+                         vt.flags != g_localVitals.flags;
+    g_localVitals = vt;
     bool changed = m != g_localStatus;
     if (changed) {
         g_localStatus = m;
@@ -3037,11 +3154,12 @@ void StatusPump(uint32_t now)
         QDLOG(LOG_INFO, "status: local mask ", hex32(m), " rev ", dec((int)g_localStatusRev));
     }
     if (g_devMirrorBody) ApplyStatus(g_devMirrorBody, g_localStatus);
-    if (g_net.Connected() && (changed || now - lastSend > 1000)) {
+    if (g_net.Connected() && (changed || vitalsChanged || now - lastSend > 1000)) {
         lastSend = now;
-        uint8_t body[16];
+        uint8_t body[24];
         wire::Writer w(body, sizeof(body));
         wire::WriteStatus(w, g_localStatusRev, g_localStatus);
+        if (g_localVitals.flags & wire::VF_VALID) wire::WriteVitals(w, g_localVitals);
         if (w.ok) g_net.SendUnreliable(wire::K_STATUS, body, w.len);
     }
 }
@@ -6298,6 +6416,153 @@ bool CallPlayerDeath(void* pawn)
     return c.Run(pawn);
 }
 
+// A TWeakObjectPtr is {ObjectIndex, ObjectSerialNumber}.  A slot whose serial is still 0 has
+// never been weakly referenced; the engine assigns one on first use, which native code here
+// cannot do safely, so such an object is reported as "no weak pointer" instead.
+static bool MakeWeakPair(void* obj, int32_t out[2])
+{
+    out[0] = -1; out[1] = 0;
+    if (!obj || !LooksLikeUObject(obj)) return false;
+    int32_t idx = -1;
+    __try { idx = *(const int32_t*)((const uint8_t*)obj + weak::kIndexOff); }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    if (idx < 0 || ObjectAt(idx) != obj) return false;
+    int32_t ser = ObjectSerialAt(idx);
+    if (ser == 0) return false;
+    out[0] = idx; out[1] = ser;
+    return true;
+}
+
+// The FHitResult layout, by NAME from the build's own ScriptStruct (never a hard-coded
+// offset table).  Resolved once.
+struct HitLayout {
+    bool tried, ok;
+    int size;
+    int loc, impact, normal, impactNormal, traceStart, traceEnd, actor, component, blocking,
+        faceIndex, item, time, distance;
+};
+static HitLayout g_hitLay = {};
+static bool HitLayoutInit()
+{
+    HitLayout& h = g_hitLay;
+    if (h.tried) return h.ok;
+    h.tried = true;
+    void* ss = FindObjectByNameAndClass("HitResult", "ScriptStruct");
+    if (!ss || !Lay().valid) { QDLOG(LOG_WARN, "damage: FHitResult struct not found; hits stay empty"); return false; }
+    static LayoutResult r;
+    if (!WalkFieldsRaw(ss, Lay(), false, &r)) { QDLOG(LOG_WARN, "damage: FHitResult walk failed"); return false; }
+    h.loc = h.impact = h.normal = h.impactNormal = h.traceStart = h.traceEnd = h.actor =
+        h.component = h.blocking = h.faceIndex = h.item = h.time = h.distance = -1;
+    for (int i = 0; i < r.props; ++i) {
+        const PropDesc& d = r.p[i];
+        if (NameEquals(d.name, "Location")) h.loc = d.offset;
+        else if (NameEquals(d.name, "ImpactPoint")) h.impact = d.offset;
+        else if (NameEquals(d.name, "Normal")) h.normal = d.offset;
+        else if (NameEquals(d.name, "ImpactNormal")) h.impactNormal = d.offset;
+        else if (NameEquals(d.name, "TraceStart")) h.traceStart = d.offset;
+        else if (NameEquals(d.name, "TraceEnd")) h.traceEnd = d.offset;
+        else if (NameEquals(d.name, "Actor")) h.actor = d.offset;
+        else if (NameEquals(d.name, "Component")) h.component = d.offset;
+        else if (NameEquals(d.name, "bBlockingHit")) h.blocking = d.offset;
+        else if (NameEquals(d.name, "FaceIndex")) h.faceIndex = d.offset;
+        else if (NameEquals(d.name, "Item")) h.item = d.offset;
+        else if (NameEquals(d.name, "Time")) h.time = d.offset;
+        else if (NameEquals(d.name, "Distance")) h.distance = d.offset;
+    }
+    h.size = r.parms_size;
+    h.ok = h.loc >= 0 && h.impact >= 0 && h.actor >= 0 && h.component >= 0 && h.blocking >= 0;
+    QDLOG(h.ok ? LOG_INFO : LOG_WARN, "damage: FHitResult size=", dec(h.size), " Location@", dec(h.loc),
+          " ImpactPoint@", dec(h.impact), " Actor@", dec(h.actor), " Component@", dec(h.component),
+          " bBlockingHit@", dec(h.blocking), (h.ok ? "" : " -- INCOMPLETE, hits stay empty"));
+    return h.ok;
+}
+
+// Fill `Hit` (and `HitLocation`/`HitLocationIsValid` when the entry declares them) with the
+// hit a swing at this enemy produces: blocking, on the enemy's own mesh, at its body.
+bool FillEnemyHit(Call& c, const Fn& fn, void* actor, void* causer)
+{
+    const PropDesc* hp = nullptr;
+    for (int i = 0; i < fn.sig.props; ++i) {
+        const PropDesc& d = fn.sig.p[i];
+        if (NameEquals(d.type, "StructProperty") && NameEquals(d.name, "Hit") && !(d.flags & CPF_ReturnParm)) { hp = &d; break; }
+    }
+    if (!hp || !HitLayoutInit() || hp->size < g_hitLay.size) return false;
+    uint8_t* h = c.At(hp->name, hp->size);
+    if (!h) return false;
+    ActorXform xf = {}, cx = {};
+    if (!ReadActorXform(actor, &xf)) return false;
+    bool haveC = causer && ReadActorXform(causer, &cx);
+    float at[3] = {xf.px, xf.py, xf.pz + 40.0f};
+    float from[3] = {haveC ? cx.px : at[0], haveC ? cx.py : at[1], haveC ? cx.pz + 60.0f : at[2] + 200.0f};
+    float n[3] = {from[0] - at[0], from[1] - at[1], from[2] - at[2]};
+    float len = sqrtf(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+    if (len < 1.0f) { n[0] = 0; n[1] = 0; n[2] = 1; len = 1.0f; }
+    for (int k = 0; k < 3; ++k) n[k] /= len;
+    const HitLayout& L = g_hitLay;
+    memcpy(h + L.loc, at, 12);
+    memcpy(h + L.impact, at, 12);
+    if (L.normal >= 0) memcpy(h + L.normal, n, 12);
+    if (L.impactNormal >= 0) memcpy(h + L.impactNormal, n, 12);
+    if (L.traceStart >= 0) memcpy(h + L.traceStart, from, 12);
+    if (L.traceEnd >= 0) memcpy(h + L.traceEnd, at, 12);
+    if (L.faceIndex >= 0) { int32_t v = -1; memcpy(h + L.faceIndex, &v, 4); }
+    if (L.item >= 0) { int32_t v = -1; memcpy(h + L.item, &v, 4); }
+    if (L.time >= 0) { float v = 0.5f; memcpy(h + L.time, &v, 4); }
+    if (L.distance >= 0) { float v = len * 0.5f; memcpy(h + L.distance, &v, 4); }
+    h[L.blocking] |= 1;                         // bBlockingHit is the first bit of its byte
+    int32_t wa[2], wc[2];
+    bool okA = MakeWeakPair(actor, wa);
+    void* mesh = ObjPropC(actor, "Mesh");
+    bool okC = mesh && MakeWeakPair(mesh, wc);
+    memcpy(h + L.actor, wa, 8);
+    memcpy(h + L.component, wc, 8);
+    if (fn.Off("HitLocation") >= 0) c.Set("HitLocation", at, 12);
+    if (fn.Off("HitLocationIsValid") >= 0) c.U8("HitLocationIsValid", 1);
+    static int said = 0;
+    if (said++ < 4)
+        QDLOG(LOG_INFO, "damage: hit built for TryApplyDamage actor=", (okA ? "weak ok" : "NO SERIAL"),
+              " component=", (okC ? "mesh weak ok" : "NONE"), " at ", flt(at[0], 0), ",", flt(at[1], 0),
+              ",", flt(at[2], 0));
+    return okA;
+}
+
+// The enemy's own on-hit presentation, for a hit whose HP had to be WRITTEN because the
+// class's damage entry still refused (the fallback).  These are the pieces the game's own
+// `TryApplyDamage` plays on a hit -- the damage flash (`TookDamageFlash`, a timeline) and
+// the class's custom damaged FX at the body -- called through the class's own functions.
+// Stagger is NOT forced: the game staggers on accumulated stacks, and forcing it on every
+// partner hit would stun-lock what one player alone could not.
+void EnemyHitPresentation(void* actor)
+{
+    if (!actor || !ObjectIsLive(actor)) return;
+    const char* flash = "absent";
+    void* tl = ObjPropC(actor, "TookDamageFlash");
+    if (tl && LooksLikeUObject(tl)) {
+        Fn f = {};
+        if (f.Resolve(tl, "PlayFromStart")) { Call c(f); flash = c.Run(tl) ? "played" : "refused"; }
+        else flash = "no PlayFromStart";
+    }
+    const char* fx = "absent";
+    {
+        static Fn f = {};
+        static void* fCls = nullptr;
+        void* cls = ObjClass(actor);
+        if (fCls != cls) { f = Fn{}; fCls = cls; }
+        ActorXform xf = {};
+        if (f.Resolve(actor, "DoCustomDamagedFX") && ReadActorXform(actor, &xf)) {
+            Call c(f);
+            float at[3] = {xf.px, xf.py, xf.pz + 40.0f};
+            if (f.Off("FXLoc") >= 0) c.Set("FXLoc", at, 12);
+            fx = c.Run(actor) ? "played" : "refused";
+        }
+    }
+    static int said = 0;
+    if (said++ < 12)
+        QDLOG(LOG_INFO, "reaction: fallback presentation flash=", flash, " customFX=", fx);
+}
+
+bool FillEnemyHit(Call& c, const Fn& fn, void* actor, void* causer);
+void EnemyHitPresentation(void* actor);
 bool ApplyDamageToActor(void* actor, float amount, void* causer, bool player,
                         float* beforeOut, float* afterOut, bool* haveHpOut)
 {
@@ -6353,6 +6618,28 @@ bool ApplyDamageToActor(void* actor, float amount, void* causer, bool player,
         void* v = causer;
         memcpy(p, &v, 8);
     }
+    // THE HIT ITSELF (after Session 26).  `TryApplyDamage`'s `Hit` is an FHitResult STRUCT,
+    // not an object, so the loop above never touched it and every call went in with an empty
+    // hit.  Ordinary enemies apply anyway; the bosses' entry reads the hit (which component,
+    // where) and takes its early-out, which is why every boss fell through to the clamped HP
+    // write -- the path that plays NO hit reaction, no flash, no stagger and no phase logic.
+    // A real swing's hit names the enemy, its mesh and a point on it; this builds that one.
+    // ORDER (measured, Session 27 run 2): the built hit goes SECOND.  Sent first to every
+    // enemy, ordinary enemies applied it but 24 kills in 780_SZ_Depths rolled NO drop, where
+    // the same kills with the empty hit (Session 25) did -- so the exact call that has always
+    // worked is kept first and unchanged, and the built hit is only the retry for a class
+    // whose entry refused it (the bosses).
+    Call c0(c);                                 // the frame before Run: the retry starts here
+    bool hitFilled = false;
+    // A MOUNT FORWARDS ITS HITS (measured from the cooked class, after Session 26 run 3).
+    // `Dragon_Green_BP_C.TryApplyDamage` is a 761-byte override whose one call is another
+    // `TryApplyDamage` -- on its `MountedLord`, the rider whose HP the dragon mirrors.  The
+    // dragon's own HP does not move inside the call, so this lane read "no effect" and wrote
+    // the HP on top: no reaction, and the hit counted twice.  The rider's HP is the oracle.
+    void* lord = player ? nullptr : ObjPropC(actor, "MountedLord");
+    if (lord && (!LooksLikeUObject(lord) || !ObjectIsLive(lord))) lord = nullptr;
+    float lordBefore = 0.0f, lordMx = 0.0f;
+    bool haveLord = lord && EnemyHp(lord, &lordBefore, &lordMx) && lordBefore > 0.0f;
     bool ran = c.Run(actor);
     // NOTE: `ret` is the function's ReturnValue slot, not its `AppliedDamage` out
     // parameter, so it can be 0 on a call that did apply (and 1 on one that did not).
@@ -6362,6 +6649,27 @@ bool ApplyDamageToActor(void* actor, float amount, void* causer, bool player,
 
     bool haveAfter = ActorHp(actor, player, &after, &mx);
     bool took = haveBefore && haveAfter && after < before;
+    bool forwarded = false;
+    if (!took && haveLord) {
+        float lb = 0.0f, lm = 0.0f;
+        if (EnemyHp(lord, &lb, &lm) && lb < lordBefore) {
+            took = true;
+            forwarded = true;
+            static int saidF = 0;
+            if (saidF++ < 12)
+                QDLOG(LOG_INFO, "damage: enemy hp via TryApplyDamage (the game's own hit pipeline, "
+                                "forwarded to the mounted lord) rider ", flt(lordBefore, 1), " -> ",
+                      flt(lb, 1), "; the mount's own HP follows the rider");
+        }
+    }
+    if (!took && !player && haveBefore && before > 0.0f && !g_hitFillOff &&
+        FillEnemyHit(c0, a.fn, actor, causer)) {
+        hitFilled = true;
+        ran = c0.Run(actor) || ran;
+        if (c0.Ret()) memcpy(&ret, c0.Ret(), 4);
+        haveAfter = ActorHp(actor, player, &after, &mx);
+        took = haveBefore && haveAfter && after < before;
+    }
 
     // G4's second half.  Only the local player needs it, and only when the game's own
     // entry produced no HP movement at all -- a partial application is the game's own
@@ -6570,6 +6878,29 @@ bool ApplyDamageToActor(void* actor, float amount, void* causer, bool player,
     if (beforeOut) *beforeOut = before;
     if (afterOut) *afterOut = after;
     if (haveHpOut) *haveHpOut = haveBefore && haveAfter;
+
+    if (took && !player) {
+        if (path[0] == 'T') {
+            // The game's own hit pipeline ran: its reaction is the game's.  The flash timeline
+            // is read back as the visible proof that a reaction started.
+            const char* fl = "n/a";
+            void* tl = ObjPropC(actor, "TookDamageFlash");
+            if (tl && LooksLikeUObject(tl)) {
+                Fn f = {};
+                if (f.Resolve(tl, "IsPlaying")) {
+                    Call ic(f);
+                    if (ic.Run(tl) && ic.Ret()) fl = (*ic.Ret() != 0) ? "playing" : "idle";
+                }
+            }
+            static int saidT = 0;
+            if (saidT++ < 24)
+                QDLOG(LOG_INFO, "damage: enemy hp via TryApplyDamage (the game's own hit pipeline, hit=",
+                      (hitFilled ? "built" : "empty"), ") ", flt(before, 1), " -> ", flt(after, 1),
+                      " reaction flash=", fl);
+        } else {
+            EnemyHitPresentation(actor);
+        }
+    }
 
     if (took && player) {
         // One INFO line that says WHICH path moved the HP, so a live run can tell the
@@ -10573,6 +10904,11 @@ struct LootActorRec {
     // the actor.  So "hidden or destroyed" comes seconds late, or never when nobody presses.
     // The flip of Acquired IS the take; a drop recorded already-acquired never counts.
     bool     acquiredAtRecord;
+    // The local take (after Session 26).  The showcase waits for the player's dismiss before
+    // the pickup's own `PutAway` hides the actor; a showcase nobody dismisses leaves the
+    // taken actor standing.  `takenAt` starts the safety net in LootPump.
+    uint32_t takenAt;
+    bool     putAwayTried;
 };
 LootActorRec g_lootActors[64];
 int          g_lootActorN = 0;
@@ -11016,6 +11352,7 @@ void* LootMirrorSpawn(uint32_t hash, int32_t index, const char* item,
     void* actor = SpawnPickupActor(cls, p[0], p[1], p[2], yaw);
     if (!actor) return nullptr;
     LootActorRec& r = g_lootActors[g_lootActorN++];
+    r.takenAt = 0; r.putAwayTried = false;
     r.actor = actor;
     r.source_hash = hash;
     r.drop_index = index;
@@ -11104,6 +11441,7 @@ void LootScanStep()
             }
         }
         LootActorRec& r = g_lootActors[g_lootActorN++];
+        r.takenAt = 0; r.putAwayTried = false;
         r.actor = o;
         r.source_hash = hash;
         r.drop_index = index;
@@ -11215,7 +11553,39 @@ void LootPump(uint32_t now)
                   dec((int)g_lootActors[i].drop_index), " (", nm, ") -- tombstoned for the "
                   "partner");
             g_lootRev = g_loot.Revision();
+            g_lootActors[i].takenAt = now ? now : 1;
         }
+    }
+
+    // THE TAKEN ACTOR GOES (after Session 26).  A take is the `Acquired` flip; the actor
+    // itself leaves when the showcase is dismissed and the pickup's own `PutAway` runs.  A
+    // showcase nobody dismisses (the game's time-dilation freeze is blocked in a live
+    // session, so the world keeps running around it) left the taken drop standing on the
+    // taker's screen.  After kPutAwayMs the module runs the pickup's OWN `PutAway` -- the
+    // game's dismiss path, not a hide -- once; a hide is the fallback if that path refuses.
+    static const uint32_t kPutAwayMs = 15000;
+    for (int i = 0; i < g_lootActorN; ++i) {
+        LootActorRec& r = g_lootActors[i];
+        if (!r.takenAt || r.putAwayTried || now - r.takenAt < kPutAwayMs) continue;
+        r.putAwayTried = true;
+        void* a = r.actor;
+        if (!a || !ObjectIsLive(a) || ActorHiddenNow(a)) {
+            QDLOG(LOG_INFO, "loot: taken drop ", hex32(r.source_hash), "#", dec((int)r.drop_index),
+                  " is gone from this screen (the showcase was dismissed)");
+            continue;
+        }
+        Fn f = {};
+        bool ran = false;
+        if (f.Resolve(a, "PutAway")) { Call c(f); ran = c.Run(a); }
+        bool goneNow = !ObjectIsLive(a) || ActorHiddenNow(a);
+        if (!goneNow) {
+            SetActorHidden(a, true);
+            char w1[160];
+            ObjectCallFn(a, "SetActorEnableCollision", true, false, w1, sizeof(w1));
+        }
+        QDLOG(LOG_INFO, "loot: taken drop ", hex32(r.source_hash), "#", dec((int)r.drop_index),
+              " still stood ", dec((int)((now - r.takenAt) / 1000)), " s after the take; PutAway ",
+              (ran ? "ran" : "did not run"), (goneNow ? " and the actor left" : " -- hidden instead"));
     }
 
     // RECONCILE THE TOMBSTONES AGAINST THE DROPS THIS MACHINE HOLDS -- every pass, but each
@@ -12853,6 +13223,15 @@ void DispatchInbound(const InboundPacket& p, uint32_t now)
         if (mask != g_peerStatus) QDLOG(LOG_INFO, "peer status mask ", hex32(mask), " rev ", dec((int)rev));
         g_peerStatusRev = rev;
         g_peerStatus = mask;
+        wire::Vitals v = {};
+        if (wire::ReadVitals(r, &v) && (v.flags & wire::VF_VALID)) {
+            bool moved = v.hp != g_peerVitals.hp || v.hp_max != g_peerVitals.hp_max ||
+                         v.flags != g_peerVitals.flags;
+            g_peerVitals = v;
+            g_peerVitalsAt = now;
+            if (moved) QDLOG(LOG_INFO, "vitals: partner hp ", dec((int)v.hp), "/", dec((int)v.hp_max),
+                             ((v.flags & wire::VF_DEAD) ? " DOWN" : ""));
+        }
         break;
     }
     case wire::K_EQUIPMENT: {
@@ -15105,6 +15484,18 @@ void DevInteract(uint32_t now)
     // that CLASS instead -- a different actor 56 km away.
     for (int i = 0; buf[i]; ++i) if (buf[i] == '#') { buf[i] = 0; break; }
     if (buf[0] == 0) return;
+    // `!<Verb>` (after Session 26): call THAT verb on the resolved object, with the player as
+    // its object argument, instead of the press.  The shop door (`Shop_Door_00_BP_C`) is a
+    // ONE-SIDED door (`OneSided`, `FrontSideInteract`, `FlipOpenableSide` in its class): a
+    // press from the outside is refused by the content, by design, and it opens through its
+    // own `Activate(ActorThatTriggered)` -- which is what R86/R105 never drove.
+    static char forcedVerb[40];
+    int forcedSide = -1;
+    forcedVerb[0] = 0;
+    for (int i = 0; buf[i]; ++i)
+        if (buf[i] == '!') { lstrcpynA(forcedVerb, buf + i + 1, sizeof(forcedVerb)); buf[i] = 0; break; }
+    for (int i = 0; forcedVerb[i]; ++i)
+        if (forcedVerb[i] == '@') { forcedSide = atoi(forcedVerb + i + 1); forcedVerb[i] = 0; break; }
 
     // `near:<name>`: interact with THAT actor.  The name is the instruction, so a
     // scenario can say which door, chest or NPC it means instead of hoping the engine's
@@ -15121,6 +15512,45 @@ void DevInteract(uint32_t now)
         }
         QDLOG(LOG_INFO, "dev interact: resolved '", buf + 5, "' -> ", nm, " at ", flt(xf.px, 0), ",",
               flt(xf.py, 0), ",", flt(xf.pz, 0), " dist=", flt(d, 0));
+    }
+
+    if (forcedVerb[0] && explicitTarget) {
+        const char* ran = nullptr;
+        char d[96] = "-";
+        ObjDescribe(explicitTarget, d, sizeof(d));
+        int before = RigObjectStateCode(explicitTarget);
+        // RigCallVerb caches by (object, name POINTER's text) and keeps the pointer, so each
+        // distinct verb gets its own stable string.
+        static char pool[8][40];
+        static int poolN = 0;
+        const char* verb = nullptr;
+        for (int k = 0; k < poolN && !verb; ++k) if (!strcmp(pool[k], forcedVerb)) verb = pool[k];
+        if (!verb && poolN < 8) { lstrcpynA(pool[poolN], forcedVerb, 40); verb = pool[poolN++]; }
+        // A ONE-SIDED DOOR READS WHICH SIDE ITS TRIGGERING ACTOR STANDS ON (`OneSided`,
+        // `FlipOpenableSide`, `Door Forward Is Y`, `TransformDirection` in the shop door's
+        // class).  `!Verb@k` (k = 0..3) first stands the player 150 cm out along +X, -X, +Y or
+        // -Y of the object's own frame, facing it -- one side per instruction, because a door's
+        // open runs on a timeline and the result is only readable seconds later.
+        int after = before;
+        ActorXform dx = {}, me = {};
+        if (forcedSide >= 0 && ReadActorXform(explicitTarget, &dx) && ReadActorXform(g_localPawn, &me)) {
+            int k = forcedSide & 3;
+            float yr = dx.yaw * 0.01745329f;
+            float fx = cosf(yr), fy = sinf(yr);
+            float ox = (k < 2) ? fx : -fy, oy = (k < 2) ? fy : fx;
+            float sg = (k % 2 == 0) ? 1.0f : -1.0f;
+            float px = dx.px + sg * ox * 150.0f, py = dx.py + sg * oy * 150.0f;
+            float face = atan2f(dx.py - py, dx.px - px) * 57.29578f;
+            SetActorXform(g_localPawn, px, py, me.pz, face);
+            QDLOG(LOG_INFO, "dev interact: standing on side ", dec(k), " of ", d, " at ", flt(px, 0), ",",
+                  flt(py, 0), " (door yaw ", flt(dx.yaw, 0), ")");
+        }
+        if (verb) RigCallVerb(explicitTarget, verb, g_localPawn, &ran);
+        after = RigObjectStateCode(explicitTarget);
+        QDLOG(LOG_INFO, "dev interact: forced verb ", forcedVerb, " on ", d, " ran=", (ran ? "yes" : "no"),
+              " state ", dec(before), " -> ", dec(after));
+        DevActorStateDump(explicitTarget);
+        return;
     }
 
     // Same rule as the scan: this dereferences the pawn, its component and whatever the
@@ -15203,6 +15633,8 @@ void DevGod(uint32_t now)
             QDLOG(LOG_INFO, "rig: god control enabled (rig-only, floor=", flt(g_rigGod.floor, 0), ")");
     }
     if (!g_devGodOn || !IsGameplayPawn(g_localPawn)) return;
+    // `qd.selfhp` holds the HP it set for 20 s so the partner's bar has a value to follow.
+    if (g_selfHpHoldUntil && (int32_t)(g_selfHpHoldUntil - now) > 0) return;
 
     if (!g_rigGod.armed) {
         g_rigGod.armed = 1;
@@ -16821,11 +17253,15 @@ void DevTakeLever(uint32_t now)
             // THE DISMISS.  The showcase waits for the player's input before `PutAway`
             // hides the actor; the pickup declares its own compiled events for the actions
             // it listens to (Interact, Attack, Jump).  One per pass, until the actor goes.
-            static const char* const kDismiss[] = {"InpActEvt_Interact", "InpActEvt_Attack",
-                                                   "InpActEvt_Jump"};
+            // MEASURED (Session 25): none of the three input events removed the actor -- the
+            // showcase only listens after its `AllowInput` timeline event.  Stage 2 therefore
+            // runs the pickup's OWN `PutAway`, which is what that dismiss calls.
+            static const char* const kDismiss[] = {"InpActEvt_Interact", "PutAway",
+                                                   "InpActEvt_Attack"};
             const char* ev = kDismiss[g_take.stage - 1];
             what = ev;
-            RigCallVerbPrefix(drop, ev, g_localPawn, &ran);
+            if (g_take.stage == 2) RigCallVerb(drop, "PutAway", nullptr, &ran);
+            else RigCallVerbPrefix(drop, ev, g_localPawn, &ran);
             break;
         }
         default: {
@@ -17497,6 +17933,39 @@ void DevProbe(uint32_t now)
 // FS_PlayerChar_C.AutoEquipItem, so a weapon swap / thrown weapon can be exercised on a
 // save that owns only the starting sword.  The game persists it into that instance's
 // save like any pickup.
+// QDCOOP_TEST_SELFHP (<UserDir>\qd.selfhp = "<hp>[#nonce]"): TEST INSTANCES ONLY -- set this
+// machine's own player HP, so the partner's vitals bar has a value to follow.
+void DevSelfHpLever(uint32_t now)
+{
+    static char path[MAX_PATH];
+    static int on = -1;
+    static char applied[48] = "";
+    static uint32_t poll = 0;
+    if (on < 0) { DevRigPath("QDCOOP_TEST_SELFHP", "qd.selfhp", path, sizeof(path)); on = path[0] != 0; }
+    if (!on || now - poll < 500) return;
+    poll = now;
+    {
+        char nh[8] = "";
+        bool off = DevRigText("QDCOOP_TEST_NOHIT", "qd.nohit", nh, sizeof(nh)) && nh[0] == '1';
+        if (off != g_hitFillOff) {
+            g_hitFillOff = off;
+            QDLOG(LOG_INFO, "rig: nohit -> the enemy hit is ", (off ? "EMPTY (old payload)" : "BUILT"));
+        }
+    }
+    char want[48];
+    if (!DevRigText("QDCOOP_TEST_SELFHP", "qd.selfhp", want, sizeof(want)) || !want[0]) return;
+    if (!strcmp(want, applied)) return;
+    lstrcpynA(applied, want, sizeof(applied));
+    if (!IsGameplayPawn(g_localPawn)) return;
+    float v = (float)atof(want);
+    if (v < 1.0f) v = 1.0f;
+    bool ok = SetFloatPropC(g_localPawn, "Health", v);
+    float back = 0.0f;
+    FloatPropC(g_localPawn, "Health", &back);
+    g_selfHpHoldUntil = now + 20000;
+    QDLOG(LOG_INFO, "rig: selfhp -> ", flt(v, 1), " wrote=", dec(ok ? 1 : 0), " read back ", flt(back, 1));
+}
+
 void DevGive(uint32_t now)
 {
     static char list[1024];
@@ -18252,10 +18721,12 @@ bool HK_Tick(void* engineLoop)
     DevProbe(now);
     DevProbe2(now);
     DevGive(now);
+    DevSelfHpLever(now);
     PuppetPump(now);
     FxPump(now);
     ArcObservePump(now);
     StatusPump(now);
+    VitalsResolveHud(now);
     DevTestFire(now);
     DevTeleport(now);
     DevTeleportFile(now);
@@ -19063,6 +19534,111 @@ void DevTriggerLever(uint32_t now)
           " triggered ", dec(before), "->", dec(after));
 }
 
+// ---------------------------------------------------------------------------
+// The partner's vitals on this machine's screen (after Session 26)
+// ---------------------------------------------------------------------------
+// The game draws its own HUD with UMG; the engine still calls `AHUD.ReceiveDrawHUD(SizeX,
+// SizeY)` from `AHUD::DrawHUD` every frame, inside PostRender, while the HUD's Canvas is
+// valid.  That dispatch crosses this ProcessEvent hook, so the partner's bar is drawn right
+// after it with the HUD's own `DrawRect`/`DrawText` -- the engine's canvas calls, which are
+// only legal inside exactly that window.  The UFunction is resolved from the live HUD (a
+// Blueprint HUD that overrides the event has its own UFunction) and re-resolved on a class
+// change.  One pointer compare per dispatch otherwise.
+void* g_fnDrawHud = nullptr;
+static void* g_drawHudCls = nullptr;
+static uint32_t g_vitalsDrawnAt = 0;
+
+void VitalsResolveHud(uint32_t now)
+{
+    static uint32_t last = 0;
+    if (now - last < 1000) return;
+    last = now;
+    if (!IsGameplayPawn(g_localPawn)) return;
+    void* pc = ObjPropC(g_localPawn, "Controller");
+    void* hud = pc ? ObjPropC(pc, "MyHUD") : nullptr;
+    if (!hud || !LooksLikeUObject(hud)) {
+        static int said = 0;
+        if (said++ < 2) QDLOG(LOG_WARN, "vitals: the player controller has no HUD actor; the partner bar cannot be drawn");
+        return;
+    }
+    void* cls = ObjClass(hud);
+    if (cls == g_drawHudCls && g_fnDrawHud) {
+        if (g_net.Connected() && g_peerVitalsAt && now - g_vitalsDrawnAt > 10000 && now - g_peerVitalsAt < 3000) {
+            static uint32_t warned = 0;
+            if (now - warned > 60000) {
+                warned = now;
+                QDLOG(LOG_WARN, "vitals: partner vitals are arriving but ReceiveDrawHUD has not been seen for 10 s "
+                                "(the HUD is hidden or the engine does not draw it); no bar on screen");
+            }
+        }
+        return;
+    }
+    g_drawHudCls = cls;
+    g_fnDrawHud = FindFunction(hud, "ReceiveDrawHUD");
+    char cn[64] = "?";
+    FNameToString(ObjNameRaw(cls), cn, sizeof(cn));
+    QDLOG(g_fnDrawHud ? LOG_INFO : LOG_WARN, "vitals: HUD ", cn, " ReceiveDrawHUD ",
+          (g_fnDrawHud ? "resolved -- the partner bar is drawn after it" : "NOT FOUND"));
+}
+
+static void VitalsDraw(void* hud, void* parms)
+{
+    uint32_t now = Net::Now();
+    if (!g_net.Connected() || !g_peerVitalsAt || now - g_peerVitalsAt > 4000) return;
+    if (!(g_peerVitals.flags & wire::VF_VALID) || g_peerVitals.hp_max == 0) return;
+    static Fn fRect = {}, fText = {};
+    static void* fCls = nullptr;
+    void* cls = ObjClass(hud);
+    if (fCls != cls) { fRect = Fn{}; fText = Fn{}; fCls = cls; }
+    if (!fRect.Resolve(hud, "DrawRect") || !fText.Resolve(hud, "DrawText")) return;
+    int32_t sx = 1920, sy = 1080;
+    if (parms) { memcpy(&sx, parms, 4); memcpy(&sy, (uint8_t*)parms + 4, 4); }
+    if (sx < 320 || sx > 16384) sx = 1920;
+    if (sy < 200 || sy > 16384) sy = 1080;
+    float scale = (float)sy / 1080.0f;
+    float w = 320.0f * scale, h = 12.0f * scale;
+    float x = (float)sx * 0.5f - w * 0.5f, y = 34.0f * scale;
+    bool dead = (g_peerVitals.flags & wire::VF_DEAD) != 0;
+    float frac = dead ? 0.0f : (float)g_peerVitals.hp / (float)g_peerVitals.hp_max;
+    if (frac > 1.0f) frac = 1.0f;
+    struct Lc { float r, g, b, a; };
+    auto rect = [&](Lc col, float rx, float ry, float rw, float rh) {
+        Call c(fRect);
+        c.Set("RectColor", &col, 16);
+        c.F32("ScreenX", rx); c.F32("ScreenY", ry); c.F32("ScreenW", rw); c.F32("ScreenH", rh);
+        return c.Run(hud);
+    };
+    bool ok = rect(Lc{0.0f, 0.0f, 0.0f, 0.6f}, x - 2.0f * scale, y - 2.0f * scale, w + 4.0f * scale, h + 4.0f * scale);
+    if (frac > 0.0f) ok = rect(Lc{0.75f, 0.06f, 0.06f, 0.9f}, x, y, w * frac, h) && ok;
+    static wchar_t text[64];
+    char a[64];
+    if (dead) lstrcpynA(a, "PARTNER  DOWN", sizeof(a));
+    else wsprintfA(a, "PARTNER  %u / %u", (unsigned)g_peerVitals.hp, (unsigned)g_peerVitals.hp_max);
+    int n = 0;
+    for (; a[n] && n < 63; ++n) text[n] = (wchar_t)(unsigned char)a[n];
+    text[n] = 0;
+    struct FStr { wchar_t* data; int32_t num; int32_t max; } fs = {text, n + 1, n + 1};
+    {
+        Call c(fText);
+        c.Set("Text", &fs, 16);
+        Lc white{1.0f, 1.0f, 1.0f, 1.0f};
+        c.Set("TextColor", &white, 16);
+        c.F32("ScreenX", x);
+        c.F32("ScreenY", y - 18.0f * scale);
+        if (fText.Off("Scale") >= 0) c.F32("Scale", scale);
+        ok = c.Run(hud) && ok;
+    }
+    g_vitalsDrawnAt = now;
+    static uint32_t lastSaid = 0;
+    static uint16_t saidHp = 0xFFFF;
+    if (lastSaid == 0 || (g_peerVitals.hp != saidHp && now - lastSaid > 1000)) {
+        lastSaid = now;
+        saidHp = g_peerVitals.hp;
+        QDLOG(ok ? LOG_INFO : LOG_WARN, "vitals: drew the partner bar ", a, " on ", dec(sx), "x", dec(sy),
+              (ok ? "" : " (a canvas call was refused)"));
+    }
+}
+
 void HK_ProcessEvent(void* self, void* func, void* parms)
 {
     // A DISPATCH ON NOTHING IS THE CRASH, NOT A CALL (Session 24, R155).  The game's own
@@ -19096,6 +19672,7 @@ void HK_ProcessEvent(void* self, void* func, void* parms)
     // also run (that would apply the same damage twice, on the wrong machine).
     if (!PlayerBodyObserve(self, func, parms)) return;
     if (g_oProcessEvent) g_oProcessEvent(self, func, parms);
+    if (func == g_fnDrawHud && g_fnDrawHud) VitalsDraw(self, parms);
 }
 
 // ---------------------------------------------------------------------------
