@@ -16265,8 +16265,20 @@ void DevFlagDump(uint32_t now)
         }
         return;
     }
+    // THE GAME'S OWN BANK, not only the synced table (Session 26 run 13).  `g_flags` holds
+    // what the flag lane carried; on the HOST that is only what the partner sent, so the
+    // host's own `flag NEW DragonLordDead = 1` (a bank fact) read back here as "not in this
+    // machine's bank".  The mirror is the per-pass read of the game's NamedSaveData; it is
+    // the answer, and the lane's table is printed beside it.
     bool found = false;
     int32_t v = g_flags.Get(want, &found);
+    int mi = MirrorFind(want);
+    if (mi >= 0) {
+        int32_t bank = g_mirror[mi].last_value;
+        QDLOG(LOG_INFO, "rig: flag dump -- ", want, " = ", dec((int)(bank > v ? bank : v)),
+              " (game bank ", dec((int)bank), ", lane table ", (found ? dec((int)v) : dec(-1)), ")");
+        return;
+    }
     QDLOG(LOG_INFO, "rig: flag dump -- ", want, " = ", dec((int)v),
           (found ? "" : " (NOT IN THIS MACHINE'S BANK)"));
 }

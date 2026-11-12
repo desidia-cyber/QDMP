@@ -1977,6 +1977,15 @@ function Invoke-OneBoss([int]$H, [int]$P, $b) {
     # larger than any boss' HP, from the HOST (routed to whichever machine owns it).
     Set-Control $H 'qd.hitguid' ($key + ':1000000#' + (Get-Date -Format 'HHmmssfff'))
     [void](Check $step $H ('rig: hitguid -> key=' + $key) 20 'the HOST struck the killing blow' $mH)
+    # A GROUP DIES TOGETHER.  The Red Lords revive each other: one killed alone is stood up
+    # again by her sister within seconds (measured, run 13), and RedLordsDead needs both
+    # down.  Every other live member is struck at once, not after the 8 s settle below.
+    $grpNow = if ($b.PSObject.Properties['Group'] -and $b.Group) { $b.Group } else { [regex]::Escape($b.Cls) }
+    foreach ($e in @($dh2.Values | Where-Object { $_.State -eq 'ALIVE' -and $_.Cls -match $grpNow -and $_.Key -ne $key })) {
+        Note "    group member $($e.Key) $($e.Cls) -- struck with the main kill"
+        Set-Control $H 'qd.hitguid' ($e.Key + ':1000000#' + (Get-Date -Format 'HHmmssfff'))
+        Start-Sleep -Milliseconds 700
+    }
     Start-Sleep -Seconds 8
     # LATER PHASES ARE OTHER ACTORS.  The green dragon's rider (JosamiLord_Green) jumps off
     # and fights on; the spawner writes DragonLordDead only when BOTH are dead.  Kill every
