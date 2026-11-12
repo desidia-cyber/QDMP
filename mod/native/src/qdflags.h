@@ -35,7 +35,10 @@
 namespace qd {
 namespace flags {
 
-static const int kMaxFlags = 512;
+// A full playthrough's bank, with headroom.  The module's flag mirror and the host's push
+// table are sized by this same constant (proxy.cpp kMirrorCap), so the three can never
+// disagree about how many keys a save may hold.
+static const int kMaxFlags = 1024;
 static const int kMaxName  = 64;
 
 class FlagBank {

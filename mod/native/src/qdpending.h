@@ -52,15 +52,18 @@ public:
     // char[80]; FlagBank stores 64), so a key is never truncated on its way here.
     static const int kMaxName = 80;
 
-    // Sixteen simultaneous unacknowledged keys is several times one frame of gameplay
-    // writes, and small enough that a host which stops answering cannot grow the
-    // module's memory.  A full queue is REPORTED (kOverflow), never silently dropped.
-    static const int kMaxPending = 16;
+    // 64 simultaneous unacknowledged keys: a dialogue or a chest burst writes several keys
+    // in one frame, and a host mid-load answers nothing for seconds.  Still bounded, so a
+    // host that stops answering cannot grow the module's memory.  A full queue is REPORTED
+    // (kOverflow) and the caller re-observes the key on its next pass -- it is deferred,
+    // never lost.
+    static const int kMaxPending = 64;
 
-    // One echo record per key the host can push.  HostPushFlags' container is bounded
-    // at 128 (g_push[128]), so a table of the same size cannot forget a key that is
-    // still live and let its echo come back as an intent.
-    static const int kMaxEcho = 128;
+    // One echo record per key the host can push.  HostPushFlags' table is bounded by
+    // flags::kMaxFlags (1024), so a table of the same size cannot forget a key that is
+    // still live and let its echo come back as an intent.  Kept as a literal so this
+    // header stays dependency-free; test_pending asserts the two agree.
+    static const int kMaxEcho = 1024;
 
     // Five attempts at 1 s: a live round trip on the relay is tens of milliseconds, so
     // five consecutive refusals mean the host is not applying this key at all (full

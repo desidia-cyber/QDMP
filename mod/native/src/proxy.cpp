@@ -313,8 +313,69 @@ struct MirrorState {
     char    last_name[80];
     int32_t last_value;
 };
-MirrorState       g_mirror[64];
+// THE MIRROR IS THE WHOLE FLAG BANK, NOT A SAMPLE OF IT (story round, after Session 25).
+// It used to hold 64 keys, and the host's push only sends keys the mirror holds -- so in a
+// save past the early game every key after the 64th (boss deaths, endings, late quest
+// stages: the bank is `<instance><property>` composed, hundreds of keys by the end) was
+// silently never mirrored, never pushed and never asked for.  It is now sized by the same
+// constant as the bank itself, indexed by a hash so a full bank costs one probe per key
+// per second instead of a linear scan, and an overflow is LOUD.
+static const int  kMirrorCap = flags::kMaxFlags;
+static const int  kMirrorIdx = kMirrorCap * 2;          // open addressing, load <= 0.5
+MirrorState       g_mirror[kMirrorCap];
 int               g_mirrorCount = 0;
+uint16_t          g_mirrorIndex[kMirrorIdx];             // slot + 1; 0 = empty (zero-init is valid)
+bool              g_mirrorFullSaid = false;
+
+uint32_t MirrorHash(const char* k)
+{
+    uint32_t h = 2166136261u;
+    for (int i = 0; k[i]; ++i) { h ^= (uint8_t)k[i]; h *= 16777619u; }
+    return h;
+}
+
+void MirrorClear()
+{
+    g_mirrorCount = 0;
+    for (int i = 0; i < kMirrorIdx; ++i) g_mirrorIndex[i] = 0;
+    g_mirrorFullSaid = false;
+}
+
+// The slot of `key` in g_mirror, or -1.  NameEquals is exact, so the hash is too.
+int MirrorFind(const char* key)
+{
+    if (!key || !g_mirrorCount) return -1;
+    uint32_t h = MirrorHash(key) % (uint32_t)kMirrorIdx;
+    for (int probe = 0; probe < kMirrorIdx; ++probe) {
+        uint16_t v = g_mirrorIndex[(h + probe) % kMirrorIdx];
+        if (v == 0) return -1;
+        if (NameEquals(g_mirror[v - 1].last_name, key)) return v - 1;
+    }
+    return -1;
+}
+
+// A new slot for `key` (the caller has checked it is absent), or -1 when the bank is full.
+int MirrorAdd(const char* key, int32_t value)
+{
+    if (g_mirrorCount >= kMirrorCap) {
+        if (!g_mirrorFullSaid) {
+            g_mirrorFullSaid = true;
+            QDLOG(LOG_ERROR, "flag mirror FULL at ", dec(kMirrorCap), " keys: '", key,
+                  "' and every later new key will NOT sync -- raise flags::kMaxFlags");
+        }
+        return -1;
+    }
+    int slot = g_mirrorCount++;
+    MirrorState& m = g_mirror[slot];
+    int i = 0;
+    for (; key[i] && i < (int)sizeof(m.last_name) - 1; ++i) m.last_name[i] = key[i];
+    m.last_name[i] = 0;
+    m.last_value = value;
+    uint32_t h = MirrorHash(m.last_name) % (uint32_t)kMirrorIdx;
+    while (g_mirrorIndex[h] != 0) h = (h + 1) % kMirrorIdx;   // load <= 0.5: always ends
+    g_mirrorIndex[h] = (uint16_t)(slot + 1);
+    return slot;
+}
 
 
 // ---------------------------------------------------------------------------
@@ -511,7 +572,7 @@ bool TryInitSaveLayer(uint32_t now)
     } else {
         QDLOG(LOG_INFO, "save layer re-initialised (new active save)");
     }
-    g_mirrorCount = 0;
+    MirrorClear();
     g_lastFlagCount = -1;
     g_flagsDirty = true;
     // A new save has to be re-baselined: its whole container is "new" to the mirror, and
@@ -559,12 +620,17 @@ bool TryInitSaveLayer(uint32_t now)
 // "Rise" includes a key appearing: NamedSaveData has no entry for an unearned key, so
 // its first appearance is the 0 -> value step.  An appearance at 0 is not a rise -- 0
 // is what the bank already reports for an absent key -- and would carry no information.
-void QueueFlagIntent(const char* key, int32_t value)
+// False ONLY when the change was observed and could not be queued.  The mirror then keeps
+// the OLD value for that key, so the next 1 Hz pass sees the same rise and queues it again:
+// a full queue delays a peer's progress, it never loses it.  (It used to be dropped with a
+// warning while the mirror had already recorded the new value -- a flag the peer earned
+// during a burst would then never reach the host.)
+bool QueueFlagIntent(const char* key, int32_t value)
 {
-    if (!Cfg().flag_sync || !g_net.IsPeer() || !g_net.Connected()) return;
+    if (!Cfg().flag_sync || !g_net.IsPeer() || !g_net.Connected()) return true;
     // The baseline pass is not a change the player made.  Without this gate the peer
     // sent an intent for every non-zero key in its save the moment it joined.
-    if (!g_mirrorBaseline) return;
+    if (!g_mirrorBaseline) return true;
 
     switch (g_pendingFlags.Observe(key, value)) {
     case pending::IntentQueue::kQueued:
@@ -580,39 +646,36 @@ void QueueFlagIntent(const char* key, int32_t value)
     case pending::IntentQueue::kDuplicate:
         break;
     case pending::IntentQueue::kOverflow:
-        QDLOG(LOG_WARN, "flag intent dropped ", key, "=", dec(value),
+        QDLOG(LOG_WARN, "flag intent deferred ", key, "=", dec(value),
               ": pending list full (", dec(pending::IntentQueue::kMaxPending),
-              "), host has not answered");
-        break;
+              "), host has not answered; retried on the next pass");
+        return false;
     }
+    return true;
 }
 
 void MirrorVisit(const char* key, int32_t value, void* user)
 {
     (void)user;
-    for (int i = 0; i < g_mirrorCount; ++i) {
-        if (NameEquals(g_mirror[i].last_name, key)) {
-            if (g_mirror[i].last_value != value) {
-                QDLOG(LOG_INFO, "flag CHANGE ", key, " : ",
-                      dec(g_mirror[i].last_value), " -> ", dec(value));
-                // A rise only.  The peer's own game never lowers a progression flag, and
-                // an intent for a lower value would be refused by the host's monotone
-                // rule anyway; acting on one would only add a datagram to the refusal.
-                if (value > g_mirror[i].last_value) QueueFlagIntent(key, value);
-                g_mirror[i].last_value = value;
-                g_flagsDirty = true;
-            }
-            return;
+    int i = MirrorFind(key);
+    if (i >= 0) {
+        if (g_mirror[i].last_value != value) {
+            QDLOG(LOG_INFO, "flag CHANGE ", key, " : ",
+                  dec(g_mirror[i].last_value), " -> ", dec(value));
+            // A rise only.  The peer's own game never lowers a progression flag, and
+            // an intent for a lower value would be refused by the host's monotone
+            // rule anyway; acting on one would only add a datagram to the refusal.
+            if (value > g_mirror[i].last_value && !QueueFlagIntent(key, value)) return;
+            g_mirror[i].last_value = value;
+            g_flagsDirty = true;
         }
+        return;
     }
-    if (g_mirrorCount < (int)(sizeof(g_mirror) / sizeof(g_mirror[0]))) {
-        MirrorState& m = g_mirror[g_mirrorCount++];
-        int i = 0;
-        for (; key[i] && i < (int)sizeof(m.last_name) - 1; ++i) m.last_name[i] = key[i];
-        m.last_name[i] = 0;
-        m.last_value = value;
+    int slot = MirrorAdd(key, value);
+    if (slot >= 0) {
         QDLOG(LOG_INFO, "flag NEW ", key, " = ", dec(value));
-        if (value > 0) QueueFlagIntent(key, value);
+        // Not queued: remember it as "not delivered yet" so the next pass is a rise.
+        if (value > 0 && !QueueFlagIntent(key, value)) g_mirror[slot].last_value = 0;
         g_flagsDirty = true;
     }
 }
@@ -631,29 +694,25 @@ static const int kSeedCount = (int)(sizeof(kSeedKeys) / sizeof(kSeedKeys[0]));
 
 void MirrorObserve(const char* key, int32_t value)
 {
-    for (int i = 0; i < g_mirrorCount; ++i) {
-        if (NameEquals(g_mirror[i].last_name, key)) {
-            if (g_mirror[i].last_value != value) {
-                QDLOG(LOG_INFO, "flag CHANGE ", key, " : ",
-                      dec(g_mirror[i].last_value), " -> ", dec(value));
-                // A rise only.  The peer's own game never lowers a progression flag, and
-                // an intent for a lower value would be refused by the host's monotone
-                // rule anyway; acting on one would only add a datagram to the refusal.
-                if (value > g_mirror[i].last_value) QueueFlagIntent(key, value);
-                g_mirror[i].last_value = value;
-                g_flagsDirty = true;
-            }
-            return;
+    int i = MirrorFind(key);
+    if (i >= 0) {
+        if (g_mirror[i].last_value != value) {
+            QDLOG(LOG_INFO, "flag CHANGE ", key, " : ",
+                  dec(g_mirror[i].last_value), " -> ", dec(value));
+            // A rise only.  The peer's own game never lowers a progression flag, and
+            // an intent for a lower value would be refused by the host's monotone
+            // rule anyway; acting on one would only add a datagram to the refusal.
+            if (value > g_mirror[i].last_value && !QueueFlagIntent(key, value)) return;
+            g_mirror[i].last_value = value;
+            g_flagsDirty = true;
         }
+        return;
     }
-    if (g_mirrorCount < (int)(sizeof(g_mirror) / sizeof(g_mirror[0]))) {
-        MirrorState& m = g_mirror[g_mirrorCount++];
-        int i = 0;
-        for (; key[i] && i < (int)sizeof(m.last_name) - 1; ++i) m.last_name[i] = key[i];
-        m.last_name[i] = 0;
-        m.last_value = value;
+    int slot = MirrorAdd(key, value);
+    if (slot >= 0) {
         QDLOG(LOG_INFO, "flag ", key, " = ", dec(value));
-        if (value > 0) QueueFlagIntent(key, value);
+        // Not queued: remember it as "not delivered yet" so the next pass is a rise.
+        if (value > 0 && !QueueFlagIntent(key, value)) g_mirror[slot].last_value = 0;
         g_flagsDirty = true;
     }
 }
@@ -707,7 +766,7 @@ void MirrorPump(uint32_t now)
 // thing that repairs a peer which missed a baseline (the corpus rule: a repair path
 // that only carries deltas cannot repair a peer that missed the baseline).
 struct PushEntry { const char* name; int32_t value; };
-PushEntry g_push[128];
+PushEntry g_push[flags::kMaxFlags];
 int       g_pushCount = 0;
 
 void CollectVisit(const char* key, int32_t value, void* user)
@@ -717,14 +776,11 @@ void CollectVisit(const char* key, int32_t value, void* user)
     // The name pointer must outlive the send.  MirrorState's storage is stable for
     // the life of the process, and MirrorVisit already copied every key into it, so
     // point at that copy rather than at a stack frame.
-    for (int i = 0; i < g_mirrorCount; ++i) {
-        if (NameEquals(g_mirror[i].last_name, key)) {
-            g_push[g_pushCount].name = g_mirror[i].last_name;
-            g_push[g_pushCount].value = value;
-            ++g_pushCount;
-            return;
-        }
-    }
+    int i = MirrorFind(key);
+    if (i < 0) return;              // MirrorAdd reported the overflow once, loudly
+    g_push[g_pushCount].name = g_mirror[i].last_name;
+    g_push[g_pushCount].value = value;
+    ++g_pushCount;
 }
 
 void HostPushFlags(uint32_t now)
@@ -738,7 +794,7 @@ void HostPushFlags(uint32_t now)
     int n = NsdEnumerate(&CollectVisit, nullptr);
     if (n <= 0) return;
 
-    wire::FlagEntry entries[128];
+    static wire::FlagEntry entries[flags::kMaxFlags];
     for (int i = 0; i < g_pushCount; ++i) {
         entries[i].name = g_push[i].name;
         entries[i].value = g_push[i].value;

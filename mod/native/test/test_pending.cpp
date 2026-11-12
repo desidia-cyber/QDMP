@@ -221,6 +221,11 @@ static void TestBounds()
     CHECK(q.Observe("Flag00", 2) == Queue::kCoalesced,
           "pending/a full list can still update a key it holds");
 
+    // The echo table must hold every key the host can push, or a live key's echo is
+    // forgotten and comes back as an intent (the ping-pong).  Both caps are one number.
+    static_assert(Queue::kMaxEcho == qd::flags::kMaxFlags,
+                  "pending/the echo table is exactly the flag bank's capacity");
+
     Queue r;
     CHECK(r.PendingOverflowed() == false, "pending/overflow flag starts clear");
 }
