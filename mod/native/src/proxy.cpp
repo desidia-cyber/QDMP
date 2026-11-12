@@ -5025,6 +5025,33 @@ void OnTravel(wire::Reader& r, uint32_t now)
         // pin was never announced.
         if (area[0] == '-' && area[1] == 0) {
             if (g_rigLevelPin[0]) {
+                // LEAVE TOGETHER, THE WAY WE ENTERED TOGETHER (Session 26).  Hiding the area
+                // removes its floor; a player still standing in it falls through into the
+                // levels stacked under the hub.  Measured: the follower fell into the hub's
+                // TempTeleporter, the game hard-reloaded the world, and both processes died
+                // in the engine's world-change path (R140's call chain).  The partner has
+                // already walked out, so this player is put beside the partner first -- the
+                // mirror of the area ENTRY, which brings the follower to the leader.
+                motion::MoveOut m = g_peerInterp.Sample(now);
+                ActorXform me = {};
+                void* pawn = g_localPawn;
+                if (m.valid && !m.frozen && pawn && IsGameplayPawn(pawn) && ReadActorXform(pawn, &me) &&
+                    motion::SanePos(m.px, m.py, m.pz)) {
+                    float dx = m.px - me.px, dy = m.py - me.py, dz = m.pz - me.pz;
+                    float dist = sqrtf(dx * dx + dy * dy + dz * dz);
+                    if (dist > 1500.0f) {
+                        float k = 150.0f / dist;
+                        float tx = m.px - dx * k, ty = m.py - dy * k, tz = m.pz;
+                        bool moved = SetActorXform(pawn, tx, ty, tz, me.yaw);
+                        QDLOG(moved ? LOG_INFO : LOG_WARN, "travel: the partner left ", g_rigLevelPin,
+                              " and this player was ", flt(dist, 0), " cm from it -- moved beside the partner at ",
+                              flt(tx, 0), ",", flt(ty, 0), ",", flt(tz, 0), " before the area is hidden",
+                              (moved ? "" : " (move FAILED)"));
+                    }
+                } else {
+                    QDLOG(LOG_WARN, "travel: the partner left ", g_rigLevelPin,
+                          " but its position is unknown; hiding the area without moving this player");
+                }
                 ClearAreaPin("the partner left it");
                 g_rigAreaAppliedFromPartner = true;
             }

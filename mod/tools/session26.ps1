@@ -1912,6 +1912,11 @@ function Invoke-OneBoss([int]$H, [int]$P, $b) {
          'Trigger lane (K_TRIGGER): the host walks in, the peer must replay it; then one shared boss, one bar, the same HP, one death, the flag on both.'
     $mH0 = Get-Mark $H
     $mP0 = Get-Mark $P
+    # Where the HOST stands in the hub BEFORE the area: the leave walks it back here first,
+    # because a real player LEAVES by walking out -- hiding the area under a player is a
+    # fall into the stacked levels (measured: the follower fell into the hub teleporter and
+    # the world reload took both processes down).
+    $hubPos = Get-LastPos $H 0
     if (-not (Enter-Area $H $P $b.Area '' $step)) {
         Verdict $step $H $false 'reached the area on both machines' 'area did not follow; boss skipped'
         return
@@ -1987,7 +1992,14 @@ function Invoke-OneBoss([int]$H, [int]$P, $b) {
             Verdict $step $i $ok ("$($b.Flag) >= 1 in this machine's bank") $(if ($ln.Count) { ([string]$ln[-1]).Trim() } else { 'no answer' })
         }
     }
+    if ($hubPos) {
+        Set-Control $H 'qd.tp' (("{0:F0},{1:F0},{2:F0},0#" -f $hubPos[0], $hubPos[1], ($hubPos[2] + 50)) + (Get-Date -Format 'HHmmssfff'))
+        Note ("    the HOST walks back to its hub spot {0:F0},{1:F0},{2:F0} before leaving the area" -f $hubPos[0], $hubPos[1], $hubPos[2])
+        Start-Sleep -Seconds 4
+    }
     Leave-Area $H $P $step | Out-Null
+    $mv = @(Wait-Since $P 'travel: the partner left .* moved beside the partner' $mP0 10)
+    Note ("    PEER on the leave: " + $(if ($mv.Count) { ([string]$mv[-1]).Trim() } else { 'no move line (it was already beside the partner, or the position was unknown)' }))
     Start-Sleep -Seconds 5
 }
 

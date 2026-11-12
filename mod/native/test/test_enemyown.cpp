@@ -196,6 +196,59 @@ static void TestUnconfirmedHandoffAborts()
     CHECK(p.State(kGuid) == enemyown::O_LOCAL, "abort/an unconfirmed hand-off resumes the AI");
 }
 
+// Session 26, measured: a frozen host took the Green Dragon back on its own preference while
+// the peer kept running it -- two simulations of one boss.  A follower that is still hearing
+// its owner must never start simulating on its own.
+static void TestFollowerNeverTakesUnilaterally()
+{
+    enemyown::OwnerSet h(true);
+    const float hostPos[3] = {0.0f, 0.0f, 0.0f};
+    const float peerFar[3] = {6000.0f, 0.0f, 0.0f};
+    uint32_t now = 1000;
+    // The host only ever sees the peer's OWN rows (claim bit clear): it is frozen.
+    h.OnRemoteRow(kGuid, false, now);
+    h.Tick(kGuid, false, kEnemy, true, hostPos, true, peerFar, true, now);   // no actor yet
+    CHECK(h.State(kGuid) == enemyown::O_FROZEN, "unilateral/precondition: the host follows");
+    // Now the host holds its own actor and is far nearer.  The peer keeps publishing.
+    for (int i = 0; i < 300; ++i) {
+        now += 16;
+        h.OnRemoteRow(kGuid, false, now);
+        h.Tick(kGuid, true, kEnemy, true, hostPos, true, peerFar, true, now);
+    }
+    CHECK(h.State(kGuid) == enemyown::O_FROZEN,
+          "unilateral/a follower that hears its owner does not start simulating");
+    // The owner hands it over (claim bit): now the host takes it.
+    h.OnRemoteRow(kGuid, true, now);
+    CHECK(h.State(kGuid) == enemyown::O_LOCAL, "unilateral/the owner's claim hands it over");
+}
+
+// A boss never changes owner by distance: an owner with `sticky` keeps it however far its
+// player walks.
+static void TestBossIsSticky()
+{
+    enemyown::OwnerSet p(false);
+    const float peerFar[3] = {6000.0f, 0.0f, 0.0f};
+    const float hostNear[3] = {10.0f, 0.0f, 0.0f};
+    uint32_t now = 1000;
+    for (int i = 0; i < 400; ++i) {
+        now += 16;
+        p.OnRemoteRow(kGuid, false, now);   // the host is present (it has a copy)
+        p.Tick(kGuid, true, kEnemy, true, peerFar, true, hostNear, true, now, true);
+    }
+    CHECK(p.Publishing(kGuid) == enemyown::PUB_OWN, "sticky/a boss owner never hands off");
+    // The same enemy without `sticky` would have been handed to the nearer host.
+    // (Unconfirmed, a hand-off cycles back after kHandoffMs, so ask whether one STARTED.)
+    enemyown::OwnerSet q(false);
+    bool handedOff = false;
+    for (int i = 0; i < 400; ++i) {
+        now += 16;
+        q.OnRemoteRow(kGuid, false, now);
+        q.Tick(kGuid, true, kEnemy, true, peerFar, true, hostNear, true, now, false);
+        if (q.Publishing(kGuid) == enemyown::PUB_HANDOFF) handedOff = true;
+    }
+    CHECK(handedOff, "sticky/an ordinary enemy is handed to the nearer machine");
+}
+
 static void TestSilentOwnerIsReleased()
 {
     enemyown::OwnerSet h(true), p(false);
@@ -366,6 +419,8 @@ int main()
     TestHandoffKeepsSimulatingUntilConfirmed();
     TestUnconfirmedHandoffAborts();
     TestSilentOwnerIsReleased();
+    TestFollowerNeverTakesUnilaterally();
+    TestBossIsSticky();
     TestNeverHandOffToAMachineThatHasNotShownTheEnemy();
     TestNoLocalActorMeansFrozen();
     TestMutualHandoffSettles();
