@@ -18494,7 +18494,11 @@ static const char* const kFnNames[trigger::kSlots] = {
 // The per-world table of placed triggers, filled on demand by a full walk (a trigger
 // arrival is rare, and the walk tests a class-pointer chain, not names).
 struct Rec { uint32_t key[4]; void* actor; };
-static Rec   g_tab[512];
+// 4096, not 512: every area is a sublevel of one map, so the resident set grows as the pair
+// travels.  Session 26 run 10 indexed past 512 after two areas and 740's ActivationTrigger4
+// (the Red Lords' start) was simply not in the table -- a partner's entry into it would have
+// been refused as "no placed trigger with that key".  A full table now says so (below).
+static Rec   g_tab[4096];
 static int   g_tabN = 0;
 static void* g_tabWorld = nullptr;
 static uint32_t g_tabBuiltAt = 0;
@@ -18671,7 +18675,9 @@ static void BuildTable(uint32_t now)
         r.actor = o;
         ++g_tabN;
     }
-    QDLOG(LOG_INFO, "trigger: indexed ", dec(g_tabN), " placed trigger(s) and spawner(s) in this world");
+    QDLOG(g_tabN >= (int)(sizeof(g_tab) / sizeof(g_tab[0])) ? LOG_ERROR : LOG_INFO,
+          "trigger: indexed ", dec(g_tabN), " placed trigger(s) and spawner(s) in this world",
+          (g_tabN >= (int)(sizeof(g_tab) / sizeof(g_tab[0])) ? " -- the table is FULL; later ones are missing" : ""));
 }
 
 static void* FindByKey(const uint32_t key[4], uint32_t now)
@@ -18914,7 +18920,18 @@ void DevTriggerLever(uint32_t now)
         break;
     }
     if (!t) {
-        QDLOG(LOG_WARN, "rig: trigger '", spec, "' is not a placed trigger in this world");
+        QDLOG(LOG_WARN, "rig: trigger '", spec, "' is not a placed trigger in this world",
+              (area[0] ? " (in that area)" : ""));
+        for (int i = 0; area[0] && i < trig::g_tabN; ++i) {
+            char nm[96] = "", path[192] = "", lvl[96] = "";
+            FNameToString(ObjNameRaw(trig::g_tab[i].actor), nm, sizeof(nm));
+            if (_stricmp(nm, spec) != 0) continue;
+            ActorLevelPath(trig::g_tab[i].actor, GWorldPtr(), path, sizeof(path));
+            void* lv = ObjOuter(trig::g_tab[i].actor);
+            void* pk = lv ? ObjOuter(lv) : nullptr;
+            if (pk) FNameToString(ObjNameRaw(pk), lvl, sizeof(lvl));
+            QDLOG(LOG_INFO, "  candidate ", nm, " path='", path, "' level outer='", lvl, "'");
+        }
         return;
     }
     if (!ActorLevelVisible(t)) {
