@@ -209,6 +209,12 @@ inline Shape ShapeOfClass(const char* cls)
     if (HasCI(cls, "Door") || HasCI(cls, "Gate")) return SH_DOOR;
     if (HasCI(cls, "Pickup") || HasCI(cls, "Drop")) return SH_PICKUP;
     if (HasCI(cls, "Barricade") || HasCI(cls, "Breakable")) return SH_BARRICADE;
+    // LIFT AND ELEVATOR CONTROLS ARE NOT OBJECT STATE (Session 26).  Their `Activated` is
+    // the input to a moving platform the mover lane already carries; writing it under the
+    // lift's Blueprint (OW_Lever_00_lift_BP8, LabElevatorSwitch, OW_Lift_Lever_00_BP) was
+    // followed both times by an access violation inside that Blueprint on the next frame --
+    // the peer in run 15 and the host in run 16, both entering 500_AUT.
+    if (HasCI(cls, "Lift") || HasCI(cls, "Elevator")) return SH_NONE;
     if (HasCI(cls, "Lever") || HasCI(cls, "Switch") || HasCI(cls, "Activatable"))
         return SH_ACTIVATABLE;
     return SH_NONE;

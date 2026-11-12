@@ -128,6 +128,11 @@ static void TestSurvey()
     CHECK(objects::ShapeOfClass("SG_Chest_BP_C") == objects::SH_CHEST,
           "survey: SG_Chest_BP_C is a chest");
     CHECK(objects::ShapeOfClass("Chest_C") == objects::SH_CHEST, "survey: Chest_C is a chest");
+    CHECK(objects::ShapeOfClass("OW_Lever_00_lift_BP_C") == objects::SH_NONE,
+          "a lift lever is the mover lane's, not object state (Session 26 crash)");
+    CHECK(objects::ShapeOfClass("OW_Lift_Lever_00_BP_C") == objects::SH_NONE, "lift lever, other spelling");
+    CHECK(objects::ShapeOfClass("LabElevatorSwitch_C") == objects::SH_NONE, "an elevator switch is not object state");
+    CHECK(objects::ShapeOfClass("OW_Lever_00_BP_C") == objects::SH_ACTIVATABLE, "a plain lever still is");
     CHECK(objects::ShapeOfClass("MimicChest_C") == objects::SH_CHEST,
           "survey: MimicChest_C is a chest");
     CHECK(objects::ShapeOfClass("Door_Base_C") == objects::SH_DOOR,
@@ -144,8 +149,10 @@ static void TestSurvey()
           "survey: WoodenBarricade_UnBroken_C is a barricade");
     CHECK(objects::ShapeOfClass("Activatable_C") == objects::SH_ACTIVATABLE,
           "survey: Activatable_C is an activatable");
-    CHECK(objects::ShapeOfClass("LiftSwitch_BP_C") == objects::SH_ACTIVATABLE,
-          "survey: LiftSwitch_BP_C is an activatable");
+    // Session 26: lift controls left the object lane (they drive a mover; writing their
+    // `Activated` preceded two Blueprint access violations in 500_AUT).
+    CHECK(objects::ShapeOfClass("LiftSwitch_BP_C") == objects::SH_NONE,
+          "LiftSwitch_BP_C belongs to the mover lane, not object state");
 
     // Bookkeeping classes carry the same substring and must never be treated as the object
     // they are named after.  Session 6 sent the peer 423 m and 33 km to a
