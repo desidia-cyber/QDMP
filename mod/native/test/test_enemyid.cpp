@@ -313,6 +313,9 @@ static void TestHpReporting()
     CHECK(!EffectivelyDead(true, false, true, 0.0f, false),
           "HP 0 before activation is NOT dead");
     CHECK(!EffectivelyDead(true, false, true, 50.0f, true), "positive HP is alive");
+    CHECK(!EffectivelyDead(true, false, true, -496900.0f, true, true),
+          "a rider reading its dead mount's HP is alive while the game's own dead bit says so");
+    CHECK(EffectivelyDead(true, true, true, -496900.0f, true, true), "the dead bit set is dead");
     // Session 23, R151: ONE KEY, ONE BODY.  A key that two records answer for cannot be
     // compared.  The measured case: one host dump held a constructed copy at HP 140 and the
     // real enemy at 30 under `530F7FD0`, both `src=0` (a spawner key), both the same class.

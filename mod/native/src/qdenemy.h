@@ -200,10 +200,16 @@ inline HpUnknown HpUnknownWhy(bool live, bool haveHp, bool seenAlive, float hp, 
 // unload (R140's rule, which EnemyDetectDeaths already used and this reporting function
 // did not).  Reporting it DEAD made the per-GUID diff claim a death the lane had never
 // broadcast -- the shape of the FA2FC279 residual.
-inline bool EffectivelyDead(bool live, bool gameDead, bool haveHp, float hp, bool seenAlive)
+// `haveDeadBit`: the game exposes its own dead flag for this enemy.  When it does, that flag
+// is the answer and HP is not consulted -- Session 26: a riding JosamiLord_Green's GetHP
+// answers its DRAGON's health, and keeps answering it (-496900) after the dragon dies and the
+// lord jumps off and fights on.  HP <= 0 is the fallback only for an enemy with no flag.
+inline bool EffectivelyDead(bool live, bool gameDead, bool haveHp, float hp, bool seenAlive,
+                            bool haveDeadBit = false)
 {
     if (!live) return seenAlive;
     if (gameDead) return true;
+    if (haveDeadBit) return false;
     return haveHp && hp <= 0.0f && seenAlive;
 }
 

@@ -9600,17 +9600,12 @@ void EnemyDetectDeaths()
             if (flagDead) { dead = true; why = "bDead/IsDead"; }
             else if (haveHp && hp <= 0.0f && r.seenAlive) {
                 // A RIDER IS NOT ITS MOUNT (Session 26).  JosamiLord_Green's GetHP answers the
-                // DRAGON's health while it rides: the dragon's killing blow read -496900 on
-                // both, this sweep recorded the lord dead, and the spawner -- whose
-                // DragonLordDead write waits for BOTH LordWasKilled and DragonIsDead -- never
-                // wrote the flag while the lord jumped off and kept attacking.  When the game
-                // exposes its own dead bit and that bit still says alive, HP <= 0 has to HOLD
-                // before it is a death; a real death sets the bit well inside that window.
-                if ((haveDeadBit || haveIsDead) && !flagDead) {
-                    uint32_t n = Net::Now() | 1u;
-                    if (!r.hpZeroSince) r.hpZeroSince = n;
-                    if ((int32_t)(n - r.hpZeroSince) < 6000) continue;
-                }
+                // DRAGON's health -- while it rides AND after: the dragon's killing blow read
+                // -496900, the lord jumped off and kept attacking, and GetHP stayed at -496900
+                // (run 8: a 6 s hold still recorded it dead).  The spawner's DragonLordDead
+                // write waits for BOTH LordWasKilled and DragonIsDead, so the false death cost
+                // the flag.  When the game exposes its own dead bit, that bit is the answer.
+                if (haveDeadBit || haveIsDead) continue;
                 dead = true; why = "hp<=0";
             }
             if (!dead) continue;
@@ -15902,7 +15897,9 @@ void DevEnemyDumpNow(uint32_t now)
         }
         // R137: HP <= 0 counts only for a copy seen alive; a spawner's inactive enemy at
         // HP 0 and an un-converged follower are not corpses.  See qdenemy.h.
-        bool isDead = enemy::EffectivelyDead(usable, gameDead, haveHp, rhp, r.seenAlive);
+        uint8_t db = 0;
+        bool haveDeadBit = usable && (BytePropC(r.actor, "bDead", &db) || BytePropC(r.actor, "IsDead", &db));
+        bool isDead = enemy::EffectivelyDead(usable, gameDead, haveHp, rhp, r.seenAlive, haveDeadBit);
         if (!isDead && knownDead) isDead = true;
         // R137: a key with no readable row (or one never seen alive) has UNKNOWN HP, not
         // HP 0.  Printing "?" keeps the shared-HP comparison from failing on a value this
