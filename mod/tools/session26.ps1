@@ -1882,7 +1882,7 @@ function Invoke-LootPhase([int]$H, [int]$P) {
 # for the triggered bosses, the boss SPAWNER itself (its own TrapActivateTrigger) for the
 # proximity bosses.  The Queen and Sipeha end the game, so they are last and opt-in.
 $script:Bosses = @(
-    [pscustomobject]@{ Name = 'GreenDragon';  Area = '780_SZ_Depths';      Start = 'ActivationTrigger9';          Cls = 'Dragon_Green';     Flag = 'DragonLordDead' }
+    [pscustomobject]@{ Name = 'GreenDragon';  Area = '780_SZ_Depths';      Start = 'ActivationTrigger9';          Cls = 'Dragon_Green';     Flag = 'DragonLordDead'; Group = 'Dragon_Green|JosamiLord_Green' }
     [pscustomobject]@{ Name = 'ROSDragon';    Area = '760_SZ_AUT';         Start = 'ActivationTrigger11';         Cls = 'Dragon_Ros';       Flag = 'ROSDragonDead' }
     [pscustomobject]@{ Name = 'RedLords';     Area = '740_SZ_Prison';      Start = 'ActivationTrigger4';          Cls = 'JosamiBloodLord';  Flag = 'RedLordsDead' }
     [pscustomobject]@{ Name = 'DemonBosses';  Area = '450_MAUS_darkmaze';  Start = 'ActivationTrigger4';          Cls = 'DemonSpider';      Flag = 'DemonBossesKilled' }
@@ -1973,6 +1973,21 @@ function Invoke-OneBoss([int]$H, [int]$P, $b) {
     Set-Control $H 'qd.hitguid' ($key + ':1000000#' + (Get-Date -Format 'HHmmssfff'))
     [void](Check $step $H ('rig: hitguid -> key=' + $key) 20 'the HOST struck the killing blow' $mH)
     Start-Sleep -Seconds 8
+    # LATER PHASES ARE OTHER ACTORS.  The green dragon's rider (JosamiLord_Green) jumps off
+    # and fights on; the spawner writes DragonLordDead only when BOTH are dead.  Kill every
+    # still-live member of the boss's group the same way, until none is left.
+    $grp = if ($b.PSObject.Properties['Group'] -and $b.Group) { $b.Group } else { [regex]::Escape($b.Cls) }
+    for ($round = 0; $round -lt 4; $round++) {
+        $dx = Invoke-EnemyDump $H ($b.Name + '-g' + $round)
+        $left = @($dx.Values | Where-Object { $_.State -eq 'ALIVE' -and $_.Cls -match $grp })
+        if ($left.Count -eq 0) { break }
+        foreach ($e in $left) {
+            Note "    later phase still alive: $($e.Key) $($e.Cls) hp=$($e.Hp) -- striking it"
+            Set-Control $H 'qd.hitguid' ($e.Key + ':1000000#' + (Get-Date -Format 'HHmmssfff'))
+            Start-Sleep -Seconds 3
+        }
+        Start-Sleep -Seconds 6
+    }
     $dh3 = Invoke-EnemyDump $H ($b.Name + '-h3')
     $dp3 = Invoke-EnemyDump $P ($b.Name + '-p3')
     $h3 = $dh3[$bh.Id]; $p3 = $dp3[$bh.Id]

@@ -5024,6 +5024,8 @@ void TravelPump(uint32_t now)
     }
 }
 
+void RigFallGuardDisarm(const char* why);
+
 void OnTravel(wire::Reader& r, uint32_t now)
 {
     wire::TravelBody t;
@@ -5060,6 +5062,7 @@ void OnTravel(wire::Reader& r, uint32_t now)
                         float k = 150.0f / dist;
                         float tx = m.px - dx * k, ty = m.py - dy * k, tz = m.pz;
                         bool moved = SetActorXform(pawn, tx, ty, tz, me.yaw);
+                        if (moved) RigFallGuardDisarm("the area-leave follow moved this player");
                         QDLOG(moved ? LOG_INFO : LOG_WARN, "travel: the partner left ", g_rigLevelPin,
                               " and this player was ", flt(dist, 0), " cm from it -- moved beside the partner at ",
                               flt(tx, 0), ",", flt(ty, 0), ",", flt(tz, 0), " before the area is hidden",
@@ -5320,6 +5323,7 @@ struct EnemyRec {
     bool     fresh;          // a NEW actor for this GUID: the adoption rule runs once
     bool     deathRecorded;  // this machine has already stored/broadcast the death
     bool     seenAlive;      // observed with HP > 0: an HP of 0 after this is a kill
+    uint32_t hpZeroSince;    // first sweep that read HP <= 0 while the game's own dead bit was 0 (0 = none)
     uint8_t  savedMoveMode;
     uint8_t  savedPaused;    // EnemyBase_C.Paused before this mod froze the copy
     float    lastHp, maxHp;
@@ -9545,9 +9549,10 @@ void EnemyDetectDeaths()
         bool dead = false;
         const char* why = "";
         if (live) {
-            uint8_t b = 0;
-            bool flagDead = (BytePropC(r.actor, "bDead", &b) && b) ||
-                            (BytePropC(r.actor, "IsDead", &b) && b);
+            uint8_t b = 0, b2 = 0;
+            bool haveDeadBit = BytePropC(r.actor, "bDead", &b);
+            bool haveIsDead = BytePropC(r.actor, "IsDead", &b2);
+            bool flagDead = (haveDeadBit && b) || (haveIsDead && b2);
             haveHp = EnemyHp(r.actor, &hp, &mx);
             if (haveHp && hp > 0.0f) {
                 // Alive: remember it.  A spawner's enemy exists at HP 0 before it is
@@ -9555,10 +9560,25 @@ void EnemyDetectDeaths()
                 // actor this machine has SEEN alive can be "detected dead" from HP 0.
                 r.seenAlive = true;
                 r.deathRecorded = false;
+                r.hpZeroSince = 0;
                 continue;
             }
             if (flagDead) { dead = true; why = "bDead/IsDead"; }
-            else if (haveHp && hp <= 0.0f && r.seenAlive) { dead = true; why = "hp<=0"; }
+            else if (haveHp && hp <= 0.0f && r.seenAlive) {
+                // A RIDER IS NOT ITS MOUNT (Session 26).  JosamiLord_Green's GetHP answers the
+                // DRAGON's health while it rides: the dragon's killing blow read -496900 on
+                // both, this sweep recorded the lord dead, and the spawner -- whose
+                // DragonLordDead write waits for BOTH LordWasKilled and DragonIsDead -- never
+                // wrote the flag while the lord jumped off and kept attacking.  When the game
+                // exposes its own dead bit and that bit still says alive, HP <= 0 has to HOLD
+                // before it is a death; a real death sets the bit well inside that window.
+                if ((haveDeadBit || haveIsDead) && !flagDead) {
+                    uint32_t n = Net::Now() | 1u;
+                    if (!r.hpZeroSince) r.hpZeroSince = n;
+                    if ((int32_t)(n - r.hpZeroSince) < 6000) continue;
+                }
+                dead = true; why = "hp<=0";
+            }
             if (!dead) continue;
         } else {
             // R140: an actor that vanished before it was ever seen alive is a record whose
@@ -9631,7 +9651,12 @@ void EnemyPump(uint32_t now)
     if (!g_substrateReady || !EnsureActorApi()) return;
     static void* lastWorld = nullptr;
     void* world = GWorldPtr();
-    if (world != lastWorld) {
+    // `g_enWorld != world` too: WorldTeardownReset clears the records BEFORE a load the game
+    // started, and a teleporter travel can end without one (Session 26 run 3: the host's
+    // TempTeleporter travel at 14:30:54 never changed the world).  Keyed on the pointer
+    // alone, the records stayed bound to nothing for the rest of the run -- every boss
+    // ACK, kill and row from the partner was refused as "for another world".
+    if (world != lastWorld || (world && g_enWorld != world)) {
         lastWorld = world;
         // The new world's enemy actors are not the old records' actors; do not read a
         // death out of a half-built world.
@@ -13881,6 +13906,18 @@ void RigArmFallGuard(float targetZ)
     QDLOG(LOG_INFO, "guard: armed for a placement at z=", flt(targetZ, 0), " (safe spot ",
           flt(g_rigFall.safe.px, 0), ",", flt(g_rigFall.safe.py, 0), ",",
           flt(g_rigFall.safe.pz, 0), ")");
+}
+
+// A MOD placement supersedes the rig's.  Session 26 run 3: the boss pull-in moved the peer
+// 370 m down into the 780 arena, the guard armed by the rig's EARLIER hub placement read that
+// as a 17 000 cm fall and put the peer back in the hub -- the "fell under the map, came back
+// somewhere else, boss on one screen only" the user saw.  The guard protects the rig's own
+// unproven placements; a placement the mod chose on purpose ends it.
+void RigFallGuardDisarm(const char* why)
+{
+    if (!g_rigFall.armed) return;
+    g_rigFall.armed = false;
+    QDLOG(LOG_INFO, "guard: disarmed -- ", why);
 }
 
 void RigFallGuardPump(uint32_t now)
@@ -18709,6 +18746,7 @@ void OnTrigger(wire::Reader& r, uint32_t now)
         float k = dist > 1.0f ? 150.0f / dist : 0.0f;
         float tx = b.px - dx * k, ty = b.py - dy * k, tz = b.pz;
         bool moved = SetActorXform(pawn, tx, ty, tz, me.yaw);
+        if (moved) RigFallGuardDisarm("the boss pull-in moved this player");
         QDLOG(moved ? LOG_INFO : LOG_WARN, "trigger: ", b.name, " starts a boss fight and this player was ",
               flt(dist, 0), " cm away -- pulled in beside the partner at ", flt(tx, 0), ",",
               flt(ty, 0), ",", flt(tz, 0), (moved ? "" : " FAILED"));
@@ -18807,7 +18845,12 @@ void DevTriggerLever(uint32_t now)
     void* pawn = g_localPawn;
     ActorXform me = {};
     ReadActorXform(pawn, &me);
-    RigArmFallGuard(at.pz);
+    // A trigger's pivot is the CENTRE of its volume, often metres above the arena floor:
+    // Session 26 run 3 stood the host at ActivationTrigger11's centre (z=-14428), it landed
+    // on the 760 floor at -15951, the guard read that 15 m drop as a fall and "rescued" the
+    // host onto the hub's spawn -- which is the TempTeleporter, so the GAME then started a
+    // teleporter travel.  The guard here only catches a drop well past any volume's height.
+    RigArmFallGuard(at.pz - 3000.0f);
     bool moved = SetActorXform(pawn, at.px, at.py, at.pz, me.yaw);
     char boss[64] = "";
     bool isBoss = trig::TargetsABoss(t, boss, sizeof(boss));
