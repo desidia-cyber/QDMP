@@ -18109,6 +18109,26 @@ bool HK_Tick(void* engineLoop)
         g_worldTransition = false;
     }
 
+    // THE SETTLE WINDOW (Session 26).  Three runs in a row (5, 6, 7) died in R140 -- the
+    // engine's timer list executing a delegate whose memory was already freed and reused --
+    // on the FIRST engine frame after the module's third frame in a freshly loaded world.
+    // In each, those three frames had run the save-layer init, the avatar/equipment scan,
+    // the god lever (FS_Cheats.DeadGod) and an area stream, all while the boot's own
+    // TempTeleporter arrival was still in flight.  Runs 3 and 4, whose first frames were
+    // slow enough to land after the arrival settled, did not die.  Nothing in a new world is
+    // urgent for its first seconds; the module now leaves it alone for 5 s.
+    {
+        static void* settledWorld = nullptr;
+        static uint32_t settleUntil = 0;
+        void* w = GWorldPtr();
+        if (w != settledWorld) {
+            settledWorld = w;
+            settleUntil = now + 5000;
+            QDLOG(LOG_INFO, "world: a new world -- the module waits 5 s before touching it");
+        }
+        if ((int32_t)(settleUntil - now) > 0) { g_lastTickMs = now; return keepRunning; }
+    }
+
     // Inbound first: applying before sending means a round trip completes in one
     // frame rather than two.
     const bool tracing = (g_frame <= 6);
