@@ -108,6 +108,8 @@ pub enum Kind {
     Objects = 0x2A,
     /// The class for an enemy key the receiver holds no actor for (WIRE.md §3.9c).
     EnemySpawn = 0x2B,
+    /// A partner's body began/ended overlapping a placed event volume (WIRE.md §3.21).
+    Trigger = 0x2C,
     Log = 0x30,
 }
 
@@ -141,6 +143,7 @@ impl Kind {
             0x29 => Boss,
             0x2A => Objects,
             0x2B => EnemySpawn,
+            0x2C => Trigger,
             0x30 => Log,
             other => return Err(Error::UnknownKind(other)),
         })
@@ -179,6 +182,7 @@ impl Kind {
             Boss => "boss",
             Objects => "objects",
             EnemySpawn => "enemy_spawn",
+            Trigger => "trigger",
             Log => "log",
         }
     }
@@ -198,6 +202,7 @@ impl Kind {
                 | Kind::Boss
                 | Kind::Objects
                 | Kind::EnemySpawn
+                | Kind::Trigger
         )
     }
 
@@ -1020,6 +1025,57 @@ pub mod enemy_spawn_flags {
     pub const MIRROR: u8 = 0x01;
 }
 
+/// `TRIGGER` body (WIRE.md §3.21).
+///
+/// A placed `ActivationTrigger_C` answers only its own machine's player, so a boss fight or
+/// a one-time event started on one machine only. The sender reports the event the game
+/// itself dispatched (the trigger's bound overlap event, with the local player as the other
+/// actor); the receiver dispatches the same event on its own copy with its own player, so
+/// the trigger's own gates decide.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Trigger {
+    /// The trigger's placed-path key.
+    pub key: Guid,
+    /// See [`trigger_event`].
+    pub event: u8,
+    /// See [`trigger_volume`].
+    pub volume: u8,
+    /// See [`trigger_flags`].
+    pub flags: u8,
+    /// The sender's body when it entered, in centimetres.
+    pub px: f32,
+    pub py: f32,
+    pub pz: f32,
+    /// The trigger's instance name, for the logs on both sides.
+    pub name: String,
+}
+
+// `Eq` is sound here although the positions are floats: `decode_body` refuses every
+// non-finite coordinate, so a decoded `Trigger` never holds a NaN and `==` is reflexive.
+impl Eq for Trigger {}
+
+/// `TRIGGER.event`.
+pub mod trigger_event {
+    pub const BEGIN: u8 = 1;
+    pub const END: u8 = 2;
+}
+
+/// `TRIGGER.volume`: which volume dispatched it. `BOX`/`SPHERE` are a placed
+/// `ActivationTrigger_C`'s two volumes; `TRAP_ON`/`TRAP_OFF` are an `EnemySpawner_C`'s own
+/// trap pair, which carry exactly one event each (begin and end respectively).
+pub mod trigger_volume {
+    pub const BOX: u8 = 0;
+    pub const SPHERE: u8 = 1;
+    pub const TRAP_ON: u8 = 2;
+    pub const TRAP_OFF: u8 = 3;
+}
+
+/// `TRIGGER.flags`.
+pub mod trigger_flags {
+    /// A target is a spawner whose enemy data says Boss: the receiver pulls its player in.
+    pub const BOSS: u8 = 0x01;
+}
+
 /// A decoded body, tagged by its kind.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Body {
@@ -1049,6 +1105,7 @@ pub enum Body {
     Boss(Boss),
     Objects(Objects),
     EnemySpawn(EnemySpawn),
+    Trigger(Trigger),
     Log(Log),
 }
 
@@ -1081,6 +1138,7 @@ impl Body {
             Body::Boss(_) => Kind::Boss,
             Body::Objects(_) => Kind::Objects,
             Body::EnemySpawn(_) => Kind::EnemySpawn,
+            Body::Trigger(_) => Kind::Trigger,
             Body::Log(_) => Kind::Log,
         }
     }
@@ -1570,6 +1628,16 @@ pub fn encode_body(body: &Body) -> Result<Vec<u8>> {
             w.write_u16(s.hp)?;
             write_str(&mut w, &s.class_path)?;
         }
+        Body::Trigger(t) => {
+            write_guid(&mut w, &t.key)?;
+            w.write_u8(t.event)?;
+            w.write_u8(t.volume)?;
+            w.write_u8(t.flags)?;
+            w.write_u32(t.px.to_bits())?;
+            w.write_u32(t.py.to_bits())?;
+            w.write_u32(t.pz.to_bits())?;
+            write_str(&mut w, &t.name)?;
+        }
     }
 
     if !w.is_byte_aligned() {
@@ -1990,6 +2058,39 @@ pub fn decode_body(kind: Kind, bytes: &[u8]) -> Result<Body> {
             }
             Body::EnemySpawn(EnemySpawn { id, flags, px, py, pz, yaw, hp, class_path })
         }
+        Kind::Trigger => {
+            let key = read_guid(&mut r)?;
+            let event = r.read_u8()?;
+            if event != trigger_event::BEGIN && event != trigger_event::END {
+                return Err(Error::OutOfRange { what: "trigger event", value: i64::from(event) });
+            }
+            let volume = r.read_u8()?;
+            let paired = match volume {
+                trigger_volume::BOX | trigger_volume::SPHERE => true,
+                trigger_volume::TRAP_ON => event == trigger_event::BEGIN,
+                trigger_volume::TRAP_OFF => event == trigger_event::END,
+                _ => false,
+            };
+            if !paired {
+                return Err(Error::OutOfRange { what: "trigger volume", value: i64::from(volume) });
+            }
+            let flags = r.read_u8()?;
+            if flags & !trigger_flags::BOSS != 0 {
+                return Err(Error::OutOfRange { what: "trigger flags", value: i64::from(flags) });
+            }
+            let px = f32::from_bits(r.read_u32()?);
+            let py = f32::from_bits(r.read_u32()?);
+            let pz = f32::from_bits(r.read_u32()?);
+            for v in [px, py, pz] {
+                // The receiver may move its player to this point: a NaN or a coordinate
+                // past any map is refused here, not at the teleport.
+                if !v.is_finite() || v.abs() >= 1e9 {
+                    return Err(Error::OutOfRange { what: "trigger position", value: 0 });
+                }
+            }
+            let name = read_str(&mut r)?;
+            Body::Trigger(Trigger { key, event, volume, flags, px, py, pz, name })
+        }
         Kind::Log => {
             // The whole body is the message; nothing to parse.
             Body::Log(Log { bytes: bytes.to_vec() })
@@ -2290,6 +2391,26 @@ mod tests {
                 yaw: 16384,
                 hp: 40_000,
                 class_path: "/Game/Enemies/Dragon/Dragon_Green_BP.Dragon_Green_BP_C".into(),
+            }),
+            Body::Trigger(Trigger {
+                key: sample_guid(),
+                event: trigger_event::BEGIN,
+                volume: trigger_volume::BOX,
+                flags: trigger_flags::BOSS,
+                px: -27846.5,
+                py: -15403.25,
+                pz: -15339.0,
+                name: "ActivationTrigger11".into(),
+            }),
+            Body::Trigger(Trigger {
+                key: sample_guid(),
+                event: trigger_event::END,
+                volume: trigger_volume::TRAP_OFF,
+                flags: 0,
+                px: 1.0,
+                py: 2.0,
+                pz: 3.0,
+                name: "WhaleKingSpawner".into(),
             }),
             Body::Log(Log { bytes: b"hello from host".to_vec() }),
         ]
@@ -2735,6 +2856,39 @@ mod tests {
         // 16 guid + 1 flags + 1 phase + 2 hp
         assert_eq!(bytes.len(), 20);
         assert_eq!(decode_body(Kind::Boss, &bytes).unwrap(), Body::Boss(b));
+    }
+
+    #[test]
+    fn trigger_refuses_an_impossible_volume_event_pair_and_a_bad_position() {
+        let good = Trigger {
+            key: sample_guid(),
+            event: trigger_event::BEGIN,
+            volume: trigger_volume::TRAP_ON,
+            flags: trigger_flags::BOSS,
+            px: 10.0,
+            py: 20.0,
+            pz: 30.0,
+            name: "T".into(),
+        };
+        let bytes = encode_body(&Body::Trigger(good.clone())).unwrap();
+        assert_eq!(decode_body(Kind::Trigger, &bytes).unwrap(), Body::Trigger(good.clone()));
+        assert!(Kind::Trigger.is_reliable());
+        // A begin on the deactivate trap names an event the spawner does not have.
+        let mut bad = bytes.clone();
+        bad[17] = trigger_volume::TRAP_OFF;
+        assert!(matches!(decode_body(Kind::Trigger, &bad), Err(Error::OutOfRange { .. })));
+        // An unknown volume.
+        let mut bad = bytes.clone();
+        bad[17] = 4;
+        assert!(matches!(decode_body(Kind::Trigger, &bad), Err(Error::OutOfRange { .. })));
+        // A NaN x: the receiver may move its player there, so it is refused at decode.
+        let mut bad = bytes.clone();
+        bad[19..23].copy_from_slice(&f32::NAN.to_bits().to_le_bytes());
+        assert!(matches!(decode_body(Kind::Trigger, &bad), Err(Error::OutOfRange { .. })));
+        // An unknown flag bit.
+        let mut bad = bytes;
+        bad[18] = 0x80;
+        assert!(matches!(decode_body(Kind::Trigger, &bad), Err(Error::OutOfRange { .. })));
     }
 
     #[test]

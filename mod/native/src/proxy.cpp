@@ -87,6 +87,7 @@
 #include "qdinvintent.h"
 #include "qdactorstate.h"
 #include "qdobjectstate.h"
+#include "qdtrigger.h"
 
 // ---------------------------------------------------------------------------
 // Globals
@@ -99,6 +100,13 @@ using namespace qd;
 // block, and a lane whose ledger names actors from the previous world must be reset with
 // the others rather than keeping keys that no longer mean anything.
 void ObjectsReset();
+
+// The trigger lane (K_TRIGGER) is defined late, beside the ProcessEvent hook that observes it.
+void OnTrigger(wire::Reader& r, uint32_t now);
+void TriggerPump(uint32_t now);
+void TriggerReset();
+void TriggerObserve(void* self, void* func, void* parms);
+void DevTriggerLever(uint32_t now);
 
 // Session 23: the world-teardown reset.  Defined once, late (every table it drops is
 // declared between here and there), and called from two places: the hard-load path BEFORE
@@ -332,7 +340,10 @@ void LogConfig()
           " movers=", dec(c.mover_sync),
           " loot=", dec(c.loot_sync),
           " suspend=", dec(c.suspend_guard),
-          " pause=", dec(c.suppress_pause));
+          " pause=", dec(c.suppress_pause),
+          " objects=", dec(c.object_sync),
+          " trigger=", dec(c.trigger_sync),
+          " pullIn=", dec(c.boss_pull_in));
     // The player body is the one switch whose prerequisites are another switch: without
     // the puppet there is no body to drive, and without the enemy lane there is nowhere
     // for a hit to go.  Say so at load rather than leaving it to be discovered.
@@ -12672,6 +12683,10 @@ void DispatchInbound(const InboundPacket& p, uint32_t now)
         // two local calls each machine makes for itself (its own bar, its own arena exit).
         if (Cfg().enemy_sync) OnBoss(r, now);
         break;
+    case wire::K_TRIGGER:
+        // Both directions: whichever player walked in, the other machine replays it.
+        OnTrigger(r, now);
+        break;
     case wire::K_OBJECTS:
         // Host -> peer only.  The body is the absolute placed-object set; the peer applies
         // it through the class' visual/restore entry and the object's own state bool, and
@@ -17770,6 +17785,7 @@ void WorldTeardownReset(uint32_t now, const char* why)
     g_actorMirror.Reset();
     g_actorNow.Clear();
     ObjectsReset();
+    TriggerReset();
     // The level table is world-scoped, and it is only refreshed by StreamPump, which is off
     // unless StreamUnion=1.  Reset it here so a world change cannot leave old names behind.
     LevelsReset();
@@ -17919,6 +17935,7 @@ bool HK_Tick(void* engineLoop)
     DevMenuLever(now);
     DevEFuncLever(now);
     DevTakeLever(now);
+    DevTriggerLever(now);
     DevUseLever(now);
     DevDropProbe(now);
     TravelPump(now);
@@ -17927,6 +17944,7 @@ bool HK_Tick(void* engineLoop)
     EnemyPump(now);
     ActorStatePump(now);
     ObjectsPump(now);
+    TriggerPump(now);
     DialoguePump(now);
     CutscenePump(now);
     MoverPump(now);
@@ -18110,6 +18128,459 @@ void TravelVerbObserve(void* self, void* func)
     }
 }
 
+// ---------------------------------------------------------------------------
+// The trigger lane (K_TRIGGER, qdtrigger.h)
+// ---------------------------------------------------------------------------
+// A placed `ActivationTrigger_C` answers only its own machine's player, and every boss fight
+// that has a start trigger -- plus most one-time world events -- begins at one.  See
+// qdtrigger.h for the measured table and the rule.  This block is the engine half:
+//
+//   OBSERVE  `HK_ProcessEvent` hands every dispatch to `TriggerObserve`.  The four bound
+//            overlap events of the trigger class are resolved once (a pointer compare per
+//            call afterwards), and a dispatch whose `OtherActor` is THIS machine's player is
+//            the game's own statement "the local player entered/left this volume".
+//   SEND     the trigger's placed key, the event, which volume, whether a target is a boss
+//            spawner, and where the body was.
+//   REPLAY   the receiver resolves the same placed trigger, pulls its player in if the
+//            trigger starts a boss fight and the player is far, and dispatches the SAME bound
+//            event with its own player as `OtherActor`.  The trigger's own gates decide.
+namespace trig {
+
+// The trigger class and its four bound overlap events.  Resolved lazily (the class is a
+// Blueprint whose package may load with the first level that places one) and re-validated:
+// a class that went away takes its UFunctions with it.
+// Two classes own the six events: the placed trigger (slots 0..3) and the enemy spawner's
+// own trap pair (slots 4, 5).  `kSlotClass` says which, `kSlotComp` names the component the
+// overlap belongs to (the event's `OverlappedComponent`).
+struct ClassInfo {
+    void* cls[2];           // [ActivationTrigger_C, EnemySpawner_C]
+    void* fn[trigger::kSlots];
+    uint32_t lastTry;
+    bool  said;
+};
+static ClassInfo g_cls = {};
+
+static const char* const kClassNames[2] = {"ActivationTrigger_C", "EnemySpawner_C"};
+static const int kSlotClass[trigger::kSlots] = {0, 0, 0, 0, 1, 1};
+static const char* const kSlotComp[trigger::kSlots] = {
+    "Box", "Box", "Sphere", "Sphere", "TrapActivateTrigger", "TrapDeactivateTrigger"};
+static const char* const kFnNames[trigger::kSlots] = {
+    "BndEvt__ActivationTrigger_Box_K2Node_ComponentBoundEvent_1_ComponentBeginOverlapSignature__DelegateSignature",
+    "BndEvt__ActivationTrigger_Box_K2Node_ComponentBoundEvent_2_ComponentEndOverlapSignature__DelegateSignature",
+    "BndEvt__ActivationTrigger_Sphere_K2Node_ComponentBoundEvent_0_ComponentBeginOverlapSignature__DelegateSignature",
+    "BndEvt__ActivationTrigger_Sphere_K2Node_ComponentBoundEvent_3_ComponentEndOverlapSignature__DelegateSignature",
+    "BndEvt__EnemySpawner_TrapActivateTrigger_K2Node_ComponentBoundEvent_2_ComponentBeginOverlapSignature__DelegateSignature",
+    "BndEvt__EnemySpawner_TrapDeactivateTrigger_K2Node_ComponentBoundEvent_1_ComponentEndOverlapSignature__DelegateSignature",
+};
+
+// The per-world table of placed triggers, filled on demand by a full walk (a trigger
+// arrival is rare, and the walk tests a class-pointer chain, not names).
+struct Rec { uint32_t key[4]; void* actor; };
+static Rec   g_tab[512];
+static int   g_tabN = 0;
+static void* g_tabWorld = nullptr;
+static uint32_t g_tabBuiltAt = 0;
+
+static trigger::EchoGuard g_echo;
+static bool g_replaying = false;
+static uint32_t g_sent = 0, g_replayed = 0, g_refused = 0;
+
+void Reset()
+{
+    g_tabN = 0;
+    g_tabWorld = nullptr;
+    g_tabBuiltAt = 0;
+    g_echo.Reset();
+    g_replaying = false;
+    // The class info survives a world change on purpose: the Blueprint class is a package
+    // object, and `ResolveClass` re-validates it before every use.
+}
+
+// True when at least one class is resolved.  Either one alone is still used: a world with
+// no spawner of the base class loaded is a world whose trap events cannot happen anyway.
+static bool ResolveClass(uint32_t now)
+{
+    bool live0 = g_cls.cls[0] && ObjectIsLive(g_cls.cls[0]);
+    bool live1 = g_cls.cls[1] && ObjectIsLive(g_cls.cls[1]);
+    if (live0 && live1) return true;
+    if (g_cls.lastTry && now - g_cls.lastTry < 2000) return live0 || live1;
+    g_cls.lastTry = now;
+    int found = 0, classes = 0;
+    for (int k = 0; k < 2; ++k) {
+        void* c = FindClassByName(kClassNames[k]);
+        if (!c || !ObjectIsLive(c)) c = nullptr;
+        g_cls.cls[k] = c;
+        if (c) ++classes;
+    }
+    for (int i = 0; i < trigger::kSlots; ++i) {
+        void* c = g_cls.cls[kSlotClass[i]];
+        g_cls.fn[i] = c ? FindFunctionInClass(c, kFnNames[i]) : nullptr;
+        if (g_cls.fn[i]) ++found;
+    }
+    static int lastFound = -1;
+    if (found != lastFound) {
+        lastFound = found;
+        QDLOG(found == trigger::kSlots ? LOG_INFO : LOG_WARN, "trigger: ", dec(classes),
+              " of 2 classes (ActivationTrigger_C, EnemySpawner_C) and ", dec(found), " of ",
+              dec(trigger::kSlots), " bound overlap events resolved",
+              (found == trigger::kSlots ? "" : " -- the missing ones cannot be observed or replayed yet"));
+    }
+    return classes > 0;
+}
+
+static bool KeyOf(void* actor, uint32_t key[4], char* pathOut, int pathCap)
+{
+    void* world = GWorldPtr();
+    if (!actor || !world) return false;
+    char path[192];
+    if (ActorLevelPath(actor, world, path, sizeof(path)) <= 0) return false;
+    enemyid::Hash128(path, trigger::kTriggerSeed, key);
+    if (pathOut && pathCap > 0) lstrcpynA(pathOut, path, pathCap);
+    return (key[0] | key[1] | key[2] | key[3]) != 0;
+}
+
+static bool SpawnerIsBoss(void* sp)
+{
+    void* ed = ObjPropC(sp, "EnemyData");
+    if (!ed || !ObjectIsLive(ed)) return false;
+    uint8_t boss = 0;
+    return BytePropC(ed, "Boss", &boss) && boss;
+}
+
+static bool IsSpawner(void* o)
+{
+    return o && g_cls.cls[1] && IsSubclassOf(ObjClass(o), g_cls.cls[1]);
+}
+
+// Does this trigger start a boss?  A spawner's trap answers for its own enemy data; a placed
+// trigger answers for its `ActivationTargets` -- `TArray<TScriptInterface<Activatable>>`,
+// 16-byte elements whose first word is the object.
+static bool TargetsABoss(void* trig, char* bossOut, int bossCap)
+{
+    if (bossOut && bossCap > 0) bossOut[0] = 0;
+    if (IsSpawner(trig)) {
+        bool b = SpawnerIsBoss(trig);
+        if (b && bossOut && bossCap > 0) FNameToString(ObjNameRaw(trig), bossOut, bossCap);
+        return b;
+    }
+    int off = PropOff(ObjClass(trig), "ActivationTargets");
+    if (off < 0) return false;
+    void* found = nullptr;
+    __try {
+        uint8_t* arr = (uint8_t*)trig + off;
+        uint8_t* data = *(uint8_t**)arr;
+        int32_t n = *(int32_t*)(arr + 8);
+        if (!data || n <= 0 || n > 64) return false;
+        for (int i = 0; i < n && !found; ++i) {
+            void* t = *(void**)(data + (size_t)i * 16);
+            if (!t || !LooksLikeUObject(t) || !ObjectIsLive(t)) continue;
+            if (SpawnerIsBoss(t)) found = t;
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    if (found && bossOut && bossCap > 0) FNameToString(ObjNameRaw(found), bossOut, bossCap);
+    return found != nullptr;
+}
+
+static bool IsTriggerActor(void* o, void* world, void* actorBase)
+{
+    void* c = ObjClass(o);
+    if (!c) return false;
+    __try {
+        bool ofClass = (g_cls.cls[0] && IsSubclassOf(c, g_cls.cls[0])) ||
+                       (g_cls.cls[1] && IsSubclassOf(c, g_cls.cls[1]));
+        return ofClass && (!actorBase || IsSubclassOf(c, actorBase)) && ActorInThisWorld(o, world);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+static void BuildTable(uint32_t now)
+{
+    void* world = GWorldPtr();
+    g_tabN = 0;
+    g_tabWorld = world;
+    g_tabBuiltAt = now;
+    if (!world || !(g_cls.cls[0] || g_cls.cls[1])) return;
+    void* actorBase = FindClassByName("Actor");
+    int total = ObjectCount();
+    for (int i = 0; i < total && g_tabN < (int)(sizeof(g_tab) / sizeof(g_tab[0])); ++i) {
+        void* o = ObjectAtSafe(i);
+        if (!o || !LooksLikeUObject(o)) continue;
+        if (!IsTriggerActor(o, world, actorBase) || !ActorIsPlaced(o)) continue;
+        Rec& r = g_tab[g_tabN];
+        if (!KeyOf(o, r.key, nullptr, 0)) continue;
+        r.actor = o;
+        ++g_tabN;
+    }
+    QDLOG(LOG_INFO, "trigger: indexed ", dec(g_tabN), " placed trigger(s) and spawner(s) in this world");
+}
+
+static void* FindByKey(const uint32_t key[4], uint32_t now)
+{
+    for (int pass = 0; pass < 2; ++pass) {
+        if (g_tabWorld == GWorldPtr()) {
+            for (int i = 0; i < g_tabN; ++i) {
+                if (memcmp(g_tab[i].key, key, 16) == 0 && ObjectIsLive(g_tab[i].actor))
+                    return g_tab[i].actor;
+            }
+        }
+        // A miss rebuilds once (a sublevel streamed in since the last walk), but not more
+        // than every 2 s: a key this world does not place must not cost a walk per message.
+        if (pass == 0 && (g_tabWorld != GWorldPtr() || now - g_tabBuiltAt > 2000)) BuildTable(now);
+        else break;
+    }
+    return nullptr;
+}
+
+// Fill and run one bound overlap event on `trig` with this machine's player as the other
+// actor.  Every parameter is set only if the signature has it: Begin carries `bFromSweep`
+// and `SweepResult`, End does not.
+static bool RunOverlapEvent(void* trig, int slot, char* how, int howCap)
+{
+    void* fn = g_cls.fn[slot];
+    void* pawn = g_localPawn;
+    if (!fn || !pawn) { lstrcpynA(how, !fn ? "event not resolved" : "no local player", howCap); return false; }
+    Fn f;
+    if (!f.Accept(fn, kFnNames[slot])) { lstrcpynA(how, "unusable signature", howCap); return false; }
+    if (f.Off("OtherActor") < 0) { lstrcpynA(how, "event has no OtherActor parameter", howCap); return false; }
+    Call c(f);
+    void* comp = ObjPropC(trig, kSlotComp[slot]);
+    void* root = ObjPropC(pawn, "CapsuleComponent");
+    if (!root) root = ObjPropC(pawn, "RootComponent");
+    if (f.Off("OverlappedComponent") >= 0) c.Obj("OverlappedComponent", comp);
+    c.Obj("OtherActor", pawn);
+    if (f.Off("OtherComp") >= 0) c.Obj("OtherComp", root);
+    if (f.Off("OtherBodyIndex") >= 0) c.I32("OtherBodyIndex", 0);
+    if (f.Off("bFromSweep") >= 0) c.U8("bFromSweep", 0);
+    bool ran = c.Run(trig);
+    lstrcpynA(how, ran ? "dispatched" : "ProcessEvent refused or faulted", howCap);
+    return ran;
+}
+
+static void Send(void* trig, int slot, uint32_t now)
+{
+    trigger::Body b;
+    memset(&b, 0, sizeof(b));
+    char path[192] = "";
+    if (!KeyOf(trig, b.key, path, sizeof(path))) {
+        QDLOG(LOG_WARN, "trigger: the local player entered a trigger with no placed path; not sent");
+        return;
+    }
+    b.event = trigger::EventOfSlot(slot);
+    b.volume = trigger::VolumeOfSlot(slot);
+    if (g_echo.Recent(b.key, b.event, now)) return;    // our own replay, or its physical echo
+    char boss[64] = "";
+    if (TargetsABoss(trig, boss, sizeof(boss))) b.flags |= trigger::kFlagBoss;
+    ActorXform me = {};
+    void* pawn = g_localPawn;
+    if (pawn) ReadActorXform(pawn, &me);
+    b.px = me.px; b.py = me.py; b.pz = me.pz;
+    FNameToString(ObjNameRaw(trig), b.name, sizeof(b.name));
+    uint8_t body[160];
+    wire::Writer w(body, sizeof(body));
+    if (!trigger::Encode(w, b) || !g_net.SendReliable(wire::K_TRIGGER, body, w.len)) {
+        QDLOG(LOG_WARN, "trigger: could not send ", b.name);
+        return;
+    }
+    g_echo.Note(b.key, b.event, now);
+    ++g_sent;
+    uint8_t done = 0;
+    BytePropC(trig, "HasAlreadybeenTriggered", &done);
+    QDLOG(LOG_INFO, "trigger: local player ", (b.event == trigger::kEvBegin ? "entered " : "left "),
+          b.name, " (", kSlotComp[slot], ") key=", hex32(b.key[0]),
+          (boss[0] ? " -- starts a boss: " : ""), boss, " triggered=", dec(done),
+          " at ", flt(b.px, 0), ",", flt(b.py, 0), ",", flt(b.pz, 0), " -> sent to the partner");
+}
+
+} // namespace trig
+
+// Called from HK_ProcessEvent for every dispatch.  The cost when it is not a trigger event is
+// a null test and four pointer compares.
+void TriggerObserve(void* self, void* func, void* parms)
+{
+    if (!Cfg().trigger_sync || trig::g_replaying || !func || !parms) return;
+    int slot = -1;
+    for (int i = 0; i < trigger::kSlots; ++i) {
+        if (trig::g_cls.fn[i] && func == trig::g_cls.fn[i]) { slot = i; break; }
+    }
+    if (slot < 0) return;
+    if (!g_net.Connected()) return;
+    void* pawn = g_localPawn;
+    if (!pawn) return;
+    static Fn sig[trigger::kSlots];
+    if (!sig[slot].fn && !sig[slot].Accept(func, trig::kFnNames[slot])) return;
+    int off = sig[slot].Off("OtherActor");
+    if (off < 0) return;
+    void* other = nullptr;
+    __try { other = *(void**)((uint8_t*)parms + off); }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return; }
+    if (other != pawn) return;                    // an enemy, a projectile, the partner's body
+    trig::Send(self, slot, Net::Now());
+}
+
+void OnTrigger(wire::Reader& r, uint32_t now)
+{
+    if (!Cfg().trigger_sync) return;
+    trigger::Body b;
+    if (!trigger::Decode(r, &b)) {
+        QDLOG(LOG_WARN, "trigger: malformed body refused");
+        return;
+    }
+    const char* evs = (b.event == trigger::kEvBegin ? "entered" : "left");
+    if (trig::g_echo.Recent(b.key, b.event, now)) {
+        QDLOG(LOG_INFO, "trigger: partner ", evs, " ", b.name, " -- already handled here in the last ",
+              dec((int)trigger::kEchoMs), " ms; dropped");
+        return;
+    }
+    if (!trig::ResolveClass(now)) {
+        ++trig::g_refused;
+        QDLOG(LOG_WARN, "trigger: partner ", evs, " ", b.name, " -- the trigger class is not loaded here; refused");
+        return;
+    }
+    void* t = trig::FindByKey(b.key, now);
+    if (!t) {
+        ++trig::g_refused;
+        QDLOG(LOG_WARN, "trigger: partner ", evs, " ", b.name, " key=", hex32(b.key[0]),
+              " -- no placed trigger with that key in this world; refused");
+        return;
+    }
+    if (!ActorLevelVisible(t)) {
+        ++trig::g_refused;
+        QDLOG(LOG_WARN, "trigger: partner ", evs, " ", b.name,
+              " -- its level is not shown here (the area did not follow); refused");
+        return;
+    }
+    void* pawn = g_localPawn;
+    if (!pawn || !IsGameplayPawn(pawn)) {
+        ++trig::g_refused;
+        QDLOG(LOG_WARN, "trigger: partner ", evs, " ", b.name, " -- no local player to replay it for; refused");
+        return;
+    }
+    // A boss arena: bring this player in before the event can close it behind the partner.
+    ActorXform me = {};
+    if (ReadActorXform(pawn, &me) && Cfg().boss_pull_in && trigger::WantPullIn(b, me.px, me.py, me.pz)) {
+        float dx = b.px - me.px, dy = b.py - me.py, dz = b.pz - me.pz;
+        float dist = sqrtf(dx * dx + dy * dy + dz * dz);
+        // Beside the partner, not inside its capsule: 150 cm back along the line from here.
+        float k = dist > 1.0f ? 150.0f / dist : 0.0f;
+        float tx = b.px - dx * k, ty = b.py - dy * k, tz = b.pz;
+        bool moved = SetActorXform(pawn, tx, ty, tz, me.yaw);
+        QDLOG(moved ? LOG_INFO : LOG_WARN, "trigger: ", b.name, " starts a boss fight and this player was ",
+              flt(dist, 0), " cm away -- pulled in beside the partner at ", flt(tx, 0), ",",
+              flt(ty, 0), ",", flt(tz, 0), (moved ? "" : " FAILED"));
+    }
+    uint8_t before = 0, after = 0;
+    BytePropC(t, "HasAlreadybeenTriggered", &before);
+    char how[64] = "";
+    int slot = trigger::SlotOf(b.event, b.volume);
+    if (slot < 0 || !trig::g_cls.fn[slot]) {
+        ++trig::g_refused;
+        QDLOG(LOG_WARN, "trigger: partner ", evs, " ", b.name, " -- that event is not resolved here; refused");
+        return;
+    }
+    trig::g_echo.Note(b.key, b.event, now);
+    trig::g_replaying = true;
+    bool ok = trig::RunOverlapEvent(t, slot, how, sizeof(how));
+    trig::g_replaying = false;
+    BytePropC(t, "HasAlreadybeenTriggered", &after);
+    if (ok) ++trig::g_replayed; else ++trig::g_refused;
+    QDLOG(ok ? LOG_INFO : LOG_WARN, "trigger: replayed the partner's ", evs, " ", b.name,
+          ((b.flags & trigger::kFlagBoss) ? " (boss)" : ""), " key=", hex32(b.key[0]), ": ", how,
+          " triggered ", dec(before), "->", dec(after), " (sent=", dec((int)trig::g_sent),
+          " replayed=", dec((int)trig::g_replayed), " refused=", dec((int)trig::g_refused), ")");
+}
+
+// Resolves the class as soon as it exists, so the very first entry is observed.
+void TriggerPump(uint32_t now)
+{
+    if (!Cfg().trigger_sync) return;
+    bool l0 = trig::g_cls.cls[0] && ObjectIsLive(trig::g_cls.cls[0]);
+    bool l1 = trig::g_cls.cls[1] && ObjectIsLive(trig::g_cls.cls[1]);
+    if (!l0 || !l1) trig::ResolveClass(now);
+}
+
+void TriggerReset() { trig::Reset(); }
+
+// The rig's "walk into this trigger": stand at the volume's centre and dispatch its begin
+// event with the local player as the other actor -- what an overlap from walking in does --
+// and observed by TriggerObserve exactly like one, so it reaches the partner the way a real
+// entry would.  The rig sends nothing itself.  `qd.trigger <instance name>[#nonce]`.
+char g_devTrigPath[MAX_PATH] = "";
+int  g_devTrigOn = -1;
+uint32_t g_devTrigPoll = 0;
+char g_devTrigApplied[96] = "";
+
+void DevTriggerLever(uint32_t now)
+{
+    if (g_devTrigOn < 0) {
+        DevRigPath("QDCOOP_TEST_TRIGGER", "qd.trigger", g_devTrigPath, sizeof(g_devTrigPath));
+        g_devTrigOn = (g_devTrigPath[0] != 0) ? 1 : 0;
+        if (g_devTrigOn) QDLOG(LOG_INFO, "rig: trigger control '", g_devTrigPath, "' enabled");
+    }
+    if (!g_devTrigOn || !IsGameplayPawn(g_localPawn)) return;
+    if (now - g_devTrigPoll < 150) return;
+    g_devTrigPoll = now;
+    char raw[96] = "";
+    if (!DevRigText("QDCOOP_TEST_TRIGGER", "qd.trigger", raw, sizeof(raw)) || !raw[0]) return;
+    if (strcmp(raw, g_devTrigApplied) == 0) return;
+    lstrcpynA(g_devTrigApplied, raw, sizeof(g_devTrigApplied));
+    char spec[96];
+    lstrcpynA(spec, raw, sizeof(spec));
+    for (int i = 0; spec[i]; ++i) if (spec[i] == '#') { spec[i] = 0; break; }
+    trig::g_cls.lastTry = 0;
+    if (!trig::ResolveClass(now)) {
+        QDLOG(LOG_WARN, "rig: trigger '", spec, "': ActivationTrigger_C is not loaded");
+        return;
+    }
+    trig::BuildTable(now);
+    void* t = nullptr;
+    for (int i = 0; i < trig::g_tabN; ++i) {
+        char nm[96] = "";
+        FNameToString(ObjNameRaw(trig::g_tab[i].actor), nm, sizeof(nm));
+        if (_stricmp(nm, spec) == 0) { t = trig::g_tab[i].actor; break; }
+    }
+    if (!t) {
+        QDLOG(LOG_WARN, "rig: trigger '", spec, "' is not a placed trigger in this world");
+        return;
+    }
+    if (!ActorLevelVisible(t)) {
+        QDLOG(LOG_WARN, "rig: trigger '", spec, "' is on a level that is not shown here; refused");
+        return;
+    }
+    int slot;
+    if (trig::IsSpawner(t)) {
+        slot = 4;                                        // a spawner: its trap's begin
+    } else {
+        uint8_t boxMode = 1;
+        BytePropC(t, "BoxMode", &boxMode);
+        slot = boxMode ? 0 : 2;
+    }
+    ActorXform at = {};
+    if (!ReadActorXform(t, &at)) {
+        QDLOG(LOG_WARN, "rig: trigger '", spec, "' has no readable position");
+        return;
+    }
+    void* pawn = g_localPawn;
+    ActorXform me = {};
+    ReadActorXform(pawn, &me);
+    RigArmFallGuard(at.pz);
+    bool moved = SetActorXform(pawn, at.px, at.py, at.pz, me.yaw);
+    char boss[64] = "";
+    bool isBoss = trig::TargetsABoss(t, boss, sizeof(boss));
+    QDLOG(LOG_INFO, "rig: trigger '", spec, "' -> standing at ", flt(at.px, 0), ",", flt(at.py, 0),
+          ",", flt(at.pz, 0), " (", trig::kSlotComp[slot], ")", (moved ? "" : " (move FAILED)"),
+          (isBoss ? " -- targets boss spawner " : ""), boss);
+    uint8_t before = 0, after = 0;
+    BytePropC(t, "HasAlreadybeenTriggered", &before);
+    char how[64] = "";
+    bool ran = trig::RunOverlapEvent(t, slot, how, sizeof(how));   // observed and sent, not replayed
+    BytePropC(t, "HasAlreadybeenTriggered", &after);
+    QDLOG(ran ? LOG_INFO : LOG_WARN, "rig: trigger '", spec, "' begin event: ", how,
+          " triggered ", dec(before), "->", dec(after));
+}
+
 void HK_ProcessEvent(void* self, void* func, void* parms)
 {
     // A DISPATCH ON NOTHING IS THE CRASH, NOT A CALL (Session 24, R155).  The game's own
@@ -18137,6 +18608,7 @@ void HK_ProcessEvent(void* self, void* func, void* parms)
     RestObserve(self, func);
     TravelVerbObserve(self, func);
     PeTraceObserve(self, func);
+    TriggerObserve(self, func, parms);
     // The proxy body reports rather than absorbs: false means the game's own hit has been
     // described to the machine that owns the player, so the local TryApplyDamage must not
     // also run (that would apply the same damage twice, on the wrong machine).
@@ -18271,7 +18743,7 @@ DWORD WINAPI BootstrapThread(LPVOID)
         // off unless someone is tracing a specific Blueprint surface.
         // Effect sync needs it to see thrown weapons begin play (one compare per call).
         // Enemy sync needs it to see the host rest (RestObserve).
-        if (tPE && (Cfg().puppet_sync || Cfg().enemy_sync || Cfg().player_body ||
+        if (tPE && (Cfg().puppet_sync || Cfg().enemy_sync || Cfg().player_body || Cfg().trigger_sync ||
                     Cfg().log_level >= LOG_TRACE || DevEnvInt("QDCOOP_PE_TRACE", 0))) {
             InstallHook(*tPE, (void*)&HK_ProcessEvent, (void**)&g_oProcessEvent);
         }

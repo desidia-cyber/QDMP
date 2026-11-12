@@ -49,6 +49,8 @@ struct Config {
     int  suspend_guard;    // hold the peer's timed suspend save, repair a load
     int  suppress_pause;   // stop a menu freeze from freezing the session
     int  object_scan;      // walk GObjects to find UFunctions (OFF: it exits the game)
+    int  trigger_sync;     // a partner entering a placed event volume fires it here (K_TRIGGER)
+    int  boss_pull_in;     // ... and a boss arena's trigger moves a far partner in first
 
     // behaviour
     int  host_authoritative;   // 1 = only the host writes world facts
@@ -82,6 +84,11 @@ inline void ConfigDefaults()
     // and writes the object's own state bool, so enable it only on a run that is looking
     // for the `object apply:` line (`SYNC-GAPS` section 5.5).
     c.object_sync      = 0;
+    // OFF like every write path: the receiver DISPATCHES a Blueprint event on its own
+    // trigger.  Enable it on a run that looks for `trigger: replayed the partner's`.
+    c.trigger_sync     = 0;
+    // ON when the lane is on: without it a boss arena closes on a partner standing outside.
+    c.boss_pull_in     = 1;
     c.enemy_sync       = 0;
     // ON: proven live in 780_SZ_Depths (LIVE-TEST-LOG Session 16).  This is the one write
     // path that CONSTRUCTS a full gameplay enemy Blueprint -- `Dragon_Green_BP_C` and friends
@@ -238,6 +245,8 @@ inline int ConfigLoad()
         else if (detail::StrEq(k, "InventorySync")) c.inventory_sync = detail::ParseInt(v, c.inventory_sync);
         else if (detail::StrEq(k, "ActorStateSync")) c.actor_state_sync = detail::ParseInt(v, c.actor_state_sync);
         else if (detail::StrEq(k, "ObjectSync"))    c.object_sync = detail::ParseInt(v, c.object_sync);
+        else if (detail::StrEq(k, "TriggerSync"))   c.trigger_sync = detail::ParseInt(v, c.trigger_sync);
+        else if (detail::StrEq(k, "BossPullIn"))    c.boss_pull_in = detail::ParseInt(v, c.boss_pull_in);
         else if (detail::StrEq(k, "EnemySync"))     c.enemy_sync = detail::ParseInt(v, c.enemy_sync);
         else if (detail::StrEq(k, "MirrorSpawn"))   c.mirror_spawn = detail::ParseInt(v, c.mirror_spawn);
         else if (detail::StrEq(k, "PuppetSync"))    c.puppet_sync = detail::ParseInt(v, c.puppet_sync);

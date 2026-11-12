@@ -50,6 +50,7 @@ enum Kind {
     K_BOSS        = 0x29,
     K_OBJECTS     = 0x2A,
     K_ENEMY_SPAWN = 0x2B,
+    K_TRIGGER     = 0x2C,   // a partner's body entered/left a placed event volume (qdtrigger.h)
     K_LOG         = 0x30,
 };
 
@@ -79,7 +80,7 @@ inline bool IsReliableKind(uint8_t kind)
     return kind == K_HELLO || kind == K_WELCOME || kind == K_INTENT ||
            kind == K_EFFECT || kind == K_ENEMY_DETAIL || kind == K_TRAVEL ||
            kind == K_DAMAGE || kind == K_SUSPEND || kind == K_BOSS ||
-           kind == K_OBJECTS || kind == K_ENEMY_SPAWN;
+           kind == K_OBJECTS || kind == K_ENEMY_SPAWN || kind == K_TRIGGER;
 }
 
 // --------------------------------------------------------------------------
