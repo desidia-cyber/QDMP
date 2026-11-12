@@ -5629,10 +5629,21 @@ void* SummonerOf(void* actor)
 bool ActorIsPlaced(void* actor)
 {
     if (!actor) return false;
+    // RF_WasLoaded FIRST (Session 26).  The FName number is NOT a placed/spawned test on its
+    // own: the engine splits a trailing number off every name, so the cooked placed actor
+    // `ActivationTrigger4` is ("ActivationTrigger", 5) -- measured live, 740's Red Lords
+    // trigger read placed=0, was never indexed, and the partner's entry into it would have
+    // been refused.  An object deserialized from its level package carries RF_WasLoaded; a
+    // runtime spawn never does.  The number rule stays as the second, older answer.
+    __try {
+        const uint32_t kRF_WasLoaded = 0x00080000u;
+        uint32_t of = *(const uint32_t*)((const uint8_t*)actor + kObjFlagsOff);
+        if (of & kRF_WasLoaded) return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
     QdName n = ObjNameRaw(actor);
     if (n.number != 0) return false;              // engine-generated unique name
-    // A CDO or an asset is not a placed actor either; the caller's world test covers the
-    // remaining case (a live actor in a level this machine has not streamed in).
     return true;
 }
 
