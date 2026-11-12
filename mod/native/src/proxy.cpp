@@ -13827,6 +13827,35 @@ static void RigLevelTag(void* actor, char* out, int cap)
     lstrcatA(out, shown == 1 ? " shown=1" : (shown == 0 ? " shown=0" : " shown=?"));
 }
 
+// IS THIS SPOT INSIDE A TELEPORTER'S VOLUME?  MEASURED (Session 25, 64 hops per machine):
+// `near:npc` places the pawn beside the NPC and the hub's `TempTeleporter` is right there, so
+// the GAME teleports the player ~190 m down into the stacked maps that are not shown -- dark,
+// no floor, "he just falls" -- and every later hop then picks the nearest actor down there.
+// The fall guard catches each individual drop, but a player who has already arrived deep is
+// restored to a deep "safe" spot, so the rig walks him down in steps (measured: the host went
+// from z=140 to z=-19060 over one phase).  A teleporter is not a place to stand.
+static bool RigSpotNearTeleporter(float x, float y, float z, float cm)
+{
+    void* actorBase = FindClassByName("Actor");
+    if (!actorBase) return false;
+    const float lim = cm * cm;
+    int count = ObjectCount();
+    for (int i = 0; i < count; ++i) {
+        void* o = ObjectAt(i);
+        if (!o || !LooksLikeUObject(o)) continue;
+        if (!RigNameMatches(o, "teleport")) continue;   // instance OR class name, cheap first
+        bool member = false;
+        __try { member = IsSubclassOf(ObjClass(o), actorBase); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { continue; }
+        if (!member) continue;
+        ActorXform t = {};
+        if (!ReadActorXform(o, &t)) continue;
+        float dx = t.px - x, dy = t.py - y, dz = t.pz - z;
+        if (dx * dx + dy * dy + dz * dz <= lim) return true;
+    }
+    return false;
+}
+
 void RigStandBeside(void* actor, const ActorXform& t, const char* label, float d,
                     float yawOverride, bool haveYaw)
 {
@@ -13849,6 +13878,11 @@ void RigStandBeside(void* actor, const ActorXform& t, const char* label, float d
     float yaw = haveYaw ? yawOverride : atan2f(-dx, -dy) * 57.29578f;  // face the target
     if (!RigActorVisible(actor)) {
         QDLOG(LOG_WARN, "dev teleport near '", label, "': the target's level is not shown here; refused");
+        return;
+    }
+    if (RigSpotNearTeleporter(px, py, pz, 300.0f)) {
+        QDLOG(LOG_WARN, "dev teleport near '", label, "': the spot beside it is inside a "
+              "teleporter's volume, and the game would move the player out of the level; refused");
         return;
     }
     RigArmFallGuard(pz);

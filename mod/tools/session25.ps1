@@ -1510,9 +1510,9 @@ function Invoke-EndChecks([int]$H, [int]$P, [string]$step, [int]$m0) {
     # The user's report ("in darkness, no map, he just falls") is answered by three counts,
     # and they are printed for every phase that ends here, not only for `rig`.
     $rig = Get-RigCounters $m0
-    Note ("  RIG: hops that landed={0}; refusals because the level is not shown={1} " +
-          "(of which {2} was a call where nothing visible matched); no-target={3}; " +
-          "'rig: FELL after a rig move'={4}" -f
+    Note (("  RIG: hops that landed={0}; refusals because the level is not shown={1} " +
+           "(of which {2} was a call where nothing visible matched); no-target={3}; " +
+           "'rig: FELL after a rig move'={4}") -f
           $rig.Landed, $rig.Refused, $rig.RefusedCalls, $rig.NoTarget, $rig.Fell)
     # A FELL is the GUARD WORKING, not a failure: it means a placement the game then moved was
     # undone.  What the run must not have is a hop that was left displaced, and that is the
@@ -1620,25 +1620,27 @@ function Invoke-RigPhase([int]$H, [int]$P) {
             }
         }
         if (($n % 8) -eq 0) {
-            # BUILT AS ONE STRING FIRST: `"a" + "b" -f args` binds -f to the last literal only
-            # (measured: the first run printed "{0} hops/machine done" literally).
-            $prog = "  {0} hops/machine done: landed={1} refused={2} no-target={3} no-answer={4} " +
-                    "guarded-back={5} dropped>30m={6} worst={7} cm" -f $n, $tally['landed'],
-                    $tally['refused'], $tally['no-target'], $tally['no-answer'], $restored,
-                    $dropped, [int]$worst
+            # THE WHOLE CONCATENATION IS PARENTHESISED: `-f` binds tighter than `+`, so
+            # `"a" + "b" -f args` formats only the LAST literal and leaves the first one's
+            # placeholders on screen (measured twice in this phase's own console output).
+            $prog = ("  {0} hops/machine done: landed={1} refused={2} no-target={3} " +
+                     "no-answer={4} guarded-back={5} dropped>30m={6} worst={7} cm") -f $n,
+                    $tally['landed'], $tally['refused'], $tally['no-target'],
+                    $tally['no-answer'], $restored, $dropped, [int]$worst
             Note $prog
         }
         if (($n % 20) -eq 0) { Save-Shots ("hop{0}" -f $n) }
     }
     $fell = Get-RigCounters $m0
     Note ''
-    Note ("  HOPS: {0} attempted ({1} per machine); landed={2} refused-not-shown={3} " +
-          "no-target={4} failed={5} no-answer={6} dead={7}" -f
+    Note (("  HOPS: {0} attempted ({1} per machine); landed={2} refused-not-shown={3} " +
+           "no-target={4} failed={5} no-answer={6} dead={7}") -f
           $attempted, $RigHops, $tally['landed'], $tally['refused'], $tally['no-target'],
           $tally['failed'], $tally['no-answer'], $tally['dead'])
-    Note ("  POST-HOP POSITION: measured={0} unmeasured={1}; LEFT more than 3000 cm below the " +
-          "target={2}; guarded back={3}; worst dz={4} cm ({5})" -f
-          $measured, $unmeasured, $dropped, $restored, [int]$worst, $(if ($worstLine) { $worstLine } else { '-' }))
+    Note (("  POST-HOP POSITION: measured={0} unmeasured={1}; LEFT more than 3000 cm below " +
+           "the target={2}; guarded back={3}; worst dz={4} cm ({5})") -f
+          $measured, $unmeasured, $dropped, $restored, [int]$worst,
+          $(if ($worstLine) { $worstLine } else { '-' }))
     Note ("  GUARD: 'rig: FELL after a rig move' lines={0}; refusal lines={1}" -f $fell.Fell, $fell.Refused)
     foreach ($d in ($deep | Select-Object -First 6)) { Note ("    DEEP " + $d) }
 
