@@ -1944,7 +1944,7 @@ function Invoke-OneBoss([int]$H, [int]$P, $b) {
     if (-not $bh) { $bh2 = Find-BossKey $dp $b.Cls; if ($bh2) { Note "    the PEER holds $($b.Cls) $($bh2.Key) but the HOST does not" } }
     Verdict $step $H ([bool]$bh) "the HOST holds a live $($b.Cls)" $(if ($bh) { $bh.Line } else { '' })
     Verdict $step $P ([bool]($bp -and $bp.State -eq 'ALIVE')) "the PEER holds the SAME key alive" $(if ($bp) { $bp.Line } else { '' })
-    if (-not $bh) { Show-Since $H 'boss|spawn|trigger' $mH 12; return }
+    if (-not $bh) { Show-Since $H 'boss|spawn|trigger' $mH 12; Leave-Area $H $P $step | Out-Null; Start-Sleep -Seconds 5; return }
     $key = $bh.Key
 
     # One bar, the same key.

@@ -5516,7 +5516,29 @@ bool EnemyShotIsOwned(void* shooter)
 bool SpawnerGuid(void* spawner, uint32_t out[4])
 {
     static Fn f = {};
-    if (!spawner || !f.Resolve(spawner, "GetSaveGUID")) return false;
+    if (!spawner) return false;
+    // CLASSES WITHOUT GetSaveGUID ARE REMEMBERED (Session 26 run 4).  A summoner's Owner /
+    // Instigator is often not a spawner, and every miss fell through FindFunction to a
+    // GObjects-wide search per super class -- ~0.55 s a call.  After a 780 stream that was
+    // one call per new enemy per frame: the host ran at ~2 fps for two minutes, the black
+    // screen the user saw, and every rig lever starved behind it.  A class either has the
+    // function or it does not; asking once per class is enough.
+    // Per world: Blueprint classes unload with it and a freed class pointer can be reused.
+    static const void* noFn[64];
+    static int noFnN = 0, noFnNext = 0;
+    static void* noFnWorld = nullptr;
+    void* w = GWorldPtr();
+    if (w != noFnWorld) { noFnWorld = w; noFnN = 0; noFnNext = 0; }
+    const void* cls = ObjClass(spawner);
+    for (int i = 0; i < noFnN; ++i) if (noFn[i] == cls) return false;
+    if (!f.Resolve(spawner, "GetSaveGUID")) {
+        if (cls) {
+            noFn[noFnNext] = cls;
+            noFnNext = (noFnNext + 1) & 63;
+            if (noFnN < 64) ++noFnN;
+        }
+        return false;
+    }
     Call c(f);
     if (!c.Run(spawner)) return false;
     uint8_t* p = OutParm(c, 16);
