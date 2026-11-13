@@ -68,7 +68,7 @@
 # NEVER counted as equal.
 [CmdletBinding()]
 param(
-    [ValidateSet('probe', 'rig', 'hardloop', 'loot', 'smoke', 'soak', 'all', 'bosses', 'gaps')]
+    [ValidateSet('probe', 'rig', 'hardloop', 'loot', 'smoke', 'soak', 'all', 'bosses', 'gaps', 'story')]
     [string]$Phase = 'all',
     [int]$BootSeconds = 300,
     [int]$SoakSeconds = 1800,
@@ -2039,12 +2039,12 @@ $script:Bosses = @(
     [pscustomobject]@{ Name = 'GreenDragon';  Area = '780_SZ_Depths';      Start = 'ActivationTrigger9';          Cls = 'Dragon_Green';     Flag = 'DragonLordDead'; Group = 'Dragon_Green|JosamiLord_Green' }
     [pscustomobject]@{ Name = 'ROSDragon';    Area = '760_SZ_AUT';         Start = 'ActivationTrigger11';         Cls = 'Dragon_Ros';       Flag = 'ROSDragonDead' }
     [pscustomobject]@{ Name = 'RedLords';     Area = '740_SZ_Prison';      Start = 'ActivationTrigger4';          Cls = 'JosamiBloodLord';  Flag = 'RedLordsDead' }
-    [pscustomobject]@{ Name = 'DemonBosses';  Area = '450_MAUS_darkmaze';  Start = 'ActivationTrigger4';          Cls = 'DemonSpider';      Flag = 'DemonBossesKilled' }
+    [pscustomobject]@{ Name = 'DemonBosses';  Area = '450_MAUS_darkmaze';  Start = 'ActivationTrigger4';          Cls = 'DemonSpider';      Flag = 'DemonBossesKilled'; Group = 'DemonSpider|Hellbat' }
     [pscustomobject]@{ Name = 'ShrineBoss';   Area = '100_GR';             Start = 'ShrinebossActivationTrigger'; Cls = 'Shrineboss';       Flag = '' }
-    [pscustomobject]@{ Name = 'WhaleKing';    Area = '210_AQ_underground'; Start = 'WhaleKingSpawner';            Cls = 'WhaleKing';        Flag = 'WhaleKingIsDead' }
+    [pscustomobject]@{ Name = 'WhaleKing';    Area = '210_AQ_underground'; Start = 'WhaleKingSpawner';            Cls = 'Whaleking_Boss';   Flag = 'WhaleKingIsDead'; Group = 'Whaleking_Boss' }
     [pscustomobject]@{ Name = 'Necronomicon'; Area = '300_LIB';            Start = 'Necronomicon_Boss_Spawner';   Cls = 'Necronomicon';     Flag = 'NecronimiconDefeated' }
     [pscustomobject]@{ Name = 'BridgeLord';   Area = '500_AUT';            Start = 'JosamiLord_Spawner';          Cls = 'JosamiLord';       Flag = 'BridgeLordDead' }
-    [pscustomobject]@{ Name = 'GiantFish';    Area = '770_SZ_Swamp';       Start = 'GiantFish_Spawner_BP';        Cls = 'GiantFish';        Flag = 'GiantSwampFish_IsDead' }
+    [pscustomobject]@{ Name = 'GiantFish';    Area = '770_SZ_Swamp';       Start = 'GiantFish_Spawner_BP';        Cls = 'GiantFish_Enemy';  Flag = 'GiantSwampFish_IsDead' }
 )
 
 function Find-BossKey([hashtable]$dump, [string]$cls) {
@@ -2140,7 +2140,21 @@ function Invoke-OneBoss([int]$H, [int]$P, $b) {
     # the actor without the spawner's death path, so `DragonLordDead` was never written on
     # either machine.  A real player kills through damage, so the rig does too: one hit
     # larger than any boss' HP, from the HOST (routed to whichever machine owns it).
-    Set-Control $H 'qd.hitguid' ($key + ':1000000#' + (Get-Date -Format 'HHmmssfff'))
+    # A FIGHT, NOT ONE BLOW (Session 28).  A boss's death flag is written at the END of its own
+    # death sequence (a montage callback, a death dialogue), and a phase boss changes form at
+    # HP thresholds; a single 1,000,000 hit skipped every threshold and no flag came.  The rig
+    # stands next to the boss and strikes a quarter of its max HP every 3 s.
+    Invoke-Go $H $b.Cls 500
+    $mxk = if ($bh.Mx) { [double]$bh.Mx } else { [double]$bh.Hp }
+    $chunk = [int][math]::Ceiling([math]::Max(50, $mxk / 4))
+    for ($k = 0; $k -lt 8; $k++) {
+        Set-Control $H 'qd.hitguid' ($key + ':' + $chunk + '#' + (Get-Date -Format 'HHmmssfff'))
+        Start-Sleep -Seconds 3
+        $dk = Invoke-EnemyDump $H ($b.Name + '-k' + $k)
+        $rk = $dk[$bh.Id]
+        if (-not $rk -or $rk.State -ne 'ALIVE') { Note "    the boss fell after strike $($k + 1) of $chunk"; break }
+        Note ("    strike {0}: hp={1}" -f ($k + 1), $rk.Hp)
+    }
     [void](Check $step $H ('rig: hitguid -> key=' + $key) 20 'the HOST struck the killing blow' $mH)
     # A GROUP DIES TOGETHER.  The Red Lords revive each other: one killed alone is stood up
     # again by her sister within seconds (measured, run 13), and RedLordsDead needs both
@@ -2176,7 +2190,7 @@ function Invoke-OneBoss([int]$H, [int]$P, $b) {
     [void](Check $step $H ('boss: (sent bar off|bar lowered|DeactivateBossHPBar called)') 30 'the HOST bar came down' $mH)
     [void](Check $step $P ('boss: (bar lowered|DeactivateBossHPBar called)|ActivateBossHPBar called.*off') 30 'the PEER bar came down' $mP)
     if ($b.Flag) {
-        [void](Check $step $H ('flag (NEW |CHANGE )?' + $b.Flag + '( =| :)') 40 "the HOST's own save holds $($b.Flag)" $mH0)
+        [void](Check $step $H ('flag (NEW |CHANGE )?' + $b.Flag + '( =| :)') 90 "the HOST's own save holds $($b.Flag)" $mH0)
         [void](Check $step $P ('flag (NEW |CHANGE )?' + $b.Flag + '( =| :)|flags applied=.*' ) 40 "the PEER's own save received the flag lane" $mP0)
         foreach ($i in @($H, $P)) {
             $m = Get-Mark $i
@@ -2207,6 +2221,135 @@ function Invoke-BossTour([int]$H, [int]$P) {
         catch { Say ("boss {0}: harness exception {1}" -f $b.Name, $_.Exception.Message) }
     }
     Invoke-EndChecks $H $P 'bosses' $m0
+}
+
+
+# ===========================================================================
+# STORY AND THE BOSSES THAT NEVER SPAWNED (Session 28)
+# ===========================================================================
+# (1) A flag the partner sets reaches this machine's world through the game's own quest
+#     refresh (GI_UpdateQuestState + GI_NotifyWorldStateChanged): the host writes it the way a
+#     quest node does (SaveFunctions.SaveNamedData), the peer's quest manager keyed on it must
+#     change state.
+# (2) For each boss whose start trigger spawned nothing in Session 26, the probe tells which of
+#     the spawner's own verbs starts it, and whether the partner gets the boss.
+$script:ProbeBosses = @(
+    [pscustomobject]@{ Name = 'Necronomicon'; Area = '300_LIB'; Start = 'Necronomicon_Boss_Spawner'; Spawner = 'Necronomicon_Boss_Spawner'; Cls = 'Necronomicon_BP'; Flag = 'NecronimiconDefeated'; Verbs = @('Interact', 'SetUpEncounter', 'CustomEvent') }
+    [pscustomobject]@{ Name = 'BridgeLord';   Area = '500_AUT'; Start = 'JosamiLord_Spawner';        Spawner = 'JosamiLord_Spawner';        Cls = 'JosamiLord_BP';   Flag = 'BridgeLordDead';       Verbs = @('~BndEvt__JosamiLord_Spawner_BridgeCenterTrigger', 'Try+Spawning+Enemy', 'Activate') }
+)
+
+function Test-Presence([int]$i, [string]$cls) {
+    $m = Get-Mark $i
+    Set-Control $i 'qd.gate' ('near:' + $cls + '#' + (Get-Date -Format 'HHmmssfff'))
+    $ln = @(Wait-Since $i ('rig: gate -- (resolved|no live actor matches)') $m 15)
+    if (-not $ln.Count) { return 'no answer' }
+    return ([string]$ln[-1]).Trim()
+}
+
+function Invoke-QuestRefresh([int]$H, [int]$P) {
+    $step = 'quest-refresh'
+    if (-not (Enter-Area $H $P '300_LIB' '' $step)) { return }
+    Start-Sleep -Seconds 6
+    $mH = Get-Mark $H
+    $mP = Get-Mark $P
+    Set-Control $H 'qd.flag' ('set:LibrarianQuestDone=1#' + (Get-Date -Format 'HHmmssfff'))
+    [void](Check $step $H 'rig: flag set -- SaveFunctions.SaveNamedData\(LibrarianQuestDone, 1, RefreshQuestStates=1\) ran' 20 "the HOST wrote the flag through the game's own SaveNamedData" $mH)
+    [void](Check $step $H 'flag (NEW |CHANGE )?LibrarianQuestDone' 20 "the HOST's mirror saw its own game write" $mH)
+    [void](Check $step $P 'quest refresh: GI_UpdateQuestState ran for [1-9]\d* of .*LibrarianQuestDone.* GI_NotifyWorldStateChanged ran' 30 "the PEER ran the game's quest refresh for the partner's flag" $mP)
+    [void](Check $step $P 'quest state: LibrarianQuestStateManager \(LibrarianQuestDone\) InternalState .* -- the quest followed' 30 "the PEER's Librarian quest manager changed state" $mP)
+    Show-Since $P 'quest refresh|quest state|flag refresh' $mP 8
+    Save-Shots 'quest'
+    Leave-Area $H $P $step | Out-Null
+    Start-Sleep -Seconds 4
+}
+
+function Invoke-BossProbe([int]$H, [int]$P, $b) {
+    $step = 'probe-' + $b.Name
+    Step "$step -- what starts $($b.Name) in $($b.Area)" "The trigger first (as Session 26), then each of the spawner's own verbs on the HOST; after each, both machines are asked whether the boss exists."
+    $hubPos = Get-LastPos $H 0
+    if (-not (Enter-Area $H $P $b.Area '' $step)) { return }
+    $mH = Get-Mark $H
+    $mP0 = Get-Mark $P
+    Set-Control $H 'qd.gate' ('near:' + $b.Spawner + '#' + (Get-Date -Format 'HHmmssfff'))
+    Start-Sleep -Seconds 3
+    Show-Since $H 'rig: gate|state' $mH 30
+    $mH = Get-Mark $H; $mP = Get-Mark $P
+    Set-Control $H 'qd.trigger' ($b.Start + '@' + $b.Area + '#' + (Get-Date -Format 'HHmmssfff'))
+    Start-Sleep -Seconds 12
+    Show-Since $H 'rig: trigger|trigger:|gate' $mH 10
+    Show-Since $P 'trigger:' $mP 6
+    $ph = Test-Presence $H $b.Cls; $pp = Test-Presence $P $b.Cls
+    Note "    after the trigger: HOST $ph"
+    Note "    after the trigger: PEER $pp"
+    $got = $ph -match 'resolved'
+    foreach ($v in $b.Verbs) {
+        if ($got) { break }
+        $mH = Get-Mark $H; $mP = Get-Mark $P
+        Invoke-Go $H $b.Spawner 300
+        Start-Sleep -Seconds 2
+        Set-Control $H 'qd.act' ('near:' + $b.Spawner + '!' + $v + '#' + (Get-Date -Format 'HHmmssfff'))
+        $ran = @(Wait-Since $H ('dev interact: forced verb ' + [regex]::Escape($v)) $mH 15)
+        Note ("    verb {0}: {1}" -f $v, $(if ($ran.Count) { ([string]$ran[-1]).Trim() } else { 'no answer' }))
+        Start-Sleep -Seconds 10
+        $ph = Test-Presence $H $b.Cls; $pp = Test-Presence $P $b.Cls
+        Note "      HOST $ph"
+        Note "      PEER $pp"
+        Show-Since $H 'boss:|spawn|enemykey' $mH 6
+        Show-Since $P 'boss:|spawn|trigger:' $mP 6
+        $got = $ph -match 'resolved'
+        if ($got) { Note "    ==> $($b.Name) started on the HOST by $v" }
+    }
+    if ($got -and $pp -notmatch 'resolved') {
+        Start-Sleep -Seconds 15
+        $pp = Test-Presence $P $b.Cls
+        Note "      PEER after the partner-boss start: $pp"
+    }
+    Show-Since $P 'boss start:' $mP0 8
+    Verdict $step $H ([bool]$got) "the HOST has a $($b.Cls)" $ph
+    Verdict $step $P ([bool]($pp -match 'resolved')) "the PEER has a $($b.Cls)" $pp
+    $dh = Invoke-EnemyDump $H ($b.Name + '-ph')
+    $dp = Invoke-EnemyDump $P ($b.Name + '-pp')
+    $bh = Find-BossKey $dh $b.Cls; $bp = Find-BossKey $dp $b.Cls
+    Note ("    enemy rows: HOST {0}; PEER {1}" -f $(if ($bh) { $bh.Line } else { '-' }), $(if ($bp) { $bp.Line } else { '-' }))
+    Save-Shots ('probe-' + $b.Name)
+    if ($bh) {
+        Verdict $step $P ([bool]($bp -and $bp.Key -eq $bh.Key)) 'the PEER holds the SAME boss key' $(if ($bp) { $bp.Line } else { '' })
+        $mK = Get-Mark $H
+        Set-Control $H 'qd.hitguid' ($bh.Key + ':1000000#' + (Get-Date -Format 'HHmmssfff'))
+        [void](Check $step $H ('rig: hitguid -> key=' + $bh.Key) 20 'the HOST struck the killing blow' $mK)
+        Start-Sleep -Seconds 15
+        foreach ($i in @($H, $P)) {
+            $m = Get-Mark $i
+            Set-Control $i 'qd.flag' ($b.Flag + '#' + (Get-Date -Format 'HHmmssfff'))
+            $ln = @(Wait-Since $i ('rig: flag dump -- ' + $b.Flag + ' = ') $m 15)
+            $ok = $ln.Count -gt 0 -and ([string]$ln[-1]) -match (' = ([1-9]\d*)( \(game bank.*\))?$')
+            Verdict $step $i $ok ("$($b.Flag) >= 1 in this machine's bank") $(if ($ln.Count) { ([string]$ln[-1]).Trim() } else { 'no answer' })
+        }
+    }
+    if ($hubPos) {
+        Set-Control $H 'qd.tp' (("{0:F0},{1:F0},{2:F0},0#" -f $hubPos[0], $hubPos[1], ($hubPos[2] + 50)) + (Get-Date -Format 'HHmmssfff'))
+        Start-Sleep -Seconds 4
+    }
+    Leave-Area $H $P $step | Out-Null
+    Start-Sleep -Seconds 5
+}
+
+function Invoke-StoryPhase([int]$H, [int]$P) {
+    $m0 = Get-Mark $H
+    if (-not $Only -or ($Only -split ',' -contains 'Quest')) { Invoke-QuestRefresh $H $P }
+    $want = @($script:ProbeBosses)
+    if ($Only) { $want = @($want | Where-Object { $Only -split ',' -contains $_.Name }) }
+    foreach ($b in $want) {
+        if (-not (Test-Alive $H) -or -not (Test-Alive $P)) { Say 'an instance died; the probe stops'; break }
+        try { Invoke-BossProbe $H $P $b } catch { Say ("probe {0}: harness exception {1}" -f $b.Name, $_.Exception.Message) }
+    }
+    $tour = @($script:Bosses | Where-Object { $_.Name -in @('ROSDragon', 'GiantFish', 'WhaleKing') })
+    if ($Only) { $tour = @($tour | Where-Object { $Only -split ',' -contains $_.Name }) }
+    foreach ($b in $tour) {
+        if (-not (Test-Alive $H) -or -not (Test-Alive $P)) { break }
+        try { Invoke-OneBoss $H $P $b } catch { Say ("boss {0}: harness exception {1}" -f $b.Name, $_.Exception.Message) }
+    }
+    Invoke-EndChecks $H $P 'story' $m0
 }
 
 # ===========================================================================
@@ -2251,6 +2394,10 @@ if ($Phase -eq 'bosses') {
 
 if ($Phase -eq 'gaps') {
     Invoke-GapsPhase $H $P
+}
+
+if ($Phase -eq 'story') {
+    Invoke-StoryPhase $H $P
 }
 
 Step 'SESSION SURVIVAL'

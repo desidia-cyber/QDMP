@@ -861,9 +861,15 @@ static bool ComponentYaw(void* actor, const char* comp, float* yaw)
     __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 
+void QuestRefreshQueue(const char* name);
+
 void FlagRefreshWorld(const char* name, int32_t value)
 {
-    if (!name || value <= 0) return;
+    if (!name) return;
+    // EVERY applied flag reaches the game's own quest-state broadcast (QuestRefreshPump);
+    // the per-class table below is only for actors that read their flag on load alone.
+    QuestRefreshQueue(name);
+    if (value <= 0) return;
     for (unsigned t = 0; t < sizeof(kFlagRefresh) / sizeof(kFlagRefresh[0]); ++t) {
         const FlagRefresh& f = kFlagRefresh[t];
         if (strcmp(f.flag, name) != 0) continue;
@@ -908,6 +914,141 @@ void FlagRefreshWorld(const char* name, int32_t value)
         }
         if (!found) QDLOG(LOG_INFO, "flag refresh: ", name, " has no live ", f.cls, " in this world (it loads with the flag)");
     }
+}
+
+// THE GAME'S OWN WORLD REFRESH (Session 28).  The game never writes a story flag bare: its
+// writer is `SaveFunctions.SaveNamedData(Name, Data, RefreshQuestStates)`, and with the bool set
+// it calls `GameInstance.GI_UpdateQuestState(NSD)` and `GI_NotifyWorldStateChanged()` (read from
+// the cooked function's references).  Those two broadcast `QuestStateRefresh(NSD)` and
+// `OnWorldRefresh` to every `WorldEventReceiver` -- the component every
+// `ActorQuestStateManager_C` (14 placed, one per quest), `Teleporter`, `Checkpoint`, the shop
+// and the lab decorations listen with.  The flag lane writes the bank directly (`NsdWrite`), so
+// the receiving machine's world never heard the change: an NPC stayed alive, a quest state did
+// not advance, until the next load.  Each applied flag is queued here and, once per 250 ms,
+// the same two calls are made on the live GameInstance -- the game's refresh, not a new one.
+// The proof is the quest managers keyed on that flag: their `InternalState` is read before and
+// for 4 s after, and the change (or its absence) is logged.
+bool IntPropC(void* obj, const char* name, int32_t* out);
+void* GameInstanceObj();
+static char     g_qrNames[128][96];
+static int      g_qrN = 0;
+static bool     g_qrOverflow = false;
+static uint32_t g_qrLastRun = 0;
+struct QuestWatch { void* mgr; char flag[96]; char nm[64]; int32_t before; uint32_t until; };
+static QuestWatch g_qWatch[16];
+static int g_qWatchN = 0;
+
+void QuestRefreshQueue(const char* name)
+{
+    if (!name || !name[0]) return;
+    for (int i = 0; i < g_qrN; ++i) if (!strcmp(g_qrNames[i], name)) return;
+    if (g_qrN >= 128) { g_qrOverflow = true; return; }
+    lstrcpynA(g_qrNames[g_qrN++], name, sizeof(g_qrNames[0]));
+}
+
+static bool QuestMgrFlag(void* mgr, char* out, int cap)
+{
+    int sz = 0;
+    int off = FindPropertyOffsetIn(ObjClass(mgr), "StateSaveDataname", &sz);
+    if (off < 0 || sz != 8) return false;
+    QdName n = {};
+    __try { n = *(const QdName*)((const uint8_t*)mgr + off); }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    return FNameToString(n, out, cap) > 0;
+}
+
+// Every live quest manager in this world whose key is one of the queued names gets a watch.
+static void QuestWatchArm(uint32_t now)
+{
+    void* world = GWorldPtr();
+    if (!world) return;
+    int total = ObjectCount();
+    for (int i = 0; i < total && g_qWatchN < 16; ++i) {
+        void* o = ObjectAtSafe(i);
+        if (!o || !LooksLikeUObject(o)) continue;
+        void* c = ObjClass(o);
+        char cn[64];
+        if (!c || FNameToString(ObjNameRaw(c), cn, sizeof(cn)) <= 0 || strcmp(cn, "ActorQuestStateManager_C") != 0) continue;
+        bool inWorld = false;
+        __try { inWorld = ActorInThisWorld(o, world); } __except (EXCEPTION_EXECUTE_HANDLER) { inWorld = false; }
+        if (!inWorld || !ObjectIsLive(o)) continue;
+        char key[96];
+        if (!QuestMgrFlag(o, key, sizeof(key))) continue;
+        bool wanted = false;
+        for (int k = 0; k < g_qrN && !wanted; ++k) wanted = !strcmp(g_qrNames[k], key);
+        if (!wanted) continue;
+        QuestWatch& w = g_qWatch[g_qWatchN++];
+        w.mgr = o;
+        lstrcpynA(w.flag, key, sizeof(w.flag));
+        FNameToString(ObjNameRaw(o), w.nm, sizeof(w.nm));
+        w.before = -1;
+        IntPropC(o, "InternalState", &w.before);
+        w.until = now + 4000;
+    }
+}
+
+static void QuestWatchPump(uint32_t now)
+{
+    for (int i = 0; i < g_qWatchN;) {
+        QuestWatch& w = g_qWatch[i];
+        int32_t s = -1;
+        bool live = ObjectIsLive(w.mgr) && IntPropC(w.mgr, "InternalState", &s);
+        bool changed = live && s != w.before;
+        if (changed || !live || (int32_t)(now - w.until) >= 0) {
+            QDLOG(LOG_INFO, "quest state: ", w.nm, " (", w.flag, ") InternalState ", dec(w.before), " -> ",
+                  (live ? dec(s) : dec(-1)), changed ? " -- the quest followed the partner's flag"
+                                                    : (live ? " (unchanged after 4 s)" : " (the manager went away)"));
+            g_qWatch[i] = g_qWatch[--g_qWatchN];
+            continue;
+        }
+        ++i;
+    }
+}
+
+void QuestRefreshPump(uint32_t now)
+{
+    QuestWatchPump(now);
+    if (!g_qrN && !g_qrOverflow) return;
+    if (now - g_qrLastRun < 250) return;
+    g_qrLastRun = now;
+    void* gi = GameInstanceObj();
+    if (!gi || !LooksLikeUObject(gi)) return;              // keep the queue; the next frame tries
+    static Fn fUpd = {}, fWorld = {};
+    static void* giCls = nullptr;
+    if (ObjClass(gi) != giCls) { fUpd = Fn{}; fWorld = Fn{}; giCls = ObjClass(gi); }
+    bool hasUpd = fUpd.Resolve(gi, "GI_UpdateQuestState");
+    bool hasWorld = fWorld.Resolve(gi, "GI_NotifyWorldStateChanged");
+    if (!hasUpd && !hasWorld) {
+        static int said = 0;
+        if (said++ < 3) QDLOG(LOG_WARN, "quest refresh: the GameInstance has neither GI_UpdateQuestState nor "
+                                        "GI_NotifyWorldStateChanged; ", dec(g_qrN), " flag(s) not broadcast");
+        g_qrN = 0; g_qrOverflow = false;
+        return;
+    }
+    QuestWatchArm(now);
+    int sent = 0;
+    char first[200] = "";
+    for (int i = 0; i < g_qrN && hasUpd; ++i) {
+        QdName n = {};
+        if (!FNameFromAnsi(g_qrNames[i], &n)) continue;
+        Call c(fUpd);
+        c.Name("NSD", n);
+        if (c.Run(gi)) {
+            ++sent;
+            if (sent <= 4 && strlen(first) + strlen(g_qrNames[i]) + 2 < sizeof(first)) {
+                if (first[0]) lstrcatA(first, ",");
+                lstrcatA(first, g_qrNames[i]);
+            }
+        }
+    }
+    bool worldRan = false;
+    if (hasWorld) { Call cw(fWorld); worldRan = cw.Run(gi); }
+    QDLOG(LOG_INFO, "quest refresh: GI_UpdateQuestState ran for ", dec(sent), " of ", dec(g_qrN), " flag(s) [",
+          first, (sent > 4 ? ",..." : ""), "]", (g_qrOverflow ? " (queue overflowed; the world refresh covers the rest)" : ""),
+          " + GI_NotifyWorldStateChanged ", (worldRan ? "ran" : "DID NOT RUN"), "; watching ", dec(g_qWatchN),
+          " quest manager(s)");
+    g_qrN = 0;
+    g_qrOverflow = false;
 }
 
 // Peer side: apply what the host sent.  Never lower, never invent.
@@ -8800,6 +8941,22 @@ void BossPump(uint32_t now)
             if (!boss) { r.bossPhase = 0; BossBarSet(r, false, now); }
             QDLOG(LOG_INFO, "boss: guid=", hex32(r.guid[0]),
                   (boss ? " is a boss" : " is not a boss"));
+            // A BOSS'S DEATH IS A MONTAGE (Session 28).  The death flags of the ROS dragon
+            // (`Dragon_ROS_FinalDie`), the Whale King (`KilledMontage` -> `MyNSD`) and the
+            // Bridge Lord are written when the death montage completes.  The engine ticks a
+            // skeletal mesh's pose only while it is rendered (`VisibilityBasedAnimTickOption`),
+            // so a boss that dies out of THIS player's view -- the partner landed the blow, or
+            // this player looks elsewhere -- never finishes dying and its flag is never written
+            // (measured: ROS dragon and Bridge Lord dead on both machines, flag in neither).
+            // A boss's mesh therefore always ticks: 0 = AlwaysTickPoseAndRefreshBones.
+            if (boss) {
+                void* mesh = ObjPropC(r.actor, "Mesh");
+                uint8_t was = 0xFF;
+                bool rd = mesh && BytePropC(mesh, "VisibilityBasedAnimTickOption", &was);
+                bool wr = rd && WriteBytePropC(mesh, "VisibilityBasedAnimTickOption", 0);
+                QDLOG(LOG_INFO, "boss: guid=", hex32(r.guid[0]), " mesh anim tick option ",
+                      (rd ? dec((int)was) : dec(-1)), " -> ", (wr ? "0 (always tick: its death montage completes off-screen)" : "UNCHANGED"));
+            }
         }
         if (!boss) continue;
         float hp = 0, mx = 0;
@@ -9033,6 +9190,10 @@ void BossPump(uint32_t now)
 
 // The follower's half: answer the host's question, then DROP every other bar and raise
 // ITS OWN bar for the key the host announced.
+void BossStartNote(const uint32_t key[4], uint32_t now);
+void BossStartPump(uint32_t now);
+void BossFollowThroughPumpAll(uint32_t now);
+
 void OnBoss(wire::Reader& r, uint32_t now)
 {
     if (!Cfg().enemy_sync) return;
@@ -9054,7 +9215,15 @@ void OnBoss(wire::Reader& r, uint32_t now)
 
     // ---- the selection question (R143) -------------------------------------
     if (b.flags & wire::kBossAsk) {
-        if (g_net.IsHost()) return;            // only the host asks
+        if (g_net.IsHost()) {
+            // THE PEER ASKS TOO (Session 28): it holds a boss this host sent no row for -- the
+            // peer's own spawner made it (the Whale King, run 2) and the host's did not.  A
+            // follower never publishes rows for an enemy the host does not run, so this ask is
+            // the only word the host gets; it starts its own spawner (BossStartPump).
+            EnemyRec* hr = EnemyByGuid(b.guid);
+            if (!hr || !ObjectIsLive(hr->actor)) BossStartNote(b.guid, now);
+            return;
+        }
         EnemyRec* er = EnemyByGuid(b.guid);
         float hp = 0, mx = 0;
         bool have = er && er->haveGuid && ObjectIsLive(er->actor) &&
@@ -9589,6 +9758,13 @@ void OnEnemyRows(wire::Reader& r, uint32_t now)
         // The claim bit is the sender's own statement of who runs it.  Feed it even for
         // a dead row: a frozen copy must not sit waiting on a stale claim.
         g_own.OnRemoteRow(e.guid, (e.flags & wire::kEnemyPeerOwns) != 0, now);
+        // A partner's boss this machine has no copy of (BossStartPump decides; ordinary
+        // enemies are filtered there by their spawner's Boss flag).
+        if ((e.flags & enemy::kAlive) &&
+            ((e.flags & wire::kEnemySrcMask) >> wire::kEnemySrcShift) == wire::kEnemySrcSpawner) {
+            EnemyRec* lr = EnemyByGuid(e.guid);
+            if (!lr || !ObjectIsLive(lr->actor)) BossStartNote(e.guid, now);
+        }
     }
     if (g_hostView.Overflowed()) {
         static bool said = false;
@@ -15088,8 +15264,7 @@ bool RigCallVerb(void* obj, const char* name, void* arg, const char** ranName)
         for (int i = 0; i < slot->f.sig.props; ++i) {
             const PropDesc& d = slot->f.sig.p[i];
             if (!NameEquals(d.type, "ObjectProperty") || (d.flags & CPF_OutParm) || d.size < 8) continue;
-            c.Obj(d.name, arg);
-            break;
+            c.Obj(d.name, arg);     // every object parameter (an overlap names two actors)
         }
     }
     bool ok = c.Run(obj);
@@ -15143,8 +15318,7 @@ bool RigCallVerbPrefix(void* obj, const char* prefix, void* arg, const char** ra
             const PropDesc& d = slot->f.sig.p[i];
             if (!NameEquals(d.type, "ObjectProperty") || (d.flags & CPF_OutParm) || d.size < 8)
                 continue;
-            c.Obj(d.name, arg);
-            break;
+            c.Obj(d.name, arg);     // every object parameter: an overlap names OverlappedActor AND OtherActor
         }
     }
     if (!c.Run(obj)) return false;
@@ -15441,7 +15615,7 @@ static const char* const onDrop[] = {"ReceiveActorBeginOverlap", "Pickup", "TryP
 char     g_devActPath[MAX_PATH];
 int      g_devActOn = -1;
 uint32_t g_devActPoll = 0;
-char     g_devActApplied[64] = "";
+char     g_devActApplied[160] = "";
 
 void DevInteract(uint32_t now)
 {
@@ -15465,7 +15639,7 @@ void DevInteract(uint32_t now)
     HANDLE h = CreateFileA(g_devActPath, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
                            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h == INVALID_HANDLE_VALUE) return;
-    char buf[64];
+    char buf[160];
     DWORD got = 0;
     (void)ReadFile(h, buf, sizeof(buf) - 1, &got, nullptr);
     CloseHandle(h);
@@ -15489,13 +15663,15 @@ void DevInteract(uint32_t now)
     // ONE-SIDED door (`OneSided`, `FrontSideInteract`, `FlipOpenableSide` in its class): a
     // press from the outside is refused by the content, by design, and it opens through its
     // own `Activate(ActorThatTriggered)` -- which is what R86/R105 never drove.
-    static char forcedVerb[40];
+    static char forcedVerb[96];
     int forcedSide = -1;
     forcedVerb[0] = 0;
     for (int i = 0; buf[i]; ++i)
         if (buf[i] == '!') { lstrcpynA(forcedVerb, buf + i + 1, sizeof(forcedVerb)); buf[i] = 0; break; }
     for (int i = 0; forcedVerb[i]; ++i)
         if (forcedVerb[i] == '@') { forcedSide = atoi(forcedVerb + i + 1); forcedVerb[i] = 0; break; }
+    // `+` stands for a space (the control line ends at the first space): `Try+Spawning+Enemy`.
+    for (int i = 0; forcedVerb[i]; ++i) if (forcedVerb[i] == '+') forcedVerb[i] = ' ';
 
     // `near:<name>`: interact with THAT actor.  The name is the instruction, so a
     // scenario can say which door, chest or NPC it means instead of hoping the engine's
@@ -15521,11 +15697,11 @@ void DevInteract(uint32_t now)
         int before = RigObjectStateCode(explicitTarget);
         // RigCallVerb caches by (object, name POINTER's text) and keeps the pointer, so each
         // distinct verb gets its own stable string.
-        static char pool[8][40];
+        static char pool[24][96];
         static int poolN = 0;
         const char* verb = nullptr;
         for (int k = 0; k < poolN && !verb; ++k) if (!strcmp(pool[k], forcedVerb)) verb = pool[k];
-        if (!verb && poolN < 8) { lstrcpynA(pool[poolN], forcedVerb, 40); verb = pool[poolN++]; }
+        if (!verb && poolN < 24) { lstrcpynA(pool[poolN], forcedVerb, 96); verb = pool[poolN++]; }
         // A ONE-SIDED DOOR READS WHICH SIDE ITS TRIGGERING ACTOR STANDS ON (`OneSided`,
         // `FlipOpenableSide`, `Door Forward Is Y`, `TransformDirection` in the shop door's
         // class).  `!Verb@k` (k = 0..3) first stands the player 150 cm out along +X, -X, +Y or
@@ -15545,7 +15721,9 @@ void DevInteract(uint32_t now)
             QDLOG(LOG_INFO, "dev interact: standing on side ", dec(k), " of ", d, " at ", flt(px, 0), ",",
                   flt(py, 0), " (door yaw ", flt(dx.yaw, 0), ")");
         }
-        if (verb) RigCallVerb(explicitTarget, verb, g_localPawn, &ran);
+        // `~Prefix`: a compiler-named event (`BndEvt__...`) resolved by its prefix.
+        if (verb && verb[0] == '~') RigCallVerbPrefix(explicitTarget, verb + 1, g_localPawn, &ran);
+        else if (verb) RigCallVerb(explicitTarget, verb, g_localPawn, &ran);
         after = RigObjectStateCode(explicitTarget);
         QDLOG(LOG_INFO, "dev interact: forced verb ", forcedVerb, " on ", d, " ran=", (ran ? "yes" : "no"),
               " state ", dec(before), " -> ", dec(after));
@@ -16210,12 +16388,14 @@ void DevHardLever(uint32_t now)
     // the map name -- `qd.tp` already uses this convention.
     char map[64];
     if (!DevRigText("QDCOOP_TEST_HARD", "qd.hard", map, sizeof(map))) return;
+    // The "already applied" rule is on the WHOLE line, nonce included (Session 28: stripping
+    // the nonce first made a second entry into the same area a silent no-op).
+    if (!map[0] || strcmp(map, g_devHardApplied) == 0) return;
+    lstrcpynA(g_devHardApplied, map, sizeof(g_devHardApplied));
     for (int i = 0; map[i] && i < (int)sizeof(map); ++i) {
         if (map[i] == '#') { map[i] = 0; break; }
     }
     if (!map[0]) return;
-    if (strcmp(map, g_devHardApplied) == 0) return;
-    lstrcpynA(g_devHardApplied, map, sizeof(g_devHardApplied));
 
     char err[160];
     bool streamed = false;
@@ -16694,6 +16874,39 @@ void DevFlagDump(uint32_t now)
     if (!want[0] || strcmp(raw, g_devFlagApplied) == 0) return;
     lstrcpynA(g_devFlagApplied, raw, sizeof(g_devFlagApplied));
 
+    // `set:<Name>=<value>`: write the flag the way a quest node does -- the game's own
+    // `SaveFunctions.SaveNamedData(Name, Data, RefreshQuestStates=true)` on its CDO, so this
+    // machine's world refreshes natively and the flag lane carries a genuine game write.
+    if (!strncmp(want, "set:", 4)) {
+        char nm[96];
+        lstrcpynA(nm, want + 4, sizeof(nm));
+        char* eq = strchr(nm, '=');
+        int32_t val = 1;
+        if (eq) { *eq = 0; val = atoi(eq + 1); }
+        void* cls = FindClassByName("SaveFunctions_C");
+        void* cdo = nullptr;
+        int total = ObjectCount();
+        for (int i = 0; cls && i < total && !cdo; ++i) {
+            void* o = ObjectAtSafe(i);
+            if (!o || !LooksLikeUObject(o) || ObjClass(o) != cls) continue;
+            char on[64];
+            if (FNameToString(ObjNameRaw(o), on, sizeof(on)) > 0 && !strncmp(on, "Default__", 9)) cdo = o;
+        }
+        Fn f = {};
+        QdName n = {};
+        bool ok = false;
+        if (cdo && f.Resolve(cdo, "SaveNamedData") && FNameFromAnsi(nm, &n)) {
+            Call c(f);
+            c.Name("Name", n);
+            c.I32("Data", val);
+            c.U8("RefreshQuestStates", 1);
+            c.Obj("__WorldContext", g_localPawn);
+            ok = c.Run(cdo);
+        }
+        QDLOG(ok ? LOG_INFO : LOG_WARN, "rig: flag set -- SaveFunctions.SaveNamedData(", nm, ", ", dec(val),
+              ", RefreshQuestStates=1) ", (ok ? "ran" : (cdo ? "DID NOT RUN" : "no SaveFunctions CDO")));
+        return;
+    }
     if (!strcmp(want, "all")) {
         QDLOG(LOG_INFO, "rig: flag dump -- all (", dec(g_flags.Size()), " flag(s), rev ",
               dec((int)g_flags.Revision()), ")");
@@ -18714,6 +18927,9 @@ bool HK_Tick(void* engineLoop)
         // already raised their host-derived share, so they cannot be read as pickups.
         PeerInventoryIntentPump(now);
     }
+    QuestRefreshPump(now);
+    BossStartPump(now);
+    BossFollowThroughPumpAll(now);
     DevAutoLoad(now);
     LocalEquipPump(now);
     DevAvatarTest(now);
@@ -19065,6 +19281,14 @@ static bool KeyOf(void* actor, uint32_t key[4], char* pathOut, int pathCap)
 
 static bool SpawnerIsBoss(void* sp)
 {
+    // THE CHALLENGE BOSSES WHOSE DATA DOES NOT SAY BOSS (Session 28).  `GiantFish_Data` has
+    // `Boss = 0`, yet the fish is one of the eight `cha_Bosses_*` and its spawner's trap starts
+    // a fight with a death flag (`GiantSwampFish_IsDead`).  Measured: the trap spawned it on the
+    // host and the partner, never pulled in, stayed 400 m away -- past the spawner's own
+    // MaxSpawnDistance (40000), so its copy never existed.
+    char cn[64];
+    if (FNameToString(ObjNameRaw(ObjClass(sp)), cn, sizeof(cn)) > 0 && !strcmp(cn, "GiantFish_Spawner_BP_C"))
+        return true;
     void* ed = ObjPropC(sp, "EnemyData");
     if (!ed || !ObjectIsLive(ed)) return false;
     uint8_t boss = 0;
@@ -19116,6 +19340,111 @@ static bool TargetsABoss(void* trig, char* bossOut, int bossCap)
 // value.  Session 26: the 760 dragon, the Demon Bosses, the Bridge Lord and the Giant Fish all
 // "did not spawn" with requireNSD=1 -- whether that is content (the save has not reached the
 // boss yet) or sync is exactly this line.
+// THE TRIGGER'S OWN ACTION, AFTER A DISPATCHED BOSS ENTRY (Session 28).  Dispatching the
+// overlap event is not enough to start a boss: the Blueprint behind it re-checks the player
+// (grounded, still overlapping -- `WaitForPlayerGroundedBeforeTrigger`, `Player Is Present`),
+// and a player placed by the pull-in or the rig is falling through the volume.  Measured, run 1:
+// the 760 trigger dispatched on both machines and no ROS dragon existed anywhere; the spawner's
+// own `Activate` spawned it at once.  The Whale King's trap dispatched, the fight never started
+// (no bar) and the kill wrote no flag.  So after a boss entry the trigger's ACTION runs:
+// `ActivationTrigger.DoTrigger()` (its own fire, no parameters), then `Activate(false, player)`
+// on any boss spawner target that still has no managed enemy; for a spawner's own trap,
+// `EnemySpawner.ActivateEnemy()`.  Double activation is the spawner's to absorb -- its spawn
+// path tests `CurrentManagedEnemy` first.
+// A trap spawner whose boss appears only AFTER the trap (the Whale King spawns by proximity a
+// few seconds later; run 3: `ActivateEnemy ran -- managed enemy none`, then the whale existed on
+// both machines and its fight never started: no bar, damage refused, no death montage, no flag).
+// The follow-through waits for the managed enemy and runs `ActivateEnemy` once it is there.
+struct PendingTrap { void* sp; uint32_t until; char label[64]; bool replay; };
+static PendingTrap g_pendTrap[4];
+static int g_pendTrapN = 0;
+
+void BossFollowThroughPump(uint32_t now)
+{
+    for (int i = 0; i < g_pendTrapN;) {
+        PendingTrap& p = g_pendTrap[i];
+        bool drop = !ObjectIsLive(p.sp) || (int32_t)(now - p.until) >= 0;
+        void* me = drop ? nullptr : ObjPropC(p.sp, "CurrentManagedEnemy");
+        if (!drop && me && LooksLikeUObject(me) && ObjectIsLive(me)) {
+            Fn f = {};
+            bool ran = false;
+            if (f.Resolve(p.sp, "ActivateEnemy")) { Call c(f); ran = c.Run(p.sp); }
+            QDLOG(ran ? LOG_INFO : LOG_WARN, "trigger: boss follow-through (", (p.replay ? "replay" : "local"),
+                  ", deferred) ", p.label, ".ActivateEnemy ", (ran ? "ran" : "DID NOT RUN"),
+                  " -- its boss appeared after the trap");
+            drop = true;
+        } else if (drop) {
+            QDLOG(LOG_WARN, "trigger: boss follow-through ", p.label, " -- no managed enemy appeared within 30 s");
+        }
+        if (drop) { g_pendTrap[i] = g_pendTrap[--g_pendTrapN]; continue; }
+        ++i;
+    }
+}
+
+static void BossFollowThrough(void* t, const char* label, bool replay)
+{
+    void* pawn = g_localPawn;
+    if (!t || !pawn) return;
+    if (IsSpawner(t)) {
+        if (!SpawnerIsBoss(t)) return;
+        Fn f = {};
+        bool ran = false;
+        if (f.Resolve(t, "ActivateEnemy")) { Call c(f); ran = c.Run(t); }
+        void* me = ObjPropC(t, "CurrentManagedEnemy");
+        bool present = me && ObjectIsLive(me);
+        QDLOG(ran ? LOG_INFO : LOG_WARN, "trigger: boss follow-through (", (replay ? "replay" : "local"), ") ",
+              label, ".ActivateEnemy ", (ran ? "ran" : "DID NOT RUN"), " -- managed enemy ",
+              (present ? "present" : "none yet (the activation is repeated when it appears)"));
+        if (!present && g_pendTrapN < 4) {
+            PendingTrap& p = g_pendTrap[g_pendTrapN++];
+            p.sp = t;
+            p.until = Net::Now() + 30000;
+            lstrcpynA(p.label, label ? label : "?", sizeof(p.label));
+            p.replay = replay;
+        }
+        return;
+    }
+    int off = PropOff(ObjClass(t), "ActivationTargets");
+    if (off < 0) return;
+    void* spawners[8];
+    int n = 0;
+    __try {
+        uint8_t* arr = (uint8_t*)t + off;
+        uint8_t* data = *(uint8_t**)arr;
+        int32_t cnt = *(int32_t*)(arr + 8);
+        for (int i = 0; data && i < cnt && i < 64 && n < 8; ++i) {
+            void* x = *(void**)(data + (size_t)i * 16);
+            if (x && LooksLikeUObject(x) && ObjectIsLive(x) && IsSpawner(x) && SpawnerIsBoss(x)) spawners[n++] = x;
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return; }
+    if (!n) return;
+    Fn fd = {};
+    bool ranDo = false;
+    if (fd.Resolve(t, "DoTrigger")) { Call c(fd); ranDo = c.Run(t); }
+    for (int i = 0; i < n; ++i) {
+        void* sp = spawners[i];
+        void* me = ObjPropC(sp, "CurrentManagedEnemy");
+        bool had = me && ObjectIsLive(me);
+        bool ranAct = false;
+        if (!had) {
+            Fn fa = {};
+            if (fa.Resolve(sp, "Activate")) {
+                Call c(fa);
+                if (fa.Off("ActivateByLoad") >= 0) c.U8("ActivateByLoad", 0);
+                if (fa.Off("ActorThatTriggered") >= 0) c.Obj("ActorThatTriggered", pawn);
+                ranAct = c.Run(sp);
+            }
+            me = ObjPropC(sp, "CurrentManagedEnemy");
+        }
+        char sn[64] = "?";
+        FNameToString(ObjNameRaw(sp), sn, sizeof(sn));
+        QDLOG(LOG_INFO, "trigger: boss follow-through (", (replay ? "replay" : "local"), ") ", label,
+              ".DoTrigger ", (ranDo ? "ran" : "DID NOT RUN"), "; ", sn, (had ? " already had its boss" :
+              (ranAct ? " Activate ran" : " Activate DID NOT RUN")), " -- managed enemy ",
+              ((me && ObjectIsLive(me)) ? "present" : "none"));
+    }
+}
+
 static void LogSpawnGate(void* sp, const char* label)
 {
     uint8_t req = 0;
@@ -19289,6 +19618,181 @@ static void Send(void* trig, int slot, uint32_t now)
 
 } // namespace trig
 
+// ---------------------------------------------------------------------------
+// The partner's boss is alive and this machine has no copy (Session 28)
+// ---------------------------------------------------------------------------
+// Not every boss starts from a volume the trigger lane carries.  The Necronomicon starts at its
+// lectern (`Necronomicon_Boss_Spawner.Interact` -> `SetUpEncounter`), the Bridge Lord from a
+// placed `TriggerVolume` the spawner binds (`BridgeCenterTrigger` ActorBeginOverlap), and a
+// trigger the partner walked through while this machine was elsewhere is gone for good.  The
+// partner's enemy rows are the fact that survives all of these: a row for a SPAWNER key that is
+// ALIVE while this machine holds no live copy, whose spawner here is a boss spawner in a shown
+// level, means "the partner is fighting a boss that does not exist here".  The spawner is then
+// asked to start, through its own entry points in the order of the recipe for its class, until
+// its `CurrentManagedEnemy` is live (checked 3 s after each step).  The spawner's own gates (the
+// death flag `RequireNamedSaveDataToSpawn`, its quest state) still decide; nothing is spawned
+// by the mod itself.
+namespace bstart {
+struct Try { uint32_t key[4]; uint32_t nextAt; int step; void* sp; uint32_t giveUpUntil; bool live; };
+static Try g_t[16];
+static int g_n = 0;
+static void* g_world = nullptr;
+struct Recipe { const char* cls; const char* steps[4]; };
+static const Recipe kRecipes[] = {
+    {"Necronomicon_Boss_Spawner_C", {"SetUpEncounter", "CustomEvent", nullptr, nullptr}},
+    {"JosamiLord_Spawner_C", {"~BndEvt__JosamiLord_Spawner_BridgeCenterTrigger", "Try Spawning Enemy", "Activate", nullptr}},
+};
+static const char* const kDefault[4] = {"Activate", "Try Spawning Enemy", nullptr, nullptr};
+
+static const char* const* StepsFor(void* sp)
+{
+    char cn[64] = "";
+    FNameToString(ObjNameRaw(ObjClass(sp)), cn, sizeof(cn));
+    for (unsigned i = 0; i < sizeof(kRecipes) / sizeof(kRecipes[0]); ++i)
+        if (!strcmp(kRecipes[i].cls, cn)) return kRecipes[i].steps;
+    return kDefault;
+}
+
+static void* SpawnerForKey(const uint32_t key[4])
+{
+    void* base = trig::g_cls.cls[1];
+    void* world = GWorldPtr();
+    if (!base || !world) return nullptr;
+    int total = ObjectCount();
+    for (int i = 0; i < total; ++i) {
+        void* o = ObjectAtSafe(i);
+        if (!o || !LooksLikeUObject(o) || !IsSubclassOf(ObjClass(o), base)) continue;
+        bool ok = false;
+        __try { ok = ActorInThisWorld(o, world) && ObjectIsLive(o) && ActorLevelVisible(o); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { ok = false; }
+        if (!ok) continue;
+        uint32_t g[4];
+        if (SpawnerGuid(o, g) && !memcmp(g, key, 16)) return o;
+    }
+    return nullptr;
+}
+
+static bool ManagedLive(void* sp)
+{
+    void* me = ObjPropC(sp, "CurrentManagedEnemy");
+    return me && LooksLikeUObject(me) && ObjectIsLive(me);
+}
+
+static bool RunStep(void* sp, const char* step)
+{
+    void* pawn = g_localPawn;
+    Fn f = {};
+    char nm[96] = "";
+    bool resolved = (step[0] == '~') ? f.ResolvePrefix(sp, step + 1, nm, sizeof(nm)) : f.Resolve(sp, step);
+    if (!resolved) return false;
+    Call c(f);
+    for (int i = 0; i < f.sig.props; ++i) {
+        const PropDesc& d = f.sig.p[i];
+        if (d.flags & CPF_OutParm) continue;
+        if (NameEquals(d.type, "ObjectProperty") && d.size >= 8) c.Obj(d.name, pawn);
+    }
+    if (f.Off("ActivateByLoad") >= 0) c.U8("ActivateByLoad", 0);
+    if (f.Off("Ignore Vis Check") >= 0) c.U8("Ignore Vis Check", 1);
+    if (f.Off("ResetSpawn") >= 0) c.U8("ResetSpawn", 0);
+    return c.Run(sp);
+}
+} // namespace bstart
+
+void BossFollowThroughPumpAll(uint32_t now) { trig::BossFollowThroughPump(now); }
+
+// From OnEnemyRows: the partner holds this spawner key alive.
+void BossStartNote(const uint32_t key[4], uint32_t now)
+{
+    using namespace bstart;
+    void* w = GWorldPtr();
+    if (w != g_world) { g_world = w; g_n = 0; }
+    for (int i = 0; i < g_n; ++i) {
+        if (memcmp(g_t[i].key, key, 16)) continue;
+        g_t[i].live = true;
+        return;
+    }
+    if (g_n >= 16) return;
+    Try& t = g_t[g_n++];
+    memcpy(t.key, key, 16);
+    t.nextAt = now;
+    t.step = -1;            // -1: the spawner is not looked up yet
+    t.sp = nullptr;
+    t.giveUpUntil = 0;
+    t.live = true;
+}
+
+void BossStartPump(uint32_t now)
+{
+    using namespace bstart;
+    if (!Cfg().enemy_sync) return;
+    static uint32_t lastAsk = 0;
+    if (g_net.IsPeer() && g_net.Connected() && now - lastAsk >= 3000 && EnemyRecordsTrustworthy() &&
+        g_map.PeerStateApplies(now)) {
+        lastAsk = now;
+        for (int i = 0; i < g_enN; ++i) {
+            EnemyRec& r = g_en[i];
+            if (!r.haveGuid || !r.isBoss || !ObjectIsLive(r.actor) || EnemyDead(r.actor)) continue;
+            if (g_hostView.Get(r.guid)) continue;          // the host runs it: nothing to ask
+            float hp = 0, mx = 0;
+            if (!EnemyHp(r.actor, &hp, &mx) || mx <= 0.0f || hp <= 0.0f) continue;
+            if (BossSend(r.guid, wire::kBossAsk, r.bossPhase, enemy::HpFrac(hp, mx))) {
+                static uint32_t said = 0;
+                if (now - said > 20000) {
+                    said = now;
+                    QDLOG(LOG_INFO, "boss start: this machine holds boss ", hex32(r.guid[0]),
+                          " and the host has sent no row for it -- asked the host to start its own");
+                }
+            }
+        }
+    }
+    if (!g_n) return;
+    if (GWorldPtr() != g_world) { g_n = 0; return; }
+    if (!g_map.PeerStateApplies(now)) return;
+    if (!IsGameplayPawn(g_localPawn)) return;
+    for (int i = 0; i < g_n; ++i) {
+        Try& t = g_t[i];
+        if ((int32_t)(now - t.nextAt) < 0) continue;
+        if (t.giveUpUntil && (int32_t)(now - t.giveUpUntil) < 0) continue;
+        EnemyRec* er = EnemyByGuid(t.key);
+        if (er && ObjectIsLive(er->actor)) { t.giveUpUntil = now + 30000; continue; }   // it exists here
+        if (!t.live) continue;               // no row since the last look: the partner's copy went
+        t.live = false;
+        if (t.step < 0) {
+            t.sp = SpawnerForKey(t.key);
+            // Not a boss spawner here (or not in a shown level): ordinary enemies keep the G5
+            // rule (each machine's spawner spawns for its own player), so this key is left alone.
+            if (!t.sp || !trig::SpawnerIsBoss(t.sp)) { t.giveUpUntil = now + 60000; t.step = -1; continue; }
+            t.step = 0;
+        }
+        if (!ObjectIsLive(t.sp)) { t.step = -1; t.nextAt = now + 2000; continue; }
+        char sn[64] = "?";
+        FNameToString(ObjNameRaw(t.sp), sn, sizeof(sn));
+        if (ManagedLive(t.sp)) {
+            QDLOG(LOG_INFO, "boss start: the partner's boss ", hex32(t.key[0]), " now exists here (", sn,
+                  (t.step > 0 ? " after step " : " on its own; step count "), dec(t.step), ")");
+            t.giveUpUntil = now + 30000;
+            t.step = 0;
+            continue;
+        }
+        const char* const* steps = StepsFor(t.sp);
+        if (t.step >= 4 || !steps[t.step]) {
+            QDLOG(LOG_WARN, "boss start: the partner fights boss ", hex32(t.key[0]), " and ", sn,
+                  " did not start here after every step of its recipe; retrying in 60 s");
+            t.giveUpUntil = now + 60000;
+            t.step = 0;
+            continue;
+        }
+        const char* st = steps[t.step++];
+        bool ran = RunStep(t.sp, st);
+        QDLOG(ran ? LOG_INFO : LOG_WARN, "boss start: the partner fights boss ", hex32(t.key[0]),
+              " and this machine has no copy -- ", sn, ".", st, (ran ? " ran" : " DID NOT RUN"),
+              " (step ", dec(t.step), ")");
+        t.nextAt = now + 3000;
+        t.live = true;      // judge the step on the next look even if no row arrives meanwhile
+        return;             // one call per frame
+    }
+}
+
 // Called from HK_ProcessEvent for every dispatch.  The cost when it is not a trigger event is
 // a null test and four pointer compares.
 void TriggerObserve(void* self, void* func, void* parms)
@@ -19377,6 +19881,7 @@ void OnTrigger(wire::Reader& r, uint32_t now)
     trig::g_echo.Note(b.key, b.event, now);
     trig::g_replaying = true;
     bool ok = trig::RunOverlapEvent(t, slot, how, sizeof(how));
+    if (ok && b.event == trigger::kEvBegin) trig::BossFollowThrough(t, b.name, true);
     trig::g_replaying = false;
     BytePropC(t, "HasAlreadybeenTriggered", &after);
     if (ok) ++trig::g_replayed; else ++trig::g_refused;
@@ -19529,6 +20034,7 @@ void DevTriggerLever(uint32_t now)
     BytePropC(t, "HasAlreadybeenTriggered", &before);
     char how[64] = "";
     bool ran = trig::RunOverlapEvent(t, slot, how, sizeof(how));   // observed and sent, not replayed
+    if (ran) trig::BossFollowThrough(t, spec, false);
     BytePropC(t, "HasAlreadybeenTriggered", &after);
     QDLOG(ran ? LOG_INFO : LOG_WARN, "rig: trigger '", spec, "' begin event: ", how,
           " triggered ", dec(before), "->", dec(after));
