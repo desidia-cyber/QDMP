@@ -2084,6 +2084,12 @@ function Invoke-OneBoss([int]$H, [int]$P, $b) {
     [void](Check $step $H ('trigger: local player entered ' + [regex]::Escape($b.Start) + '.*sent to the partner') 15 'the HOST sent the entry to the partner' $mH)
     [void](Check $step $P ("trigger: replayed the partner's entered " + [regex]::Escape($b.Start) + '.*: dispatched') 20 "the PEER replayed the entry on its own copy" $mP)
     Show-Since $P 'trigger: |pulled in' $mP 6
+    # STAY IN THE ARENA (Session 28 run 4): a player placed at a volume's centre falls out of
+    # it, and a proximity boss (the Whale King) then never spawns.  The host stands at the
+    # start actor again, as a player who walked in would still be standing there.
+    # A spawner refuses to spawn in the player's view (`Check Spawn Visibility`), so the host
+    # stands 15 m off the start actor rather than on it (run 5: no whale with the host on it).
+    Invoke-Go $H $b.Start 1500
     Start-Sleep -Seconds 12
 
     # Both machines must hold the SAME boss (one key, alive on both).
@@ -2093,6 +2099,13 @@ function Invoke-OneBoss([int]$H, [int]$P, $b) {
     $dh = Invoke-EnemyDump $H ($b.Name + '-h1')
     $dp = Invoke-EnemyDump $P ($b.Name + '-p1')
     $bh = Find-BossKey $dh $b.Cls
+    # A boss with an intro (the ROS dragon flies in) or a proximity spawn exists seconds later.
+    for ($w = 0; $w -lt 3 -and -not $bh; $w++) {
+        Start-Sleep -Seconds 10
+        $dh = Invoke-EnemyDump $H ($b.Name + '-h1r' + $w)
+        $dp = Invoke-EnemyDump $P ($b.Name + '-p1r' + $w)
+        $bh = Find-BossKey $dh $b.Cls
+    }
     $bp = $null
     if ($bh -and $dp.ContainsKey($bh.Id)) { $bp = $dp[$bh.Id] }
     if (-not $bh) { $bh2 = Find-BossKey $dp $b.Cls; if ($bh2) { Note "    the PEER holds $($b.Cls) $($bh2.Key) but the HOST does not" } }
@@ -2234,11 +2247,15 @@ function Invoke-BossTour([int]$H, [int]$P) {
 # (2) For each boss whose start trigger spawned nothing in Session 26, the probe tells which of
 #     the spawner's own verbs starts it, and whether the partner gets the boss.
 $script:ProbeBosses = @(
-    [pscustomobject]@{ Name = 'Necronomicon'; Area = '300_LIB'; Start = 'Necronomicon_Boss_Spawner'; Spawner = 'Necronomicon_Boss_Spawner'; Cls = 'Necronomicon_BP'; Flag = 'NecronimiconDefeated'; Verbs = @('Interact', 'SetUpEncounter', 'CustomEvent') }
+    [pscustomobject]@{ Name = 'Necronomicon'; Area = '300_LIB'; Start = 'Necronomicon_Boss_Spawner'; Spawner = 'Necronomicon_Boss_Spawner'; Cls = 'Necronomicon_BP'; Flag = 'NecronimiconDefeated'; Verbs = @('Try+Spawning+Enemy', 'CustomEvent', 'Interact') }
     [pscustomobject]@{ Name = 'BridgeLord';   Area = '500_AUT'; Start = 'JosamiLord_Spawner';        Spawner = 'JosamiLord_Spawner';        Cls = 'JosamiLord_BP';   Flag = 'BridgeLordDead';       Verbs = @('~BndEvt__JosamiLord_Spawner_BridgeCenterTrigger', 'Try+Spawning+Enemy', 'Activate') }
 )
 
 function Test-Presence([int]$i, [string]$cls) {
+    # The enemy table first (a dormant boss may not match by actor name), then the name.
+    $d = Invoke-EnemyDump $i ('pres-' + $cls)
+    $r = Find-BossKey $d $cls
+    if ($r) { return ('resolved by the enemy table: ' + $r.Line) }
     $m = Get-Mark $i
     Set-Control $i 'qd.gate' ('near:' + $cls + '#' + (Get-Date -Format 'HHmmssfff'))
     $ln = @(Wait-Since $i ('rig: gate -- (resolved|no live actor matches)') $m 15)

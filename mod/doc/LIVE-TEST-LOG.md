@@ -5831,3 +5831,44 @@ dropping the new STATUS body.
   lines as "since" (one false FAIL).
 - The HP write still overrides a boss's own immunity outside its fight (it was the design: the
   last resort). Whether a partner hit on an immune boss should be dropped instead is open.
+
+## Session 28 - 2026-11-13 (story refresh, bosses that never spawned, death flags)
+
+Harness: `mod/tools/session26.ps1 -Phase story [-Only ...]`; six runs (s28-run1..6). Zero faults,
+zero crash dumps, both processes alive at the end of every run.
+
+| Item | Result | Proof |
+|---|---|---|
+| World refresh on a partner's flag | **closed** (run 1) | host `rig: flag set -- SaveFunctions.SaveNamedData(LibrarianQuestDone, 1, RefreshQuestStates=1) ran`; peer `quest refresh: GI_UpdateQuestState ran for 1 of 1 flag(s) [LibrarianQuestDone] + GI_NotifyWorldStateChanged ran`, then `quest state: LibrarianQuestStateManager (LibrarianQuestDone) InternalState 0 -> 1` 0.2 s later |
+| Demon Bosses death flag | **closed** (run 1) | the hell-bat is in the group; `DemonBossesKilled = 1 (game bank 1)` on both |
+| ROS dragon spawns | **closed** (runs 2, 3, 5, 6) | peer `boss follow-through (replay) ActivationTrigger11.DoTrigger ran; ROSDragon_Spawner Activate ran -- managed enemy present`; key 8120191E alive on both, one bar, 9999 -> 9799 on both, dead on both |
+| Bridge Lord spawns | **closed** (runs 2, 3) | its `BridgeCenterTrigger` overlap event starts it; key 2543387C, 4000 HP, on both |
+| Giant Fish | **spawn + flag** (run 4) | treated as a boss (pulled in); `GiantSwampFish_IsDead = 1` on both; the host's copy took a summon key, so HP was not shared that run |
+| Whale King | same key on both (run 3); spawn is flaky under the rig | the fight did not start (trap before spawn): deferred `ActivateEnemy` added; runs 4-6 the whale never spawned on the host (proximity + visibility rules vs. the rig's placement) |
+| ROS / Whale / Bridge Lord / Necronomicon death flags | **open** | see SYNC-GAPS: written at the end of each boss's own death sequence (montage callback or death dialogue) |
+| Necronomicon start | **open** | starts from closing the lectern's read message (`CustomEvent` -> managed enemy `DoIntroAnimation` -> `Activate`); the book enemy never existed under the rig |
+
+### Changes
+
+1. `QuestRefreshQueue` / `QuestRefreshPump` (every applied flag -> the game's own quest refresh),
+   with a 4 s watch on the quest managers keyed on the flag.
+2. Trigger lane: `BossFollowThrough` after a boss entry, rig and replay; deferred `ActivateEnemy`.
+3. `BossStartNote` / `BossStartPump`: a partner's live boss with no copy here starts the local
+   spawner (recipe per class), within 300 m, never for a dead key; the peer asks the host about
+   bosses the host sent no row for.
+4. A boss death on the owner is claimed on the kill log without the mod's immediate
+   `StoreEnemySaveState(hp=0)`; the boss's own sequence records it.
+5. Rig: `qd.flag set:<Name>=<v>`; `qd.hard` re-entry (the nonce was stripped before the
+   "already applied" compare, so a second entry into the same area did nothing);
+   `qd.act near:X!Verb` takes `+` for spaces and `~Prefix` for compiler-named events, and fills
+   every object parameter; harness `story` phase, staged boss kill, presence retries.
+
+### Open from this session
+
+- ROS dragon / Whale King flags (death montage callback never reached under the rig's kill),
+  Bridge Lord / Necronomicon flags (need the death dialogue driven).
+- Necronomicon start under the rig; Whale King spawn under the rig.
+- Giant Fish key source (spawner vs summon) for HP sharing.
+- Ending reached together: the ending cutscene managers (`Ending1CutsceneManager_C`, ...) are
+  spawned at runtime, so the cutscene lane falls back to HOLD on the partner; not yet tested.
+

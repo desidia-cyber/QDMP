@@ -605,6 +605,37 @@ Two assumptions in that paragraph are unproven and each is one probe:
   `Activate(ActivateByLoad=1)` and then `SetToOpenState`. The shop door (R105) was a one-sided
   door opened by `OpenDoor`, not a lane failure. It now opens on both machines: the host opens
   it, and the peer's copy opens when the flag arrives.
+- **The world follows every partner flag (closed, Session 28).** The game never writes a story
+  flag bare: `SaveFunctions.SaveNamedData(Name, Data, RefreshQuestStates)` calls
+  `GameInstance.GI_UpdateQuestState(NSD)` and `GI_NotifyWorldStateChanged()`, which every
+  `WorldEventReceiver` listens to (the 14 `ActorQuestStateManager_C`, teleporters, checkpoints,
+  the shop, spawners' `RequireQuestStateToSpawn`). The flag lane wrote the bank directly, so the
+  receiving world never heard it. Every applied flag (peer apply, host intent apply) is now
+  queued and, at most every 250 ms, the same two calls run on the live GameInstance
+  (`QuestRefreshPump`). Measured run 1: the host wrote `LibrarianQuestDone` through the game's
+  own `SaveNamedData`; 0.2 s after it arrived, the peer's `LibrarianQuestStateManager` went
+  `InternalState 0 -> 1`.
+- **Bosses start on both machines (Session 28).** Three mechanisms, all the game's own calls:
+  - *Trigger follow-through.* A dispatched overlap does not start a boss: the trigger's Blueprint
+    re-checks the player (grounded, still overlapping) and a placed or pulled-in player is
+    falling through the volume. After a boss entry (rig or replay) the trigger's own action runs:
+    `ActivationTrigger.DoTrigger()`, `Activate(false, player)` on a boss spawner target without a
+    managed enemy, or `EnemySpawner.ActivateEnemy()` for a spawner trap; repeated when a boss
+    appears after the trap (the Whale King spawns by proximity). Measured: ROS dragon now on both
+    machines, one key, one bar, 9999 -> 9799 on both, dead on both (runs 2, 3, 5, 6).
+  - *Partner boss start.* A partner's row for a live boss spawner key within 300 m that has no
+    copy here starts the local spawner through its class recipe (default `Activate`,
+    `Try Spawning Enemy`; the Bridge Lord's `BridgeCenterTrigger` overlap event). The peer also
+    asks the host (`kBossAsk`) about bosses the host sent no row for, so a peer-only boss starts
+    on the host. A dead key is never restarted.
+  - *Boss identity.* `GiantFish_Spawner_BP_C` is a boss though its data says `Boss = 0`.
+- **Death flags (Session 28).** `DemonBossesKilled` needs the spider AND the hell-bat (now in both
+  banks, run 1); `GiantSwampFish_IsDead` is in both banks (run 4). The others are written at the
+  end of the boss's own death sequence, not on the HP drop: the Bridge Lord and the Necronomicon
+  through a death dialogue (`DummyNPC` -> `DialogueEnded` -> `Kill` -> `SaveNamedData`), the ROS
+  dragon and the Whale King in a death montage's `OnCompleted`. **Open:** the ROS dragon dies on
+  both machines and plays `Dragon_Ground_Die_Montage`, and neither machine reaches the callback
+  (runs 2-6); a solo control run is needed to tell the mod from the rig's kill.
 - **Shop, journal/bestiary, XP, weapon levels, grimoire ink.** Per-player by nature.
 - **Peer vitals (closed, Session 27).** Each machine reads its own player's `Health` and
   `GetMaxHP` and sends them on the STATUS tail (WIRE.md 3.15, vitals tail: `hp`, `hp_max`,

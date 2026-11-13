@@ -9763,7 +9763,15 @@ void OnEnemyRows(wire::Reader& r, uint32_t now)
         if ((e.flags & enemy::kAlive) &&
             ((e.flags & wire::kEnemySrcMask) >> wire::kEnemySrcShift) == wire::kEnemySrcSpawner) {
             EnemyRec* lr = EnemyByGuid(e.guid);
-            if (!lr || !ObjectIsLive(lr->actor)) BossStartNote(e.guid, now);
+            // Only a boss NEAR this player: every boss is resident, and run 4 measured the peer
+            // starting the Red Lords (alive on the host in 740) while the pair stood in 760.
+            ActorXform meX = {};
+            bool closeBy = false;
+            if (IsGameplayPawn(g_localPawn) && ReadActorXform(g_localPawn, &meX)) {
+                float dx = (float)e.px - meX.px, dy = (float)e.py - meX.py, dz = (float)e.pz - meX.pz;
+                closeBy = dx * dx + dy * dy + dz * dz < 30000.0f * 30000.0f;
+            }
+            if (closeBy && (!lr || !ObjectIsLive(lr->actor))) BossStartNote(e.guid, now);
         }
     }
     if (g_hostView.Overflowed()) {
@@ -10191,6 +10199,20 @@ void EnemyDetectDeaths()
             g_killLog.Add(r.guid);
             QDLOG(LOG_INFO, "enemy death observed guid=", hex32(r.guid[0]), " (", why,
                   ") on a copy this machine does not run; broadcast as a death claim");
+            continue;
+        }
+        // A BOSS FINISHES DYING ON ITS OWN (Session 28).  The ROS dragon's flag is written in
+        // its death montage's OnCompleted, the Whale King's after `KilledMontage`; the game's
+        // spawner records the death itself when that sequence ends, and the death flag gates
+        // the respawn.  Measured: the mod's immediate StoreEnemySaveState(hp=0) on the boss's
+        // spawner, at the first frame of the death, and no ROSDragonDead in 90 s on either
+        // machine.  A boss's death is claimed on the kill log only; the save write is the
+        // game's.
+        if (r.isBoss) {
+            g_killLog.Add(r.guid);
+            DeathMarkFromRecord(r, g_own.Running(r.guid), Net::Now());
+            QDLOG(LOG_INFO, "enemy death detected guid=", hex32(r.guid[0]), " (", why,
+                  ") -- a boss: claimed on the kill log; its own death sequence writes the record");
             continue;
         }
         // The spawner's own respawn time when it names one; 0 otherwise.  The record is
@@ -19755,6 +19777,9 @@ void BossStartPump(uint32_t now)
         if (t.giveUpUntil && (int32_t)(now - t.giveUpUntil) < 0) continue;
         EnemyRec* er = EnemyByGuid(t.key);
         if (er && ObjectIsLive(er->actor)) { t.giveUpUntil = now + 30000; continue; }   // it exists here
+        // A boss that died (here, or by the partner's word) is never started again: run 6 measured
+        // the host retrying the ROS dragon's spawner after the kill, on a stale partner row.
+        if (KillLogHas(t.key) || g_remoteDead.Has(t.key, now)) { t.giveUpUntil = now + 120000; t.step = -1; continue; }
         if (!t.live) continue;               // no row since the last look: the partner's copy went
         t.live = false;
         if (t.step < 0) {
