@@ -863,9 +863,100 @@ static bool ComponentYaw(void* actor, const char* comp, float* yaw)
 
 void QuestRefreshQueue(const char* name);
 
+// A BOSS IS CONCLUDED BY A CONVERSATION (Session 29).  Measured on the ROS dragon (boss death
+// watch): its "death" plays `Dragon_Ground_Die_Montage`, whose `Dead` section LOOPS -- the
+// position cycles 2.3..2.6 s for 45 s and OnCompleted never comes.  That is the design, not a
+// fault: the downed boss waits for the player to talk to it.  The dialogue's end
+// (`RewardDialogueEnded` on the dragon and the Whale King, `EndedDeathDialogue` on the Bridge
+// Lord, `Ended` on the Necronomicon) sets the final death montage, kills it for good, and that
+// sequence writes the boss's flag (`ROSDragonDead`, `WhaleKingIsDead`, `BridgeLordDead`,
+// `NecronimiconDefeated`) and spawns the boss's reward NPC.
+//
+// Only ONE player talks.  Their machine writes the flag and the flag lane carries it; the
+// other machine's copy of the boss is downed too (the death lane killed it) and would kneel
+// in its loop forever.  So a partner's conclusion flag runs the same game event on the local
+// downed copy: the same final montage, the same reward NPC, the same write.  It is only
+// reached through FlagRefreshWorld, i.e. when the flag was NEW here -- the machine whose
+// player talked already holds it and never runs the event twice.
+void BossDeathWatchArm(void* actor, uint32_t key);
+struct BossConclusion { const char* flag; const char* cls; const char* verb; };
+static const BossConclusion kBossConclusion[] = {
+    {"ROSDragonDead",        "Dragon_Ros_BP_C",      "RewardDialogueEnded"},
+    {"WhaleKingIsDead",      "Whaleking_Boss_BP_C",  "RewardDialogueEnded"},
+    {"BridgeLordDead",       "JosamiLord_BP_C",      "EndedDeathDialogue"},
+    {"NecronimiconDefeated", "Necronomicon_BP_C",    "Ended"},
+};
+struct PendingConclusion { int row; uint32_t until; uint32_t next; };
+static PendingConclusion g_pc[4];
+static int g_pcN = 0;
+bool EnemyDead(void* actor);
+bool EnemyHp(void* actor, float* hp, float* maxHp);
+
+static void BossConclusionNote(const char* name)
+{
+    for (int t = 0; t < (int)(sizeof(kBossConclusion) / sizeof(kBossConclusion[0])); ++t) {
+        if (strcmp(kBossConclusion[t].flag, name) != 0) continue;
+        for (int i = 0; i < g_pcN; ++i) if (g_pc[i].row == t) return;
+        if (g_pcN >= 4) return;
+        g_pc[g_pcN].row = t;
+        g_pc[g_pcN].until = Net::Now() + 60000;
+        g_pc[g_pcN].next = 0;
+        ++g_pcN;
+        QDLOG(LOG_INFO, "boss conclusion: the partner concluded ", kBossConclusion[t].cls, " (", name,
+              "); running ", kBossConclusion[t].verb, " on the downed copy here");
+        return;
+    }
+}
+
+void BossConclusionPump(uint32_t now)
+{
+    for (int i = 0; i < g_pcN;) {
+        PendingConclusion& pc = g_pc[i];
+        const BossConclusion& bc = kBossConclusion[pc.row];
+        if ((int32_t)(now - pc.until) >= 0) {
+            QDLOG(LOG_INFO, "boss conclusion: no downed ", bc.cls, " here within 60 s -- nothing to conclude "
+                  "(the boss is not in this world; its flag alone keeps it from respawning)");
+            g_pc[i] = g_pc[--g_pcN];
+            continue;
+        }
+        if ((int32_t)(now - pc.next) < 0) { ++i; continue; }
+        pc.next = now + 1000;
+        void* world = GWorldPtr();
+        if (!world) { ++i; continue; }
+        int total = ObjectCount();
+        void* hit = nullptr;
+        int alive = 0;
+        for (int k = 0; k < total && !hit; ++k) {
+            void* o = ObjectAtSafe(k);
+            if (!o || !LooksLikeUObject(o)) continue;
+            void* c = ObjClass(o);
+            char cn[96];
+            if (!c || FNameToString(ObjNameRaw(c), cn, sizeof(cn)) <= 0 || strcmp(cn, bc.cls) != 0) continue;
+            bool inWorld = false;
+            __try { inWorld = ActorInThisWorld(o, world); } __except (EXCEPTION_EXECUTE_HANDLER) { inWorld = false; }
+            if (!inWorld || !ObjectIsLive(o)) continue;
+            float hp = 1.0f, mx = 1.0f;
+            bool downed = EnemyDead(o) || (EnemyHp(o, &hp, &mx) && mx > 0.0f && hp <= mx * 0.005f);
+            if (downed) hit = o; else ++alive;
+        }
+        if (!hit) { ++i; continue; }   // a copy still fighting goes down through the death lane first
+        Fn f = {};
+        bool ran = false;
+        __try {
+            if (f.Resolve(hit, bc.verb)) { Call cl(f); ran = cl.Run(hit); }
+        } __except (EXCEPTION_EXECUTE_HANDLER) { ran = false; }
+        QDLOG(ran ? LOG_INFO : LOG_WARN, "boss conclusion: ", bc.cls, ".", bc.verb, (ran ? " ran" : " DID NOT RUN"),
+              " on the downed copy -- the partner's conversation ended it there; this world plays the final "
+              "death and its reward here");
+        if (ran) BossDeathWatchArm(hit, 0);
+        g_pc[i] = g_pc[--g_pcN];
+    }
+}
+
 void FlagRefreshWorld(const char* name, int32_t value)
 {
     if (!name) return;
+    if (value > 0) BossConclusionNote(name);
     // EVERY applied flag reaches the game's own quest-state broadcast (QuestRefreshPump);
     // the per-class table below is only for actors that read their flag on load alone.
     QuestRefreshQueue(name);
@@ -8680,6 +8771,13 @@ bool EnemyIsBoss(void* actor, void* spawner)
         byData = EnemyDataSaysBoss(actor);
         if (byData) boss = true;
     }
+    // The Giant Fish is a challenge boss whose data says `Boss = 0` (see SpawnerIsBoss); its
+    // spawner is a boss spawner, so its enemy is a boss too: one owner, one shared HP.
+    if (!boss) {
+        char an[64] = "";
+        if (FNameToString(ObjNameRaw(ObjClass(actor)), an, sizeof(an)) > 0 && !strcmp(an, "GiantFish_Enemy_BP_C"))
+            boss = true;
+    }
     static void* seen[64];
     static int seenN = 0;
     void* cls = ObjClass(actor);
@@ -9193,6 +9291,9 @@ void BossPump(uint32_t now)
 void BossStartNote(const uint32_t key[4], uint32_t now);
 void BossStartPump(uint32_t now);
 void BossFollowThroughPumpAll(uint32_t now);
+void BossDeathWatchArm(void* actor, uint32_t key);
+void BossDeathWatchPump(uint32_t now);
+void BossConclusionPump(uint32_t now);
 
 void OnBoss(wire::Reader& r, uint32_t now)
 {
@@ -10210,6 +10311,7 @@ void EnemyDetectDeaths()
         // game's.
         if (r.isBoss) {
             g_killLog.Add(r.guid);
+            BossDeathWatchArm(r.actor, r.guid[0]);
             DeathMarkFromRecord(r, g_own.Running(r.guid), Net::Now());
             QDLOG(LOG_INFO, "enemy death detected guid=", hex32(r.guid[0]), " (", why,
                   ") -- a boss: claimed on the kill log; its own death sequence writes the record");
@@ -18952,6 +19054,8 @@ bool HK_Tick(void* engineLoop)
     QuestRefreshPump(now);
     BossStartPump(now);
     BossFollowThroughPumpAll(now);
+    BossDeathWatchPump(now);
+    BossConclusionPump(now);
     DevAutoLoad(now);
     LocalEquipPump(now);
     DevAvatarTest(now);
@@ -19741,6 +19845,74 @@ void BossStartNote(const uint32_t key[4], uint32_t now)
     t.sp = nullptr;
     t.giveUpUntil = 0;
     t.live = true;
+}
+
+// BOSS DEATH WATCH (Session 29, diagnostic).  The ROS dragon and the Whale King write their
+// death flag in the death montage's OnCompleted, and neither ever did under the rig.  For
+// 45 s after a boss dies on the machine that runs it, this logs once a second what the
+// engine says about that montage: the actor still live/hidden, the active montage, its
+// position and whether the anim instance still plays it.  A montage that stops advancing,
+// vanishes before its end, or is replaced, each names a different cause.
+struct DeathWatch { void* actor; uint32_t key; uint32_t until; uint32_t next; void* mon; };
+static DeathWatch g_dw[4];
+static int g_dwN = 0;
+
+void BossDeathWatchArm(void* actor, uint32_t key)
+{
+    if (!actor || g_dwN >= 4) return;
+    DeathWatch& w = g_dw[g_dwN++];
+    w.actor = actor; w.key = key; w.until = Net::Now() + 45000; w.next = 0; w.mon = nullptr;
+}
+
+void BossDeathWatchPump(uint32_t now)
+{
+    for (int i = 0; i < g_dwN;) {
+        DeathWatch& w = g_dw[i];
+        if ((int32_t)(now - w.until) >= 0) {
+            QDLOG(LOG_INFO, "boss death watch ", hex32(w.key), ": 45 s done");
+            g_dw[i] = g_dw[--g_dwN];
+            continue;
+        }
+        if ((int32_t)(now - w.next) < 0) { ++i; continue; }
+        w.next = now + 1000;
+        if (!ObjectIsLive(w.actor)) {
+            QDLOG(LOG_INFO, "boss death watch ", hex32(w.key), ": the actor is GONE (destroyed)");
+            g_dw[i] = g_dw[--g_dwN];
+            continue;
+        }
+        void* mesh = EnemyMesh(w.actor);
+        void* ai = mesh ? MeshAnimInstance(mesh) : nullptr;
+        void* mon = nullptr;
+        float pos = -1.0f;
+        int playing = -1;
+        char path[160] = "";
+        __try {
+            mon = mesh ? MeshActiveMontage(mesh) : nullptr;
+            if (mon && LooksLikeUObject(mon)) {
+                if (!w.mon) w.mon = mon;
+                avatar::AssetPath(mon, path, sizeof(path));
+            }
+            void* m = w.mon;
+            static Fn fPos = {}, fPl = {};
+            if (ai && m && fPos.Resolve(ai, "Montage_GetPosition")) {
+                Call c(fPos);
+                c.Obj("Montage", m);
+                if (c.Run(ai) && c.Ret()) pos = *(float*)c.Ret();
+            }
+            if (ai && m && fPl.Resolve(ai, "Montage_IsPlaying")) {
+                Call c(fPl);
+                c.Obj("Montage", m);
+                if (c.Run(ai) && c.Ret()) playing = *(uint8_t*)c.Ret() ? 1 : 0;
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) {}
+        float hp = 0, mx = 0;
+        bool haveHp = EnemyHp(w.actor, &hp, &mx);
+        QDLOG(LOG_INFO, "boss death watch ", hex32(w.key), ": live hidden=", dec(ActorHiddenNow(w.actor) ? 1 : 0),
+              " mesh=", dec(mesh ? 1 : 0), " anim=", dec(ai ? 1 : 0),
+              " active=", (path[0] ? path : "(none)"), " deathMontage pos=", flt(pos, 2),
+              " playing=", dec(playing), " hp=", flt(haveHp ? hp : -1.0f, 1));
+        ++i;
+    }
 }
 
 void BossStartPump(uint32_t now)

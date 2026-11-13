@@ -2037,13 +2037,14 @@ function Invoke-HitReaction([int]$H, [int]$P) {
 # proximity bosses.  The Queen and Sipeha end the game, so they are last and opt-in.
 $script:Bosses = @(
     [pscustomobject]@{ Name = 'GreenDragon';  Area = '780_SZ_Depths';      Start = 'ActivationTrigger9';          Cls = 'Dragon_Green';     Flag = 'DragonLordDead'; Group = 'Dragon_Green|JosamiLord_Green' }
-    [pscustomobject]@{ Name = 'ROSDragon';    Area = '760_SZ_AUT';         Start = 'ActivationTrigger11';         Cls = 'Dragon_Ros';       Flag = 'ROSDragonDead' }
+    [pscustomobject]@{ Name = 'ROSDragon';    Area = '760_SZ_AUT';         Start = 'ActivationTrigger11';         Cls = 'Dragon_Ros';       Flag = 'ROSDragonDead'; Talk = 'RewardDialogueEnded'; Near = 200 }
     [pscustomobject]@{ Name = 'RedLords';     Area = '740_SZ_Prison';      Start = 'ActivationTrigger4';          Cls = 'JosamiBloodLord';  Flag = 'RedLordsDead' }
     [pscustomobject]@{ Name = 'DemonBosses';  Area = '450_MAUS_darkmaze';  Start = 'ActivationTrigger4';          Cls = 'DemonSpider';      Flag = 'DemonBossesKilled'; Group = 'DemonSpider|Hellbat' }
     [pscustomobject]@{ Name = 'ShrineBoss';   Area = '100_GR';             Start = 'ShrinebossActivationTrigger'; Cls = 'Shrineboss';       Flag = '' }
-    [pscustomobject]@{ Name = 'WhaleKing';    Area = '210_AQ_underground'; Start = 'WhaleKingSpawner';            Cls = 'Whaleking_Boss';   Flag = 'WhaleKingIsDead'; Group = 'Whaleking_Boss' }
-    [pscustomobject]@{ Name = 'Necronomicon'; Area = '300_LIB';            Start = 'Necronomicon_Boss_Spawner';   Cls = 'Necronomicon';     Flag = 'NecronimiconDefeated' }
-    [pscustomobject]@{ Name = 'BridgeLord';   Area = '500_AUT';            Start = 'JosamiLord_Spawner';          Cls = 'JosamiLord';       Flag = 'BridgeLordDead' }
+    [pscustomobject]@{ Name = 'WhaleKing';    Area = '210_AQ_underground'; Start = 'WhaleKingSpawner';            Cls = 'Whaleking_Boss';   Flag = 'WhaleKingIsDead'; Group = 'Whaleking_Boss'; Talk = 'RewardDialogueEnded' }
+    [pscustomobject]@{ Name = 'Necronomicon'; Area = '300_LIB';            Start = 'Necronomicon_Boss_Spawner';   Cls = 'Necronomicon';     Flag = 'NecronimiconDefeated'; Talk = 'Ended' }
+    [pscustomobject]@{ Name = 'BridgeLord';   Area = '500_AUT';            Start = 'JosamiLord_Spawner';          Cls = 'JosamiLord';       Flag = 'BridgeLordDead'; Talk = 'EndedDeathDialogue' }
+    [pscustomobject]@{ Name = 'Queen';        Area = '600_Castle';         Start = 'Queen_Spawner_BP';            Cls = 'Queen_BP';         Flag = 'Ending1Complete'; Begin = 'QueenRegularGreetingEnded'; OptIn = $true }
     [pscustomobject]@{ Name = 'GiantFish';    Area = '770_SZ_Swamp';       Start = 'GiantFish_Spawner_BP';        Cls = 'GiantFish_Enemy';  Flag = 'GiantSwampFish_IsDead' }
 )
 
@@ -2089,8 +2090,21 @@ function Invoke-OneBoss([int]$H, [int]$P, $b) {
     # start actor again, as a player who walked in would still be standing there.
     # A spawner refuses to spawn in the player's view (`Check Spawn Visibility`), so the host
     # stands 15 m off the start actor rather than on it (run 5: no whale with the host on it).
-    Invoke-Go $H $b.Start 1500
+    # Per boss: the ROS dragon's arena is a ledge, and 15 m off its start sphere is over the
+    # drop (Session 29 runs 2-3: the host fell 47 m, z -6227 -> -10906, and the dragon left).
+    $near = if ($b.PSObject.Properties['Near'] -and $b.Near) { [int]$b.Near } else { 1500 }
+    Invoke-Go $H $b.Start $near
     Start-Sleep -Seconds 12
+    if ($b.PSObject.Properties['Begin'] -and $b.Begin) {
+        # A boss whose fight starts from a conversation (the Queen's greeting): the HOST's
+        # player talks; the dialogue's end event runs on the host's copy only.
+        $mB = Get-Mark $P
+        Invoke-Go $H $b.Cls 600
+        Set-Control $H 'qd.act' ('near:' + $b.Cls + '!' + $b.Begin + '#' + (Get-Date -Format 'HHmmssfff'))
+        Start-Sleep -Seconds 10
+        Show-Since $H 'rig: act|boss' $mH 8
+        Show-Since $P 'boss|cutscene|sequence' $mB 8
+    }
 
     # Both machines must hold the SAME boss (one key, alive on both).
     Invoke-Go $H 'enemy' 600
@@ -2202,6 +2216,18 @@ function Invoke-OneBoss([int]$H, [int]$P, $b) {
     Verdict $step $P ([bool](-not $p3 -or $p3.State -ne 'ALIVE')) 'the boss is dead on the PEER' $(if ($p3) { $p3.Line } else { 'no row (no live copy)' })
     [void](Check $step $H ('boss: (sent bar off|bar lowered|DeactivateBossHPBar called)') 30 'the HOST bar came down' $mH)
     [void](Check $step $P ('boss: (bar lowered|DeactivateBossHPBar called)|ActivateBossHPBar called.*off') 30 'the PEER bar came down' $mP)
+    if ($b.Talk) {
+        # THE DOWNED BOSS IS CONCLUDED BY A CONVERSATION (Session 29).  The host's player "talks"
+        # to it: the rig runs the dialogue's end event on the host's copy (the conversation's
+        # own effect); the peer must conclude its copy from the flag (`boss conclusion:`).
+        $mT = Get-Mark $P
+        Set-Control $H 'qd.act' ('near:' + $b.Cls + '!' + $b.Talk + '#' + (Get-Date -Format 'HHmmssfff'))
+        Start-Sleep -Seconds 4
+        Show-Since $H 'rig: act|boss death watch' $mH 6
+        [void](Check $step $P ('boss conclusion: .*' + $b.Talk + ' ran') 60 'the PEER concluded its downed copy from the partner''s flag' $mT)
+        Start-Sleep -Seconds 6
+        Show-Since $P 'boss death watch|boss conclusion' $mT 8
+    }
     if ($b.Flag) {
         [void](Check $step $H ('flag (NEW |CHANGE )?' + $b.Flag + '( =| :)') 90 "the HOST's own save holds $($b.Flag)" $mH0)
         [void](Check $step $P ('flag (NEW |CHANGE )?' + $b.Flag + '( =| :)|flags applied=.*' ) 40 "the PEER's own save received the flag lane" $mP0)
@@ -2361,7 +2387,7 @@ function Invoke-StoryPhase([int]$H, [int]$P) {
         try { Invoke-BossProbe $H $P $b } catch { Say ("probe {0}: harness exception {1}" -f $b.Name, $_.Exception.Message) }
     }
     $tour = @($script:Bosses | Where-Object { $_.Name -in @('ROSDragon', 'GiantFish', 'WhaleKing') })
-    if ($Only) { $tour = @($tour | Where-Object { $Only -split ',' -contains $_.Name }) }
+    if ($Only) { $tour = @($script:Bosses | Where-Object { $Only -split ',' -contains $_.Name }) }
     foreach ($b in $tour) {
         if (-not (Test-Alive $H) -or -not (Test-Alive $P)) { break }
         try { Invoke-OneBoss $H $P $b } catch { Say ("boss {0}: harness exception {1}" -f $b.Name, $_.Exception.Message) }
