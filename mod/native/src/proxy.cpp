@@ -9294,6 +9294,156 @@ void BossFollowThroughPumpAll(uint32_t now);
 void BossDeathWatchArm(void* actor, uint32_t key);
 void BossDeathWatchPump(uint32_t now);
 void BossConclusionPump(uint32_t now);
+bool ActorHiddenNow(void* actor);
+
+// A BOSS WHOSE FIGHT STARTS FROM A CONVERSATION (Session 29).  The Queen waits on her throne;
+// talking to her spawns `Queen_HackNPC_C`, whose greeting's end runs the Queen's
+// `QueenRegularGreetingEnded` -> `ActivateEnemyAI`, and the NPC is destroyed on end of talk.
+// Only the talking player's machine does that, so the partner's Queen would stay dormant.
+// The machine whose greeting NPC disappears (while the boss is alive) tells the partner
+// (`kBossBegin`), and the partner runs the same event on its dormant copy, then retires its own
+// greeting NPC so the greeting cannot be started a second time there.
+//
+// The Necronomicon is begun by READING the lectern's message: closing it runs the spawner's
+// `CustomEvent` -> the book's `DoIntroAnimation` -> `Activate`.  There is no NPC to watch, so
+// its signal is the book itself: it rests on the lectern until the intro lifts it, so a book
+// that moved more than 1.5 m from where it was first seen at rest has begun.  The partner then
+// runs the spawner's `CustomEvent` (the message-closed path) on its own copy.
+struct BossBeginRow { const char* boss; const char* npc; const char* verb; bool onSpawner; };
+static const BossBeginRow kBossBegins[] = {
+    {"Queen_BP_C",        "Queen_HackNPC_C", "QueenRegularGreetingEnded", false},
+    {"Necronomicon_BP_C", nullptr,           "CustomEvent",               true},
+};
+static void* g_beginNpc[sizeof(kBossBegins) / sizeof(kBossBegins[0])];
+struct BeginRest { uint32_t key; float p[3]; bool sent; bool applied; };
+static BeginRest g_beginRest[8];
+static int g_beginRestN = 0;
+static BeginRest* BeginRestFor(uint32_t key)
+{
+    for (int i = 0; i < g_beginRestN; ++i) if (g_beginRest[i].key == key) return &g_beginRest[i];
+    if (g_beginRestN >= 8) return nullptr;
+    BeginRest& b = g_beginRest[g_beginRestN++];
+    memset(&b, 0, sizeof(b));
+    b.key = key;
+    b.p[0] = b.p[1] = b.p[2] = 3.0e38f;
+    return &b;
+}
+
+static void* FindLiveOfClass(const char* cls, void* world)
+{
+    int total = ObjectCount();
+    for (int k = 0; k < total; ++k) {
+        void* o = ObjectAtSafe(k);
+        if (!o || !LooksLikeUObject(o)) continue;
+        void* c = ObjClass(o);
+        char cn[96];
+        if (!c || FNameToString(ObjNameRaw(c), cn, sizeof(cn)) <= 0 || strcmp(cn, cls) != 0) continue;
+        bool inWorld = false;
+        __try { inWorld = ActorInThisWorld(o, world); } __except (EXCEPTION_EXECUTE_HANDLER) { inWorld = false; }
+        if (inWorld && ObjectIsLive(o) && !ActorHiddenNow(o)) return o;
+    }
+    return nullptr;
+}
+
+static EnemyRec* BossRecOfClass(const char* cls)
+{
+    for (int i = 0; i < g_enN; ++i) {
+        EnemyRec& r = g_en[i];
+        if (!r.haveGuid || !ObjectIsLive(r.actor) || EnemyDead(r.actor)) continue;
+        char cn[96];
+        if (FNameToString(ObjNameRaw(ObjClass(r.actor)), cn, sizeof(cn)) > 0 && !strcmp(cn, cls)) return &r;
+    }
+    return nullptr;
+}
+
+void BossBeginPump(uint32_t now)
+{
+    static uint32_t last = 0;
+    if (!Cfg().enemy_sync || now - last < 500) return;
+    last = now;
+    void* world = GWorldPtr();
+    if (!world || !EnemyRecordsTrustworthy()) return;
+    for (int t = 0; t < (int)(sizeof(kBossBegins) / sizeof(kBossBegins[0])); ++t) {
+        const BossBeginRow& row = kBossBegins[t];
+        if (!row.npc) {
+            EnemyRec* r = BossRecOfClass(row.boss);
+            ActorXform x;
+            if (!r || !ReadActorXform(r->actor, &x)) continue;
+            BeginRest* br = BeginRestFor(r->guid[0]);
+            if (!br || br->sent || br->applied) continue;
+            if (br->p[0] > 1.0e38f) { br->p[0] = x.px; br->p[1] = x.py; br->p[2] = x.pz; continue; }
+            float dx = x.px - br->p[0], dy = x.py - br->p[1], dz = x.pz - br->p[2];
+            if (dx * dx + dy * dy + dz * dz < 150.0f * 150.0f) continue;
+            br->sent = true;
+            bool sent = g_net.Connected() && BossSend(r->guid, wire::kBossBegin, 0, 0);
+            QDLOG(LOG_INFO, "boss begin: ", row.boss, " left its rest spot here (the intro lifted it) -- ",
+                  (sent ? "the partner's copy is told to begin" : "NOT SENT (no session)"), " key=", hex32(r->guid[0]));
+            continue;
+        }
+        void* npc = FindLiveOfClass(row.npc, world);
+        if (npc) { g_beginNpc[t] = npc; continue; }
+        if (!g_beginNpc[t]) continue;
+        g_beginNpc[t] = nullptr;                 // it was here and is gone: the greeting ended
+        EnemyRec* r = BossRecOfClass(row.boss);
+        if (!r) continue;                        // the boss left with the NPC (a world change)
+        bool sent = g_net.Connected() && BossSend(r->guid, wire::kBossBegin, 0, 0);
+        QDLOG(LOG_INFO, "boss begin: this player finished ", row.boss, "'s greeting (", row.npc,
+              " is gone) -- ", (sent ? "the partner's copy is told to begin" : "NOT SENT (no session)"),
+              " key=", hex32(r->guid[0]));
+    }
+}
+
+static void BossBeginApply(const uint32_t key[4])
+{
+    EnemyRec* er = EnemyByGuid(key);
+    if (!er || !ObjectIsLive(er->actor)) {
+        QDLOG(LOG_WARN, "boss begin: the partner began boss ", hex32(key[0]), " but this machine has no live copy");
+        return;
+    }
+    char cn[96] = "";
+    FNameToString(ObjNameRaw(ObjClass(er->actor)), cn, sizeof(cn));
+    void* world = GWorldPtr();
+    for (int t = 0; t < (int)(sizeof(kBossBegins) / sizeof(kBossBegins[0])); ++t) {
+        const BossBeginRow& row = kBossBegins[t];
+        if (strcmp(cn, row.boss) != 0) continue;
+        if (!row.npc) {
+            BeginRest* br = BeginRestFor(key[0]);
+            if (br && (br->sent || br->applied)) {
+                QDLOG(LOG_INFO, "boss begin: the partner began ", row.boss, " and it has begun here already -- nothing to do");
+                return;
+            }
+            if (br) br->applied = true;
+            void* sp = (er->spawner && ObjectIsLive(er->spawner)) ? er->spawner : nullptr;
+            void* tgt = row.onSpawner ? sp : er->actor;
+            Fn f = {};
+            bool ran = false;
+            __try { if (tgt && f.Resolve(tgt, row.verb)) { Call c(f); ran = c.Run(tgt); } }
+            __except (EXCEPTION_EXECUTE_HANDLER) { ran = false; }
+            QDLOG(ran ? LOG_INFO : LOG_WARN, "boss begin: ", row.boss, (row.onSpawner ? " spawner." : "."), row.verb,
+                  (ran ? " ran" : " DID NOT RUN"), " on this copy -- the partner began the fight; it begins here too");
+            return;
+        }
+        void* npc = world ? FindLiveOfClass(row.npc, world) : nullptr;
+        if (!npc) {
+            QDLOG(LOG_INFO, "boss begin: the partner began ", row.boss, " and this copy has no greeting "
+                  "NPC (already begun here) -- nothing to do");
+            return;
+        }
+        Fn f = {};
+        bool ran = false;
+        __try { if (f.Resolve(er->actor, row.verb)) { Call c(f); ran = c.Run(er->actor); } }
+        __except (EXCEPTION_EXECUTE_HANDLER) { ran = false; }
+        // The greeting NPC is retired the way end-of-talk would: hidden and not interactable
+        // (never destroyed from native code, R140).  The detector ignores hidden actors, and
+        // g_beginNpc is cleared first so this retirement is not read as a local greeting.
+        g_beginNpc[t] = nullptr;
+        __try { SetActorHidden(npc, true); avatar::SetActorCollision(npc, false); }
+        __except (EXCEPTION_EXECUTE_HANDLER) {}
+        QDLOG(ran ? LOG_INFO : LOG_WARN, "boss begin: ", row.boss, ".", row.verb, (ran ? " ran" : " DID NOT RUN"),
+              " on this copy -- the partner finished the greeting; the fight begins here too");
+        return;
+    }
+}
 
 void OnBoss(wire::Reader& r, uint32_t now)
 {
@@ -9301,6 +9451,8 @@ void OnBoss(wire::Reader& r, uint32_t now)
     if (!EnemyRecordsTrustworthy()) return;    // the bars below belong to the previous world
     wire::BossBody b;
     if (!wire::ReadBoss(r, &b)) return;
+
+    if (b.flags & wire::kBossBegin) { BossBeginApply(b.guid); return; }
 
     if (b.flags & wire::kBossArenaExit) {
         // The event belongs to the LOCAL spawner of the local copy.  Resolving it from the
@@ -19056,6 +19208,7 @@ bool HK_Tick(void* engineLoop)
     BossFollowThroughPumpAll(now);
     BossDeathWatchPump(now);
     BossConclusionPump(now);
+    BossBeginPump(now);
     DevAutoLoad(now);
     LocalEquipPump(now);
     DevAvatarTest(now);

@@ -622,6 +622,10 @@ static const uint8_t kBossArenaExit = 0x04;
 static const uint8_t kBossAsk     = 0x08;
 static const uint8_t kBossAck     = 0x10;
 static const uint8_t kBossNack    = 0x20;
+// Session 29: a boss whose fight starts from a CONVERSATION (the Queen's greeting) began on
+// the sender -- its player finished the greeting.  The receiver runs the same end-of-greeting
+// event on its own dormant copy, so both machines fight an active boss.  Either direction.
+static const uint8_t kBossBegin   = 0x40;
 
 inline void WriteBoss(Writer& w, const BossBody& b)
 {

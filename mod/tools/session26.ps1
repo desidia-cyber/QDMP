@@ -1967,8 +1967,12 @@ function Invoke-GapsPhase([int]$H, [int]$P) {
 
 function Invoke-HitReaction([int]$H, [int]$P) {
     Step 'GAP: the enemy reacts to the partner''s hit' 'The non-owner lands a small hit on a shared live enemy; the owner applies it through the class''s own damage entry.'
-    Invoke-Go $H 'enemy' 600
-    Invoke-Go $P 'enemy' 600
+    # 'near:enemy' can be any enemy in the union of loaded areas; in the swamp and on the
+    # bridge it put the host over nothing and it fell out of the world (Session 29 run 5).
+    if (-not ($b.PSObject.Properties['Stay'] -and $b.Stay)) {
+        Invoke-Go $H 'enemy' 600
+        Invoke-Go $P 'enemy' 600
+    }
     Start-Sleep -Seconds 8
     $dh = Invoke-EnemyDump $H 'react-h'
     $dp = Invoke-EnemyDump $P 'react-p'
@@ -2042,10 +2046,10 @@ $script:Bosses = @(
     [pscustomobject]@{ Name = 'DemonBosses';  Area = '450_MAUS_darkmaze';  Start = 'ActivationTrigger4';          Cls = 'DemonSpider';      Flag = 'DemonBossesKilled'; Group = 'DemonSpider|Hellbat' }
     [pscustomobject]@{ Name = 'ShrineBoss';   Area = '100_GR';             Start = 'ShrinebossActivationTrigger'; Cls = 'Shrineboss';       Flag = '' }
     [pscustomobject]@{ Name = 'WhaleKing';    Area = '210_AQ_underground'; Start = 'WhaleKingSpawner';            Cls = 'Whaleking_Boss';   Flag = 'WhaleKingIsDead'; Group = 'Whaleking_Boss'; Talk = 'RewardDialogueEnded' }
-    [pscustomobject]@{ Name = 'Necronomicon'; Area = '300_LIB';            Start = 'Necronomicon_Boss_Spawner';   Cls = 'Necronomicon';     Flag = 'NecronimiconDefeated'; Talk = 'Ended' }
-    [pscustomobject]@{ Name = 'BridgeLord';   Area = '500_AUT';            Start = 'JosamiLord_Spawner';          Cls = 'JosamiLord';       Flag = 'BridgeLordDead'; Talk = 'EndedDeathDialogue' }
-    [pscustomobject]@{ Name = 'Queen';        Area = '600_Castle';         Start = 'Queen_Spawner_BP';            Cls = 'Queen_BP';         Flag = 'Ending1Complete'; Begin = 'QueenRegularGreetingEnded'; OptIn = $true }
-    [pscustomobject]@{ Name = 'GiantFish';    Area = '770_SZ_Swamp';       Start = 'GiantFish_Spawner_BP';        Cls = 'GiantFish_Enemy';  Flag = 'GiantSwampFish_IsDead' }
+    [pscustomobject]@{ Name = 'Necronomicon'; Area = '300_LIB';            Start = 'Necronomicon_Boss_Spawner';   Cls = 'Necronomicon_BP';  Flag = 'NecronimiconDefeated'; Talk = 'Ended'; Begin = @('Necronomicon_Boss_Spawner!Try+Spawning+Enemy', 'Necronomicon_Boss_Spawner!CustomEvent'); BeginSync = $true; Stay = $true }
+    [pscustomobject]@{ Name = 'BridgeLord';   Area = '500_AUT';            Start = 'JosamiLord_Spawner';          Cls = 'JosamiLord_BP';    Flag = 'BridgeLordDead'; Talk = 'EndedDeathDialogue'; Begin = @('JosamiLord_Spawner!~BndEvt__JosamiLord_Spawner_BridgeCenterTrigger'); Stay = $true }
+    [pscustomobject]@{ Name = 'Queen';        Area = '600_Castle';         Start = 'Queen_Spawner_BP';            Cls = 'Queen_BP';         Flag = 'Ending1Complete'; Begin = @('Queen_BP!Interact', 'Queen_HackNPC!EndDialogue'); BeginSync = $true; Stay = $true; OptIn = $true }
+    [pscustomobject]@{ Name = 'GiantFish';    Area = '770_SZ_Swamp';       Start = 'GiantFish_Spawner_BP';        Cls = 'GiantFish_Enemy';  Flag = 'GiantSwampFish_IsDead'; Stay = $true; Near = 600 }
 )
 
 function Find-BossKey([hashtable]$dump, [string]$cls) {
@@ -2100,10 +2104,16 @@ function Invoke-OneBoss([int]$H, [int]$P, $b) {
         # player talks; the dialogue's end event runs on the host's copy only.
         $mB = Get-Mark $P
         Invoke-Go $H $b.Cls 600
-        Set-Control $H 'qd.act' ('near:' + $b.Cls + '!' + $b.Begin + '#' + (Get-Date -Format 'HHmmssfff'))
-        Start-Sleep -Seconds 10
-        Show-Since $H 'rig: act|boss' $mH 8
-        Show-Since $P 'boss|cutscene|sequence' $mB 8
+        foreach ($act in @($b.Begin)) {
+            Set-Control $H 'qd.act' ('near:' + $act + '#' + (Get-Date -Format 'HHmmssfff'))
+            Start-Sleep -Seconds 5
+        }
+        Start-Sleep -Seconds 5
+        Show-Since $H 'rig: act|boss begin' $mH 8
+        if ($b.PSObject.Properties['BeginSync'] -and $b.BeginSync) {
+            [void](Check $step $H 'boss begin: (this player finished|.* left its rest spot)' 30 'the HOST began the fight and told the partner' $mH)
+            [void](Check $step $P 'boss begin: .* ran on this copy' 30 "the PEER's copy began from the partner's start" $mB)
+        }
     }
 
     # Both machines must hold the SAME boss (one key, alive on both).
@@ -2380,8 +2390,11 @@ function Invoke-BossProbe([int]$H, [int]$P, $b) {
 function Invoke-StoryPhase([int]$H, [int]$P) {
     $m0 = Get-Mark $H
     if (-not $Only -or ($Only -split ',' -contains 'Quest')) { Invoke-QuestRefresh $H $P }
+    # The probes (kill, no conversation) are opt-in by 'probe:<Name>' since Session 29: the tour
+    # now fights these bosses through their conversation, and a probe kill first would leave
+    # the tour nothing to fight.
     $want = @($script:ProbeBosses)
-    if ($Only) { $want = @($want | Where-Object { $Only -split ',' -contains $_.Name }) }
+    if ($Only) { $want = @($want | Where-Object { $Only -split ',' -contains ('probe:' + $_.Name) }) } else { $want = @() }
     foreach ($b in $want) {
         if (-not (Test-Alive $H) -or -not (Test-Alive $P)) { Say 'an instance died; the probe stops'; break }
         try { Invoke-BossProbe $H $P $b } catch { Say ("probe {0}: harness exception {1}" -f $b.Name, $_.Exception.Message) }
