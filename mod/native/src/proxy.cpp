@@ -16269,6 +16269,36 @@ void DevInteract(uint32_t now)
     // left the dialogue widget open on the talking machine (user report, run 12: "a dialogue
     // box on one instance but not on the other"); the player's DialogueManager.End is the
     // call a player's last "continue" makes -- it hides the widget and ends the NPC's talk.
+    // `near:<actor>!?Prop1,Prop2` (Session 29): read properties instead of calling a verb -- a
+    // boss stuck between phases is a state question first (CurrentStateIndex, DoingPhaseAnim).
+    if (forcedVerb[0] == '?' && !strncmp(buf, "near:", 5)) {
+        float d = 0.0f;
+        ActorXform xf = {};
+        char nm[64] = "";
+        void* t = RigFindNear(buf + 5, &d, &xf, nm, sizeof(nm));
+        if (!t) { QDLOG(LOG_WARN, "dev props: no live actor matches '", buf + 5, "'"); return; }
+        char line[400] = "";
+        char list[96];
+        lstrcpynA(list, forcedVerb + 1, sizeof(list));
+        char* save = nullptr;
+        for (char* p = strtok_s(list, ",", &save); p; p = strtok_s(nullptr, ",", &save)) {
+            int size = 0;
+            int off = FindPropertyOffsetIn(ObjClass(t), p, &size);
+            char v[48] = "absent";
+            __try {
+                if (off >= 0 && size == 1) wsprintfA(v, "%d", (int)*((uint8_t*)t + off));
+                else if (off >= 0 && size == 4) {
+                    float fv = *(float*)((uint8_t*)t + off);
+                    int iv = *(int32_t*)((uint8_t*)t + off);
+                    wsprintfA(v, "i%d/f%d", iv, (int)(fv * 100.0f));
+                } else if (off >= 0 && size == 8) wsprintfA(v, "ptr%p", *(void**)((uint8_t*)t + off));
+            } __except (EXCEPTION_EXECUTE_HANDLER) { lstrcpyA(v, "fault"); }
+            if (lstrlenA(line) + lstrlenA(p) + lstrlenA(v) + 4 >= (int)sizeof(line)) break;
+            lstrcatA(line, " "); lstrcatA(line, p); lstrcatA(line, "="); lstrcatA(line, v);
+        }
+        QDLOG(LOG_INFO, "dev props: ", nm, line);
+        return;
+    }
     if (!strcmp(buf, "near:dialogue") && forcedVerb[0]) {
         void* dm = g_localPawn ? ObjPropC(g_localPawn, "DialogueManager") : nullptr;
         const char* ran = nullptr;

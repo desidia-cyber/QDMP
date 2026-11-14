@@ -2048,7 +2048,7 @@ $script:Bosses = @(
     [pscustomobject]@{ Name = 'WhaleKing';    Area = '210_AQ_underground'; Start = 'WhaleKingSpawner';            Cls = 'Whaleking_Boss';   Flag = 'WhaleKingIsDead'; Group = 'Whaleking_Boss'; Talk = 'RewardDialogueEnded' }
     [pscustomobject]@{ Name = 'Necronomicon'; Area = '300_LIB';            Start = 'Necronomicon_Boss_Spawner';   Cls = 'Necronomicon_BP';  Flag = 'NecronimiconDefeated'; Talk = @('Necronomicon_BP!Interact', 'dialogue!End'); TalkWait = 6; Begin = @('Necronomicon_Boss_Spawner!CanEverSpawn', 'Necronomicon_Boss_Spawner!CheckSpawnConditions', 'Necronomicon_Boss_Spawner!Check+Spawn+Visibility', 'Necronomicon_Boss_Spawner!Try+Spawning+Enemy', 'Necronomicon_Boss_Spawner!CustomEvent'); BeginSync = $true; Stay = $true }
     [pscustomobject]@{ Name = 'BridgeLord';   Area = '500_AUT';            Start = 'JosamiLord_Spawner';          Cls = 'JosamiLord_BP';    Flag = 'BridgeLordDead'; Talk = 'EndedDeathDialogue'; Begin = @('JosamiLord_Spawner!~BndEvt__JosamiLord_Spawner_BridgeCenterTrigger'); Stay = $true }
-    [pscustomobject]@{ Name = 'Queen';        Area = '600_Castle';         Start = 'Queen_Spawner_BP';            Cls = 'Queen_BP';         Flag = 'Ending1Complete'; Begin = @('Queen_BP!Interact', 'dialogue!End'); BeginSync = $true; Stay = $true; OptIn = $true }
+    [pscustomobject]@{ Name = 'Queen';        Area = '600_Castle';         Start = 'Queen_Spawner_BP';            Cls = 'Queen_BP';         Flag = 'Ending1Complete'; Begin = @('Queen_BP!Interact', 'dialogue!End'); BeginSync = $true; Stay = $true; OptIn = $true; Phase = @('Queen_BP!?CurrentStateIndex,DoingPhaseAnim,DeathIsSuspended,bDead,HP,MaxHP,DoinAOrb,IntroWasAbbrev,SpecialSwordTriggerHP', 'Queen_BP!?CurrentStateIndex,DoingPhaseAnim,DeathIsSuspended,bDead,HP,DoinAOrb', 'Queen_BP!OrbProjectileHitPlayer', 'Queen_BP!?CurrentStateIndex,DoingPhaseAnim,DeathIsSuspended,bDead,HP,DoinAOrb', 'Queen_BP!?CurrentStateIndex,DoingPhaseAnim,DeathIsSuspended,bDead,HP,DoinAOrb') }
     [pscustomobject]@{ Name = 'GiantFish';    Area = '770_SZ_Swamp';       Start = 'GiantFish_Spawner_BP';        Cls = 'GiantFish_Enemy';  Flag = 'GiantSwampFish_IsDead'; Stay = $true; Near = 600; Wait = 12 }
 )
 
@@ -2204,6 +2204,18 @@ function Invoke-OneBoss([int]$H, [int]$P, $b) {
         Start-Sleep -Milliseconds 700
     }
     Start-Sleep -Seconds 8
+    if ($b.PSObject.Properties['Phase'] -and $b.Phase) {
+        # A BOSS WITH A SECOND PHASE (Session 29: the Queen's phase 1 at HP 0 transitions, it
+        # does not end).  Each step is an act on the host ('X!Verb' or 'X!?Props'), 6 s apart.
+        $mPh = Get-Mark $H
+        $mPp = Get-Mark $P
+        foreach ($act in @($b.Phase)) {
+            Set-Control $H 'qd.act' ('near:' + $act + '#' + (Get-Date -Format 'HHmmssfff'))
+            Start-Sleep -Seconds 6
+        }
+        Show-Since $H 'dev props|forced verb|rig: verb|boss|cutscene' $mPh 24
+        Show-Since $P 'boss|cutscene' $mPp 12
+    }
     # LATER PHASES ARE OTHER ACTORS.  The green dragon's rider (JosamiLord_Green) jumps off
     # and fights on; the spawner writes DragonLordDead only when BOTH are dead.  Kill every
     # still-live member of the boss's group the same way, until none is left.
