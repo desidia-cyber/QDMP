@@ -10001,6 +10001,16 @@ void EnemyOwnPump(uint32_t now)
         // the ordinary nearer-player ownership instead: the machine whose player is nearer
         // runs her, so her orbs, grabs and cutscenes act on THAT player, natively.
         bool stickyBoss = r.isBoss && !GrabBossActor(r.actor);
+        // NEVER HAND OFF MID-GRAB (Session 29, user: "black screen on one instance and constant
+        // falling through the floor on the other").  Her grab turns OFF the grabbed player's
+        // collision, sets its movement mode and fades in a black overlay; only her own
+        // `UnlockFromOrbStuff` at the end of the grab undoes it.  A copy handed away mid-grab
+        // is frozen, the end never runs, and that player falls through every floor under a
+        // black screen.  While she is in an orb (`DoinAOrb`) ownership stays where it is.
+        if (!stickyBoss && r.isBoss) {
+            uint8_t inOrb = 0;
+            if (BytePropC(r.actor, "DoinAOrb", &inOrb) && inOrb) stickyBoss = true;
+        }
         enemyown::OwnerState st = g_own.Tick(r.guid, true, ex, haveEx,
                                             mine, haveMine, theirs, haveTheirs, now,
                                             stickyBoss);
@@ -15420,6 +15430,51 @@ void LandingHoldStart(float x, float y, float z, float yaw, const char* why)
           " until the levels around it are loaded (", g_land.why, "); ", dec(PendingLevelCount()), " still pending");
 }
 
+// THE GRAB'S AFTERMATH IS ALWAYS UNDONE (Session 29).  If this machine's player has had its
+// collision off for 3 s and no Queen RUN HERE is in an orb, the grab that turned it off can no
+// longer end on its own (her copy here was frozen, or the partner's machine ran the orb): her
+// `UnlockFromOrbStuff` runs on the local copy, and the player's collision and walking come back.
+void GrabAftermathPump(uint32_t now)
+{
+    static uint32_t last = 0, offSince = 0;
+    if (now - last < 500) return;
+    last = now;
+    void* pawn = g_localPawn;
+    if (!pawn || !IsGameplayPawn(pawn)) { offSince = 0; return; }
+    static Fn fGet = {};
+    bool collides = true;
+    __try {
+        if (fGet.Resolve(pawn, "GetActorEnableCollision")) { Call c(fGet); if (c.Run(pawn) && c.Ret()) collides = *(uint8_t*)c.Ret() != 0; }
+    } __except (EXCEPTION_EXECUTE_HANDLER) { collides = true; }
+    if (collides) { offSince = 0; return; }
+    if (!offSince) { offSince = now ? now : 1; return; }
+    if ((int32_t)(now - offSince) < 3000) return;
+    void* queen = nullptr;
+    bool grabbingHere = false;
+    for (int i = 0; i < g_enN; ++i) {
+        EnemyRec& r = g_en[i];
+        if (!r.haveGuid || !ObjectIsLive(r.actor) || !GrabBossActor(r.actor)) continue;
+        if (!queen) queen = r.actor;
+        uint8_t inOrb = 0;
+        if (!r.mirror && g_own.Running(r.guid) && BytePropC(r.actor, "DoinAOrb", &inOrb) && inOrb) grabbingHere = true;
+    }
+    if (grabbingHere) return;                       // a live grab here ends on its own
+    bool unlocked = false;
+    if (queen) {
+        Fn f = {};
+        __try { if (f.Resolve(queen, "UnlockFromOrbStuff")) { Call c(f); unlocked = c.Run(queen); } }
+        __except (EXCEPTION_EXECUTE_HANDLER) { unlocked = false; }
+    }
+    __try {
+        CallActorBool(pawn, "SetActorEnableCollision", "bNewActorEnableCollision", true);
+        PawnMovementMode(pawn, 1 /* MOVE_Walking */);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    offSince = 0;
+    QDLOG(LOG_WARN, "grab aftermath: this player had no collision for 3 s and no grab is running here -- ",
+          (unlocked ? "the Queen's UnlockFromOrbStuff ran, " : (queen ? "UnlockFromOrbStuff DID NOT RUN, " : "no Queen here, ")),
+          "collision and walking restored");
+}
+
 void LandingHoldPump(uint32_t now)
 {
     // ANY TELEPORT, NOT ONLY THE MOD'S (run 28: the game's own fall recovery sent the peer to
@@ -19962,6 +20017,7 @@ bool HK_Tick(void* engineLoop)
     DevTeleportFile(now);
     RigFallGuardPump(now);
     LandingHoldPump(now);
+    GrabAftermathPump(now);
     DevScanNearest(now);
     DevEnemyDump(now);
     DevObjectLever(now);
