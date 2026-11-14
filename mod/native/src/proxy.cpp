@@ -21022,9 +21022,13 @@ void OnTrigger(wire::Reader& r, uint32_t now)
     if (ReadActorXform(pawn, &me) && Cfg().boss_pull_in && trigger::WantPullIn(b, me.px, me.py, me.pz)) {
         float dx = b.px - me.px, dy = b.py - me.py, dz = b.pz - me.pz;
         float dist = sqrtf(dx * dx + dy * dy + dz * dz);
-        // Beside the partner, not inside its capsule: 150 cm back along the line from here.
-        float k = dist > 1.0f ? 150.0f / dist : 0.0f;
-        float tx = b.px - dx * k, ty = b.py - dy * k, tz = b.pz;
+        // ON THE PARTNER'S OWN FLOOR (Session 29).  This used to be 150 cm back along the line
+        // from wherever this player was -- from the hub that line ends over the Queen arena's
+        // chute: run 31 measured the peer sinking 1.8 m five seconds after the pull-in and the
+        // game returning it to the hub teleporter (the black screen and the "falling through
+        // the floor").  The partner stands on a floor that exists; this player is put 1 m above
+        // that exact spot and the engine separates the two capsules.
+        float tx = b.px, ty = b.py, tz = b.pz + 100.0f;
         bool moved = SetActorXform(pawn, tx, ty, tz, me.yaw);
         if (moved) RigFallGuardDisarm("the boss pull-in moved this player");
         if (moved) LandingHoldStart(tx, ty, tz, me.yaw, "boss pull-in");

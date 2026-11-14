@@ -2171,7 +2171,9 @@ function Invoke-OneBoss([int]$H, [int]$P, $b) {
         Invoke-Go $P $b.Start 300
         Start-Sleep -Seconds 6
         Invoke-Go $P $b.Cls 400
-        Invoke-Go $H $b.Cls 2500
+        # The host steps back to the start spot (a floor that exists; 25 m in a random direction
+        # put it over the arena chute, run 31) -- it is still the farther of the two.
+        Invoke-Go $H $b.Start 1500
         # EQUAL CO-OP BY OWNERSHIP: with the peer nearer, the PEER's machine runs her, and her
         # orbs (and grabs) are its own -- published by the peer as local effects.
         Save-Shots ($b.Name + '-grabtest')
