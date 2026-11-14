@@ -118,6 +118,8 @@ void WorldTeardownReset(uint32_t now, const char* why);
 // Defined late (they are part of the world-teardown block), used by the enemy scan below.
 void HideWorldActor(void* a);
 void ForgetMirror(void* actor);
+void RetireActor(void* a);
+bool IsRetiredActor(void* a);
 
 // TRUE between "we asked the engine for a hard load" and "the world pointer changed".
 // While it is set the module does nothing at all: the old world is being destroyed inside
@@ -6260,6 +6262,7 @@ void DropMirrorForKey(const uint32_t g[4], void* keep)
         QDLOG(LOG_INFO, "enemy mirror: the real enemy for guid=", hex32(g[0]),
               " is on this machine too; dropping the constructed copy (one key, one body)");
         HideWorldActor(r.actor);
+        RetireActor(r.actor);
         ForgetMirror(r.actor);
         g_en[i] = g_en[--g_enN];
         --i;
@@ -6305,6 +6308,7 @@ void EnemyScanStep()
         char nm[12];
         if (FNameToString(ObjNameRaw(o), nm, sizeof(nm)) > 0 && strncmp(nm, "Default__", 9) == 0) continue;
         EnemyRec* r = EnemyByActor(o);
+        if (!r && IsRetiredActor(o)) continue;      // a retired copy, hidden in place
         if (!r) {
             if (g_enN >= (int)(sizeof(g_en) / sizeof(g_en[0]))) continue;
             r = &g_en[g_enN++];
@@ -8092,9 +8096,32 @@ void ForgetMirror(void* actor)
     }
 }
 
+// A RETIRED COPY IS NEVER AN ENEMY AGAIN (Session 29).  A copy the module constructed is
+// hidden, never destroyed (R140), when it is retired -- the real enemy took its key, or the
+// owner's row said dead.  The hidden actor is still a live FS_EnemyCharacterBase with no
+// OwningSpawner, and the next scan pass met it as a NEW enemy: measured runs 10-11, the
+// peer's dropped Queen copy became summon key D8279A47, was published to the host, and the
+// host built a mirror of the ghost -- two Queens on both machines.  Retired actors are
+// remembered (raw pointers, compared only, never dereferenced) until the world changes.
+static void* g_retired[128];
+static int g_retiredN = 0;
+void RetireActor(void* a)
+{
+    if (!a) return;
+    for (int i = 0; i < g_retiredN; ++i) if (g_retired[i] == a) return;
+    if (g_retiredN < 128) g_retired[g_retiredN++] = a;
+    else { memmove(g_retired, g_retired + 1, sizeof(void*) * 127); g_retired[127] = a; }
+}
+bool IsRetiredActor(void* a)
+{
+    for (int i = 0; i < g_retiredN; ++i) if (g_retired[i] == a) return true;
+    return false;
+}
+
 void ForgetAllMirrors()
 {
     g_mirrorN = 0;
+    g_retiredN = 0;
 }
 
 // Resolve the class an owner named.  The path is the actor's CLASS asset path
@@ -8620,6 +8647,7 @@ void EnemyMirrorPump(uint32_t now)
                 // R140: HIDE it, never `K2_DestroyActor` -- a gameplay Blueprint destroyed
                 // from native code leaves the engine list this session's dump faults in.
                 __try { SetActorHidden(r.actor, true); } __except (EXCEPTION_EXECUTE_HANDLER) {}
+                RetireActor(r.actor);
                 ForgetMirror(r.actor);
                 gone = true;
             }
