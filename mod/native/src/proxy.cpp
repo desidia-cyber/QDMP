@@ -10123,6 +10123,18 @@ void EnemyTargetPump(uint32_t now)
             // the flag stays for the grab relay (the orb homes on the partner's body here).
             (void)grabber;
         }
+        // A STALE BODY IS THE REMOTE BODY (Session 29 run 23).  The partner's body is respawned
+        // (a teleport, a hide/show), and an enemy aimed at the OLD one read as "not a player":
+        // the pump never moved it, and the Queen stood for 80 s with no target and no attack.
+        // A target of the player's own class that is not the local player is the partner's
+        // body, current or old, and is treated as such.
+        bool staleBody = false;
+        if (cur != nullptr && cur != g_localPawn && cur != g_proxySeen) {
+            __try { staleBody = !ObjectIsLive(cur) || (g_localPawn && ObjClass(cur) == ObjClass(g_localPawn)); }
+            __except (EXCEPTION_EXECUTE_HANDLER) { staleBody = true; }
+            if (staleBody && proxyOk) cur = g_proxySeen;
+            else if (staleBody) cur = nullptr;
+        }
         int c = (cur != nullptr && cur == g_localPawn)      ? playerbody::CUR_LOCAL
               : (cur != nullptr && cur == g_proxySeen)      ? playerbody::CUR_REMOTE
               : (cur == nullptr)                            ? playerbody::CUR_NONE
@@ -10136,6 +10148,8 @@ void EnemyTargetPump(uint32_t now)
         float dRemote = proxyOk ? playerbody::Dist3(e, pr) : -1.0f;
 
         playerbody::Tgt act = playerbody::ChooseTarget(true, proxyOk, c, dLocal, dRemote);
+        if (staleBody && act == playerbody::TGT_LEAVE)      // re-aim it at a body that exists
+            act = (proxyOk && dRemote >= 0.0f && dRemote < dLocal) ? playerbody::TGT_TO_REMOTE : playerbody::TGT_TO_LOCAL;
         if (act == playerbody::TGT_LEAVE) {
             // The informative refusal: the proxy is inside the switch margin and the
             // target still did not move.  Without this line a run can only say "no
