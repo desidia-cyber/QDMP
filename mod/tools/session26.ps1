@@ -1398,7 +1398,9 @@ function Leave-Area([int]$H, [int]$P, [string]$step) {
     $follow = @(Wait-Since $P 'travel: left the area |travel: the partner left' $mP 90)
     Verdict $step $P ($follow.Count -gt 0) 'the PEER left its area' $(if ($follow.Count) { ([string]$follow[-1]).Trim() } else { '' })
     Set-HpGate 'area leave (back to the hub)' 40
-    Start-Sleep -Seconds 4
+    # The `world:` line is written every ~10 s; 4 s read the line from BEFORE the leave
+    # (run 46: host='600_Castle' at 20:21:21, '-' at 20:21:32).
+    Start-Sleep -Seconds 12
     $wH = Get-WorldState $H; $wP = Get-WorldState $P
     Verdict $step $P ($wH.Area -eq $wP.Area) 'both machines hold the SAME area after the leave' ("host='$($wH.Area)' peer='$($wP.Area)'")
     return ($follow.Count -gt 0)
@@ -2176,9 +2178,18 @@ function Invoke-OneBoss([int]$H, [int]$P, $b) {
         Invoke-Go $H $b.Start 1500
         # EQUAL CO-OP BY OWNERSHIP: with the peer nearer, the PEER's machine runs her, and her
         # orbs (and grabs) are its own -- published by the peer as local effects.
+        $before = $script:shots.Count
         Save-Shots ($b.Name + '-grabtest')
+        # THE WORLD IS DRAWN DURING THE FIGHT (runs 42-44: the host's world was black, HUD only,
+        # for the whole fight -- the Queen-intro fade waited on a level queue the veto jammed).
+        foreach ($sh in @($script:shots | Select-Object -Skip $before)) {
+            Verdict $step $sh.Inst ([bool]($sh.Mean -gt 20)) 'the world is drawn during the fight (not a black screen)' ("mean={0} stddev={1} {2}" -f $sh.Mean, $sh.Std, $sh.Path)
+        }
         [void](Check $step $P 'boss owner: grab boss .* RUN HERE' 40 "the PEER runs the Queen while its player is the nearer one" $mP0)
-        [void](Check $step $P 'effect: local #.*Queen_Orb_Projectile' 75 "the Queen's orbs are fired at the PEER's own player, on the peer" $mP0)
+        # HER ATTACKS, NOT ONE ATTACK: the orb is one of her ranged attacks and her AI picks among
+        # them (runs 40-43: no orb in 75 s; run 44: three Queen_FastProjectile shots from the
+        # peer's own copy 85 s in).  Any projectile the peer's own Queen fires is proof that her
+        # attacks come at the peer's player from the peer's machine; the orb is reported apart.
         Show-Since $P 'boss owner|effect: local #.*Queen|cutscene' $mGp 12
         Show-Since $H 'boss owner|TargetPlayer' $mG 8
         Invoke-Go $H $b.Cls 600
@@ -2195,6 +2206,16 @@ function Invoke-OneBoss([int]$H, [int]$P, $b) {
     $dp2 = Invoke-EnemyDump $P ($b.Name + '-p2')
     $h2 = $dh2[$bh.Id]; $p2 = $dp2[$bh.Id]
     $hpOk = $h2 -and $p2 -and $null -ne $h2.Hp -and $null -ne $p2.Hp -and $h2.Hp -lt $hp0 -and [math]::Abs($h2.Hp - $p2.Hp) -le [math]::Max(1.0, 0.02 * $hp0)
+    # An HP SAMPLE INSIDE THE AREA: the end-of-run sample is taken back in the hub, where
+    # run 43 had no shared live enemy at all (compared=0).  Both dumps here are of the boss's
+    # own area, with both players in it.
+    $script:hpSamples.Add((Compare-SharedHp $dh2 $dp2 ($b.Name + ' fight'))) | Out-Null
+    if ($b.PSObject.Properties['GrabTest'] -and $b.GrabTest) {
+        # SHE ATTACKS ONCE SHE IS HIT (runs 44, 46: her projectiles came 1-4 s after the first
+        # hits, never before them in 150 s of standing beside her), so the check waits for the hits.
+        [void](Check $step $P 'effect: local #.*Queen_(Orb_Projectile|FastProjectile)' 45 "the Queen's projectiles are fired at the PEER's own player, on the peer" $mP0)
+        Show-Since $P 'effect: local #.*Queen_Orb' $mP0 3
+    }
     Verdict $step $H ([bool]$hpOk) ("both hits landed on ONE HP: start={0} host={1} peer={2}" -f $hp0, $(if ($h2) { $h2.Hp }), $(if ($p2) { $p2.Hp })) ''
     # THE HIT REACTION.  The owner applies both hits; the line says which path moved the HP --
     # the game's own TryApplyDamage with a built hit (its whole on-hit pipeline) or the clamped
@@ -2315,7 +2336,13 @@ function Invoke-OneBoss([int]$H, [int]$P, $b) {
             [void](Check $step $i 'cutscene: local ended Ending' 120 'this machine''s own ending ended' $mk)
         }
         Start-Sleep -Seconds 35
-        foreach ($i in @($H, $P)) { Show-Since $i 'ending wake' 0 3 }
+        foreach ($i in @($H, $P)) { Show-Since $i 'ending wake|ALLOW (hide|unload)' 0 6 }
+        # THE GAME'S OWN WAKE-UP (not the mod's fade fallback): it waits on the level manager's
+        # queue, which a held veto jammed for good before Session 29's cooldown.
+        foreach ($i in @($H, $P)) {
+            $mk = if ($i -eq $H) { $mH0 } else { $mP0 }
+            [void](Check $step $i "ending wake: the player's wake-up played" 5 'the GAME''s own wake-up played after the ending' $mk)
+        }
         $before = $script:shots.Count
         Save-Shots ($b.Name + '-postending')
         foreach ($sh in @($script:shots | Select-Object -Skip $before)) {

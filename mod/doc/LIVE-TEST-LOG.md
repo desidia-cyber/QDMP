@@ -5943,3 +5943,24 @@ the rig kills the Queen before she reaches it). The boss's own HP was equal (220
   compared with the single-player game.
 - The orb check (the Queen's orbs aimed at the peer's own player) depends on an orb attack
   landing in the harness window.
+
+## Session 29, runs 44-46 - 2026-11-14 (black world in the fight, the double spawn, the attacks on the peer)
+
+Run 46: 50 PASS, 4 FAIL. No crash, one Queen (C88FFC0C on both), HP compared 61 of 61 equal (in
+the castle), kill sets diff 0, the world drawn on both screens during the fight.
+
+| Gap | Status | Proof |
+|---|---|---|
+| Host world black during the whole Queen fight (HUD only, runs 42-44) | **closed** (runs 45, 46) | both machines published ~18 hub levels while standing in the castle and each vetoed the other's hide of `050_Ocean` (~20/s); the manager's queue never drained and the Queen-intro fade waited on it. Now no veto and no forcing while the partner is within 60 m (`PartnerIsNear`); a far partner's level still gets one allow per 10 s. Run 46 fight shots: mean 88.7 / 83, `PASS the world is drawn during the fight` |
+| Double Queen from a spawn race (run 45: host built a copy of the peer's Queen 1.1 s before its own spawner made her; new keys A7EC3543 / 083326E5, host died) | **closed** (run 46) | while a boss trap this machine activated has no enemy yet (4 s), a received spawn waits in the queue: `enemy spawn: guid=... waits -- this machine's own boss spawner was activated`. Run 46: C88FFC0C on both, no summon keys |
+| Host crash in `EnemyIsBoss` (run 45: its static counter overwritten, wild write) | **guarded** | the counter is bounds-checked before use; the writer is not found (the minidump holds no .data) |
+| The Queen's attacks reach the peer's own player | **closed** (runs 44, 46) | the peer's own copy fired: `effect: local #1 .../Queen_FastProjectile_BP_C` at 20:17:54 (run 46), 1-4 s after the first hits. She does not attack before she is hit, so the harness check now runs after the hits |
+| HP never measured in the story run | **closed** (run 46) | a sample is taken from the fight's own dumps: compared=61 unequal=0 |
+| `both machines hold the SAME area after the leave` | **harness** | the `world:` line is written every ~10 s; the check read the line from before the leave (host '-' at 20:21:32). Now waits 12 s |
+
+### Open
+
+- The game's own wake-up after the ending still does not play, with no veto active (run 46). The
+  mod's fallback stops the held fade at 25 s and the world is drawn (run 46 post-ending shot: the
+  beach at night facing a rock, mean 4-6, so the brightness check cannot tell it from black).
+  The main-menu skip on the rig is the remaining suspect.

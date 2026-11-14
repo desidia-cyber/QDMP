@@ -3992,6 +3992,28 @@ bool FlipPendingHideGuarded(void* mgr, void* ls)
     __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 
+// True while the partner's player is within 60 m of this one (re-read at most 4 times a
+// second: the veto runs inside the engine's streaming call, many times a frame).
+static bool PartnerIsNear(uint32_t now)
+{
+    static uint32_t at = 0;
+    static bool isNear = false;
+    if (at && (uint32_t)(now - at) < 250) return isNear;
+    at = now ? now : 1;
+    isNear = false;
+    __try {
+        motion::MoveOut m = g_peerInterp.Sample(now);
+        ActorXform me = {};
+        void* pawn = g_localPawn;
+        if (m.valid && pawn && ReadActorXform(pawn, &me) && motion::SanePos(m.px, m.py, m.pz)) {
+            float dx = m.px - me.px, dy = m.py - me.py, dz = m.pz - me.pz;
+            isNear = dx * dx + dy * dy + dz * dz < 6000.0f * 6000.0f;
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) { isNear = false; }
+    return isNear;
+}
+
 bool StreamVetoes(const LevelRec* r)
 {
     if (!r || !r->name[0] || !Cfg().stream_union || !g_net.Connected()) return false;
@@ -3999,7 +4021,15 @@ bool StreamVetoes(const LevelRec* r)
     // While the machines are in different worlds the partner's `PeerWants` answer is
     // about another world's name.  Refusing to veto there is the same rule as
     // refusing to apply its union: the local game owns the decision again.
-    return g_map.PeerStateApplies(now) && g_stream.PeerWants(r->name, now);
+    if (!(g_map.PeerStateApplies(now) && g_stream.PeerWants(r->name, now))) return false;
+    // TOGETHER, THE LOCAL GAME DECIDES (Session 29, runs 42-44).  The veto keeps a level for a
+    // partner who is somewhere ELSE.  With both players in one place each game already streams
+    // what that place needs, and the veto only fought the manager: both machines kept ~18 hub
+    // levels in their published sets while standing in the castle, each blocked the other's
+    // hide of `050_Ocean` (~20 a second, vetoes 2055 -> 3092), the manager's queue never
+    // drained, and what waits on it never ran -- the Queen-intro camera fade on the host
+    // (black world, HUD only, the whole fight) and the wake-up after the ending.
+    return !PartnerIsNear(now);
 }
 
 // A veto must never STALL the manager's queue.  MEASURED (Session 15): the manager applies
@@ -4014,23 +4044,27 @@ bool StreamVetoes(const LevelRec* r)
 // than timed, so a manager that asks once and moves on is still vetoed every time.
 bool VetoWouldStall(void* ls, uint32_t now)
 {
-    static struct { void* ls; uint32_t lastMs; int n; bool allowed; } rec[16];
+    static struct { void* ls; uint32_t lastMs; int n; bool allowed; uint32_t allowMs; } rec[16];
     static int n = 0;
     int slot = -1;
     for (int i = 0; i < n; ++i) if (rec[i].ls == ls) { slot = i; break; }
     if (slot < 0) {
         slot = (n < 16) ? n++ : 0;
-        rec[slot].ls = ls; rec[slot].lastMs = now; rec[slot].n = 0; rec[slot].allowed = false;
+        rec[slot].ls = ls; rec[slot].lastMs = now; rec[slot].n = 0; rec[slot].allowed = false; rec[slot].allowMs = 0;
     }
     if ((uint32_t)(now - rec[slot].lastMs) > 1000) rec[slot].n = 0;   // a new burst
     rec[slot].lastMs = now;
     ++rec[slot].n;
-    // ONE allow per level, ever.  Measured Session 15: allowing repeatedly turned the
-    // union into a hide/show churn that ended with a process death.  One allow is enough
-    // to move the manager past the entry it was waiting on; after that the veto holds the
-    // level the way it is meant to.
-    if (rec[slot].allowed) return false;
-    if (rec[slot].n > 3) { rec[slot].allowed = true; return true; }
+    // At most ONE allow per level per 10 s.  Measured Session 15: allowing every few calls
+    // turned the union into a hide/show churn that ended with a process death.  But "one
+    // allow ever" (the old rule) jammed the manager for good once a level had spent it --
+    // measured Session 29 run 43: the host vetoed `050_Ocean` ~20 times a second from
+    // before the ending to the end of the run (vetoes 2055 -> 3092), the queue never
+    // drained, and the player's `WakeOnBeachAnim` waits on `FS_WaitForLevelManagement`, so
+    // the wake-up after the ending never played and both screens stayed black.  Anything
+    // else the game gates on the manager (rest, teleports) hung the same way.
+    if (rec[slot].allowed && (uint32_t)(now - rec[slot].allowMs) < 10000) return false;
+    if (rec[slot].n > 3) { rec[slot].allowed = true; rec[slot].allowMs = now; rec[slot].n = 0; return true; }
     return false;
 }
 
@@ -4281,7 +4315,8 @@ void StreamPump(uint32_t now)
     for (int i = 0; i < g_levelN; ++i) {
         LevelRec& r = g_levels[i];
         if (!r.name[0] || !ObjectIsLive(r.ls)) continue;
-        bool peer = worldsAgree && g_net.Connected() && g_stream.PeerWants(r.name, now);
+        bool peer = worldsAgree && g_net.Connected() && g_stream.PeerWants(r.name, now) &&
+                    !PartnerIsNear(now);   // together, the local game streams for both (see StreamVetoes)
         if (peer) {
             g_force.Need(r.name, now);
             if (r.gameWants != 1 && !LevelVisible(r.ls) && budget > 0) {
@@ -8089,6 +8124,7 @@ uint32_t g_lastMirrorSpawnMs = 0;
 static bool TryConstructMirror(const wire::EnemySpawnBody& s, uint32_t now);
 static bool TryConstructMirrorBody(const wire::EnemySpawnBody& s, uint32_t now);
 static void QueueMirror(const wire::EnemySpawnBody& s, uint32_t now);
+namespace trig { bool LocalBossSpawnPending(uint32_t now); }
 static void ClearPendingMirrors();
 
 bool IsMirrorActor(void* actor)
@@ -8532,6 +8568,19 @@ void OnEnemySpawn(wire::Reader& r, uint32_t now)
         }
         return;
     }
+    // THIS MACHINE'S OWN SPAWNER IS ABOUT TO MAKE IT (Session 29, run 45).  Both machines run
+    // the boss trap; the peer's spawner made the Queen in 0.3 s, the host's took 1.1 s, and
+    // the host built a COPY of the peer's Queen first.  Its own spawner's Queen then came out
+    // beside the copy under new keys (summons A7EC3543, 083326E5), the fight start and the
+    // ownership both lost track, and the host process died.  While a boss trap this machine
+    // activated is still waiting for its enemy, the body waits in the queue: when the local
+    // spawn appears under the same key the queue drops it; if none appears in 4 s it is built.
+    if (trig::LocalBossSpawnPending(now)) {
+        QDLOG(LOG_INFO, "enemy spawn: guid=", hex32(s.guid[0]),
+              " waits -- this machine's own boss spawner was activated and has not spawned yet");
+        QueueMirror(s, now);
+        return;
+    }
     TryConstructMirror(s, now);
 }
 
@@ -8623,6 +8672,7 @@ void EnemyMirrorPump(uint32_t now)
             g_pendingMirror[i].used = false;
             continue;
         }
+        if (trig::LocalBossSpawnPending(now)) continue;   // see OnEnemySpawn
         wire::EnemySpawnBody s = g_pendingMirror[i].body;
         g_pendingMirror[i].used = false;
         TryConstructMirror(s, now);
@@ -8847,6 +8897,7 @@ bool EnemyIsBoss(void* actor, void* spawner)
     static int seenN = 0;
     void* cls = ObjClass(actor);
     bool logged = false;
+    if (seenN < 0 || seenN > 64) seenN = 64;   // run 45: found overwritten; never index with it
     for (int i = 0; i < seenN; ++i) if (seen[i] == cls) { logged = true; break; }
     if (!logged && seenN < 64) {
         seen[seenN++] = cls;
@@ -20730,6 +20781,20 @@ static bool TargetsABoss(void* trig, char* bossOut, int bossCap)
 struct PendingTrap { void* sp; uint32_t until; uint32_t at; char label[64]; bool replay; };
 static PendingTrap g_pendTrap[4];
 static int g_pendTrapN = 0;
+
+// A boss trap activated here in the last 4 s whose spawner has no live enemy yet.
+bool LocalBossSpawnPending(uint32_t now)
+{
+    for (int i = 0; i < g_pendTrapN && i < 4; ++i) {
+        PendingTrap& p = g_pendTrap[i];
+        if (now - p.at >= 4000 || !ObjectIsLive(p.sp)) continue;
+        void* me = nullptr;
+        __try { me = ObjPropC(p.sp, "CurrentManagedEnemy"); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { me = nullptr; }
+        if (!(me && LooksLikeUObject(me) && ObjectIsLive(me))) return true;
+    }
+    return false;
+}
 
 void BossFollowThroughPump(uint32_t now)
 {
