@@ -9328,6 +9328,7 @@ void BossPump(uint32_t now)
 // ITS OWN bar for the key the host announced.
 void BossStartNote(const uint32_t key[4], uint32_t now);
 void BossStartPump(uint32_t now);
+void TestWindowNoStealPump(uint32_t now);
 void BossFollowThroughPumpAll(uint32_t now);
 void BossDeathWatchArm(void* actor, uint32_t key);
 void BossDeathWatchPump(uint32_t now);
@@ -9692,6 +9693,36 @@ void EnemyOwnPump(uint32_t now)
             !EnemyDead(r.actor) && now - r.ledgerKillAt >= 1000) {
             r.ledgerKillAt = now;
             float rhp = 0, rmx = 0;
+            // A BOSS IS NOT KILLED TWICE (Session 29 run 12).  The peer held a mirror of the
+            // Queen during the fight, so its own spawner never recorded her death; it spawned
+            // her again a minute later and this path killed the new copy through the game's
+            // damage path -- which runs her WHOLE death sequence: the ending cutscene started a
+            // second time and the host froze its player for it.  A boss's death sequence is
+            // story (an ending, a reward NPC, a flag); a copy that appears after the death is
+            // already recorded is retired quietly instead: hidden, not interactable, not
+            // ticking, its spawner told the death, and never scanned again.
+            if (r.isBoss || EnemyIsBoss(r.actor, r.spawner)) {
+                void* a = r.actor;
+                __try {
+                    SetActorHidden(a, true);
+                    avatar::SetActorCollision(a, false);
+                    CallActorBool(a, "SetActorTickEnabled", "bEnabled", false);
+                } __except (EXCEPTION_EXECUTE_HANDLER) {}
+                bool stored = false;
+                if (r.spawner && ObjectIsLive(r.spawner) && ActorCallReady(r.spawner)) {
+                    QdGuid g = {r.guid[0], r.guid[1], r.guid[2], r.guid[3]};
+                    __try { StoreEnemySaveState(r.spawner, g, 0.0f, 0.0f); stored = true; }
+                    __except (EXCEPTION_EXECUTE_HANDLER) { stored = false; }
+                }
+                QDLOG(LOG_INFO, "enemy ", hex32(r.guid[0]), ": a boss whose death is already recorded appeared "
+                      "again here; retired quietly (hidden, no death sequence -- its ending/reward ran once)",
+                      (stored ? "; its spawner now records the death" : ""));
+                RetireActor(a);
+                ForgetMirror(a);
+                r.actor = nullptr;
+                r.haveGuid = false;
+                continue;
+            }
             if (EnemyHp(r.actor, &rhp, &rmx) && rhp > 0.0f) {
                 // Once per second overall, not per enemy: with a hundred dead keys the
                 // per-enemy line is a log flood, and the fact does not change between them.
@@ -14165,6 +14196,71 @@ void DevRigPath(const char* envName, const char* leaf, char* out, int cap)
     lstrcpynA(out + n, leaf, cap - n);
 }
 
+// A TEST INSTANCE NEVER TAKES THE OPERATOR'S MOUSE (Session 29, user report: "Rig steals my
+// mouse and I can't use/freely move it").  The engine captures and clips the cursor to its
+// viewport whenever its window is the foreground window (first-person look), and a launched
+// instance takes the foreground when its window is created and on some level loads.  The
+// rig drives an instance through control files, never through input, so a test instance
+// (one launched with -UserDir) marks its window WS_EX_NOACTIVATE, and if it is foreground
+// anyway it frees the cursor and hands the foreground back to the window the operator was
+// using.  A player's normal game (no -UserDir) is untouched.
+struct OwnWin { DWORD pid; HWND hwnd; };
+static BOOL CALLBACK OwnWinEnum(HWND h, LPARAM lp)
+{
+    OwnWin* w = (OwnWin*)lp;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(h, &pid);
+    if (pid != w->pid || !IsWindowVisible(h) || GetWindow(h, GW_OWNER)) return TRUE;
+    char cn[64];
+    if (GetClassNameA(h, cn, sizeof(cn)) && !lstrcmpA(cn, "UnrealWindow")) { w->hwnd = h; return FALSE; }
+    return TRUE;
+}
+
+void TestWindowNoStealPump(uint32_t now)
+{
+    static int isTest = -1;
+    if (isTest < 0) {
+        char ud[260];
+        isTest = (CmdArg("-UserDir", ud, sizeof(ud)) && ud[0]) ? 1 : 0;
+    }
+    if (!isTest) return;
+    static uint32_t last = 0;
+    if (now - last < 100) return;
+    last = now;
+    static HWND own = nullptr;
+    static HWND lastOther = nullptr;
+    static bool styled = false;
+    static int gaveBack = 0;
+    if (!own || !IsWindow(own)) {
+        OwnWin w = {GetCurrentProcessId(), nullptr};
+        EnumWindows(OwnWinEnum, (LPARAM)&w);
+        own = w.hwnd;
+        styled = false;
+        if (!own) return;
+    }
+    if (!styled) {
+        LONG_PTR ex = GetWindowLongPtrA(own, GWL_EXSTYLE);
+        SetWindowLongPtrA(own, GWL_EXSTYLE, ex | WS_EX_NOACTIVATE);
+        styled = true;
+        QDLOG(LOG_INFO, "test window: marked no-activate (a test instance never takes the operator's mouse or focus)");
+    }
+    HWND fg = GetForegroundWindow();
+    if (fg && fg != own) {
+        char cn[64] = "";
+        GetClassNameA(fg, cn, sizeof(cn));
+        if (lstrcmpA(cn, "UnrealWindow") != 0) lastOther = fg;     // never the partner instance
+        return;
+    }
+    if (fg != own) return;
+    ClipCursor(nullptr);
+    if (lastOther && IsWindow(lastOther)) {
+        SetForegroundWindow(lastOther);
+        if (gaveBack++ < 5)
+            QDLOG(LOG_INFO, "test window: this instance took the foreground; the cursor is freed and the "
+                  "foreground handed back to the operator's window");
+    }
+}
+
 // An integer rig lever, read from the environment OR from a control file in the
 // UserDir.  The control file is what the rig uses, for the same measured reason the
 // teleport file exists: `QDCOOP_TEST_TPFILE` was set in the parent and did not arrive in
@@ -16036,6 +16132,18 @@ void DevInteract(uint32_t now)
     // scenario can say which door, chest or NPC it means instead of hoping the engine's
     // own trace happened to be pointing at it.
     void* explicitTarget = nullptr;
+    // `near:dialogue!End` (Session 29): the player's OWN conversation.  Ending it on the NPC
+    // left the dialogue widget open on the talking machine (user report, run 12: "a dialogue
+    // box on one instance but not on the other"); the player's DialogueManager.End is the
+    // call a player's last "continue" makes -- it hides the widget and ends the NPC's talk.
+    if (!strcmp(buf, "near:dialogue") && forcedVerb[0]) {
+        void* dm = g_localPawn ? ObjPropC(g_localPawn, "DialogueManager") : nullptr;
+        const char* ran = nullptr;
+        bool ok = dm && RigCallVerb(dm, forcedVerb, nullptr, &ran);
+        QDLOG(ok ? LOG_INFO : LOG_WARN, "dev interact: the player's DialogueManager.", forcedVerb,
+              (ok ? " ran" : (dm ? " DID NOT RUN" : " -- no DialogueManager on the pawn")));
+        return;
+    }
     if (!strncmp(buf, "near:", 5)) {
         float d = 0.0f;
         ActorXform xf = {};
@@ -19286,6 +19394,7 @@ bool HK_Tick(void* engineLoop)
         // already raised their host-derived share, so they cannot be read as pickups.
         PeerInventoryIntentPump(now);
     }
+    TestWindowNoStealPump(now);
     QuestRefreshPump(now);
     BossStartPump(now);
     BossFollowThroughPumpAll(now);
