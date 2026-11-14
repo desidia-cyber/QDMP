@@ -9319,11 +9319,15 @@ bool ActorHiddenNow(void* actor);
 // its signal is the book itself: it rests on the lectern until the intro lifts it, so a book
 // that moved more than 1.5 m from where it was first seen at rest has begun.  The partner then
 // runs the spawner's `CustomEvent` (the message-closed path) on its own copy.
-struct BossBeginRow { const char* boss; const char* npc; const char* verb; bool onSpawner; };
+// The Queen's signal (Session 29 run 10): the greeting NPC did not go away under the rig, but
+// her greeting's end plays `Queen_P1_Intro(_Abbrev)_Montage` -- the montage is the fact.
+struct BossBeginRow { const char* boss; const char* npc; const char* verb; bool onSpawner; const char* introMontage; };
 static const BossBeginRow kBossBegins[] = {
-    {"Queen_BP_C",        "Queen_HackNPC_C", "QueenRegularGreetingEnded", false},
-    {"Necronomicon_BP_C", nullptr,           "CustomEvent",               true},
+    {"Queen_BP_C",        nullptr, "QueenRegularGreetingEnded", false, "Queen_P1_Intro"},
+    {"Necronomicon_BP_C", nullptr, "CustomEvent",               true,  nullptr},
 };
+void* MeshActiveMontage(void* mesh);
+void* EnemyMesh(void* actor);
 static void* g_beginNpc[sizeof(kBossBegins) / sizeof(kBossBegins[0])];
 struct BeginRest { uint32_t key; float p[3]; bool sent; bool applied; };
 static BeginRest g_beginRest[8];
@@ -9378,9 +9382,23 @@ void BossBeginPump(uint32_t now)
         if (!row.npc) {
             EnemyRec* r = BossRecOfClass(row.boss);
             ActorXform x;
-            if (!r || !ReadActorXform(r->actor, &x)) continue;
+            if (!r || r->mirror || !ReadActorXform(r->actor, &x)) continue;
             BeginRest* br = BeginRestFor(r->guid[0]);
             if (!br || br->sent || br->applied) continue;
+            if (row.introMontage) {
+                void* mon = nullptr;
+                char path[160] = "";
+                __try { void* mesh = EnemyMesh(r->actor); mon = mesh ? MeshActiveMontage(mesh) : nullptr; }
+                __except (EXCEPTION_EXECUTE_HANDLER) { mon = nullptr; }
+                if (!mon || !LooksLikeUObject(mon) || avatar::AssetPath(mon, path, sizeof(path)) <= 0 ||
+                    !strstr(path, row.introMontage))
+                    continue;
+                br->sent = true;
+                bool sent = g_net.Connected() && BossSend(r->guid, wire::kBossBegin, 0, 0);
+                QDLOG(LOG_INFO, "boss begin: ", row.boss, " plays its intro here (", path, ") -- ",
+                      (sent ? "the partner's copy is told to begin" : "NOT SENT (no session)"), " key=", hex32(r->guid[0]));
+                continue;
+            }
             if (br->p[0] > 1.0e38f) { br->p[0] = x.px; br->p[1] = x.py; br->p[2] = x.pz; continue; }
             float dx = x.px - br->p[0], dy = x.py - br->p[1], dz = x.pz - br->p[2];
             if (dx * dx + dy * dy + dz * dz < 150.0f * 150.0f) continue;
@@ -19671,7 +19689,7 @@ static bool TargetsABoss(void* trig, char* bossOut, int bossCap)
 // few seconds later; run 3: `ActivateEnemy ran -- managed enemy none`, then the whale existed on
 // both machines and its fight never started: no bar, damage refused, no death montage, no flag).
 // The follow-through waits for the managed enemy and runs `ActivateEnemy` once it is there.
-struct PendingTrap { void* sp; uint32_t until; char label[64]; bool replay; };
+struct PendingTrap { void* sp; uint32_t until; uint32_t at; char label[64]; bool replay; };
 static PendingTrap g_pendTrap[4];
 static int g_pendTrapN = 0;
 
@@ -19681,7 +19699,17 @@ void BossFollowThroughPump(uint32_t now)
         PendingTrap& p = g_pendTrap[i];
         bool drop = !ObjectIsLive(p.sp) || (int32_t)(now - p.until) >= 0;
         void* me = drop ? nullptr : ObjPropC(p.sp, "CurrentManagedEnemy");
-        if (!drop && me && LooksLikeUObject(me) && ObjectIsLive(me)) {
+        if (!drop && me && LooksLikeUObject(me) && ObjectIsLive(me) && now - p.at < 2000) {
+            // THE FIRST CALL SPAWNED IT (Session 29 run 10): the Queen appeared 0.3 s after the
+            // trap's ActivateEnemy, and a second ActivateEnemy spawned a SECOND Queen (a summon
+            // key on the peer, a mirror of it on the host).  A boss that appears within 2 s is
+            // the first call's own spawn; only a boss that appears later (the Whale King, by
+            // proximity, seconds after) still needs the activation.
+            QDLOG(LOG_INFO, "trigger: boss follow-through ", p.label, " -- its boss appeared ",
+                  dec((int)(now - p.at)), " ms after the trap's ActivateEnemy (that call spawned it); "
+                  "not activated twice");
+            drop = true;
+        } else if (!drop && me && LooksLikeUObject(me) && ObjectIsLive(me)) {
             Fn f = {};
             bool ran = false;
             if (f.Resolve(p.sp, "ActivateEnemy")) { Call c(f); ran = c.Run(p.sp); }
@@ -19715,6 +19743,7 @@ static void BossFollowThrough(void* t, const char* label, bool replay)
             PendingTrap& p = g_pendTrap[g_pendTrapN++];
             p.sp = t;
             p.until = Net::Now() + 30000;
+            p.at = Net::Now();
             lstrcpynA(p.label, label ? label : "?", sizeof(p.label));
             p.replay = replay;
         }
