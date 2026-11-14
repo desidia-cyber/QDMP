@@ -8106,29 +8106,38 @@ void ForgetMirror(void* actor)
 // peer's dropped Queen copy became summon key D8279A47, was published to the host, and the
 // host built a mirror of the ghost -- two Queens on both machines.  Retired actors are
 // remembered (raw pointers, compared only, never dereferenced) until the world changes.
-static void* g_retired[128];
+// Each entry is the pointer AND the object's class and name, so a freed slot that the engine
+// reuses for another actor never matches.  The list is NOT cleared with the record table:
+// run 27 measured the table rebuilt mid-area (the world check fired) and the cleared list let
+// the host's retired Queen copy come back as summon key 38F5DC75.
+struct RetiredRec { void* a; void* cls; uint64_t name; };
+static RetiredRec g_retired[128];
 static int g_retiredN = 0;
-static void* g_retiredWorld = nullptr;
-// The list belongs to a UWorld, not to the record table: the table is rebuilt on area
-// streaming (run 19: the peer's retired Queen copy was re-registered as a summon every 30 s,
-// each time the table reset cleared the list).  Only a different world clears it.
-static void RetiredWorldCheck()
+static uint64_t RetiredName(void* a)
 {
-    void* w = GWorldPtr();
-    if (w != g_retiredWorld) { g_retiredN = 0; g_retiredWorld = w; }
+    uint64_t n = 0;
+    __try { QdName q = ObjNameRaw(a); memcpy(&n, &q, sizeof(q) < 8 ? sizeof(q) : 8); } __except (EXCEPTION_EXECUTE_HANDLER) { n = 0; }
+    return n;
 }
 void RetireActor(void* a)
 {
     if (!a) return;
-    RetiredWorldCheck();
-    for (int i = 0; i < g_retiredN; ++i) if (g_retired[i] == a) return;
-    if (g_retiredN < 128) g_retired[g_retiredN++] = a;
-    else { memmove(g_retired, g_retired + 1, sizeof(void*) * 127); g_retired[127] = a; }
+    for (int i = 0; i < g_retiredN; ++i) if (g_retired[i].a == a) return;
+    RetiredRec r = {a, ObjClass(a), RetiredName(a)};
+    if (g_retiredN < 128) g_retired[g_retiredN++] = r;
+    else { memmove(g_retired, g_retired + 1, sizeof(RetiredRec) * 127); g_retired[127] = r; }
 }
 bool IsRetiredActor(void* a)
 {
-    RetiredWorldCheck();
-    for (int i = 0; i < g_retiredN; ++i) if (g_retired[i] == a) return true;
+    for (int i = 0; i < g_retiredN; ++i) {
+        if (g_retired[i].a != a) continue;
+        bool same = false;
+        __try { same = ObjClass(a) == g_retired[i].cls && RetiredName(a) == g_retired[i].name; }
+        __except (EXCEPTION_EXECUTE_HANDLER) { same = false; }
+        if (same) return true;
+        g_retired[i] = g_retired[--g_retiredN];          // the slot was reused: forget it
+        return false;
+    }
     return false;
 }
 
@@ -10010,7 +10019,9 @@ void EnemyOwnPump(uint32_t now)
                 QDLOG(LOG_INFO, "boss owner: grab boss ", hex32(r.guid[0]), " is ",
                       (st == enemyown::O_LOCAL ? "RUN HERE (its attacks and grabs act on this player)" :
                        st == enemyown::O_FROZEN ? "followed here (the partner's machine runs it)" : "being handed to the partner"),
-                      (r.mirror ? " [constructed copy]" : ""));
+                      (r.mirror ? " [constructed copy]" : ""),
+                      " dMine=", flt(haveMine && haveEx ? sqrtf((mine[0]-ex[0])*(mine[0]-ex[0]) + (mine[1]-ex[1])*(mine[1]-ex[1]) + (mine[2]-ex[2])*(mine[2]-ex[2])) : -1.0f, 0),
+                      " dTheirs=", flt(haveTheirs && haveEx ? sqrtf((theirs[0]-ex[0])*(theirs[0]-ex[0]) + (theirs[1]-ex[1])*(theirs[1]-ex[1]) + (theirs[2]-ex[2])*(theirs[2]-ex[2])) : -1.0f, 0));
             }
         }
         const enemy::HostRow* row = g_hostView.Get(r.guid);
