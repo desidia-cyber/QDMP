@@ -9634,16 +9634,13 @@ void BossGrabRelayPump(uint32_t now)
         if (FNameToString(ObjNameRaw(ObjClass(r.actor)), cn, sizeof(cn)) > 0 && !strcmp(cn, "Queen_BP_C")) queen = &r;
     }
     if (!queen) return;
-    void* world = GWorldPtr();
-    int total = ObjectCount();
-    for (int k = 0; k < total; ++k) {
-        void* o = ObjectAtSafe(k);
-        if (!o || !LooksLikeUObject(o)) continue;
+    // The orbs are the effect lane's own tracked projectiles (run 24: a world scan found none
+    // while the effect lane had just published the orb).
+    for (int k = 0; k < 8; ++k) {
+        void* o = g_fxTrack[k].actor;
+        if (!o || !ObjectIsLive(o)) continue;
         char cn[64];
         if (FNameToString(ObjNameRaw(ObjClass(o)), cn, sizeof(cn)) <= 0 || strcmp(cn, "Queen_Orb_Projectile_C") != 0) continue;
-        bool inWorld = false;
-        __try { inWorld = world && ActorInThisWorld(o, world); } __except (EXCEPTION_EXECUTE_HANDLER) { inWorld = false; }
-        if (!inWorld || !ObjectIsLive(o) || ActorHiddenNow(o)) continue;
         bool done = false;
         for (int h = 0; h < g_grabHandledN; ++h) if (g_grabHandled[h] == o) { done = true; break; }
         if (done) continue;
