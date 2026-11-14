@@ -2171,9 +2171,12 @@ function Invoke-OneBoss([int]$H, [int]$P, $b) {
         Start-Sleep -Seconds 6
         Invoke-Go $P $b.Cls 400
         Invoke-Go $H $b.Cls 2500
-        $grab = @(Wait-Since $H 'boss grab: the Queen' $mG 75)
-        Show-Since $H 'boss grab|orb watch|TargetPlayer' $mG 16
-        [void](Check $step $P 'boss grab: OrbProjectileHitPlayer ran' 20 "the PEER's player was grabbed by the partner's Queen (relayed)" $mGp)
+        # EQUAL CO-OP BY OWNERSHIP: with the peer nearer, the PEER's machine runs her, and her
+        # orbs (and grabs) are its own -- published by the peer as local effects.
+        [void](Check $step $P 'boss owner: grab boss .* RUN HERE' 40 "the PEER runs the Queen while its player is the nearer one" $mGp)
+        [void](Check $step $P 'effect: local #.*Queen_Orb_Projectile' 75 "the Queen's orbs are fired at the PEER's own player, on the peer" $mGp)
+        Show-Since $P 'boss owner|effect: local #.*Queen|cutscene' $mGp 12
+        Show-Since $H 'boss owner|TargetPlayer' $mG 8
         Invoke-Go $H $b.Cls 600
     }
     # Damage from BOTH players moves one HP.

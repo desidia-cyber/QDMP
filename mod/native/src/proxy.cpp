@@ -9071,6 +9071,21 @@ void BossBarSet(EnemyRec& r, bool on, uint32_t now)
 // Every tracked Queen whose `QueenSpawner` is empty gets her own spawner (or, for a copy the
 // module constructed, the Queen spawner of this world).
 void WriteObjPropRaw(void* obj, const char* name, void* v);
+bool GrabBossActor(void* actor)
+{
+    static void* cls[16];
+    static bool yes[16];
+    static int n = 0;
+    if (!actor) return false;
+    void* c = ObjClass(actor);
+    for (int i = 0; i < n; ++i) if (cls[i] == c) return yes[i];
+    char cn[96] = "";
+    FNameToString(ObjNameRaw(c), cn, sizeof(cn));
+    bool y = strstr(cn, "Queen_BP") || strstr(cn, "Sipeha");
+    if (n < 16) { cls[n] = c; yes[n] = y; ++n; }
+    return y;
+}
+
 void QueenSpawnerRepair(EnemyRec& r)
 {
     static void* queenCls = nullptr;
@@ -9407,6 +9422,7 @@ void BossDeathWatchPump(uint32_t now);
 void BossConclusionPump(uint32_t now);
 bool ActorHiddenNow(void* actor);
 void QueenSpawnerRepair(EnemyRec& r);
+bool GrabBossActor(void* actor);
 
 // A BOSS WHOSE FIGHT STARTS FROM A CONVERSATION (Session 29).  The Queen waits on her throne;
 // talking to her spawns `Queen_HackNPC_C`, whose greeting's end runs the Queen's
@@ -9967,14 +9983,36 @@ void EnemyOwnPump(uint32_t now)
         { ActorXform x; if (ReadActorXform(r.actor, &x)) {
               ex[0] = x.px; ex[1] = x.py; ex[2] = x.pz; exYaw = x.yaw; haveEx = true; } }
 
+        // EQUAL CO-OP FOR A GRAB BOSS (Session 29, user: "if it never targets him ... this is
+        // clearly bad for equal coop").  A boss is sticky (the owner keeps it for the whole
+        // fight) and the follower's player can only be fought through the owner's swings at
+        // its body -- which a grab boss never makes (run 26).  The Queen and Sipeha follow
+        // the ordinary nearer-player ownership instead: the machine whose player is nearer
+        // runs her, so her orbs, grabs and cutscenes act on THAT player, natively.
+        bool stickyBoss = r.isBoss && !GrabBossActor(r.actor);
         enemyown::OwnerState st = g_own.Tick(r.guid, true, ex, haveEx,
                                             mine, haveMine, theirs, haveTheirs, now,
-                                            r.isBoss);
+                                            stickyBoss);
         // A mirrored copy NEVER runs its own AI, whatever this machine's distance says.  It
         // exists because the owner holds that key, and two simulations of one enemy is the
         // exact failure ownership exists to prevent; on the machine that constructed a copy
         // of the owner's enemy, "frozen" is not a preference.
         if (r.mirror) st = enemyown::O_FROZEN;
+        if (!stickyBoss && r.isBoss) {
+            static uint32_t gbKey[8];
+            static int gbState[8];
+            static int gbN = 0;
+            int gi = -1;
+            for (int k = 0; k < gbN; ++k) if (gbKey[k] == r.guid[0]) { gi = k; break; }
+            if (gi < 0 && gbN < 8) { gi = gbN++; gbKey[gi] = r.guid[0]; gbState[gi] = -1; }
+            if (gi >= 0 && gbState[gi] != (int)st) {
+                gbState[gi] = (int)st;
+                QDLOG(LOG_INFO, "boss owner: grab boss ", hex32(r.guid[0]), " is ",
+                      (st == enemyown::O_LOCAL ? "RUN HERE (its attacks and grabs act on this player)" :
+                       st == enemyown::O_FROZEN ? "followed here (the partner's machine runs it)" : "being handed to the partner"),
+                      (r.mirror ? " [constructed copy]" : ""));
+            }
+        }
         const enemy::HostRow* row = g_hostView.Get(r.guid);
         if (st == enemyown::O_FROZEN && row) {
             // A death the other machine ran reaches the machine that did not kill it.
@@ -10114,11 +10152,20 @@ void EnemyTargetPump(uint32_t now)
                 else if (yes) gi = -2;
             }
             bool grabber = (gi == -2) || (gi >= 0 && grabYes[gi]);
-            // REVERTED (same session): the crash was the Queen's empty QueenSpawner (see
-            // QueenSpawnerRepair), not the target -- both crash dumps are identical with and
-            // without the retarget.  A grab boss fights BOTH players like every other enemy;
-            // the flag stays for the grab relay (the orb homes on the partner's body here).
-            (void)grabber;
+            // A GRAB BOSS IS NOT POINTED AT THE BODY (Session 29, measured run 26): the Queen
+            // stood 1 m from the partner's body for 80 s and never attacked -- the cast gates
+            // qdenemyown.h documents admit only a real FS_PlayerChar with the damage
+            // interface.  She fights the partner by OWNERSHIP instead (GrabBossOwnership):
+            // the nearer player's machine runs her, against its own real player.
+            if (grabber) {
+                if (cur != nullptr && cur != g_localPawn) {
+                    bool back = WriteEnemyTarget(r.actor, off, g_localPawn);
+                    QDLOG(LOG_INFO, "enemy ", hex32(r.guid[0]), ": a grab boss was aimed at the partner's body; "
+                          "TargetPlayer put back on the local player (she fights the partner by ownership)",
+                          (back ? " (read back)" : " WRITE FAILED"));
+                }
+                continue;
+            }
         }
         // A STALE BODY IS THE REMOTE BODY (Session 29 run 23).  The partner's body is respawned
         // (a teleport, a hide/show), and an enemy aimed at the OLD one read as "not a player":
