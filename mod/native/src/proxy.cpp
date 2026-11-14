@@ -9938,6 +9938,38 @@ void EnemyTargetPump(uint32_t now)
         if (off < 0) continue;
 
         void* cur = ReadEnemyTarget(r.actor, off);
+        // A BOSS THAT GRABS ITS TARGET NEVER TARGETS THE BODY (Session 29, crash run 17).  The
+        // Queen's orb homes on `TargetPlayer` and its hit runs `SetUpPlayerForOrbCutscene` on
+        // the grabbed player; the pump had pointed her at the partner's inert body, and the
+        // host's game thread wrote through a null component of that body (AV write at
+        // +0x2BC inside her Blueprint, 32 s after her phase 1 ended).  The Queen and Sipeha
+        // (`Sipeha_Homing_Orb`, the same `GrabbedPlayer`) keep the local player as target; one
+        // already on the body is put back.
+        {
+            static void* grabCls[16];
+            static bool grabYes[16];
+            static int grabN = 0;
+            void* cls = ObjClass(r.actor);
+            int gi = -1;
+            for (int k = 0; k < grabN; ++k) if (grabCls[k] == cls) { gi = k; break; }
+            if (gi < 0) {
+                char cn[96] = "";
+                FNameToString(ObjNameRaw(cls), cn, sizeof(cn));
+                bool yes = strstr(cn, "Queen_BP") || strstr(cn, "Sipeha");
+                if (grabN < 16) { grabCls[grabN] = cls; grabYes[grabN] = yes; gi = grabN++; }
+                else if (yes) gi = -2;
+            }
+            bool grabber = (gi == -2) || (gi >= 0 && grabYes[gi]);
+            if (grabber) {
+                if (cur != nullptr && cur == g_proxySeen) {
+                    bool back = WriteEnemyTarget(r.actor, off, g_localPawn);
+                    QDLOG(LOG_INFO, "enemy ", hex32(r.guid[0]), ": a boss that grabs its target was on the "
+                          "remote body; TargetPlayer put back on the local player",
+                          (back ? " (read back)" : " WRITE FAILED"));
+                }
+                continue;
+            }
+        }
         int c = (cur != nullptr && cur == g_localPawn)      ? playerbody::CUR_LOCAL
               : (cur != nullptr && cur == g_proxySeen)      ? playerbody::CUR_REMOTE
               : (cur == nullptr)                            ? playerbody::CUR_NONE
