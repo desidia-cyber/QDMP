@@ -2046,10 +2046,10 @@ $script:Bosses = @(
     [pscustomobject]@{ Name = 'DemonBosses';  Area = '450_MAUS_darkmaze';  Start = 'ActivationTrigger4';          Cls = 'DemonSpider';      Flag = 'DemonBossesKilled'; Group = 'DemonSpider|Hellbat' }
     [pscustomobject]@{ Name = 'ShrineBoss';   Area = '100_GR';             Start = 'ShrinebossActivationTrigger'; Cls = 'Shrineboss';       Flag = '' }
     [pscustomobject]@{ Name = 'WhaleKing';    Area = '210_AQ_underground'; Start = 'WhaleKingSpawner';            Cls = 'Whaleking_Boss';   Flag = 'WhaleKingIsDead'; Group = 'Whaleking_Boss'; Talk = 'RewardDialogueEnded' }
-    [pscustomobject]@{ Name = 'Necronomicon'; Area = '300_LIB';            Start = 'Necronomicon_Boss_Spawner';   Cls = 'Necronomicon_BP';  Flag = 'NecronimiconDefeated'; Talk = 'Necronomicon_DummyNPC!EndDialogue'; TalkWait = 14; Begin = @('Necronomicon_Boss_Spawner!CanEverSpawn', 'Necronomicon_Boss_Spawner!CheckSpawnConditions', 'Necronomicon_Boss_Spawner!Check+Spawn+Visibility', 'Necronomicon_Boss_Spawner!Try+Spawning+Enemy', 'Necronomicon_Boss_Spawner!CustomEvent'); BeginSync = $true; Stay = $true }
+    [pscustomobject]@{ Name = 'Necronomicon'; Area = '300_LIB';            Start = 'Necronomicon_Boss_Spawner';   Cls = 'Necronomicon_BP';  Flag = 'NecronimiconDefeated'; Talk = @('Necronomicon_BP!Interact', 'Necronomicon_DummyNPC!EndDialogue'); TalkWait = 6; Begin = @('Necronomicon_Boss_Spawner!CanEverSpawn', 'Necronomicon_Boss_Spawner!CheckSpawnConditions', 'Necronomicon_Boss_Spawner!Check+Spawn+Visibility', 'Necronomicon_Boss_Spawner!Try+Spawning+Enemy', 'Necronomicon_Boss_Spawner!CustomEvent'); BeginSync = $true; Stay = $true }
     [pscustomobject]@{ Name = 'BridgeLord';   Area = '500_AUT';            Start = 'JosamiLord_Spawner';          Cls = 'JosamiLord_BP';    Flag = 'BridgeLordDead'; Talk = 'EndedDeathDialogue'; Begin = @('JosamiLord_Spawner!~BndEvt__JosamiLord_Spawner_BridgeCenterTrigger'); Stay = $true }
     [pscustomobject]@{ Name = 'Queen';        Area = '600_Castle';         Start = 'Queen_Spawner_BP';            Cls = 'Queen_BP';         Flag = 'Ending1Complete'; Begin = @('Queen_BP!Interact', 'Queen_HackNPC!EndDialogue'); BeginSync = $true; Stay = $true; OptIn = $true }
-    [pscustomobject]@{ Name = 'GiantFish';    Area = '770_SZ_Swamp';       Start = 'GiantFish_Spawner_BP';        Cls = 'GiantFish_Enemy';  Flag = 'GiantSwampFish_IsDead'; Stay = $true; Near = 600 }
+    [pscustomobject]@{ Name = 'GiantFish';    Area = '770_SZ_Swamp';       Start = 'GiantFish_Spawner_BP';        Cls = 'GiantFish_Enemy';  Flag = 'GiantSwampFish_IsDead'; Stay = $true; Near = 600; Wait = 12 }
 )
 
 function Find-BossKey([hashtable]$dump, [string]$cls) {
@@ -2124,7 +2124,8 @@ function Invoke-OneBoss([int]$H, [int]$P, $b) {
     $dp = Invoke-EnemyDump $P ($b.Name + '-p1')
     $bh = Find-BossKey $dh $b.Cls
     # A boss with an intro (the ROS dragon flies in) or a proximity spawn exists seconds later.
-    for ($w = 0; $w -lt 3 -and -not $bh; $w++) {
+    $tries = if ($b.PSObject.Properties['Wait'] -and $b.Wait) { [int]$b.Wait } else { 3 }
+    for ($w = 0; $w -lt $tries -and -not $bh; $w++) {
         Start-Sleep -Seconds 10
         $dh = Invoke-EnemyDump $H ($b.Name + '-h1r' + $w)
         $dp = Invoke-EnemyDump $P ($b.Name + '-p1r' + $w)
@@ -2234,8 +2235,11 @@ function Invoke-OneBoss([int]$H, [int]$P, $b) {
         # The death sequence first (the Necronomicon plays its death montage, then leaves its
         # dialogue NPC; talking during the montage did nothing, Session 29 run 7).
         if ($b.PSObject.Properties['TalkWait'] -and $b.TalkWait) { Start-Sleep -Seconds ([int]$b.TalkWait) }
-        $talkAt = if ($b.Talk -match '!') { $b.Talk } else { $b.Cls + '!' + $b.Talk }
-        Set-Control $H 'qd.act' ('near:' + $talkAt + '#' + (Get-Date -Format 'HHmmssfff'))
+        foreach ($tk in @($b.Talk)) {
+            $talkAt = if ($tk -match '!') { $tk } else { $b.Cls + '!' + $tk }
+            Set-Control $H 'qd.act' ('near:' + $talkAt + '#' + (Get-Date -Format 'HHmmssfff'))
+            Start-Sleep -Seconds 4
+        }
         Start-Sleep -Seconds 4
         Show-Since $H 'rig: act|boss death watch' $mH 6
         [void](Check $step $P 'boss conclusion: .* ran on the downed copy' 60 'the PEER concluded its downed copy from the partner''s flag' $mT)
