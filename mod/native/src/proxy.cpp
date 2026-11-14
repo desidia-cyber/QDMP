@@ -9052,6 +9052,63 @@ void BossBarSet(EnemyRec& r, bool on, uint32_t now)
     r.bossBarAt = now;
 }
 
+// THE QUEEN'S GRAB CAMERA NEEDS HER SPAWNER (Session 29, crash runs 17 and 18).  Her orb
+// grab runs `SceneCaptureComponent2D_SetFov(QueenSpawner.OrbGrabCutsceneCam, ...)`, a STATIC
+// library call that Kismet does not null-check: with `QueenSpawner` empty the host's game
+// thread wrote the FOV through null (AV write at +0x2BC, identical stack in both runs, ~30 s
+// after her phase-1 death hold lifted).  `QueenSpawner` is filled by a cast in her own graph,
+// so a Queen spawned through a path where that cast found nothing keeps it empty forever.
+// Every tracked Queen whose `QueenSpawner` is empty gets her own spawner (or, for a copy the
+// module constructed, the Queen spawner of this world).
+void WriteObjPropRaw(void* obj, const char* name, void* v);
+void QueenSpawnerRepair(EnemyRec& r)
+{
+    static void* queenCls = nullptr;
+    void* cls = ObjClass(r.actor);
+    if (!queenCls) {
+        char cn[64] = "";
+        if (FNameToString(ObjNameRaw(cls), cn, sizeof(cn)) <= 0 || strcmp(cn, "Queen_BP_C") != 0) return;
+        queenCls = cls;
+    }
+    if (cls != queenCls) return;
+    if (FindPropertyOffsetIn(cls, "QueenSpawner") < 0) return;
+    void* cur = ObjPropC(r.actor, "QueenSpawner");
+    if (cur && ObjectIsLive(cur)) return;
+    void* sp = (r.spawner && ObjectIsLive(r.spawner)) ? r.spawner : nullptr;
+    char sn[64] = "";
+    if (sp && (FNameToString(ObjNameRaw(ObjClass(sp)), sn, sizeof(sn)) <= 0 || strcmp(sn, "Queen_Spawner_BP_C") != 0))
+        sp = nullptr;
+    if (!sp) {
+        void* world = GWorldPtr();
+        int total = ObjectCount();
+        for (int k = 0; k < total && !sp; ++k) {
+            void* o = ObjectAtSafe(k);
+            if (!o || !LooksLikeUObject(o)) continue;
+            char cn[64];
+            if (FNameToString(ObjNameRaw(ObjClass(o)), cn, sizeof(cn)) <= 0 || strcmp(cn, "Queen_Spawner_BP_C") != 0) continue;
+            bool inWorld = false;
+            __try { inWorld = world && ActorInThisWorld(o, world); } __except (EXCEPTION_EXECUTE_HANDLER) { inWorld = false; }
+            if (inWorld && ObjectIsLive(o)) sp = o;
+        }
+    }
+    static uint32_t saidMiss = 0;
+    if (!sp) {
+        uint32_t now = Net::Now();
+        if (now - saidMiss > 30000) {
+            saidMiss = now;
+            QDLOG(LOG_WARN, "queen: guid=", hex32(r.guid[0]), " has no QueenSpawner and no Queen spawner is in this "
+                  "world -- her orb grab would write through null");
+        }
+        return;
+    }
+    WriteObjPropRaw(r.actor, "QueenSpawner", sp);
+    void* back = ObjPropC(r.actor, "QueenSpawner");
+    void* cam = back ? ObjPropC(back, "OrbGrabCutsceneCam") : nullptr;
+    QDLOG(back == sp ? LOG_INFO : LOG_WARN, "queen: guid=", hex32(r.guid[0]), " had no QueenSpawner; set to her spawner",
+          (back == sp ? " (read back)" : " -- WRITE FAILED"), ", OrbGrabCutsceneCam ",
+          (cam ? "present" : "ABSENT"), (r.mirror ? " (a constructed copy)" : ""));
+}
+
 void BossPump(uint32_t now)
 {
     static uint32_t lastCheck = 0;
@@ -9091,6 +9148,7 @@ void BossPump(uint32_t now)
             }
         }
         if (!boss) continue;
+        QueenSpawnerRepair(r);
         float hp = 0, mx = 0;
         bool haveHp = EnemyHp(r.actor, &hp, &mx) && mx > 0.0f;
         // A BOSS THAT DIVES KEEPS ITS BAR (Session 29).  The Giant Fish moves between emerge
@@ -9960,15 +10018,11 @@ void EnemyTargetPump(uint32_t now)
                 else if (yes) gi = -2;
             }
             bool grabber = (gi == -2) || (gi >= 0 && grabYes[gi]);
-            if (grabber) {
-                if (cur != nullptr && cur == g_proxySeen) {
-                    bool back = WriteEnemyTarget(r.actor, off, g_localPawn);
-                    QDLOG(LOG_INFO, "enemy ", hex32(r.guid[0]), ": a boss that grabs its target was on the "
-                          "remote body; TargetPlayer put back on the local player",
-                          (back ? " (read back)" : " WRITE FAILED"));
-                }
-                continue;
-            }
+            // REVERTED (same session): the crash was the Queen's empty QueenSpawner (see
+            // QueenSpawnerRepair), not the target -- both crash dumps are identical with and
+            // without the retarget.  A grab boss fights BOTH players like every other enemy;
+            // the flag stays for the grab relay (the orb homes on the partner's body here).
+            (void)grabber;
         }
         int c = (cur != nullptr && cur == g_localPawn)      ? playerbody::CUR_LOCAL
               : (cur != nullptr && cur == g_proxySeen)      ? playerbody::CUR_REMOTE
