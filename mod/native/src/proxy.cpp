@@ -5676,6 +5676,8 @@ struct EnemyRec {
     // rides the row's spare flag bits so a hash collision cannot merge two enemies.
     uint8_t  src;
     void*    ownerKeyBy;     // the summoner whose key minted a SRC_SUMMON identity
+    float    bossLastHp, bossLastMx;   // the boss's last READABLE HP (a diving fish reads none)
+    uint32_t bossLastHpAt;
     uint16_t summonOrd;      // the coincidence index claimed (valid when summonMinted)
     bool     summonMinted;   // the index has been claimed, so re-deriving must not re-claim
     bool     adopted;        // this key came from the owner (see AdoptSummonKey)
@@ -9059,6 +9061,14 @@ void BossPump(uint32_t now)
         if (!boss) continue;
         float hp = 0, mx = 0;
         bool haveHp = EnemyHp(r.actor, &hp, &mx) && mx > 0.0f;
+        // A BOSS THAT DIVES KEEPS ITS BAR (Session 29).  The Giant Fish moves between emerge
+        // spots; while it is under water its HP does not read, and the pump took that as "the
+        // boss died or left": bar off, re-ask, re-raise, three times in 1.5 s (run 9).  A live,
+        // not-dead boss whose HP read within the last 30 s keeps that last reading.
+        if (haveHp) { r.bossLastHp = hp; r.bossLastMx = mx; r.bossLastHpAt = now; }
+        else if (r.bossLastMx > 0.0f && now - r.bossLastHpAt < 30000 && !EnemyDead(r.actor)) {
+            hp = r.bossLastHp; mx = r.bossLastMx; haveHp = true;
+        }
         // A boss whose HP this machine cannot READ is not eligible for the one shared bar:
         // measured in the first Session 20 run, `Whaleking_SZ_BP_C` (71 km away, its
         // encounter not running) was acked, bound and then sampled hp=0 forever while the
