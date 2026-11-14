@@ -534,12 +534,16 @@ function Start-Boot([string]$tag) {
         }
         Set-Control $i 'qd.scan' '1'
         Set-Control $i 'qd.god' '400'
+        Set-Control $i 'qd.near' '140'
         if (Test-Path -LiteralPath $inst[$i].Pid) { Remove-Item -LiteralPath $inst[$i].Pid -ErrorAction SilentlyContinue }
         $old = $inst[$i].Log
         if (Test-Path -LiteralPath $old) { Move-Item -LiteralPath $old -Destination ($old + '.prev') -Force }
     }
     $env:QDCOOP_AUTOLOAD = '0'
-    $env:QDCOOP_TEST_NEAR = '140'
+    # NOT the environment (Session 29): the mod reads the environment BEFORE the control file, so
+    # this one line made every Invoke-Go distance 140 cm -- the 15 m / 25 m placements never
+    # happened, and players were set down on ledges.  The default lives in qd.near instead.
+    $env:QDCOOP_TEST_NEAR = $null
     $env:QDCOOP_TEST_HITMS = '3000'
 
     if (-not (Test-Path -LiteralPath $relay)) { Say "REFUSED: relay not built at $relay"; exit 2 }
