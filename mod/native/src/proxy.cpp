@@ -8108,15 +8108,26 @@ void ForgetMirror(void* actor)
 // remembered (raw pointers, compared only, never dereferenced) until the world changes.
 static void* g_retired[128];
 static int g_retiredN = 0;
+static void* g_retiredWorld = nullptr;
+// The list belongs to a UWorld, not to the record table: the table is rebuilt on area
+// streaming (run 19: the peer's retired Queen copy was re-registered as a summon every 30 s,
+// each time the table reset cleared the list).  Only a different world clears it.
+static void RetiredWorldCheck()
+{
+    void* w = GWorldPtr();
+    if (w != g_retiredWorld) { g_retiredN = 0; g_retiredWorld = w; }
+}
 void RetireActor(void* a)
 {
     if (!a) return;
+    RetiredWorldCheck();
     for (int i = 0; i < g_retiredN; ++i) if (g_retired[i] == a) return;
     if (g_retiredN < 128) g_retired[g_retiredN++] = a;
     else { memmove(g_retired, g_retired + 1, sizeof(void*) * 127); g_retired[127] = a; }
 }
 bool IsRetiredActor(void* a)
 {
+    RetiredWorldCheck();
     for (int i = 0; i < g_retiredN; ++i) if (g_retired[i] == a) return true;
     return false;
 }
@@ -8124,7 +8135,6 @@ bool IsRetiredActor(void* a)
 void ForgetAllMirrors()
 {
     g_mirrorN = 0;
-    g_retiredN = 0;
 }
 
 // Resolve the class an owner named.  The path is the actor's CLASS asset path
@@ -9396,6 +9406,7 @@ void BossDeathWatchArm(void* actor, uint32_t key);
 void BossDeathWatchPump(uint32_t now);
 void BossConclusionPump(uint32_t now);
 bool ActorHiddenNow(void* actor);
+void QueenSpawnerRepair(EnemyRec& r);
 
 // A BOSS WHOSE FIGHT STARTS FROM A CONVERSATION (Session 29).  The Queen waits on her throne;
 // talking to her spawns `Queen_HackNPC_C`, whose greeting's end runs the Queen's
@@ -9596,11 +9607,87 @@ void BossBeginQueuePump(uint32_t now)
     }
 }
 
+// THE GRAB REACHES THE PLAYER IT WAS AIMED AT (Session 29, user: "if it never targets him and
+// always targets only one player this is clearly bad for equal coop").  The Queen fights both
+// players; her orb homes on her TargetPlayer, which on the host may be the partner's inert body.
+// That body has no collision, so the orb can never grab it, and the grab cutscene acts on the
+// grabbing machine's own player.  So: on the host, an orb that reaches the partner's body is
+// dissolved and the grab is sent; the partner runs the Queen's own `OrbProjectileHitPlayer` on
+// its copy -- her cutscene, against the partner's real player, released by her own graph.
+static void* g_grabHandled[16];
+static int g_grabHandledN = 0;
+
+void BossGrabRelayPump(uint32_t now)
+{
+    static uint32_t last = 0;
+    if (now - last < 100) return;
+    last = now;
+    if (!Cfg().enemy_sync || !g_net.IsHost() || !g_net.Connected()) return;
+    if (!g_proxySeen || !ObjectIsLive(g_proxySeen) || !IsGameplayPawn(g_localPawn)) return;
+    ActorXform px = {}, lx = {};
+    if (!ReadActorXform(g_proxySeen, &px) || !ReadActorXform(g_localPawn, &lx)) return;
+    EnemyRec* queen = nullptr;
+    for (int i = 0; i < g_enN && !queen; ++i) {
+        EnemyRec& r = g_en[i];
+        if (!r.haveGuid || r.mirror || !ObjectIsLive(r.actor) || EnemyDead(r.actor)) continue;
+        char cn[64];
+        if (FNameToString(ObjNameRaw(ObjClass(r.actor)), cn, sizeof(cn)) > 0 && !strcmp(cn, "Queen_BP_C")) queen = &r;
+    }
+    if (!queen) return;
+    void* world = GWorldPtr();
+    int total = ObjectCount();
+    for (int k = 0; k < total; ++k) {
+        void* o = ObjectAtSafe(k);
+        if (!o || !LooksLikeUObject(o)) continue;
+        char cn[64];
+        if (FNameToString(ObjNameRaw(ObjClass(o)), cn, sizeof(cn)) <= 0 || strcmp(cn, "Queen_Orb_Projectile_C") != 0) continue;
+        bool inWorld = false;
+        __try { inWorld = world && ActorInThisWorld(o, world); } __except (EXCEPTION_EXECUTE_HANDLER) { inWorld = false; }
+        if (!inWorld || !ObjectIsLive(o) || ActorHiddenNow(o)) continue;
+        bool done = false;
+        for (int h = 0; h < g_grabHandledN; ++h) if (g_grabHandled[h] == o) { done = true; break; }
+        if (done) continue;
+        ActorXform ox = {};
+        if (!ReadActorXform(o, &ox)) continue;
+        auto d2 = [&](const ActorXform& a) {
+            float dx = ox.px - a.px, dy = ox.py - a.py, dz = ox.pz - (a.pz + 60.0f);
+            return dx * dx + dy * dy + dz * dz;
+        };
+        if (d2(px) > 200.0f * 200.0f || d2(lx) < 300.0f * 300.0f) continue;
+        if (g_grabHandledN < 16) g_grabHandled[g_grabHandledN++] = o;
+        else { memmove(g_grabHandled, g_grabHandled + 1, sizeof(void*) * 15); g_grabHandled[15] = o; }
+        bool sent = BossSend(queen->guid, wire::kBossGrab, 0, 0);
+        Fn f = {};
+        bool gone = false;
+        __try { if (f.Resolve(o, "InstantlyDissolve")) { Call c(f); gone = c.Run(o); } }
+        __except (EXCEPTION_EXECUTE_HANDLER) { gone = false; }
+        QDLOG(LOG_INFO, "boss grab: the Queen's orb reached the partner's body -- ", (sent ? "the grab is sent to the partner" : "NOT SENT"),
+              "; the orb ", (gone ? "dissolved here" : "left as is"), " key=", hex32(queen->guid[0]));
+    }
+}
+
+static void BossGrabApply(const uint32_t key[4])
+{
+    EnemyRec* er = EnemyByGuid(key);
+    if (!er || !ObjectIsLive(er->actor)) {
+        QDLOG(LOG_WARN, "boss grab: the partner's Queen grabbed this player but there is no local copy of ", hex32(key[0]));
+        return;
+    }
+    QueenSpawnerRepair(*er);           // her grab camera needs it (a constructed copy has none)
+    Fn f = {};
+    bool ran = false;
+    __try { if (f.Resolve(er->actor, "OrbProjectileHitPlayer")) { Call c(f); ran = c.Run(er->actor); } }
+    __except (EXCEPTION_EXECUTE_HANDLER) { ran = false; }
+    QDLOG(ran ? LOG_INFO : LOG_WARN, "boss grab: OrbProjectileHitPlayer ", (ran ? "ran" : "DID NOT RUN"),
+          " on this machine's Queen -- the partner's orb grabbed THIS player; her cutscene plays here");
+}
+
 void OnBoss(wire::Reader& r, uint32_t now)
 {
     if (!Cfg().enemy_sync) return;
     wire::BossBody b;
     if (!wire::ReadBoss(r, &b)) return;
+    if (b.flags & wire::kBossGrab) { if (EnemyRecordsTrustworthy()) BossGrabApply(b.guid); return; }
     if (b.flags & wire::kBossBegin) {
         if (g_pendBeginN < 4) {
             memcpy(g_pendBegin[g_pendBeginN].key, b.guid, 16);
@@ -9608,6 +9695,7 @@ void OnBoss(wire::Reader& r, uint32_t now)
             ++g_pendBeginN;
         }
         BossBeginQueuePump(now);
+    BossGrabRelayPump(now);
         return;
     }
     if (!EnemyRecordsTrustworthy()) return;    // the bars below belong to the previous world

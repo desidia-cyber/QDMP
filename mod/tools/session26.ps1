@@ -2048,7 +2048,7 @@ $script:Bosses = @(
     [pscustomobject]@{ Name = 'WhaleKing';    Area = '210_AQ_underground'; Start = 'WhaleKingSpawner';            Cls = 'Whaleking_Boss';   Flag = 'WhaleKingIsDead'; Group = 'Whaleking_Boss'; Talk = 'RewardDialogueEnded' }
     [pscustomobject]@{ Name = 'Necronomicon'; Area = '300_LIB';            Start = 'Necronomicon_Boss_Spawner';   Cls = 'Necronomicon_BP';  Flag = 'NecronimiconDefeated'; Talk = @('Necronomicon_BP!Interact', 'dialogue!End'); TalkWait = 6; Begin = @('Necronomicon_Boss_Spawner!CanEverSpawn', 'Necronomicon_Boss_Spawner!CheckSpawnConditions', 'Necronomicon_Boss_Spawner!Check+Spawn+Visibility', 'Necronomicon_Boss_Spawner!Try+Spawning+Enemy', 'Necronomicon_Boss_Spawner!CustomEvent'); BeginSync = $true; Stay = $true }
     [pscustomobject]@{ Name = 'BridgeLord';   Area = '500_AUT';            Start = 'JosamiLord_Spawner';          Cls = 'JosamiLord_BP';    Flag = 'BridgeLordDead'; Talk = 'EndedDeathDialogue'; Begin = @('JosamiLord_Spawner!~BndEvt__JosamiLord_Spawner_BridgeCenterTrigger'); Stay = $true }
-    [pscustomobject]@{ Name = 'Queen';        Area = '600_Castle';         Start = 'Queen_Spawner_BP';            Cls = 'Queen_BP';         Flag = 'Ending1Complete'; Begin = @('Queen_BP!Interact', 'dialogue!End'); BeginSync = $true; Stay = $true; OptIn = $true; Phase = @('Queen_BP!?CurrentStateIndex,DoingPhaseAnim,DeathIsSuspended,bDead,HP,MaxHP,DoinAOrb,IntroWasAbbrev,SpecialSwordTriggerHP', 'Queen_BP!?CurrentStateIndex,DoingPhaseAnim,DeathIsSuspended,bDead,HP,DoinAOrb', 'Queen_BP!OrbProjectileHitPlayer', 'Queen_BP!?CurrentStateIndex,DoingPhaseAnim,DeathIsSuspended,bDead,HP,DoinAOrb', 'Queen_BP!?CurrentStateIndex,DoingPhaseAnim,DeathIsSuspended,bDead,HP,DoinAOrb') }
+    [pscustomobject]@{ Name = 'Queen';        Area = '600_Castle';         Start = 'Queen_Spawner_BP';            Cls = 'Queen_BP';         Flag = 'Ending1Complete'; Begin = @('Queen_BP!Interact', 'dialogue!End'); BeginSync = $true; Stay = $true; OptIn = $true; GrabTest = $true; Phase = @('Queen_BP!?CurrentStateIndex,DoingPhaseAnim,DeathIsSuspended,bDead,HP,MaxHP,DoinAOrb,IntroWasAbbrev,SpecialSwordTriggerHP', 'Queen_BP!?CurrentStateIndex,DoingPhaseAnim,DeathIsSuspended,bDead,HP,DoinAOrb', 'Queen_BP!OrbProjectileHitPlayer', 'Queen_BP!?CurrentStateIndex,DoingPhaseAnim,DeathIsSuspended,bDead,HP,DoinAOrb', 'Queen_BP!?CurrentStateIndex,DoingPhaseAnim,DeathIsSuspended,bDead,HP,DoinAOrb') }
     [pscustomobject]@{ Name = 'GiantFish';    Area = '770_SZ_Swamp';       Start = 'GiantFish_Spawner_BP';        Cls = 'GiantFish_Enemy';  Flag = 'GiantSwampFish_IsDead'; Stay = $true; Near = 600; Wait = 12 }
 )
 
@@ -2154,6 +2154,19 @@ function Invoke-OneBoss([int]$H, [int]$P, $b) {
     [void](Check $step $H ('boss: (bar key=|active key -> )' + $keyRx) 40 'the HOST raised the shared bar for this boss' $mH)
     [void](Check $step $P ('ActivateBossHPBar called|boss: follower raised its own bar for guid=' + $keyRx + '|boss: bar key=' + $keyRx) 40 'the PEER shows a bar' $mP)
 
+    if ($b.PSObject.Properties['GrabTest'] -and $b.GrabTest) {
+        # THE GRAB REACHES THE PARTNER (Session 29): the peer stands at the boss and the host
+        # 25 m back, so the boss targets the partner's body on the host; an orb that reaches it
+        # must be relayed and played on the peer against its own player.
+        $mG = Get-Mark $H
+        $mGp = Get-Mark $P
+        Invoke-Go $P $b.Cls 400
+        Invoke-Go $H $b.Cls 2500
+        $grab = @(Wait-Since $H 'boss grab: ' $mG 45)
+        Show-Since $H 'boss grab|TargetPlayer' $mG 8
+        [void](Check $step $P 'boss grab: OrbProjectileHitPlayer ran' 20 "the PEER's player was grabbed by the partner's Queen (relayed)" $mGp)
+        Invoke-Go $H $b.Cls 600
+    }
     # Damage from BOTH players moves one HP.
     $hp0 = $bh.Hp
     $mHh = Get-Mark $H

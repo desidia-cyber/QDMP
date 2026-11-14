@@ -626,6 +626,10 @@ static const uint8_t kBossNack    = 0x20;
 // the sender -- its player finished the greeting.  The receiver runs the same end-of-greeting
 // event on its own dormant copy, so both machines fight an active boss.  Either direction.
 static const uint8_t kBossBegin   = 0x40;
+// Session 29: the boss's grab reached the RECEIVER's player (host -> peer).  The Queen's orb homes
+// on her target, and on the host the partner is an inert body the orb cannot grab; the receiver
+// runs the boss's own grab (`OrbProjectileHitPlayer`) on its copy against its own player.
+static const uint8_t kBossGrab    = 0x80;
 
 inline void WriteBoss(Writer& w, const BossBody& b)
 {
