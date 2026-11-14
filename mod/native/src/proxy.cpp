@@ -1898,6 +1898,8 @@ bool WriteBytePropC(void* obj, const char* name, uint8_t v);
 // it belongs with the other enemy rig verbs.
 bool DevRigText(const char* envName, const char* leaf, char* out, int cap);
 void RigArmFallGuard(float targetZ);
+void LandingHoldStart(float x, float y, float z, float yaw, const char* why);
+void LandingHoldPump(uint32_t now);
 int ObjectCallFn(void* actor, const char* fnName, bool haveValue, bool value, char* why, int cap);
 
 bool IsGameplayPawn(void* pawn)
@@ -14488,6 +14490,7 @@ void DevTeleport(uint32_t now)
     for (char* t = strtok_s(work, ",", &save); t && n < 4; t = strtok_s(nullptr, ",", &save)) v[n++] = (float)atof(t);
     RigArmFallGuard(v[2]);
     bool ok = SetActorXform(g_localPawn, v[0], v[1], v[2], v[3]);
+    if (ok) LandingHoldStart(v[0], v[1], v[2], v[3], "rig placement");
     void* pc = LocalController();
     int ro = pc ? FindPropertyOffsetIn(ObjClass(pc), "ControlRotation") : -1;
     if (ro >= 0) { float* r = (float*)((uint8_t*)pc + ro); r[0] = 0.0f; r[1] = v[3]; }
@@ -15369,6 +15372,94 @@ void RigFallGuardDisarm(const char* why)
     QDLOG(LOG_INFO, "guard: disarmed -- ", why);
 }
 
+// A PLAYER THE MOD MOVES WAITS FOR THE FLOOR (Session 29, user: "i just saw a player ...
+// fall through the freaking floor").  Measured run 28: the boss pull-in put the peer in the
+// Queen's arena at 16:52:44, its floor was not streamed in yet, the peer fell, the game's own
+// recovery sent it to the hub teleporter -- and the hub was not shown either, so it fell
+// again, in a loop.  The pull-in is a real-play path, not only the rig's.  A player the mod
+// moves is now HELD where it was put (flying, no gravity, re-placed each tick) until no level
+// the world wants shown is still loading, then released to fall onto a floor that exists.
+struct LandingHold { bool on; uint32_t t0, quietSince; float x, y, z, yaw; char why[64]; };
+static LandingHold g_land = {};
+
+static int PendingLevelCount()
+{
+    int pending = 0;
+    for (int i = 0; i < g_levelN; ++i) {
+        void* ls = g_levels[i].ls;
+        if (!ls || !ObjectIsLive(ls)) continue;
+        if (!LevelVisible(ls)) continue;                       // not wanted shown
+        if (!LevelLoadedLevel(ls) || !LevelActuallyVisible(ls)) ++pending;
+    }
+    return pending;
+}
+
+static void PawnMovementMode(void* pawn, uint8_t mode)
+{
+    static Fn f = {};
+    void* cmc = pawn ? ObjPropC(pawn, "CharacterMovement") : nullptr;
+    if (!cmc || !f.Resolve(cmc, "SetMovementMode")) return;
+    Call c(f);
+    if (f.sig.props > 0) c.U8(f.sig.p[0].name, mode);
+    if (f.sig.props > 1) c.U8(f.sig.p[1].name, 0);
+    c.Run(cmc);
+}
+
+void LandingHoldStart(float x, float y, float z, float yaw, const char* why)
+{
+    void* pawn = g_localPawn;
+    if (!pawn || !IsGameplayPawn(pawn)) return;
+    g_land.on = true;
+    g_land.t0 = Net::Now();
+    g_land.quietSince = 0;
+    g_land.x = x; g_land.y = y; g_land.z = z; g_land.yaw = yaw;
+    lstrcpynA(g_land.why, why ? why : "?", sizeof(g_land.why));
+    __try { PawnMovementMode(pawn, 5 /* MOVE_Flying: no gravity while the floor streams in */); }
+    __except (EXCEPTION_EXECUTE_HANDLER) {}
+    QDLOG(LOG_INFO, "landing: holding this player at ", flt(x, 0), ",", flt(y, 0), ",", flt(z, 0),
+          " until the levels around it are loaded (", g_land.why, "); ", dec(PendingLevelCount()), " still pending");
+}
+
+void LandingHoldPump(uint32_t now)
+{
+    // ANY TELEPORT, NOT ONLY THE MOD'S (run 28: the game's own fall recovery sent the peer to
+    // the hub teleporter while the hub was not shown, and it fell again).  A jump of the local
+    // player by more than 50 m in one tick is a teleport, whoever made it, and is held too.
+    static void* lastPawn = nullptr;
+    static float lx = 0, ly = 0, lz = 0;
+    void* pawn = g_localPawn;
+    if (pawn && IsGameplayPawn(pawn)) {
+        ActorXform cur = {};
+        if (ReadActorXform(pawn, &cur)) {
+            float dx = cur.px - lx, dy = cur.py - ly, dz = cur.pz - lz;
+            bool jumped = lastPawn == pawn && dx * dx + dy * dy + dz * dz > 5000.0f * 5000.0f;
+            lastPawn = pawn; lx = cur.px; ly = cur.py; lz = cur.pz;
+            if (jumped && !g_land.on) LandingHoldStart(cur.px, cur.py, cur.pz, cur.yaw, "a teleport");
+        }
+    }
+    if (!g_land.on) return;
+    if (!pawn || !IsGameplayPawn(pawn)) { g_land.on = false; return; }
+    int pending = PendingLevelCount();
+    int32_t age = (int32_t)(now - g_land.t0);
+    if (pending == 0) { if (!g_land.quietSince) g_land.quietSince = now ? now : 1; }
+    else g_land.quietSince = 0;
+    bool settled = g_land.quietSince && (int32_t)(now - g_land.quietSince) >= 1000 && age >= 1500;
+    if (settled || age >= 15000) {
+        __try { PawnMovementMode(pawn, 3 /* MOVE_Falling: the engine finds the floor itself */); }
+        __except (EXCEPTION_EXECUTE_HANDLER) {}
+        g_land.on = false;
+        QDLOG(settled ? LOG_INFO : LOG_WARN, "landing: released after ", dec(age), " ms -- ",
+              (settled ? "every level the world wants shown is loaded" : "15 s passed with levels still loading"),
+              " (", g_land.why, ")");
+        return;
+    }
+    ActorXform me = {};
+    if (ReadActorXform(pawn, &me)) {
+        float dx = me.px - g_land.x, dy = me.py - g_land.y, dz = me.pz - g_land.z;
+        if (dx * dx + dy * dy + dz * dz > 50.0f * 50.0f) SetActorXform(pawn, g_land.x, g_land.y, g_land.z, me.yaw);
+    }
+}
+
 void RigFallGuardPump(uint32_t now)
 {
     if (!g_rigFall.armed) return;
@@ -15489,6 +15580,7 @@ void RigStandBeside(void* actor, const ActorXform& t, const char* label, float d
     }
     RigArmFallGuard(pz);
     bool ok = SetActorXform(g_localPawn, px, py, pz, yaw);
+    if (ok) LandingHoldStart(px, py, pz, yaw, "rig placement");
     void* pc = LocalController();
     int ro = pc ? FindPropertyOffsetIn(ObjClass(pc), "ControlRotation") : -1;
     if (ro >= 0) { float* r = (float*)((uint8_t*)pc + ro); r[0] = 0.0f; r[1] = yaw; }
@@ -19840,6 +19932,7 @@ bool HK_Tick(void* engineLoop)
     DevTeleport(now);
     DevTeleportFile(now);
     RigFallGuardPump(now);
+    LandingHoldPump(now);
     DevScanNearest(now);
     DevEnemyDump(now);
     DevObjectLever(now);
@@ -20849,6 +20942,7 @@ void OnTrigger(wire::Reader& r, uint32_t now)
         float tx = b.px - dx * k, ty = b.py - dy * k, tz = b.pz;
         bool moved = SetActorXform(pawn, tx, ty, tz, me.yaw);
         if (moved) RigFallGuardDisarm("the boss pull-in moved this player");
+        if (moved) LandingHoldStart(tx, ty, tz, me.yaw, "boss pull-in");
         QDLOG(moved ? LOG_INFO : LOG_WARN, "trigger: ", b.name, " starts a boss fight and this player was ",
               flt(dist, 0), " cm away -- pulled in beside the partner at ", flt(tx, 0), ",",
               flt(ty, 0), ",", flt(tz, 0), (moved ? "" : " FAILED"));
