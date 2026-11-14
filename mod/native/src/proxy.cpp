@@ -118,6 +118,7 @@ void WorldTeardownReset(uint32_t now, const char* why);
 // Defined late (they are part of the world-teardown block), used by the enemy scan below.
 void HideWorldActor(void* a);
 void ForgetMirror(void* actor);
+void InstallTestInputHooks();
 void RetireActor(void* a);
 bool IsRetiredActor(void* a);
 
@@ -5680,6 +5681,7 @@ struct EnemyRec {
     void*    ownerKeyBy;     // the summoner whose key minted a SRC_SUMMON identity
     float    bossLastHp, bossLastMx;   // the boss's last READABLE HP (a diving fish reads none)
     uint32_t bossLastHpAt;
+    uint32_t bornAt;          // when this record was created (a respawn is born after the death)
     uint16_t summonOrd;      // the coincidence index claimed (valid when summonMinted)
     bool     summonMinted;   // the index has been claimed, so re-deriving must not re-claim
     bool     adopted;        // this key came from the owner (see AdoptSummonKey)
@@ -6313,6 +6315,7 @@ void EnemyScanStep()
             if (g_enN >= (int)(sizeof(g_en) / sizeof(g_en[0]))) continue;
             r = &g_en[g_enN++];
             memset(r, 0, sizeof(*r));
+            r->bornAt = Net::Now();
             r->actor = o;
             r->cls = cls;                    // R155: the identity a reused slot cannot fake
             r->lastHp = -1.0f;
@@ -8215,6 +8218,7 @@ EnemyRec* RegisterMirror(void* actor, const uint32_t guid[4], uint32_t now)
     }
     EnemyRec* r = &g_en[g_enN++];
     memset(r, 0, sizeof(*r));
+    r->bornAt = Net::Now();
     r->actor = actor;
     r->cls = actor ? ObjClass(actor) : nullptr;   // R155, as the sweep does
     memcpy(r->guid, guid, 16);
@@ -9411,7 +9415,12 @@ void BossBeginPump(uint32_t now)
         if (!row.npc) {
             EnemyRec* r = BossRecOfClass(row.boss);
             ActorXform x;
-            if (!r || r->mirror || !ReadActorXform(r->actor, &x)) continue;
+            // A copy that FOLLOWS the owner replays the owner's montages and positions (run 13:
+            // the peer's frozen Queen replayed the host's intro and reported it as its own start,
+            // and the host ran the greeting's end a second time).  Only a body this machine runs
+            // can begin.
+            if (!r || r->mirror || r->driven || g_own.State(r->guid) == enemyown::O_FROZEN ||
+                !ReadActorXform(r->actor, &x)) continue;
             BeginRest* br = BeginRestFor(r->guid[0]);
             if (!br || br->sent || br->applied) continue;
             if (row.introMontage) {
@@ -9455,6 +9464,11 @@ static void BossBeginApply(const uint32_t key[4])
     EnemyRec* er = EnemyByGuid(key);
     if (!er || !ObjectIsLive(er->actor)) {
         QDLOG(LOG_WARN, "boss begin: the partner began boss ", hex32(key[0]), " but this machine has no live copy");
+        return;
+    }
+    if (er->mirror || er->driven || g_own.State(key) == enemyown::O_FROZEN) {
+        QDLOG(LOG_INFO, "boss begin: the partner began boss ", hex32(key[0]), " and this machine's copy follows "
+              "the owner (it moves and animates from the owner's rows) -- nothing to begin here");
         return;
     }
     char cn[96] = "";
@@ -9701,7 +9715,22 @@ void EnemyOwnPump(uint32_t now)
             // story (an ending, a reward NPC, a flag); a copy that appears after the death is
             // already recorded is retired quietly instead: hidden, not interactable, not
             // ticking, its spawner told the death, and never scanned again.
-            if (r.isBoss || EnemyIsBoss(r.actor, r.spawner)) {
+            // ONLY A COPY BORN AFTER THE DEATH (run 13: the first version retired the copy that
+            // was alive AT the kill -- the peer's Necronomicon never ran its death sequence and
+            // never concluded).  The first time this machine sees a boss key dead is noted; a
+            // record older than that note is the body that died, and dies the normal way.
+            static uint32_t deadKey[64], deadAt[64];
+            static int deadN = 0;
+            uint32_t firstDead = 0;
+            bool isBossRec = r.isBoss || EnemyIsBoss(r.actor, r.spawner);
+            for (int k = 0; k < deadN; ++k) if (deadKey[k] == r.guid[0]) { firstDead = deadAt[k]; break; }
+            if (!firstDead && isBossRec) {
+                firstDead = now ? now : 1;
+                if (deadN < 64) { deadKey[deadN] = r.guid[0]; deadAt[deadN] = firstDead; ++deadN; }
+                else { deadKey[now % 64] = r.guid[0]; deadAt[now % 64] = firstDead; }
+            }
+            bool bornAfterDeath = firstDead && (int32_t)(r.bornAt - firstDead) > 0;
+            if (bornAfterDeath && isBossRec) {
                 void* a = r.actor;
                 __try {
                     SetActorHidden(a, true);
@@ -14204,6 +14233,76 @@ void DevRigPath(const char* envName, const char* leaf, char* out, int cap)
 // (one launched with -UserDir) marks its window WS_EX_NOACTIVATE, and if it is foreground
 // anyway it frees the cursor and hands the foreground back to the window the operator was
 // using.  A player's normal game (no -UserDir) is untouched.
+// THE OS CURSOR IS NOT THE GAME'S IN A TEST INSTANCE (Session 29, second report: "the rig
+// stole my mouse again").  The focus guard alone measured nothing to hand back: the instance
+// was never the foreground window when it took the mouse.  The engine's mouse-look locks the
+// cursor with ClipCursor (system-wide, not per window), re-centres it with SetCursorPos and
+// routes mouse input to itself with SetCapture -- none of which needs the foreground.  In a
+// test instance (-UserDir) those calls are hooked: a clip is refused (release is allowed),
+// the cursor is never moved, capture is never taken, and the game's own windows never make
+// themselves foreground or active.  The rig drives the game through control files, never
+// through the mouse, so nothing the tests measure depends on these calls.
+typedef BOOL (WINAPI* PFN_ClipCursor)(const RECT*);
+typedef BOOL (WINAPI* PFN_SetCursorPos)(int, int);
+typedef HWND (WINAPI* PFN_SetCapture)(HWND);
+typedef BOOL (WINAPI* PFN_SetForegroundWindow)(HWND);
+typedef HWND (WINAPI* PFN_SetActiveWindow)(HWND);
+static PFN_ClipCursor o_ClipCursor = nullptr;
+static PFN_SetCursorPos o_SetCursorPos = nullptr;
+static PFN_SetCapture o_SetCapture = nullptr;
+static PFN_SetForegroundWindow o_SetForegroundWindow = nullptr;
+static PFN_SetActiveWindow o_SetActiveWindow = nullptr;
+static volatile LONG g_inputBlocked = 0;
+static BOOL WINAPI h_ClipCursor(const RECT* r)
+{
+    if (r) { InterlockedIncrement(&g_inputBlocked); return TRUE; }   // refuse a clip, allow a release
+    return o_ClipCursor(nullptr);
+}
+static BOOL WINAPI h_SetCursorPos(int, int) { InterlockedIncrement(&g_inputBlocked); return TRUE; }
+static HWND WINAPI h_SetCapture(HWND) { InterlockedIncrement(&g_inputBlocked); return nullptr; }
+static bool OwnProcessWindow(HWND h)
+{
+    DWORD pid = 0;
+    if (h) GetWindowThreadProcessId(h, &pid);
+    return pid == GetCurrentProcessId();
+}
+static BOOL WINAPI h_SetForegroundWindow(HWND h)
+{
+    if (OwnProcessWindow(h)) { InterlockedIncrement(&g_inputBlocked); return FALSE; }
+    return o_SetForegroundWindow(h);
+}
+static HWND WINAPI h_SetActiveWindow(HWND h)
+{
+    if (OwnProcessWindow(h)) { InterlockedIncrement(&g_inputBlocked); return nullptr; }
+    return o_SetActiveWindow(h);
+}
+
+void InstallTestInputHooks()
+{
+    char ud[260];
+    if (!CmdArg("-UserDir", ud, sizeof(ud)) || !ud[0]) return;      // a player's game: untouched
+    struct H { const char* name; void* detour; void** orig; } hs[] = {
+        {"ClipCursor", (void*)h_ClipCursor, (void**)&o_ClipCursor},
+        {"SetCursorPos", (void*)h_SetCursorPos, (void**)&o_SetCursorPos},
+        {"SetCapture", (void*)h_SetCapture, (void**)&o_SetCapture},
+        {"SetForegroundWindow", (void*)h_SetForegroundWindow, (void**)&o_SetForegroundWindow},
+        {"SetActiveWindow", (void*)h_SetActiveWindow, (void**)&o_SetActiveWindow},
+    };
+    int ok = 0;
+    for (auto& h : hs) {
+        void* target = nullptr;
+        if (MH_CreateHookApiEx(L"user32", h.name, h.detour, h.orig, &target) == MH_OK &&
+            MH_EnableHook(target) == MH_OK)
+            ++ok;
+        else
+            QDLOG(LOG_WARN, "test input: could not hook user32!", h.name);
+    }
+    if (o_ClipCursor) o_ClipCursor(nullptr);      // free anything clipped before the hooks
+    ReleaseCapture();
+    QDLOG(LOG_INFO, "test input: ", dec(ok), " of 5 user32 calls hooked -- this test instance never clips, "
+          "moves or captures the operator's mouse, and never makes itself foreground");
+}
+
 struct OwnWin { DWORD pid; HWND hwnd; };
 static BOOL CALLBACK OwnWinEnum(HWND h, LPARAM lp)
 {
@@ -14243,6 +14342,11 @@ void TestWindowNoStealPump(uint32_t now)
         SetWindowLongPtrA(own, GWL_EXSTYLE, ex | WS_EX_NOACTIVATE);
         styled = true;
         QDLOG(LOG_INFO, "test window: marked no-activate (a test instance never takes the operator's mouse or focus)");
+    }
+    static uint32_t saidBlocked = 0;
+    if (g_inputBlocked && now - saidBlocked > 60000) {
+        saidBlocked = now;
+        QDLOG(LOG_INFO, "test input: ", dec((int)g_inputBlocked), " cursor/focus call(s) from the game refused so far");
     }
     HWND fg = GetForegroundWindow();
     if (fg && fg != own) {
@@ -20817,6 +20921,7 @@ DWORD WINAPI BootstrapThread(LPVOID)
         QDLOG(LOG_ERROR, "MH_Initialize failed");
         return 0;
     }
+    InstallTestInputHooks();
     {
         // Find the exact entries by name so a reordering of targets.h cannot silently
         // hook the wrong address.
