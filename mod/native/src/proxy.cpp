@@ -9653,6 +9653,17 @@ void BossGrabRelayPump(uint32_t now)
             float dx = ox.px - a.px, dy = ox.py - a.py, dz = ox.pz - (a.pz + 60.0f);
             return dx * dx + dy * dy + dz * dz;
         };
+        {
+            // Diagnostic (run 21: an orb flew while the Queen targeted the partner's body and no
+            // relay fired): the orb's distance to each player, once a second per orb.
+            static void* lastOrb = nullptr;
+            static uint32_t lastSaid = 0;
+            if (o != lastOrb || now - lastSaid >= 1000) {
+                lastOrb = o; lastSaid = now;
+                QDLOG(LOG_INFO, "boss grab: orb watch dPartnerBody=", flt(sqrtf(d2(px)), 0), " dLocalPlayer=",
+                      flt(sqrtf(d2(lx)), 0));
+            }
+        }
         if (d2(px) > 200.0f * 200.0f || d2(lx) < 300.0f * 300.0f) continue;
         if (g_grabHandledN < 16) g_grabHandled[g_grabHandledN++] = o;
         else { memmove(g_grabHandled, g_grabHandled + 1, sizeof(void*) * 15); g_grabHandled[15] = o; }

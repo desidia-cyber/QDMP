@@ -2166,8 +2166,8 @@ function Invoke-OneBoss([int]$H, [int]$P, $b) {
         $mGp = Get-Mark $P
         Invoke-Go $P $b.Cls 400
         Invoke-Go $H $b.Cls 2500
-        $grab = @(Wait-Since $H 'boss grab: ' $mG 45)
-        Show-Since $H 'boss grab|TargetPlayer' $mG 8
+        $grab = @(Wait-Since $H 'boss grab: the Queen' $mG 75)
+        Show-Since $H 'boss grab|orb watch|TargetPlayer' $mG 16
         [void](Check $step $P 'boss grab: OrbProjectileHitPlayer ran' 20 "the PEER's player was grabbed by the partner's Queen (relayed)" $mGp)
         Invoke-Go $H $b.Cls 600
     }
