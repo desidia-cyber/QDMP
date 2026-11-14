@@ -2164,6 +2164,11 @@ function Invoke-OneBoss([int]$H, [int]$P, $b) {
         # must be relayed and played on the peer against its own player.
         $mG = Get-Mark $H
         $mGp = Get-Mark $P
+        # The peer may not hold a copy yet (its copy is constructed from the host's rows once it is
+        # near): its own spawner is the place every machine has (run 22: 'near:Queen_BP' on the
+        # peer found nothing and it stayed in the hidden hub).
+        Invoke-Go $P $b.Start 300
+        Start-Sleep -Seconds 6
         Invoke-Go $P $b.Cls 400
         Invoke-Go $H $b.Cls 2500
         $grab = @(Wait-Since $H 'boss grab: the Queen' $mG 75)
