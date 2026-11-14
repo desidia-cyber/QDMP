@@ -15543,8 +15543,35 @@ bool RigCallVerb(void* obj, const char* name, void* arg, const char** ranName)
             c.Obj(d.name, arg);     // every object parameter (an overlap names two actors)
         }
     }
+    // Booleans default to false in a zeroed frame; the spawn verbs mean "ignore the visibility
+    // check" when asked by the rig (the rig is placing the player, not the game).
+    for (int i = 0; i < slot->f.sig.props; ++i) {
+        const PropDesc& d = slot->f.sig.p[i];
+        if (!(d.flags & (CPF_OutParm | CPF_ReturnParm)) && NameEquals(d.type, "BoolProperty") &&
+            (strstr(d.name, "Ignore") || strstr(d.name, "Reset") == d.name))
+            c.U8(d.name, strstr(d.name, "Ignore") ? 1 : 0);
+    }
     bool ok = c.Run(obj);
     if (ok && ranName) *ranName = name;
+    // OUTPUTS ARE MEASUREMENTS (Session 29): a gate function (`CheckSpawnConditions`,
+    // `Check Spawn Visibility`, `CanEverSpawn`) answers through out-params, and "ran=yes"
+    // alone said nothing about why the Necronomicon's book never spawned.
+    if (ok) {
+        char line[400] = "";
+        for (int i = 0; i < slot->f.sig.props; ++i) {
+            const PropDesc& d = slot->f.sig.p[i];
+            if (!(d.flags & (CPF_OutParm | CPF_ReturnParm))) continue;
+            const uint8_t* p = c.buf + d.offset;
+            char v[48] = "?";
+            if (NameEquals(d.type, "BoolProperty") || NameEquals(d.type, "ByteProperty")) wsprintfA(v, "%d", (int)p[0]);
+            else if (NameEquals(d.type, "IntProperty")) wsprintfA(v, "%d", *(const int32_t*)p);
+            else if (NameEquals(d.type, "FloatProperty")) wsprintfA(v, "%d/100", (int)(*(const float*)p * 100.0f));
+            else continue;
+            if (lstrlenA(line) + lstrlenA(d.name) + lstrlenA(v) + 4 >= (int)sizeof(line)) break;
+            lstrcatA(line, " "); lstrcatA(line, d.name); lstrcatA(line, "="); lstrcatA(line, v);
+        }
+        if (line[0]) QDLOG(LOG_INFO, "rig: verb ", name, " outputs:", line);
+    }
     return ok;
 }
 

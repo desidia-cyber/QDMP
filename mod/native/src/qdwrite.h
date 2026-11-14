@@ -1991,6 +1991,30 @@ inline bool WrSetActorState(const QdGuid& guid, int32_t value, void* actorHint,
         return true;
     }
 
+    // A WRITE THAT FAILED IS NOT RETRIED EVERY BODY (Session 29).  Measured run 6: the Bridge
+    // Lord's spawner guid failed the same write 164 times on the peer (its saved state lives in
+    // the enemy save, which the enemy lane already carries), one ERR line per actor-state body.
+    // The same (guid, value) after a failure waits 60 s; a different value is tried at once.
+    struct FailMemo { QdGuid g; int32_t v; uint32_t at; };
+    static FailMemo s_fail[16];
+    static int s_failN = 0;
+    uint32_t nowMs = GetTickCount();
+    for (int i = 0; i < s_failN; ++i) {
+        FailMemo& f = s_fail[i];
+        if (f.g.a == guid.a && f.g.b == guid.b && f.g.c == guid.c && f.g.d == guid.d && f.v == value &&
+            nowMs - f.at < 60000) {
+            ErrSet(err, errCap, "the same write failed less than 60 s ago; not retried", "");
+            return false;
+        }
+    }
+    auto rememberFail = [&]() {
+        int slot = -1;
+        for (int i = 0; i < s_failN; ++i)
+            if (s_fail[i].g.a == guid.a && s_fail[i].g.b == guid.b && s_fail[i].g.c == guid.c && s_fail[i].g.d == guid.d) { slot = i; break; }
+        if (slot < 0) slot = (s_failN < 16) ? s_failN++ : (int)(nowMs % 16);
+        s_fail[slot].g = guid; s_fail[slot].v = value; s_fail[slot].at = nowMs;
+    };
+
     void* actor = actorHint;
     int index = indexHint;
     if (!actor || index < 0) {
@@ -2015,7 +2039,8 @@ inline bool WrSetActorState(const QdGuid& guid, int32_t value, void* actorHint,
                        "");
                 QDLOG(LOG_ERROR, "actor-state: game writer for guid=", gbuf,
                       " value=", dec(value), " read back ", dec(haveAfter ? after : -999999),
-                      " (WRITE FAILED)");
+                      " (WRITE FAILED; the same write is not retried for 60 s)");
+                rememberFail();
                 return false;
             }
 
