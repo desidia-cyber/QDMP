@@ -15651,7 +15651,11 @@ void RigStandBeside(void* actor, const ActorXform& t, const char* label, float d
 
     float px = t.px + dx * off;
     float py = t.py + dy * off;
-    float pz = t.pz;
+    // 1.5 m ABOVE the target's own height (Session 29 run 32): an actor's origin can sit below
+    // the floor it belongs to -- `Queen_Spawner_BP` is 1.6 m under the arena floor, and a player
+    // put at its height started inside the floor and fell 15 m.  From above, the landing hold
+    // drops the player onto the floor once the levels are in.
+    float pz = t.pz + 150.0f;
     float yaw = haveYaw ? yawOverride : atan2f(-dx, -dy) * 57.29578f;  // face the target
     if (!RigActorVisible(actor)) {
         QDLOG(LOG_WARN, "dev teleport near '", label, "': the target's level is not shown here; refused");

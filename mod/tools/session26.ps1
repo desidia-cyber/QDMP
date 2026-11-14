@@ -2177,8 +2177,8 @@ function Invoke-OneBoss([int]$H, [int]$P, $b) {
         # EQUAL CO-OP BY OWNERSHIP: with the peer nearer, the PEER's machine runs her, and her
         # orbs (and grabs) are its own -- published by the peer as local effects.
         Save-Shots ($b.Name + '-grabtest')
-        [void](Check $step $P 'boss owner: grab boss .* RUN HERE' 40 "the PEER runs the Queen while its player is the nearer one" $mGp)
-        [void](Check $step $P 'effect: local #.*Queen_Orb_Projectile' 75 "the Queen's orbs are fired at the PEER's own player, on the peer" $mGp)
+        [void](Check $step $P 'boss owner: grab boss .* RUN HERE' 40 "the PEER runs the Queen while its player is the nearer one" $mP0)
+        [void](Check $step $P 'effect: local #.*Queen_Orb_Projectile' 75 "the Queen's orbs are fired at the PEER's own player, on the peer" $mP0)
         Show-Since $P 'boss owner|effect: local #.*Queen|cutscene' $mGp 12
         Show-Since $H 'boss owner|TargetPlayer' $mG 8
         Invoke-Go $H $b.Cls 600
