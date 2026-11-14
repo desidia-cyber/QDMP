@@ -2305,6 +2305,49 @@ function Invoke-OneBoss([int]$H, [int]$P, $b) {
             Verdict $step $i $ok ("$($b.Flag) >= 1 in this machine's bank") $(if ($ln.Count) { ([string]$ln[-1]).Trim() } else { 'no answer' })
         }
     }
+    if ($b.Flag -like 'Ending*') {
+        # THE GAME COMES BACK AFTER THE ENDING (Session 29, user: "after the video finished ...
+        # black screen on both and nothing was happening").  The afterkill shot is taken before
+        # the ending plays; this one is taken 20 s after each machine's own ending ended, and
+        # a black frame on either machine fails.
+        foreach ($i in @($H, $P)) {
+            $mk = if ($i -eq $H) { $mH0 } else { $mP0 }
+            [void](Check $step $i 'cutscene: local ended Ending' 120 'this machine''s own ending ended' $mk)
+        }
+        Start-Sleep -Seconds 35
+        foreach ($i in @($H, $P)) { Show-Since $i 'ending wake' 0 3 }
+        $before = $script:shots.Count
+        Save-Shots ($b.Name + '-postending')
+        foreach ($sh in @($script:shots | Select-Object -Skip $before)) {
+            Verdict $step $sh.Inst ([bool]($sh.Mean -gt 3)) 'the screen is not black 35 s after the ending' ("mean={0} stddev={1} {2}" -f $sh.Mean, $sh.Std, $sh.Path)
+        }
+        foreach ($i in @($H, $P)) {
+            $mk = Get-Mark $i
+            foreach ($q in @('me!?InitialFadeInRunning,InIntroCutscene,CurrentCutsceneManager,ForceNoOverlayPause,SteamOverlayStatus,IntroCrosshairFadeOpacity,bHidden',
+                             'camera!?bEnableFading,FadeAmount,FadeTimeRemaining,FadeTime,bHoldFadeWhenFinished,bFadeAudio,bAutoAnimateFade',
+                             'gi!?InCutscene,LevelLoadingSuspendState',
+                             'controller!?bShowMouseCursor,bCinematicMode,bHidePawnInCinematicMode,IgnoreMoveInput,IgnoreLookInput')) {
+                Set-Control $i 'qd.act' ('near:' + $q + '#' + (Get-Date -Format 'HHmmssfff'))
+                Start-Sleep -Seconds 2
+            }
+            foreach ($q in @('widgets', 'view')) {
+                Set-Control $i 'qd.act' ($q + '#' + (Get-Date -Format 'HHmmssfff'))
+                Start-Sleep -Seconds 2
+            }
+            Show-Since $i 'dev props|dev widgets|dev view' $mk 30
+        }
+        # Which fix brings the picture back: each one is tried on both, then a screenshot.
+        foreach ($fx in @('fix:fade', 'fix:view')) {
+            foreach ($i in @($H, $P)) {
+                $mk = Get-Mark $i
+                Set-Control $i 'qd.act' ($fx + '#' + (Get-Date -Format 'HHmmssfff'))
+                Start-Sleep -Seconds 3
+                Show-Since $i 'dev view' $mk 3
+            }
+            Start-Sleep -Seconds 3
+            Save-Shots ($b.Name + '-' + ($fx -replace ':', '-'))
+        }
+    }
     if ($hubPos) {
         Set-Control $H 'qd.tp' (("{0:F0},{1:F0},{2:F0},0#" -f $hubPos[0], $hubPos[1], ($hubPos[2] + 50)) + (Get-Date -Format 'HHmmssfff'))
         Note ("    the HOST walks back to its hub spot {0:F0},{1:F0},{2:F0} before leaving the area" -f $hubPos[0], $hubPos[1], $hubPos[2])

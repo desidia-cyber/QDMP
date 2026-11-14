@@ -188,6 +188,17 @@ synced; the dialogue block writes `NPC_Base.BlockInteract`, a bool property the 
 code called as a function and therefore never blocked anything; the streaming union vetoes
 both `SetShouldBeVisible` and the byte-verified `SetShouldBeLoaded`.
 
+**One copy of each boss, wherever the fight starts (Session 29).** The ownership table and
+the row view hold 1024 records behind a hashed GUID index (256 overflowed in the castle and
+left the Queen unowned, so both machines ran her). A double run is resolved by role (the peer
+yields). Boss rows go out every tick and the boss ACK counts as a seen row, so the host can
+hand the boss to the nearer peer. A grab boss holds its owner inside a 300 cm margin. A fight
+begin is announced by whichever copy starts it; a follower applies it when its copy exists.
+After the ending the held camera fade is stopped (the game's own wake-up never runs), the
+grab overlay is cleared, and the area-leave follow lands the player on the partner's spot
+and waits for the floor. Open: the game's own wake-up after the ending, and the Queen the
+ending's enemy reset respawns.
+
 ## 2. What still breaks the co-op promise
 
 **G2 has two halves now, and the measured half was the wrong lane.** Session 8 R67

@@ -73,6 +73,7 @@
 #include <math.h>
 #include <stdint.h>
 #include "qdwire.h"
+#include "qdguidindex.h"
 
 namespace qd {
 namespace enemyown {
@@ -98,19 +99,23 @@ inline float Dist3(const float a[3], const float b[3])
 
 class OwnerSet {
 public:
-    static const int      kMax = 256;
+    static const int      kMax = 1024;   // the castle runs ~600 (run 36: 256 overflowed)
     static constexpr float kMarginCm  = 800.0f;
     static constexpr float kTieCm     = 0.5f;
     static const uint32_t  kHoldMs    = 1500;
     static const uint32_t  kReleaseMs = 2000;
     static const uint32_t  kHandoffMs = 2000;
     static const uint32_t  kRecycleMs = 60000;
+    static const uint32_t  kYieldMs     = 500;    // double run, the peer not clearly nearer
+    static const uint32_t  kYieldNearMs = 4000;   // double run outliving the host's hand-off window
 
-    explicit OwnerSet(bool host = true) : host_(host), overflow_(false) { Reset(); }
+    explicit OwnerSet(bool host = true) : host_(host), overflow_(false), yields_(0) { Reset(); }
 
     void Reset()
     {
         for (int i = 0; i < kMax; ++i) r_[i].used = false;
+        idx_.Clear();
+        used_ = 0;
         overflow_ = false;
     }
 
@@ -128,14 +133,14 @@ public:
                     const float enemy[3], bool haveEnemy,
                     const float mine[3], bool haveMine,
                     const float theirs[3], bool haveTheirs, uint32_t now,
-                    bool sticky = false)
+                    bool sticky = false, float marginCm = kMarginCm)
     {
         if (!(guid[0] | guid[1] | guid[2] | guid[3])) return O_LOCAL;   // not an enemy
         Rec* r = Touch(guid, now);
         if (!r) { overflow_ = true; return O_LOCAL; }   // full table: run locally
 
         Pref p = P_HOLD;
-        if (haveEnemy && haveMine && haveTheirs) p = Preference(mine, theirs, enemy);
+        if (haveEnemy && haveMine && haveTheirs) p = Preference(mine, theirs, enemy, marginCm);
         // Inside the margin neither distance resolves.  P_HOLD used to mean "both keep
         // running", which is fine when the players are far apart and WRONG when they
         // stand together -- which is the ordinary way to play co-op.  Measured on the rig
@@ -144,7 +149,12 @@ public:
         // two health pools to converge.  So the tie is broken by role: the host owns, the
         // peer follows.  With the partner's position unknown there is nothing to compare
         // and nothing to follow, so P_HOLD still holds there.
-        if (p == P_HOLD && haveMine && haveTheirs) p = host_ ? P_ME : P_THEM;
+        // A NARROW MARGIN KEEPS ITS OWNER (Session 29, run 38): a grab boss's 3 m margin moved
+        // the Queen to the nearer peer, then the role tie-break handed her straight back 1.6 s
+        // later when the two players drew within 3 m (peer 207 cm, host 416 cm).  The tie-break
+        // exists to end double runs, and a double run is now resolved by the yield in O_LOCAL,
+        // so with the narrow margin the current owner simply keeps her inside it.
+        if (p == P_HOLD && haveMine && haveTheirs && marginCm >= kMarginCm) p = host_ ? P_ME : P_THEM;
         if (p != (Pref)r->pref) { r->pref = (uint8_t)p; r->prefSince = now; }
         // The dispute latch only suppresses a reversal while the contradiction is still
         // present; a genuine change of distances clears it.
@@ -160,6 +170,29 @@ public:
         uint32_t held = now - r->prefSince;
         switch (r->state) {
         case O_LOCAL:
+            // TWO MACHINES BOTH SAY "I RUN IT" (Session 29, measured run 33): the peer's
+            // constructed Queen copy was frozen, then its OWN spawner's Queen replaced it and
+            // started LOCAL; the host ran her too, and every row each sent said "I run it".
+            // Nothing in the handshake answered that -- a clear row reaching an O_LOCAL record
+            // was "we already agree" -- so both simulated her for the whole fight: two Queens
+            // firing at once.  A double run is now resolved by role: the PEER yields and
+            // follows; the host's distance test then hands the enemy over the normal way if
+            // the peer's player is the nearer one.  It yields at once (0.5 s, past any
+            // reordered row from a hand-off in flight) unless its own distance says it is
+            // clearly the nearer machine -- then the host's own test is about to hand it over,
+            // and yielding first would only flip the model twice; a conflict that outlives
+            // that hand-off window is resolved by role all the same.
+            if (!host_ && r->conflictSince && now - r->remoteRunMs < kReleaseMs + 500) {
+                uint32_t dur = now - r->conflictSince;
+                if ((p != P_ME && dur >= kYieldMs) || dur >= kYieldNearMs) {
+                    r->state = O_FROZEN; r->stateSince = now;
+                    r->conflictSince = 0; r->disputed = 0;
+                    ++yields_;
+                    break;
+                }
+            } else if (r->conflictSince && now - r->remoteRunMs >= kReleaseMs + 500) {
+                r->conflictSince = 0;
+            }
             // Hand off only to a machine that has shown it holds this enemy (it has
             // sent us at least one row for the GUID).  Handing to a machine without
             // the actor would leave the enemy simulated by nobody.
@@ -217,6 +250,7 @@ public:
             if (r->state == O_FROZEN) {
                 r->state = O_LOCAL;
                 r->stateSince = now;
+                r->conflictSince = 0;
                 r->pref = P_HOLD;
                 r->prefSince = now;
                 r->disputed = (was == P_THEM) ? 1 : 0;
@@ -230,10 +264,28 @@ public:
                 r->disputed = 0;
             }
             // O_LOCAL: both sides already agree that we own it.
+        } else if (r->state == O_LOCAL) {
+            // The other machine says "I run it" while this one runs it too: a double run.
+            // Tick resolves it (the peer yields); here it is only recorded.
+            if (!r->conflictSince) r->conflictSince = now ? now : 1;
+            r->remoteRunMs = now;
         } else if (r->state == O_HANDOFF) {
             r->state = O_FROZEN;       // the other has taken it: the release completes
             r->stateSince = now;
         }
+    }
+
+    // The other machine has said, on another lane, that it holds a live copy of this enemy
+    // (Session 29, run 37: the boss lane's ACK).  A follower publishes no rows, so a peer that
+    // yielded a double run at once never sent the host a row for the key, `sawRemote` stayed
+    // false, and the host could never hand the Queen to the nearer peer.  This is the same
+    // fact a row proves -- "the other machine has this enemy" -- and nothing else: no
+    // ownership state changes here.
+    void NoteRemoteHolds(const uint32_t guid[4], uint32_t now)
+    {
+        Rec* r = Touch(guid, now);
+        if (!r) { overflow_ = true; return; }
+        if (!r->sawRemote) { r->sawRemote = true; r->lastRemoteMs = now; }
     }
 
     OwnerState State(const uint32_t guid[4]) const
@@ -257,6 +309,20 @@ public:
     bool Running(const uint32_t guid[4]) const { return Publishing(guid) != PUB_NONE; }
 
     bool Host() const { return host_; }
+    // Diagnostic: the record's state, preference, and the ages of its conflict and of the
+    // other machine's latest row (0xFFFFFFFF = never).
+    bool Debug(const uint32_t guid[4], uint32_t now, int* state, int* pref,
+               uint32_t* conflictAge, uint32_t* rowAge, bool* sawRemote) const
+    {
+        const Rec* r = Find(guid);
+        if (!r) return false;
+        *state = r->state; *pref = r->pref; *sawRemote = r->sawRemote;
+        *conflictAge = r->conflictSince ? now - r->conflictSince : 0xFFFFFFFFu;
+        *rowAge = r->sawRemote ? now - r->lastRemoteMs : 0xFFFFFFFFu;
+        return true;
+    }
+    // How many double runs this machine resolved by yielding (diagnostic).
+    uint32_t Yields() const { return yields_; }
     bool Overflowed() const { return overflow_; }
     int  Count() const { int n = 0; for (int i = 0; i < kMax; ++i) n += r_[i].used ? 1 : 0; return n; }
 
@@ -273,14 +339,16 @@ private:
         uint32_t lastRemoteMs;
         uint32_t stateSince;
         uint32_t touchMs;
+        uint32_t conflictSince;   // first "I run it" row from the other while we run it too
+        uint32_t remoteRunMs;     // the latest such row
     };
 
-    Pref Preference(const float me[3], const float them[3], const float e[3]) const
+    Pref Preference(const float me[3], const float them[3], const float e[3], float margin) const
     {
         float dm = Dist3(me, e);
         float dt = Dist3(them, e);
-        if (dm + kMarginCm < dt) return P_ME;
-        if (dt + kMarginCm < dm) return P_THEM;
+        if (dm + margin < dt) return P_ME;
+        if (dt + margin < dm) return P_THEM;
         float diff = (dm > dt) ? dm - dt : dt - dm;
         // Exactly equidistant: the host runs it.  Both machines compute P_ME on the
         // host and P_THEM on the peer, so they agree on one owner.
@@ -288,21 +356,14 @@ private:
         return P_HOLD;                     // inside the margin: keep the current owner
     }
 
-    Rec* Find(const uint32_t g[4])
-    {
-        for (int i = 0; i < kMax; ++i) {
-            if (r_[i].used && g[0] == r_[i].guid[0] && g[1] == r_[i].guid[1] &&
-                g[2] == r_[i].guid[2] && g[3] == r_[i].guid[3]) return &r_[i];
-        }
-        return nullptr;
-    }
     const Rec* Find(const uint32_t g[4]) const
     {
-        for (int i = 0; i < kMax; ++i) {
-            if (r_[i].used && g[0] == r_[i].guid[0] && g[1] == r_[i].guid[1] &&
-                g[2] == r_[i].guid[2] && g[3] == r_[i].guid[3]) return &r_[i];
-        }
-        return nullptr;
+        int i = idx_.Find(g, [this](int k) { return (const uint32_t*)r_[k].guid; });
+        return i >= 0 ? &r_[i] : nullptr;
+    }
+    Rec* Find(const uint32_t g[4])
+    {
+        return const_cast<Rec*>(static_cast<const OwnerSet*>(this)->Find(g));
     }
 
     Rec* Touch(const uint32_t g[4], uint32_t now)
@@ -312,8 +373,8 @@ private:
         if (!r) {
             int victim = -1;
             uint32_t oldest = 0;
-            for (int i = 0; i < kMax; ++i) {
-                if (!r_[i].used) { victim = i; break; }
+            if (used_ < kMax) victim = used_;          // records fill in order; never freed singly
+            for (int i = 0; victim < 0 && i < kMax; ++i) {
                 // Full: recycle the record nothing has touched for a minute.  A record
                 // that old is past every window above and decides nothing.
                 if (now - r_[i].touchMs > kRecycleMs && now - r_[i].touchMs > oldest) {
@@ -323,8 +384,16 @@ private:
             }
             if (victim < 0) return nullptr;
             r = &r_[victim];
+            bool recycled = r->used;
             r->used = true;
             for (int k = 0; k < 4; ++k) r->guid[k] = g[k];
+            if (victim == used_) ++used_;
+            if (recycled) {                            // a GUID changed: rebuild the index
+                idx_.Clear();
+                for (int k = 0; k < used_; ++k) if (r_[k].used) idx_.Insert(r_[k].guid, k);
+            } else {
+                idx_.Insert(g, victim);
+            }
             r->state = O_LOCAL;            // run and publish until the other speaks
             r->pref = P_HOLD;
             r->disputed = 0;
@@ -333,14 +402,19 @@ private:
             r->handoffSince = 0;
             r->lastRemoteMs = 0;
             r->stateSince = now;
+            r->conflictSince = 0;
+            r->remoteRunMs = 0;
         }
         r->touchMs = now;
         return r;
     }
 
     Rec  r_[kMax];
+    GuidIndex<2 * kMax> idx_;
+    int  used_ = 0;
     bool host_;
     bool overflow_;
+    uint32_t yields_;
 };
 
 // ---------------------------------------------------------------------------

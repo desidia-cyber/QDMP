@@ -5915,3 +5915,31 @@ lines and zero crash dumps in every run; both processes alive at the end of ever
 - The rig's placement drops a player out of some arenas (the swamp, the bridge, the castle for
   the peer, the Whale King's ledge): `rig: FELL after a rig move`. A real player walks in.
 
+
+## Session 29, continued - 2026-11-14 (one Queen, fight starts from either machine, the screen after the ending)
+
+Harness: `session26.ps1 -Phase story -Only 'Queen'`, runs 33-43. Run 43: 47 PASS, 3 FAIL. All
+three failures are checks the run never got to measure, not wrong values: the HP sampler took
+1 sample in the whole run (gated around the area entry, the fight and the leave; 56 and 5 in
+runs 41/42), and no orb attack was fired in any run (0 `Orb_Projectile` lines on either machine;
+the rig kills the Queen before she reaches it). The boss's own HP was equal (2200/2200).
+
+| Gap | Status | Proof |
+|---|---|---|
+| Two Queens (both machines ran her) | **closed** (runs 37, 43) | Root cause: the ownership table held 256 records, the castle has ~600 enemies, so `ownership table full` and the Queen got no record and ran on both. Now 1024 records behind a hashed GUID index. A double run is also resolved by role: peer `enemy owner: C88FFC0C (boss) was run by BOTH machines; this machine yields` |
+| Host could not hand the boss to the nearer peer | **closed** (run 38) | the host never saw a peer row for the boss (`sawRemote=0`); boss rows now go out every tick, and the boss ACK counts as seen. Run 43: `PASS [2] the PEER runs the Queen while its player is the nearer one` |
+| Boss bouncing between owners inside 3 m | **closed** (run 38) | a grab boss uses a 300 cm margin, and the role tie-break does not apply inside it |
+| Fight start not relayed when the talker's machine is the follower | **closed** (runs 39, 43) | any copy may announce the begin; a follower applies it once its copy exists (`BossBeginApplyRow`). `PASS [2] the PEER's copy began from the partner's start` |
+| Black screen on both after the ending video | **closed by fallback** (runs 42, 43) | the ending's `EndingWakeOnBeach` holds a camera fade; its second half (wake montage, fade in) never runs. 15 s after the ending `PostEndingWakeOnBeach` is called, and at 25 s `StopCameraFade`. Run 43 shots 35 s after the ending: mean 166.7 / 168, `PASS the screen is not black` on both |
+| Grab overlay / locked movement left after the ending | **closed** | `GrabCleanupNow` 2 s after the local ending ends: `UnlockFromOrbStuff`, `FadeOutQuickTPOverlay`, collision and walking |
+| Peer falls after the area-leave follow (run 42: z 140 -> -16556) | **closed** (run 43) | the follow places the player on the partner's own spot +1 m and holds it: `landing: holding this player at 4106,-1744,240 ... (area-leave follow)`, `released after 1515 ms`, then `local pos 4106,-1744,140` |
+| Game teleports held by the landing hold | **closed** | only logged now: `landing: the game moved this player to -1586,-130,-41 -- its own teleport, left to the game` |
+
+### Open
+
+- Why the game never plays its own wake-up after the ending (the rig boots straight into
+  gameplay past the main menu; not ruled out as the cause).
+- The ending's `ClearAllEnemySaveStates` lets the Queen spawner make a new Queen; not yet
+  compared with the single-player game.
+- The orb check (the Queen's orbs aimed at the peer's own player) depends on an orb attack
+  landing in the harness window.

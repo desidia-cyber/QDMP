@@ -119,6 +119,9 @@ void WorldTeardownReset(uint32_t now, const char* why);
 void HideWorldActor(void* a);
 void ForgetMirror(void* actor);
 void InstallTestInputHooks();
+extern uint32_t g_grabCleanupAt;
+extern uint32_t g_wakeSeenAt;
+extern uint32_t g_endingEndedAt;
 void RetireActor(void* a);
 bool IsRetiredActor(void* a);
 
@@ -2291,6 +2294,7 @@ void LocalActionPump(uint32_t now)
         if (k > 0) ++a.seq;
         if (k >= 0) a.kind = k;
         QDLOG(LOG_INFO, "local montage ", (mon ? nm : "none"), " -> kind ", dec(raw), " sent ", dec(k));
+        if (mon && strstr(nm, "WakeUp")) g_wakeSeenAt = Net::Now();
     }
     if (g_localUsed) {
         g_localUsed = false;
@@ -5426,10 +5430,16 @@ void OnTravel(wire::Reader& r, uint32_t now)
                     float dx = m.px - me.px, dy = m.py - me.py, dz = m.pz - me.pz;
                     float dist = sqrtf(dx * dx + dy * dy + dz * dz);
                     if (dist > 1500.0f) {
-                        float k = 150.0f / dist;
-                        float tx = m.px - dx * k, ty = m.py - dy * k, tz = m.pz;
+                        // THE PARTNER'S OWN SPOT, AND HELD UNTIL ITS FLOOR IS THERE (Session 29, run
+                        // 42: placed 1.5 m off along the line from the old spot, at the partner's
+                        // height, the peer fell from z 140 to -16556 and the game's fall recovery
+                        // woke it elsewhere -- the same flaw the boss pull-in had).  The partner is
+                        // standing on a floor; 1 m above it, held until no wanted level is loading.
+                        (void)dx; (void)dy;
+                        float tx = m.px, ty = m.py, tz = m.pz + 100.0f;
                         bool moved = SetActorXform(pawn, tx, ty, tz, me.yaw);
                         if (moved) RigFallGuardDisarm("the area-leave follow moved this player");
+                        if (moved) LandingHoldStart(tx, ty, tz, me.yaw, "area-leave follow");
                         QDLOG(moved ? LOG_INFO : LOG_WARN, "travel: the partner left ", g_rigLevelPin,
                               " and this player was ", flt(dist, 0), " cm from it -- moved beside the partner at ",
                               flt(tx, 0), ",", flt(ty, 0), ",", flt(tz, 0), " before the area is hidden",
@@ -9458,7 +9468,7 @@ static const BossBeginRow kBossBegins[] = {
 void* MeshActiveMontage(void* mesh);
 void* EnemyMesh(void* actor);
 static void* g_beginNpc[sizeof(kBossBegins) / sizeof(kBossBegins[0])];
-struct BeginRest { uint32_t key; float p[3]; bool sent; bool applied; };
+struct BeginRest { uint32_t key; float p[3]; bool sent; bool applied; bool deferred; };
 static BeginRest g_beginRest[8];
 static int g_beginRestN = 0;
 static BeginRest* BeginRestFor(uint32_t key)
@@ -9499,6 +9509,7 @@ static EnemyRec* BossRecOfClass(const char* cls)
     return nullptr;
 }
 
+static void BossBeginApplyRow(int t, EnemyRec& er);
 void BossBeginPump(uint32_t now)
 {
     static uint32_t last = 0;
@@ -9511,14 +9522,27 @@ void BossBeginPump(uint32_t now)
         if (!row.npc) {
             EnemyRec* r = BossRecOfClass(row.boss);
             ActorXform x;
-            // A copy that FOLLOWS the owner replays the owner's montages and positions (run 13:
-            // the peer's frozen Queen replayed the host's intro and reported it as its own start,
-            // and the host ran the greeting's end a second time).  Only a body this machine runs
-            // can begin.
-            if (!r || r->mirror || r->driven || g_own.State(r->guid) == enemyown::O_FROZEN ||
-                !ReadActorXform(r->actor, &x)) continue;
+            // ANY COPY MAY ANNOUNCE (Session 29, run 38).  Followers were excluded because a
+            // follower replays the owner's intro (run 13's echo).  But ownership now moves to the
+            // nearer player: in run 38 the peer ran the Queen, the HOST's player talked to her,
+            // and a start seen only on a follower was never announced -- her fight never began on
+            // the machine running her.  The echo is harmless now: a machine whose copy has begun
+            // (`sent` or `applied`) ignores a begin, so only a genuine start does anything.
+            if (!r || !ReadActorXform(r->actor, &x)) continue;
             BeginRest* br = BeginRestFor(r->guid[0]);
-            if (!br || br->sent || br->applied) continue;
+            if (!br) continue;
+            // A begin that arrived while this copy followed is applied once it runs here.
+            bool runsHere = !r->mirror && !r->driven && g_own.State(r->guid) != enemyown::O_FROZEN;
+            if (br->deferred && !br->applied && !br->sent && runsHere) {
+                QDLOG(LOG_INFO, "boss begin: ", row.boss, " now runs on this machine; applying the partner's earlier begin");
+                br->deferred = false;
+                BossBeginApplyRow(t, *r);
+                continue;
+            }
+            if (br->sent || br->applied) continue;
+            // A follower that already holds the partner's begin is seeing the owner's intro
+            // replayed: that is the echo, not a start of its own.
+            if (br->deferred) continue;
             if (row.introMontage) {
                 void* mon = nullptr;
                 char path[160] = "";
@@ -9555,6 +9579,21 @@ void BossBeginPump(uint32_t now)
     }
 }
 
+static void BossBeginApplyRow(int t, EnemyRec& er)
+{
+    const BossBeginRow& row = kBossBegins[t];
+    BeginRest* br = BeginRestFor(er.guid[0]);
+    if (br) br->applied = true;
+    void* sp = (er.spawner && ObjectIsLive(er.spawner)) ? er.spawner : nullptr;
+    void* tgt = row.onSpawner ? sp : er.actor;
+    Fn f = {};
+    bool ran = false;
+    __try { if (tgt && f.Resolve(tgt, row.verb)) { Call c(f); ran = c.Run(tgt); } }
+    __except (EXCEPTION_EXECUTE_HANDLER) { ran = false; }
+    QDLOG(ran ? LOG_INFO : LOG_WARN, "boss begin: ", row.boss, (row.onSpawner ? " spawner." : "."), row.verb,
+          (ran ? " ran" : " DID NOT RUN"), " on this copy -- the partner began the fight; it begins here too");
+}
+
 static void BossBeginApply(const uint32_t key[4])
 {
     EnemyRec* er = EnemyByGuid(key);
@@ -9563,8 +9602,10 @@ static void BossBeginApply(const uint32_t key[4])
         return;
     }
     if (er->mirror || er->driven || g_own.State(key) == enemyown::O_FROZEN) {
+        BeginRest* brf = BeginRestFor(key[0]);
+        if (brf && !brf->sent && !brf->applied) brf->deferred = true;
         QDLOG(LOG_INFO, "boss begin: the partner began boss ", hex32(key[0]), " and this machine's copy follows "
-              "the owner (it moves and animates from the owner's rows) -- nothing to begin here");
+              "the owner -- the begin is kept and applied if this machine comes to run it");
         return;
     }
     char cn[96] = "";
@@ -9579,15 +9620,7 @@ static void BossBeginApply(const uint32_t key[4])
                 QDLOG(LOG_INFO, "boss begin: the partner began ", row.boss, " and it has begun here already -- nothing to do");
                 return;
             }
-            if (br) br->applied = true;
-            void* sp = (er->spawner && ObjectIsLive(er->spawner)) ? er->spawner : nullptr;
-            void* tgt = row.onSpawner ? sp : er->actor;
-            Fn f = {};
-            bool ran = false;
-            __try { if (tgt && f.Resolve(tgt, row.verb)) { Call c(f); ran = c.Run(tgt); } }
-            __except (EXCEPTION_EXECUTE_HANDLER) { ran = false; }
-            QDLOG(ran ? LOG_INFO : LOG_WARN, "boss begin: ", row.boss, (row.onSpawner ? " spawner." : "."), row.verb,
-                  (ran ? " ran" : " DID NOT RUN"), " on this copy -- the partner began the fight; it begins here too");
+            BossBeginApplyRow(t, *er);
             return;
         }
         void* npc = world ? FindLiveOfClass(row.npc, world) : nullptr;
@@ -9772,6 +9805,7 @@ void OnBoss(wire::Reader& r, uint32_t now)
     if (b.flags & wire::kBossAck) {
         if (!g_net.IsHost()) return;
         g_bossAck.OnAck(b.guid);
+        g_own.NoteRemoteHolds(b.guid, now);   // the peer holds her: a hand-off to it is possible
         if (g_bossAskPending && boss::SameKey(g_bossAskKey, b.guid)) g_bossAskPending = false;
         QDLOG(LOG_INFO, "boss: peer ACK key=", hex32(b.guid[0]),
               " -- the shared bar may be raised");
@@ -10011,15 +10045,34 @@ void EnemyOwnPump(uint32_t now)
             uint8_t inOrb = 0;
             if (BytePropC(r.actor, "DoinAOrb", &inOrb) && inOrb) stickyBoss = true;
         }
+        // A grab boss moves to the nearer player at 3 m, not 8 m: in her arena the two players
+        // are rarely 8 m apart, and with the wide margin the host ran her (by role) for the
+        // whole of run 33 while the peer stood nearer.  3 m is still four times the two
+        // machines' worst disagreement about the positions (qdenemyown.h, kMarginCm).
+        bool grabBoss = r.isBoss && GrabBossActor(r.actor);
+        uint32_t yieldsBefore = g_own.Yields();
         enemyown::OwnerState st = g_own.Tick(r.guid, true, ex, haveEx,
                                             mine, haveMine, theirs, haveTheirs, now,
-                                            stickyBoss);
+                                            stickyBoss, grabBoss ? 300.0f : enemyown::OwnerSet::kMarginCm);
+        if (g_own.Yields() != yieldsBefore)
+            QDLOG(LOG_INFO, "enemy owner: ", hex32(r.guid[0]), (r.isBoss ? " (boss)" : ""),
+                  " was run by BOTH machines; this machine yields and follows the host's copy");
         // A mirrored copy NEVER runs its own AI, whatever this machine's distance says.  It
         // exists because the owner holds that key, and two simulations of one enemy is the
         // exact failure ownership exists to prevent; on the machine that constructed a copy
         // of the owner's enemy, "frozen" is not a preference.
         if (r.mirror) st = enemyown::O_FROZEN;
-        if (!stickyBoss && r.isBoss) {
+        if (grabBoss) {
+            static uint32_t dbgAt = 0;
+            if (now - dbgAt >= 2000) {
+                dbgAt = now;
+                int ds = -1, dp = -1; uint32_t ca = 0, ra = 0; bool sr = false;
+                if (g_own.Debug(r.guid, now, &ds, &dp, &ca, &ra, &sr))
+                    QDLOG(LOG_INFO, "boss owner dbg ", hex32(r.guid[0]), ": state=", dec(ds), " pref=", dec(dp),
+                          " conflictAge=", dec((int)(ca == 0xFFFFFFFFu ? -1 : (int)ca)),
+                          " lastRowAge=", dec((int)(ra == 0xFFFFFFFFu ? -1 : (int)ra)), " sawRemote=", dec(sr ? 1 : 0),
+                          " mirror=", dec(r.mirror ? 1 : 0), " host=", dec(g_net.IsHost() ? 1 : 0));
+            }
             static uint32_t gbKey[8];
             static int gbState[8];
             static int gbN = 0;
@@ -10263,9 +10316,31 @@ void EnemySendPump(uint32_t now)
     last = now;
     static wire::EnemyRow rows[256];
     int n = 0;
+    // A BOSS'S ROW GOES OUT EVERY TICK (Session 29, run 33).  The 16-row window rotates over
+    // every enemy this machine runs -- ~600 in the castle, so one boss row every ~1.9 s, about
+    // the 2 s within which an ownership hand-off must be confirmed.  The boss is the one enemy
+    // whose hand-off the players see, so its rows bypass the rotation.
+    static wire::EnemyRow bossRows[4];
+    int nb = 0;
     for (int i = 0; i < g_enN; ++i) {
         EnemyRec& r = g_en[i];
         __try {
+        // WHY A BOSS HAS NO ROW (Session 29 diagnostic, run 34: the peer never heard the host's
+        // Queen, so a double run of her was never seen).  Logged when the reason changes.
+        if (r.isBoss && r.haveGuid && ObjectIsLive(r.actor)) {
+            const char* why = EnemyDead(r.actor) ? "bDead set" : r.mirror ? "a constructed copy" :
+                              g_remoteDead.Has(r.guid, now) ? "the partner recorded its death" :
+                              KillLogHas(r.guid) ? "this machine recorded its death" :
+                              g_own.Publishing(r.guid) == enemyown::PUB_NONE ? "followed (the partner runs it)" : "sent";
+            static uint32_t bk[8]; static const char* bw[8]; static int bn = 0;
+            int bi = -1;
+            for (int k = 0; k < bn; ++k) if (bk[k] == r.guid[0]) { bi = k; break; }
+            if (bi < 0 && bn < 8) { bi = bn++; bk[bi] = r.guid[0]; bw[bi] = nullptr; }
+            if (bi >= 0 && bw[bi] != why) {
+                bw[bi] = why;
+                QDLOG(LOG_INFO, "enemy rows: boss ", hex32(r.guid[0]), " row ", why);
+            }
+        }
         if (!r.haveGuid || !ObjectIsLive(r.actor) || EnemyDead(r.actor)) continue;
         // A mirrored copy is NOT a simulation: its rows would tell the owner's machine about
         // an enemy it already runs, from a copy that is not running it.  Only the owner
@@ -10283,7 +10358,7 @@ void EnemySendPump(uint32_t now)
         if (!ReadActorXform(r.actor, &x)) continue;
         float hp = 0, mx = 0;
         if (!EnemyHp(r.actor, &hp, &mx) || hp <= 0.0f) continue;
-        wire::EnemyRow& w = rows[n++];
+        wire::EnemyRow& w = (r.isBoss && nb < 4) ? bossRows[nb++] : rows[n++];
         memcpy(w.guid, r.guid, 16);
         w.px = wire::QuantizePos(x.px); w.py = wire::QuantizePos(x.py); w.pz = wire::QuantizePos(x.pz);
         w.yaw = wire::QuantizeAngle(x.yaw);
@@ -10309,8 +10384,17 @@ void EnemySendPump(uint32_t now)
 
     int count = 0;
     int first = g_rowCursor.Take(n, 16, &count);     // 16 live + up to 4 dead = 20 rows
-    wire::EnemyRow out[20];
+    wire::EnemyRow out[24];
     int m = 0;
+    for (int i = 0; i < nb; ++i) out[m++] = bossRows[i];
+    {
+        static uint32_t cntAt = 0, cnt = 0;
+        cnt += (uint32_t)nb;
+        if (now - cntAt >= 5000) {
+            if (cntAt) QDLOG(LOG_INFO, "enemy rows: ", dec((int)cnt), " boss row(s) put on the wire in 5 s");
+            cntAt = now; cnt = 0;
+        }
+    }
     for (int i = 0; i < count; ++i) out[m++] = rows[first + i];
     for (int k = 0; k < 4 && g_killLog.Count() > 0; ++k) {
         if (g_deadCursor >= g_killLog.Count()) g_deadCursor = 0;
@@ -10426,6 +10510,23 @@ void OnEnemyRows(wire::Reader& r, uint32_t now)
         // The claim bit is the sender's own statement of who runs it.  Feed it even for
         // a dead row: a frozen copy must not sit waiting on a stale claim.
         g_own.OnRemoteRow(e.guid, (e.flags & wire::kEnemyPeerOwns) != 0, now);
+        {
+            EnemyRec* br = EnemyByGuid(e.guid);
+            if (br && br->isBoss) {
+                int what = ((e.flags & enemy::kAlive) ? 1 : 0) | ((e.flags & wire::kEnemyPeerOwns) ? 2 : 0);
+                static uint32_t rk[8]; static int rw[8]; static int rn = 0;
+                int ri = -1;
+                for (int k = 0; k < rn; ++k) if (rk[k] == e.guid[0]) { ri = k; break; }
+                if (ri < 0 && rn < 8) { ri = rn++; rk[ri] = e.guid[0]; rw[ri] = -1; }
+                if (ri >= 0 && rw[ri] != what) {
+                    rw[ri] = what;
+                    QDLOG(LOG_INFO, "enemy rows: the partner's row for boss ", hex32(e.guid[0]), ": ",
+                          ((what & 1) ? "alive" : "dead"), ((what & 2) ? ", handed to this machine" : ", it runs it"),
+                          "; here ", (g_own.State(e.guid) == enemyown::O_LOCAL ? "LOCAL" :
+                                      g_own.State(e.guid) == enemyown::O_FROZEN ? "FROZEN" : "HANDOFF"));
+                }
+            }
+        }
         // A partner's boss this machine has no copy of (BossStartPump decides; ordinary
         // enemies are filtered there by their spawner's Boss flag).
         if ((e.flags & enemy::kAlive) &&
@@ -11520,6 +11621,8 @@ void CutscenePump(uint32_t now)
         QDLOG(LOG_INFO, "cutscene: local ", (playing ? "started " : "ended "),
               ((playing ? name : lastName)[0] ? (playing ? name : lastName) : "(unnamed)"));
         wasPlaying = playing;
+        // The Queen's ending ended here: any grab of hers that was still on is undone (below).
+        if (ended && strstr(lastName, "Ending")) { g_grabCleanupAt = now + 2000; g_endingEndedAt = now ? now : 1; }
     }
 
     if (g_net.Connected() && (changed || ended || now - lastSend >= 1000)) {
@@ -15434,8 +15537,95 @@ void LandingHoldStart(float x, float y, float z, float yaw, const char* why)
 // collision off for 3 s and no Queen RUN HERE is in an orb, the grab that turned it off can no
 // longer end on its own (her copy here was frozen, or the partner's machine ran the orb): her
 // `UnlockFromOrbStuff` runs on the local copy, and the player's collision and walking come back.
+// A GRAB THAT OUTLIVES THE QUEEN IS UNDONE (Session 29, user: "after the video finished ...
+// black screen on both and nothing was happening").  Her grab fades in the grabbed player's
+// own teleport overlay (`FadeInQuickTPOverlay`, the purple swirl that goes black), turns off
+// its collision and freezes its movement; only her `UnlockFromOrbStuff` at the grab's end
+// undoes it.  Killed mid-grab -- by the partner, whose kill reaches this copy through the death
+// lane -- her graph never gets there, and after the ending the player woke on the beach under
+// the overlay (run 39: the host's frame purple, the peer's black).  When this machine's ending
+// ends, every live Queen copy runs `UnlockFromOrbStuff`, and the player's own
+// `FadeOutQuickTPOverlay`, collision and walking are restored as well.
+uint32_t g_grabCleanupAt = 0;
+static void GrabCleanupNow(const char* why)
+{
+    void* pawn = g_localPawn;
+    if (!pawn || !IsGameplayPawn(pawn)) return;
+    int unlocked = 0;
+    for (int i = 0; i < g_enN; ++i) {
+        EnemyRec& r = g_en[i];
+        if (!r.haveGuid || !ObjectIsLive(r.actor) || !GrabBossActor(r.actor)) continue;
+        Fn f = {};
+        __try { if (f.Resolve(r.actor, "UnlockFromOrbStuff")) { Call c(f); if (c.Run(r.actor)) ++unlocked; } }
+        __except (EXCEPTION_EXECUTE_HANDLER) {}
+    }
+    bool faded = false;
+    {
+        Fn f = {};
+        __try { if (f.Resolve(pawn, "FadeOutQuickTPOverlay")) { Call c(f); faded = c.Run(pawn); } }
+        __except (EXCEPTION_EXECUTE_HANDLER) { faded = false; }
+    }
+    __try {
+        CallActorBool(pawn, "SetActorEnableCollision", "bNewActorEnableCollision", true);
+        PawnMovementMode(pawn, 1 /* MOVE_Walking */);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    QDLOG(LOG_INFO, "grab cleanup (", why, "): UnlockFromOrbStuff ran on ", dec(unlocked), " Queen copy(ies); "
+          "FadeOutQuickTPOverlay ", (faded ? "ran" : "DID NOT RUN"), "; collision and walking restored");
+}
+
+// THE WAKE-UP AFTER THE ENDING IS FINISHED (Session 29, user: "black screen on both and nothing
+// was happening").  The Queen's ending calls the player's `EndingWakeOnBeach`: it moves the
+// player to the camp beach under a held camera fade, and `PostEndingWakeOnBeach` then plays the
+// wake-up (`Player_FPArms_WakeUp_Montage`) and fades the camera back in.  Runs 34-41: the move
+// happened on both machines and the second half never did -- no wake-up montage, the camera
+// held black (run 41: `StopCameraFade` alone brought the picture back on both).  If 15 s after
+// this machine's ending no wake-up has played, the player's own `PostEndingWakeOnBeach` runs;
+// if 10 s later the wake-up still has not played, the camera fade is stopped.
+uint32_t g_wakeSeenAt = 0;
+uint32_t g_endingEndedAt = 0;
+static void EndingWakePump(uint32_t now)
+{
+    static int stage = 0;
+    if (!g_endingEndedAt) { stage = 0; return; }
+    bool woke = g_wakeSeenAt && (int32_t)(g_wakeSeenAt - g_endingEndedAt) >= 0;
+    int32_t age = (int32_t)(now - g_endingEndedAt);
+    if (woke) {
+        QDLOG(LOG_INFO, "ending wake: the player's wake-up played ", dec((int)(g_wakeSeenAt - g_endingEndedAt)),
+              " ms after the ending", (stage ? " (after this module ran PostEndingWakeOnBeach)" : " (the game's own)"));
+        g_endingEndedAt = 0; stage = 0;
+        return;
+    }
+    void* pawn = g_localPawn;
+    if (!pawn || !IsGameplayPawn(pawn)) return;
+    if (stage == 0 && age >= 15000) {
+        stage = 1;
+        Fn f = {};
+        bool ran = false;
+        __try { if (f.Resolve(pawn, "PostEndingWakeOnBeach")) { Call c(f); ran = c.Run(pawn); } }
+        __except (EXCEPTION_EXECUTE_HANDLER) { ran = false; }
+        QDLOG(ran ? LOG_INFO : LOG_WARN, "ending wake: no wake-up 15 s after the ending -- the player's PostEndingWakeOnBeach ",
+              (ran ? "ran" : "DID NOT RUN"));
+    } else if (stage == 1 && age >= 25000) {
+        stage = 2;
+        void* pc = LocalController();
+        void* cam = pc ? ObjPropC(pc, "PlayerCameraManager") : nullptr;
+        Fn f = {};
+        bool ran = false;
+        __try { if (cam && f.Resolve(cam, "StopCameraFade")) { Call c(f); ran = c.Run(cam); } }
+        __except (EXCEPTION_EXECUTE_HANDLER) { ran = false; }
+        QDLOG(LOG_WARN, "ending wake: still no wake-up 25 s after the ending -- the held camera fade is stopped (",
+              (ran ? "StopCameraFade ran" : "StopCameraFade DID NOT RUN"), ")");
+        g_endingEndedAt = 0; stage = 0;
+    }
+}
+
 void GrabAftermathPump(uint32_t now)
 {
+    EndingWakePump(now);
+    if (g_grabCleanupAt && (int32_t)(now - g_grabCleanupAt) >= 0) {
+        g_grabCleanupAt = 0;
+        GrabCleanupNow("the ending ended");
+    }
     static uint32_t last = 0, offSince = 0;
     if (now - last < 500) return;
     last = now;
@@ -15451,14 +15641,24 @@ void GrabAftermathPump(uint32_t now)
     if ((int32_t)(now - offSince) < 3000) return;
     void* queen = nullptr;
     bool grabbingHere = false;
+    // ONLY NEAR A GRAB BOSS (run 34): the game turns collision off for its own sequences too
+    // (the ending's wake-up on the beach), and those are not the mod's to undo.  A grab leaves
+    // the player inside her arena, so only a grab boss within 60 m counts.
+    ActorXform meX = {};
+    bool haveMe = ReadActorXform(pawn, &meX);
     for (int i = 0; i < g_enN; ++i) {
         EnemyRec& r = g_en[i];
         if (!r.haveGuid || !ObjectIsLive(r.actor) || !GrabBossActor(r.actor)) continue;
+        ActorXform qx = {};
+        if (!haveMe || !ReadActorXform(r.actor, &qx)) continue;
+        float dx = qx.px - meX.px, dy = qx.py - meX.py, dz = qx.pz - meX.pz;
+        if (dx * dx + dy * dy + dz * dz > 6000.0f * 6000.0f) continue;
         if (!queen) queen = r.actor;
         uint8_t inOrb = 0;
         if (!r.mirror && g_own.Running(r.guid) && BytePropC(r.actor, "DoinAOrb", &inOrb) && inOrb) grabbingHere = true;
     }
     if (grabbingHere) return;                       // a live grab here ends on its own
+    if (!queen) { offSince = 0; return; }           // no grab boss near: the game's own sequence
     bool unlocked = false;
     if (queen) {
         Fn f = {};
@@ -15477,9 +15677,14 @@ void GrabAftermathPump(uint32_t now)
 
 void LandingHoldPump(uint32_t now)
 {
-    // ANY TELEPORT, NOT ONLY THE MOD'S (run 28: the game's own fall recovery sent the peer to
-    // the hub teleporter while the hub was not shown, and it fell again).  A jump of the local
-    // player by more than 50 m in one tick is a teleport, whoever made it, and is held too.
+    // ONLY THE MOD'S OWN MOVES ARE HELD (Session 29, run 34, user: "after the video finished
+    // ... black screen on both and nothing was happening").  The hold used to take ANY jump of
+    // more than 50 m.  The Queen's ending moves the player to the camp beach and plays the
+    // game's own wake-up there, with its own fade from black; the hold switched that player to
+    // flying, then falling -- a jump-landing montage played on both machines -- and the
+    // wake-up never finished its fade.  The game's own teleports stream their own levels and
+    // run their own sequences; the falls the hold exists for came from the mod's moves (the
+    // boss pull-in and rig placements, held where they are made).  A game teleport is logged.
     static void* lastPawn = nullptr;
     static float lx = 0, ly = 0, lz = 0;
     void* pawn = g_localPawn;
@@ -15489,7 +15694,9 @@ void LandingHoldPump(uint32_t now)
             float dx = cur.px - lx, dy = cur.py - ly, dz = cur.pz - lz;
             bool jumped = lastPawn == pawn && dx * dx + dy * dy + dz * dz > 5000.0f * 5000.0f;
             lastPawn = pawn; lx = cur.px; ly = cur.py; lz = cur.pz;
-            if (jumped && !g_land.on) LandingHoldStart(cur.px, cur.py, cur.pz, cur.yaw, "a teleport");
+            if (jumped && !g_land.on)
+                QDLOG(LOG_INFO, "landing: the game moved this player to ", flt(cur.px, 0), ",", flt(cur.py, 0), ",",
+                      flt(cur.pz, 0), " -- its own teleport, left to the game (not held)");
         }
     }
     {
@@ -16684,6 +16891,85 @@ void DevInteract(uint32_t now)
     // that CLASS instead -- a different actor 56 km away.
     for (int i = 0; buf[i]; ++i) if (buf[i] == '#') { buf[i] = 0; break; }
     if (buf[0] == 0) return;
+    // `view` / `fix:fade` / `fix:view` (Session 29): the camera after the ending.  `view` logs
+    // the controller, its camera manager and the camera's view target; the two fixes are tried
+    // one at a time by the harness with a screenshot after each, so one run says which one the
+    // black screen needed.
+    if (!strcmp(buf, "view") || !strcmp(buf, "fix:fade") || !strcmp(buf, "fix:view")) {
+        void* pc = LocalController();
+        void* cam = pc ? ObjPropC(pc, "PlayerCameraManager") : nullptr;
+        char pcn[96] = "-", camn[96] = "-", vtn[96] = "-", vtc[96] = "-", pn[96] = "-";
+        if (pc) FNameToString(ObjNameRaw(ObjClass(pc)), pcn, sizeof(pcn));
+        if (cam) FNameToString(ObjNameRaw(ObjClass(cam)), camn, sizeof(camn));
+        if (g_localPawn) FNameToString(ObjNameRaw(g_localPawn), pn, sizeof(pn));
+        void* vt = nullptr;
+        {
+            Fn f = {};
+            __try { if (pc && f.Resolve(pc, "GetViewTarget")) { Call c(f); if (c.Run(pc) && c.Ret()) vt = *(void**)c.Ret(); } }
+            __except (EXCEPTION_EXECUTE_HANDLER) { vt = nullptr; }
+        }
+        if (vt && LooksLikeUObject(vt)) { FNameToString(ObjNameRaw(vt), vtn, sizeof(vtn)); FNameToString(ObjNameRaw(ObjClass(vt)), vtc, sizeof(vtc)); }
+        int fo = cam ? FindPropertyOffsetIn(ObjClass(cam), "FadeAmount", nullptr) : -1;
+        int fade = -1;
+        __try { if (fo >= 0) fade = (int)(*(float*)((uint8_t*)cam + fo) * 100.0f); } __except (EXCEPTION_EXECUTE_HANDLER) {}
+        QDLOG(LOG_INFO, "dev view: controller ", pcn, " camera ", camn, " viewtarget ", vtn, " (", vtc, ") pawn ", pn,
+              " viewIsPawn=", dec(vt && vt == g_localPawn ? 1 : 0), " fadeAmount%=", dec(fade), " fadeOff=", dec(fo));
+        if (!strcmp(buf, "fix:fade")) {
+            Fn f = {};
+            bool ran = false;
+            __try { if (cam && f.Resolve(cam, "StopCameraFade")) { Call c(f); ran = c.Run(cam); } }
+            __except (EXCEPTION_EXECUTE_HANDLER) { ran = false; }
+            QDLOG(LOG_INFO, "dev view: StopCameraFade ", (ran ? "ran" : "DID NOT RUN"));
+        } else if (!strcmp(buf, "fix:view")) {
+            Fn f = {};
+            bool ran = false;
+            __try {
+                if (pc && g_localPawn && f.Resolve(pc, "SetViewTargetWithBlend")) {
+                    Call c(f);
+                    if (f.sig.props > 0) c.Obj(f.sig.p[0].name, g_localPawn);
+                    ran = c.Run(pc);
+                }
+            } __except (EXCEPTION_EXECUTE_HANDLER) { ran = false; }
+            QDLOG(LOG_INFO, "dev view: SetViewTargetWithBlend(player) ", (ran ? "ran" : "DID NOT RUN"));
+        }
+        return;
+    }
+    // `widgets` (Session 29): every user widget on the viewport, with its visibility and
+    // opacity.  After the ending both machines show a black screen with the game's HUD gone
+    // and no flag explaining it; the question is WHAT is drawn over the world.
+    if (!strcmp(buf, "widgets")) {
+        void* uw = FindClassByName("UserWidget");
+        int n = ObjectCount(), shown = 0;
+        static Fn fIn = {};
+        static void* missIn = nullptr;
+        for (int i = 0; uw && i < n && shown < 40; ++i) {
+            void* o = ObjectAt(i);
+            if (!o || !LooksLikeUObject(o)) continue;
+            char on[96] = "", cn[96] = "";
+            bool sub = false;
+            __try { sub = IsSubclassOf(ObjClass(o), uw); } __except (EXCEPTION_EXECUTE_HANDLER) { sub = false; }
+            if (!sub || !ObjectIsLive(o)) continue;
+            FNameToString(ObjNameRaw(o), on, sizeof(on));
+            if (!strncmp(on, "Default__", 9)) continue;
+            bool inVp = false;
+            __try {
+                if (ResolvePerClass(fIn, &missIn, o, "IsInViewport")) { Call c(fIn); if (c.Run(o) && c.Ret()) inVp = *(uint8_t*)c.Ret() != 0; }
+            } __except (EXCEPTION_EXECUTE_HANDLER) { inVp = false; }
+            if (!inVp) continue;
+            FNameToString(ObjNameRaw(ObjClass(o)), cn, sizeof(cn));
+            int vo = FindPropertyOffsetIn(ObjClass(o), "Visibility", nullptr);
+            int ro = FindPropertyOffsetIn(ObjClass(o), "RenderOpacity", nullptr);
+            int vis = -1, op = -1;
+            __try {
+                if (vo >= 0) vis = *((uint8_t*)o + vo);
+                if (ro >= 0) op = (int)(*(float*)((uint8_t*)o + ro) * 100.0f);
+            } __except (EXCEPTION_EXECUTE_HANDLER) {}
+            QDLOG(LOG_INFO, "dev widgets: ", cn, " ", on, " visibility=", dec(vis), " opacity%=", dec(op));
+            ++shown;
+        }
+        QDLOG(LOG_INFO, "dev widgets: ", dec(shown), " widget(s) on the viewport");
+        return;
+    }
     // `!<Verb>` (after Session 26): call THAT verb on the resolved object, with the player as
     // its object argument, instead of the press.  The shop door (`Shop_Door_00_BP_C`) is a
     // ONE-SIDED door (`OneSided`, `FrontSideInteract`, `FlipOpenableSide` in its class): a
@@ -16713,8 +16999,19 @@ void DevInteract(uint32_t now)
         float d = 0.0f;
         ActorXform xf = {};
         char nm[64] = "";
-        void* t = RigFindNear(buf + 5, &d, &xf, nm, sizeof(nm));
-        if (!t) { QDLOG(LOG_WARN, "dev props: no live actor matches '", buf + 5, "'"); return; }
+        void* t = nullptr;
+        // `near:me!?...` / `near:camera!?...` / `near:controller!?...` (Session 29): the local
+        // player, its camera manager (the engine's fade) and its controller -- the black screen
+        // after the ending is a question about those, not about an actor near the player.
+        if (!strcmp(buf + 5, "me")) { t = g_localPawn; lstrcpynA(nm, "local player", sizeof(nm)); }
+        else if (!strcmp(buf + 5, "gi")) { t = GameInstanceObj(); lstrcpynA(nm, "game instance", sizeof(nm)); }
+        else if (!strcmp(buf + 5, "controller")) { t = LocalController(); lstrcpynA(nm, "local controller", sizeof(nm)); }
+        else if (!strcmp(buf + 5, "camera")) {
+            void* pc = LocalController();
+            t = pc ? ObjPropC(pc, "PlayerCameraManager") : nullptr;
+            lstrcpynA(nm, "camera manager", sizeof(nm));
+        } else t = RigFindNear(buf + 5, &d, &xf, nm, sizeof(nm));
+        if (!t || !ObjectIsLive(t)) { QDLOG(LOG_WARN, "dev props: no live actor matches '", buf + 5, "'"); return; }
         char line[400] = "";
         char list[96];
         lstrcpynA(list, forcedVerb + 1, sizeof(list));

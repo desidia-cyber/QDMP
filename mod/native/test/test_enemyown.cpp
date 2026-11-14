@@ -76,17 +76,124 @@ static void TestNearerMachineWins()
 
 static void TestHoldPreventsAnEarlySwitch()
 {
+    // The HOST is the far machine (the peer never yields while it is clearly nearer, so
+    // the host's own distance test is what moves the enemy -- after the hold).
     enemyown::OwnerSet h(true), p(false);
-    const float hostNear[3] = {100.0f, 0.0f, 0.0f};
-    const float peerFar[3]  = {5000.0f, 0.0f, 0.0f};
+    const float hostFar[3]  = {5000.0f, 0.0f, 0.0f};
+    const float peerNear[3] = {100.0f, 0.0f, 0.0f};
     uint32_t now = 0;
-    // One second: the peer prefers to own it but the hold has not elapsed.
-    for (int i = 0; i < 60; ++i) { now += 16; Step(h, p, now, hostNear, peerFar, true, true); }
-    CHECK(p.State(kGuid) == enemyown::O_LOCAL,
+    // One second: the host prefers to hand it over but the hold has not elapsed.
+    for (int i = 0; i < 60; ++i) { now += 16; Step(h, p, now, hostFar, peerNear, true, true); }
+    CHECK(h.State(kGuid) == enemyown::O_LOCAL,
           "own/a preference younger than the hold does not switch");
     // Past the hold, it does.
-    for (int i = 0; i < 120; ++i) { now += 16; Step(h, p, now, hostNear, peerFar, true, true); }
-    CHECK(p.State(kGuid) == enemyown::O_FROZEN, "own/the switch happens once the hold passes");
+    for (int i = 0; i < 120; ++i) { now += 16; Step(h, p, now, hostFar, peerNear, true, true); }
+    CHECK(h.State(kGuid) == enemyown::O_FROZEN, "own/the switch happens once the hold passes");
+    CHECK(p.State(kGuid) == enemyown::O_LOCAL, "own/the nearer peer runs it after the hold");
+}
+
+// ===========================================================================
+// A double run always ends with one owner (Session 29, run 33: two Queens)
+// ===========================================================================
+static void TestDoubleRunIsResolved()
+{
+    // Both machines start their own copy and both say "I run it" -- the peer's real copy
+    // replaced a frozen constructed one.  A STICKY boss (no distance hand-off at all) is
+    // the worst case: before the fix both ran it for the whole fight.
+    enemyown::OwnerSet h(true), p(false);
+    const float hostPos[3] = {350.0f, 0.0f, 0.0f};
+    const float peerPos[3] = {250.0f, 0.0f, 0.0f};
+    uint32_t now = 0;
+    int bothRunning = 0;
+    for (int i = 0; i < 400; ++i) {
+        now += 16;
+        h.Tick(kGuid, true, kEnemy, true, hostPos, true, peerPos, true, now, true);
+        p.Tick(kGuid, true, kEnemy, true, peerPos, true, hostPos, true, now, true);
+        enemyown::Publish hp = h.Publishing(kGuid), pp = p.Publishing(kGuid);
+        if (hp != enemyown::PUB_NONE) p.OnRemoteRow(kGuid, hp == enemyown::PUB_HANDOFF, now);
+        if (pp != enemyown::PUB_NONE) h.OnRemoteRow(kGuid, pp == enemyown::PUB_HANDOFF, now);
+        if (i > 100 && h.Running(kGuid) && p.Running(kGuid)) ++bothRunning;
+    }
+    CHECK(bothRunning == 0, "double/a sticky boss run on both machines ends within 1.6 s");
+    CHECK(h.State(kGuid) == enemyown::O_LOCAL, "double/the host keeps it");
+    CHECK(p.State(kGuid) == enemyown::O_FROZEN, "double/the peer yields and follows");
+    CHECK(p.Yields() == 1, "double/the peer yielded exactly once");
+
+    // Rows arrive only every ~1.9 s (a busy machine's row cursor): still resolved.
+    enemyown::OwnerSet h2(true), p2(false);
+    now = 0;
+    for (int i = 0; i < 800; ++i) {
+        now += 16;
+        h2.Tick(kGuid, true, kEnemy, true, hostPos, true, peerPos, true, now, true);
+        p2.Tick(kGuid, true, kEnemy, true, peerPos, true, hostPos, true, now, true);
+        if (i % 120 == 0) {
+            enemyown::Publish hp = h2.Publishing(kGuid), pp = p2.Publishing(kGuid);
+            if (hp != enemyown::PUB_NONE) p2.OnRemoteRow(kGuid, hp == enemyown::PUB_HANDOFF, now);
+            if (pp != enemyown::PUB_NONE) h2.OnRemoteRow(kGuid, pp == enemyown::PUB_HANDOFF, now);
+        }
+    }
+    CHECK(h2.Running(kGuid) != p2.Running(kGuid), "double/sparse rows: exactly one owner");
+}
+
+static void TestCastleSizedTableKeepsTheQueen()
+{
+    // Run 36: ~600 enemies filled the 256-record table and the Queen, the newest, got no
+    // record -- both machines ran her for the whole fight.  700 enemies, the Queen last.
+    static enemyown::OwnerSet h(true), p(false);
+    h.Reset(); p.Reset();
+    const float hostPos[3] = {350.0f, 0.0f, 0.0f};
+    const float peerPos[3] = {250.0f, 0.0f, 0.0f};
+    uint32_t now = 1000;
+    uint32_t g[4] = {0, 0x11111111u, 0x22222222u, 0x33333333u};
+    for (uint32_t k = 1; k <= 700; ++k) {
+        g[0] = k * 7919u;
+        h.Tick(g, true, kEnemy, true, hostPos, true, peerPos, true, now);
+        p.Tick(g, true, kEnemy, true, peerPos, true, hostPos, true, now);
+    }
+    CHECK(!h.Overflowed() && !p.Overflowed(), "table/700 enemies fit");
+    const uint32_t queen[4] = {0xC88FFC0Cu, 0x4A90A87Au, 0xF30BA198u, 0x5A3A2863u};
+    for (int i = 0; i < 200; ++i) {
+        now += 16;
+        h.Tick(queen, true, kEnemy, true, hostPos, true, peerPos, true, now);
+        p.Tick(queen, true, kEnemy, true, peerPos, true, hostPos, true, now);
+        enemyown::Publish hp = h.Publishing(queen), pp = p.Publishing(queen);
+        if (hp != enemyown::PUB_NONE) p.OnRemoteRow(queen, hp == enemyown::PUB_HANDOFF, now);
+        if (pp != enemyown::PUB_NONE) h.OnRemoteRow(queen, pp == enemyown::PUB_HANDOFF, now);
+    }
+    CHECK(h.Running(queen) != p.Running(queen), "table/the 701st enemy has one owner");
+    CHECK(h.Count() == 701 && p.Count() == 701, "table/every enemy has a record");
+    // Every earlier key is still found (the index survives growth).
+    int lost = 0;
+    for (uint32_t k = 1; k <= 700; ++k) {
+        g[0] = k * 7919u;
+        int ds, dp; uint32_t ca, ra; bool sr;
+        if (!h.Debug(g, now, &ds, &dp, &ca, &ra, &sr)) ++lost;
+    }
+    CHECK(lost == 0, "table/earlier keys are still found by the index");
+}
+
+static void TestDoubleRunNearerPeerEndsOwningIt()
+{
+    // Double run, and the peer is clearly the nearer machine (a grab boss's small margin).
+    // The peer does not yield first: the host hands it over by distance, and the peer owns.
+    enemyown::OwnerSet h(true), p(false);
+    const float hostPos[3] = {900.0f, 0.0f, 0.0f};
+    const float peerPos[3] = {100.0f, 0.0f, 0.0f};
+    uint32_t now = 0;
+    int peerFlips = 0, prev = Kind(p);
+    for (int i = 0; i < 600; ++i) {
+        now += 16;
+        h.Tick(kGuid, true, kEnemy, true, hostPos, true, peerPos, true, now, false, 300.0f);
+        p.Tick(kGuid, true, kEnemy, true, peerPos, true, hostPos, true, now, false, 300.0f);
+        enemyown::Publish hp = h.Publishing(kGuid), pp = p.Publishing(kGuid);
+        if (hp != enemyown::PUB_NONE) p.OnRemoteRow(kGuid, hp == enemyown::PUB_HANDOFF, now);
+        if (pp != enemyown::PUB_NONE) h.OnRemoteRow(kGuid, pp == enemyown::PUB_HANDOFF, now);
+        if (Kind(p) != prev) { ++peerFlips; prev = Kind(p); }
+    }
+    CHECK(p.State(kGuid) == enemyown::O_LOCAL, "double/the clearly nearer peer ends up running it");
+    CHECK(h.State(kGuid) == enemyown::O_FROZEN, "double/the far host follows");
+    CHECK(peerFlips == 0, "double/the nearer peer's model never flips");
+    CHECK(p.Yields() == 0, "double/the nearer peer did not yield");
 }
 
 static void TestMarginBreaksByRole()
@@ -156,11 +263,13 @@ static void TestClaimIsHonouredBeforeDistanceAgrees()
 
 static void TestHandoffKeepsSimulatingUntilConfirmed()
 {
-    enemyown::OwnerSet h(true), p(false);
+    // The machine under test is the HOST: a peer that runs an enemy the host also runs now
+    // yields at once (TestDoubleRunIsResolved), so the hand-off paths are the host's.
+    enemyown::OwnerSet p(true);
     const float hostNear[3] = {100.0f, 0.0f, 0.0f};
     const float peerFar[3]  = {5000.0f, 0.0f, 0.0f};
     uint32_t now = 0;
-    p.OnRemoteRow(kGuid, false, now);           // the host has this enemy
+    p.OnRemoteRow(kGuid, false, now);           // the other machine has this enemy
     // Drive the peer to its own hand-off without ever delivering the host's rows.
     for (int i = 0; i < 120; ++i) { now += 16; p.Tick(kGuid, true, kEnemy, true, peerFar, true, hostNear, true, now); }
     CHECK(p.State(kGuid) == enemyown::O_HANDOFF, "claim/the hand-off state is entered");
@@ -180,7 +289,9 @@ static void TestHandoffKeepsSimulatingUntilConfirmed()
 
 static void TestUnconfirmedHandoffAborts()
 {
-    enemyown::OwnerSet p(false);
+    // The machine under test is the HOST: a peer that runs an enemy the host also runs now
+    // yields at once (TestDoubleRunIsResolved), so the hand-off paths are the host's.
+    enemyown::OwnerSet p(true);
     const float hostNear[3] = {100.0f, 0.0f, 0.0f};
     const float peerFar[3]  = {5000.0f, 0.0f, 0.0f};
     uint32_t now = 0;
@@ -226,7 +337,9 @@ static void TestFollowerNeverTakesUnilaterally()
 // player walks.
 static void TestBossIsSticky()
 {
-    enemyown::OwnerSet p(false);
+    // The machine under test is the HOST: a peer that runs an enemy the host also runs now
+    // yields at once (TestDoubleRunIsResolved), so the hand-off paths are the host's.
+    enemyown::OwnerSet p(true);
     const float peerFar[3] = {6000.0f, 0.0f, 0.0f};
     const float hostNear[3] = {10.0f, 0.0f, 0.0f};
     uint32_t now = 1000;
@@ -238,7 +351,7 @@ static void TestBossIsSticky()
     CHECK(p.Publishing(kGuid) == enemyown::PUB_OWN, "sticky/a boss owner never hands off");
     // The same enemy without `sticky` would have been handed to the nearer host.
     // (Unconfirmed, a hand-off cycles back after kHandoffMs, so ask whether one STARTED.)
-    enemyown::OwnerSet q(false);
+    enemyown::OwnerSet q(true);
     bool handedOff = false;
     for (int i = 0; i < 400; ++i) {
         now += 16;
@@ -413,6 +526,9 @@ int main()
     printf("=== qd enemy-ownership tests ===\n");
     TestNearerMachineWins();
     TestHoldPreventsAnEarlySwitch();
+    TestDoubleRunIsResolved();
+    TestDoubleRunNearerPeerEndsOwningIt();
+    TestCastleSizedTableKeepsTheQueen();
     TestMarginBreaksByRole();
     TestExactTieGoesToTheHost();
     TestClaimIsHonouredBeforeDistanceAgrees();

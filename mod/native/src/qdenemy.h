@@ -38,6 +38,7 @@
 // Header-only and dependency-free, compiled into native/test like the other state
 // machines.
 #pragma once
+#include "qdguidindex.h"
 #include <stdint.h>
 
 namespace qd {
@@ -230,7 +231,7 @@ enum Owner { LOCAL = 0, DRIVEN = 1, KILL = 2 };
 
 class HostView {
 public:
-    static const int      kMax = 256;
+    static const int      kMax = 1024;   // the castle runs ~600 (run 36; see qdguidindex.h)
     static const uint32_t kFreshMs   = 1000;   // a row this young means "host runs it"
     static const uint32_t kReleaseMs = 2000;   // a driven copy waits this long before
                                                // its own AI takes over (hysteresis:
@@ -239,7 +240,7 @@ public:
     static const uint32_t kDeadStaleMs = 5000; // dead rows cycle in under 1 s
 
     HostView() { Reset(); }
-    void Reset() { for (int i = 0; i < kMax; ++i) r_[i].used = false; overflow_ = false; }
+    void Reset() { for (int i = 0; i < kMax; ++i) r_[i].used = false; idx_.Clear(); used_ = 0; overflow_ = false; }
 
     void OnRow(const uint32_t guid[4], int32_t px, int32_t py, int32_t pz, int16_t yaw,
                uint16_t hp, uint8_t flags, uint32_t now_ms)
@@ -254,8 +255,8 @@ public:
 
     const HostRow* Get(const uint32_t guid[4]) const
     {
-        for (int i = 0; i < kMax; ++i) if (r_[i].used && SameGuid(r_[i].guid, guid)) return &r_[i];
-        return nullptr;
+        int i = idx_.Find(guid, [this](int k) { return (const uint32_t*)r_[k].guid; });
+        return i >= 0 ? &r_[i] : nullptr;
     }
 
     Owner Decide(const uint32_t guid[4], bool currentlyDriven, uint32_t now_ms) const
@@ -278,17 +279,13 @@ public:
     int Count() const { int n = 0; for (int i = 0; i < kMax; ++i) n += r_[i].used ? 1 : 0; return n; }
 
 private:
-    HostRow* Find(const uint32_t g[4])
-    {
-        for (int i = 0; i < kMax; ++i) if (r_[i].used && SameGuid(r_[i].guid, g)) return &r_[i];
-        return nullptr;
-    }
+    HostRow* Find(const uint32_t g[4]) { return const_cast<HostRow*>(Get(g)); }
     HostRow* Alloc(const uint32_t g[4], uint32_t now_ms)
     {
         int victim = -1;
         uint32_t oldest = 0;
-        for (int i = 0; i < kMax; ++i) {
-            if (!r_[i].used) { victim = i; break; }
+        if (used_ < kMax) victim = used_;
+        for (int i = 0; victim < 0 && i < kMax; ++i) {
             // Full: recycle the row that has been quiet longest, once it is well past
             // both staleness windows (it no longer decides anything).
             uint32_t age = (now_ms > r_[i].rx_ms) ? now_ms - r_[i].rx_ms : 0;
@@ -296,14 +293,24 @@ private:
         }
         if (victim < 0) return nullptr;
         HostRow& r = r_[victim];
+        bool recycled = r.used;
         r.used = true;
         for (int k = 0; k < 4; ++k) r.guid[k] = g[k];
+        if (victim == used_) ++used_;
+        if (recycled) {
+            idx_.Clear();
+            for (int k = 0; k < used_; ++k) if (r_[k].used) idx_.Insert(r_[k].guid, k);
+        } else {
+            idx_.Insert(g, victim);
+        }
         r.flags = 0;
         r.rx_ms = now_ms;
         return &r;
     }
 
     HostRow r_[kMax];
+    GuidIndex<2 * kMax> idx_;
+    int     used_ = 0;
     bool    overflow_;
 };
 
