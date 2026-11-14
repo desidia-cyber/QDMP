@@ -199,6 +199,13 @@ grab overlay is cleared, and the area-leave follow lands the player on the partn
 and waits for the floor. Open: the game's own wake-up after the ending, and the Queen the
 ending's enemy reset respawns.
 
+**Players standing together are not vetoed (Session 29, run 46).** The level union keeps a
+level for a partner who is somewhere else; within 60 m each game streams for both, so there is
+no veto and no forcing (the mutual veto jammed the level manager: a black world in the Queen
+fight, no wake-up after the ending). A received boss spawn waits up to 4 s for this machine's
+own activated spawner, so a spawn race no longer makes two Queens. Open: the game's own
+wake-up after the ending (the mod's 25 s fade stop restores the picture).
+
 ## 2. What still breaks the co-op promise
 
 **G2 has two halves now, and the measured half was the wrong lane.** Session 8 R67
