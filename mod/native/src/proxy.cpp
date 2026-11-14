@@ -10157,10 +10157,14 @@ void EnemyTargetPump(uint32_t now)
             static uint32_t lastKeep = 0;
             if (proxyOk && (int32_t)(now - lastKeep) > 5000 && dRemote + 200.0f < dLocal) {
                 lastKeep = now;
+                char tcn[64] = "";
+                if (c == playerbody::CUR_OTHER && cur) {
+                    __try { FNameToString(ObjNameRaw(ObjClass(cur)), tcn, sizeof(tcn)); } __except (EXCEPTION_EXECUTE_HANDLER) {}
+                }
                 QDLOG(LOG_DEBUG, "enemy ", hex32(r.guid[0]), ": TargetPlayer left alone (",
                       c == playerbody::CUR_LOCAL ? "local player" :
                       c == playerbody::CUR_REMOTE ? "the remote body" :
-                      c == playerbody::CUR_NONE ? "no target yet" : "not a player",
+                      c == playerbody::CUR_NONE ? "no target yet" : "not a player: ", tcn,
                       ") dLocal=", flt(dLocal, 0), " dRemote=", flt(dRemote, 0),
                       " -- the proxy is nearer by ", flt(dLocal - dRemote, 0), " cm");
             }
