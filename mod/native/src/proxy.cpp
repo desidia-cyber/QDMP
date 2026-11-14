@@ -20427,6 +20427,15 @@ void BossDeathWatchPump(uint32_t now)
         } __except (EXCEPTION_EXECUTE_HANDLER) {}
         float hp = 0, mx = 0;
         bool haveHp = EnemyHp(w.actor, &hp, &mx);
+        // A phase boss "dies" into its next phase (the Queen); the state says which.
+        int32_t st = -1;
+        uint8_t dpa = 0xFF, dis = 0xFF, bd = 0xFF;
+        IntPropC(w.actor, "CurrentStateIndex", &st);
+        BytePropC(w.actor, "DoingPhaseAnim", &dpa);
+        BytePropC(w.actor, "DeathIsSuspended", &dis);
+        BytePropC(w.actor, "bDead", &bd);
+        QDLOG(LOG_INFO, "boss death watch ", hex32(w.key), ": state=", dec(st), " phaseAnim=", dec((int)dpa),
+              " deathSuspended=", dec((int)dis), " bDead=", dec((int)bd));
         QDLOG(LOG_INFO, "boss death watch ", hex32(w.key), ": live hidden=", dec(ActorHiddenNow(w.actor) ? 1 : 0),
               " mesh=", dec(mesh ? 1 : 0), " anim=", dec(ai ? 1 : 0),
               " active=", (path[0] ? path : "(none)"), " deathMontage pos=", flt(pos, 2),

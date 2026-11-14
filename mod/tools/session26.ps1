@@ -2111,14 +2111,20 @@ function Invoke-OneBoss([int]$H, [int]$P, $b) {
         Start-Sleep -Seconds 5
         Show-Since $H 'rig: act|rig: verb|forced verb|boss begin' $mH 14
         if ($b.PSObject.Properties['BeginSync'] -and $b.BeginSync) {
-            [void](Check $step $H 'boss begin: (this player finished|.* left its rest spot)' 30 'the HOST began the fight and told the partner' $mH)
+            [void](Check $step $H 'boss begin: (this player finished|.* left its rest spot|.* plays its intro)' 30 'the HOST began the fight and told the partner' $mH)
             [void](Check $step $P 'boss begin: .* ran on this copy' 30 "the PEER's copy began from the partner's start" $mB)
         }
     }
 
     # Both machines must hold the SAME boss (one key, alive on both).
-    Invoke-Go $H 'enemy' 600
-    Invoke-Go $P 'enemy' 600
+    # 'near:enemy' can be any enemy in the union of loaded areas: in the swamp and on the bridge
+    # it put the host over nothing (Session 29 run 5), and in the castle it teleported the host
+    # 29 km out of the Queen's arena, whose spawner then reset her (run 16).  A `Stay` boss
+    # keeps the host where the start put it.
+    if (-not ($b.PSObject.Properties['Stay'] -and $b.Stay)) {
+        Invoke-Go $H 'enemy' 600
+        Invoke-Go $P 'enemy' 600
+    }
     Start-Sleep -Seconds 8
     $dh = Invoke-EnemyDump $H ($b.Name + '-h1')
     $dp = Invoke-EnemyDump $P ($b.Name + '-p1')
