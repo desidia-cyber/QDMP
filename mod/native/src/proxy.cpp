@@ -9516,14 +9516,43 @@ static void BossBeginApply(const uint32_t key[4])
     }
 }
 
+// A BEGIN IS NOT DROPPED (Session 29 run 14).  The peer received the Queen's begin while it
+// was streaming her cutscene level, the trust gate below returned, and the peer's Queen never
+// began.  A begin waits up to 20 s for trusted records and a local copy.
+struct PendingBegin { uint32_t key[4]; uint32_t until; };
+static PendingBegin g_pendBegin[4];
+static int g_pendBeginN = 0;
+
+void BossBeginQueuePump(uint32_t now)
+{
+    for (int i = 0; i < g_pendBeginN;) {
+        PendingBegin& pb = g_pendBegin[i];
+        bool expired = (int32_t)(now - pb.until) >= 0;
+        EnemyRec* er = EnemyRecordsTrustworthy() ? EnemyByGuid(pb.key) : nullptr;
+        if (er && ObjectIsLive(er->actor)) { BossBeginApply(pb.key); expired = true; }
+        else if (expired)
+            QDLOG(LOG_WARN, "boss begin: the partner began boss ", hex32(pb.key[0]),
+                  " and no local copy appeared here within 20 s");
+        if (expired) { g_pendBegin[i] = g_pendBegin[--g_pendBeginN]; continue; }
+        ++i;
+    }
+}
+
 void OnBoss(wire::Reader& r, uint32_t now)
 {
     if (!Cfg().enemy_sync) return;
-    if (!EnemyRecordsTrustworthy()) return;    // the bars below belong to the previous world
     wire::BossBody b;
     if (!wire::ReadBoss(r, &b)) return;
-
-    if (b.flags & wire::kBossBegin) { BossBeginApply(b.guid); return; }
+    if (b.flags & wire::kBossBegin) {
+        if (g_pendBeginN < 4) {
+            memcpy(g_pendBegin[g_pendBeginN].key, b.guid, 16);
+            g_pendBegin[g_pendBeginN].until = now + 20000;
+            ++g_pendBeginN;
+        }
+        BossBeginQueuePump(now);
+        return;
+    }
+    if (!EnemyRecordsTrustworthy()) return;    // the bars below belong to the previous world
 
     if (b.flags & wire::kBossArenaExit) {
         // The event belongs to the LOCAL spawner of the local copy.  Resolving it from the
@@ -19505,6 +19534,7 @@ bool HK_Tick(void* engineLoop)
     BossDeathWatchPump(now);
     BossConclusionPump(now);
     BossBeginPump(now);
+    BossBeginQueuePump(now);
     DevAutoLoad(now);
     LocalEquipPump(now);
     DevAvatarTest(now);
