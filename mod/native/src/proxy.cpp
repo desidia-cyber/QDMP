@@ -15437,6 +15437,35 @@ void LandingHoldPump(uint32_t now)
             if (jumped && !g_land.on) LandingHoldStart(cur.px, cur.py, cur.pz, cur.yaw, "a teleport");
         }
     }
+    {
+        // WHICH LEVELS ARE ACTUALLY ON SCREEN, BY NAME, whenever the set changes (Session 29:
+        // the peer fell through the Queen's arena with "nothing pending" -- the floor's level was
+        // never wanted shown there; this line names what each machine really shows).
+        static uint32_t lastScan = 0;
+        static uint32_t lastHash = 0;
+        if (now - lastScan >= 2000) {
+            lastScan = now;
+            char line[900] = "";
+            uint32_t h = 2166136261u;
+            int shown = 0;
+            for (int i = 0; i < g_levelN; ++i) {
+                void* ls = g_levels[i].ls;
+                if (!ls || !ObjectIsLive(ls) || !LevelActuallyVisible(ls)) continue;
+                ++shown;
+                for (const char* c = g_levels[i].name; *c; ++c) h = (h ^ (uint8_t)*c) * 16777619u;
+                if (lstrlenA(line) + lstrlenA(g_levels[i].name) + 2 < (int)sizeof(line)) {
+                    lstrcatA(line, " "); lstrcatA(line, g_levels[i].name);
+                }
+            }
+            if (h != lastHash) {
+                lastHash = h;
+                ActorXform me = {};
+                bool havePos = pawn && ReadActorXform(pawn, &me);
+                QDLOG(LOG_INFO, "levels shown (", dec(shown), ") at ", flt(havePos ? me.px : 0.0f, 0), ",",
+                      flt(havePos ? me.py : 0.0f, 0), ",", flt(havePos ? me.pz : 0.0f, 0), ":", line);
+            }
+        }
+    }
     if (!g_land.on) return;
     if (!pawn || !IsGameplayPawn(pawn)) { g_land.on = false; return; }
     int pending = PendingLevelCount();

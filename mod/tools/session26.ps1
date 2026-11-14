@@ -2114,6 +2114,7 @@ function Invoke-OneBoss([int]$H, [int]$P, $b) {
         }
         Start-Sleep -Seconds 5
         Show-Since $H 'rig: act|rig: verb|forced verb|boss begin' $mH 14
+        Save-Shots ($b.Name + '-begun')
         if ($b.PSObject.Properties['BeginSync'] -and $b.BeginSync) {
             [void](Check $step $H 'boss begin: (this player finished|.* left its rest spot|.* plays its intro)' 30 'the HOST began the fight and told the partner' $mH)
             [void](Check $step $P 'boss begin: .* ran on this copy' 30 "the PEER's copy began from the partner's start" $mB)
@@ -2173,6 +2174,7 @@ function Invoke-OneBoss([int]$H, [int]$P, $b) {
         Invoke-Go $H $b.Cls 2500
         # EQUAL CO-OP BY OWNERSHIP: with the peer nearer, the PEER's machine runs her, and her
         # orbs (and grabs) are its own -- published by the peer as local effects.
+        Save-Shots ($b.Name + '-grabtest')
         [void](Check $step $P 'boss owner: grab boss .* RUN HERE' 40 "the PEER runs the Queen while its player is the nearer one" $mGp)
         [void](Check $step $P 'effect: local #.*Queen_Orb_Projectile' 75 "the Queen's orbs are fired at the PEER's own player, on the peer" $mGp)
         Show-Since $P 'boss owner|effect: local #.*Queen|cutscene' $mGp 12
@@ -2289,6 +2291,7 @@ function Invoke-OneBoss([int]$H, [int]$P, $b) {
         Start-Sleep -Seconds 6
         Show-Since $P 'boss death watch|boss conclusion' $mT 8
     }
+    Save-Shots ($b.Name + '-afterkill')
     if ($b.Flag) {
         [void](Check $step $H ('flag (NEW |CHANGE )?' + $b.Flag + '( =| :)') 90 "the HOST's own save holds $($b.Flag)" $mH0)
         [void](Check $step $P ('flag (NEW |CHANGE )?' + $b.Flag + '( =| :)|flags applied=.*' ) 40 "the PEER's own save received the flag lane" $mP0)
