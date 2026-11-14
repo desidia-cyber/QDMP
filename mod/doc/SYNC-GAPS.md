@@ -636,6 +636,50 @@ Two assumptions in that paragraph are unproven and each is one probe:
   dragon and the Whale King in a death montage's `OnCompleted`. **Open:** the ROS dragon dies on
   both machines and plays `Dragon_Ground_Die_Montage`, and neither machine reaches the callback
   (runs 2-6); a solo control run is needed to tell the mod from the rig's kill.
+- **A boss is concluded by a conversation (closed, Session 29).** The death flags that never
+  came were not a sync fault: the ROS dragon's "death" plays `Dragon_Ground_Die_Montage`, whose
+  `Dead` section LOOPS (measured by the boss death watch: position 2.3..2.6 s for 45 s) -- the
+  downed boss waits for the player to talk to it. The dialogue's end (`RewardDialogueEnded` on
+  the dragon and the Whale King, `EndedDeathDialogue` on the Bridge Lord, `Ended` on the
+  Necronomicon, reached through `Interact` -> `Necronomicon_DummyNPC` -> its `DialogueEnded`)
+  plays the final death, writes the flag and spawns the reward NPC. Only one player talks, so a
+  partner's conclusion flag now runs the same event on the local downed copy
+  (`BossConclusionNote/Pump`, reached only when the flag is NEW here). Measured both banks:
+  `ROSDragonDead`, `WhaleKingIsDead`, `BridgeLordDead`, `NecronimiconDefeated`.
+- **A boss fight begun by one player begins on both (Session 29).** `kBossBegin` on the boss
+  lane: the Queen's greeting end (detected by her `Queen_P1_Intro` montage) and the
+  Necronomicon's lectern (detected by the book leaving its rest spot) are announced, and the
+  partner runs `QueenRegularGreetingEnded` / the spawner's `CustomEvent` on its own copy. A copy
+  that FOLLOWS the owner (mirror, driven, frozen) neither announces nor applies -- it replays the
+  owner's montages, and run 13 measured that echo. A begin waits up to 20 s for trusted records
+  and a local copy (run 14: the peer dropped it while streaming the Queen's cutscene level).
+- **The ending plays on both (closed, Session 29).** The Queen's `Kill` finds the PLACED
+  `Ending1CutsceneManager` (`GetAllActorsOfClass`, `998_QueenCutscenes`) and begins it; the
+  partner's copy dies through the death lane and begins its own, or the cutscene lane resolves
+  the manager locally and plays the partner's sequence. Both write `Ending1Complete` and
+  `EndingSeen` themselves; the pair resumes together. **Open:** that is the Queen killed in the
+  state that ends the game. Run 15 started her fight properly (her intro, announced to the
+  partner) and her phase 1 at HP 0 does NOT end the game: `Kill` takes her into
+  `DoStateTransition` (the special sword / orb / `Queen_Nude_Data` second form), and she waited
+  at -200 HP for 45 s. Her second phase, the orb cutscene and the Sipeha branch are not yet
+  driven by the rig or proven synced. A boss copy that appears AFTER its death
+  is recorded (the peer's spawner respawned the Queen a minute later and the death lane killed it
+  through her death sequence: a second ending) is retired quietly -- hidden, not ticking, its
+  spawner told the death -- and only a copy born after the death (run 13 measured the first
+  version hiding the copy that was dying).
+- **One boss, one body (Session 29).** A constructed copy the module retires is hidden, never
+  destroyed (R140), and the scan met it again as a NEW enemy with no spawner: the peer's dropped
+  Queen copy became summon key D8279A47 and the host mirrored the ghost (runs 10-11). Retired
+  actors are never scanned again. A trap's deferred `ActivateEnemy` is skipped when the boss
+  appeared within 2 s of the first call (that call spawned it).
+- **Giant Fish (Session 29).** Its enemy is a boss although `GiantFish_Data.Boss = 0`: one key
+  (51BC2B8B) on both, the shared bar, both hits on one HP, the flag on both (runs 6, 9). A boss
+  whose HP cannot be read for a moment (the fish dives between emerge spots) keeps its last
+  reading for 30 s instead of flapping the bar.
+- **Test instances never take the operator's mouse (Session 29).** In a `-UserDir` instance
+  `ClipCursor` (a clip), `SetCursorPos`, `SetCapture`, and `SetForegroundWindow` /
+  `SetActiveWindow` on the game's own windows are hooked and refused, and the window is
+  `WS_EX_NOACTIVATE`. A player's game is untouched.
 - **Shop, journal/bestiary, XP, weapon levels, grimoire ink.** Per-player by nature.
 - **Peer vitals (closed, Session 27).** Each machine reads its own player's `Health` and
   `GetMaxHP` and sends them on the STATUS tail (WIRE.md 3.15, vitals tail: `hp`, `hp_max`,

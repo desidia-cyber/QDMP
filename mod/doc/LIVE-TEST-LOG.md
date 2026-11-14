@@ -5872,3 +5872,46 @@ zero crash dumps, both processes alive at the end of every run.
 - Ending reached together: the ending cutscene managers (`Ending1CutsceneManager_C`, ...) are
   spawned at runtime, so the cutscene lane falls back to HOLD on the partner; not yet tested.
 
+## Session 29 - 2026-11-14 (boss conclusions, fight starts, the ending, one body per boss)
+
+Harness: `mod/tools/session26.ps1 -Phase story -Only <bosses>`; runs s29-run1..15. Zero FAULT
+lines and zero crash dumps in every run; both processes alive at the end of every run.
+
+| Item | Result | Proof |
+|---|---|---|
+| Why the montage flags never came | **found** (run 1) | boss death watch: the dragon's `Dragon_Ground_Die_Montage` loops 2.3..2.6 s for 45 s -- the downed boss waits for a conversation |
+| ROS dragon death flag | **closed** (run 4) | host talk -> `Dragon_ROS_FinalDie` -> `ROSDragonDead`; peer `boss conclusion: Dragon_Ros_BP_C.RewardDialogueEnded ran on the downed copy`, its own `Dragon_ROS_FinalDie`; `= 1` in both banks |
+| Whale King | **closed** (run 5) | one key 6AEFB87A, one bar, 1500 -> 1300 on both, conclusion on the peer, `WhaleKingIsDead = 1` in both banks |
+| Bridge Lord | **closed** (run 8) | key 2543387C on both (peer mirror), one bar, 4000 -> 3599.9 on both, `EndedDeathDialogue` conclusion on the peer, `BridgeLordDead = 1` in both banks |
+| Necronomicon | **closed** (runs 9, 14) | spawn gates measured (`CheckSpawnConditions Success=1`, `Vis Checks Passed=0` while watched); the host's start announced (`left its rest spot`), peer copy follows; one bar, 3000 -> 2600 on both; `Ended` conclusion on the peer; `NecronimiconDefeated = 1` in both banks |
+| Giant Fish | **closed** (runs 6, 9) | key 51BC2B8B on both, shared bar, 1800 -> 1600 on both, `GiantSwampFish_IsDead = 1` in both banks |
+| Ending (Queen's final state) | **closed** (runs 10, 12-14) | `cutscene: local started Ending1CutsceneManager` on both (or the partner's sequence resolved locally), `Ending1Complete` / `EndingSeen` written by each machine's own game, `partner's cutscene ended; resuming together` |
+| Queen's full fight | **open** (run 15) | begun properly (`plays its intro`, announced); phase 1 at HP 0 enters `DoStateTransition` and waits (orb / special sword / second form) -- not yet driven or synced |
+| Second ending / duplicate Queen | **closed** (runs 13-14) | retired copies never rescanned; a recorded-dead boss copy born after the death retired quietly |
+| Operator's mouse | **closed** (run 14 on) | `test input: 5 of 5 user32 calls hooked`; 1 (host) and 10 (peer) cursor/focus calls refused in run 14 |
+| Peer actor-state ERR spam | **closed** | a failed (guid, value) write is not retried for 60 s (164 identical ERR lines in run 6) |
+
+### Changes
+
+1. `BossDeathWatch` (diagnostic): a dead boss's montage, position and playing state for 45 s.
+2. `BossConclusionNote/Pump`: a partner's conclusion flag runs the boss's own dialogue-end event
+   on the local downed copy.
+3. `kBossBegin` + `BossBeginPump` / `BossBeginApply` / `BossBeginQueuePump`.
+4. Boss identity: `GiantFish_Enemy_BP_C`; last readable boss HP kept 30 s.
+5. `RetireActor` / `IsRetiredActor`; deferred `ActivateEnemy` skipped within 2 s; recorded-dead
+   boss copy born after the death retired quietly.
+6. `qdwrite.h`: failed actor-state write memo.
+7. Test instances: user32 cursor/focus hooks, `WS_EX_NOACTIVATE`, foreground hand-back.
+8. Rig: verb outputs logged (`rig: verb X outputs:`), spawn verbs ignore the visibility check,
+   `near:dialogue!End` ends the player's own conversation; harness `Talk`/`Begin` lists,
+   `Stay`, `Near`, `Wait`, probes opt-in by `probe:<Name>`.
+
+### Open
+
+- The Queen's second phase (orb cutscene, special sword, `Queen_Nude_Data` form, Sipeha branch).
+
+### Still the harness's, not the mod's
+
+- The rig's placement drops a player out of some arenas (the swamp, the bridge, the castle for
+  the peer, the Whale King's ledge): `rig: FELL after a rig move`. A real player walks in.
+
