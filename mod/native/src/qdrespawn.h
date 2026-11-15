@@ -218,6 +218,9 @@ public:
     int  Pct() const { return PctFor(deaths_); }
     float Multiplier() const { return (float)PctFor(deaths_) / 100.0f; }
     bool Down() const { return down_; }
+    // When the death being served was noticed, so the log can say how far into the pose a
+    // refused reload arrived.  Only meaningful while `Down()`.
+    uint32_t DownAt() const { return down_ ? deathAt_ : 0; }
     const Point& Rest() const { return rest_; }
 
     // A death this machine observed (the game killed the local player, or the health read

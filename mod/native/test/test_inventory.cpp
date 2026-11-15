@@ -488,6 +488,98 @@ static void TestGrantPaths()
 }
 
 // ===========================================================================
+// The zero-count tombstone ledger (quest-item mode)
+// ===========================================================================
+// MEASURED live (progression.md round 2/3): the host used its last key, the key simply
+// disappeared from the published set, and the peer's copy stayed forever -- "the host holds
+// none" had no wire form.  The decision: in quest-item mode a path that HAS been published
+// and now reads 0 IS published, with count 0, and the receiver applies it by consuming its
+// own copies.  These are the ledger's rules, and they are what keeps the set BOUNDED and
+// the tombstone reversible.
+static void TestTombstoneLedger()
+{
+    Pub p;
+    const char* keyA = "/Game/Items/KeyItems/A.A";
+    const char* keyB = "/Game/Items/KeyItems/B.B";
+
+    CHECK(!p.Has(keyA), "tomb/a path never published is not tombstonable");
+
+    // A published entry is remembered, so a later zero is a CHANGE the partner owes.
+    p.DocNote(keyA);
+    CHECK(p.Has(keyA), "tomb/a published path is remembered");
+    CHECK(!p.Has(keyB), "tomb/and an unrelated path is not");
+
+    // Re-noting is idempotent: the ledger is a set, not a counter.
+    p.DocNote(keyA);
+    CHECK(p.Has(keyA), "tomb/re-noting is idempotent");
+
+    // The count rose again after a tombstone: the ledger forgets it, so the path is no
+    // longer eligible to be tombstoned until it is published once more.
+    p.DocClear(keyA);
+    CHECK(!p.Has(keyA), "tomb/a cleared path is forgotten");
+
+    // A tombstone is only a zero in the BODY; the ledger keeps the path so a second 0 is
+    // still publishable and a rise-then-fall does not need a re-note first.
+    p.DocNote(keyA);
+    CHECK(p.Has(keyA), "tomb/republished");
+
+    // =========================================================================
+    // THE TOMBSTONE SECOND PASS -- the half that actually makes the peer's copy vanish.
+    // `InventoryContents` does not keep a zero element: using a key up removes it outright,
+    // so the container walk can never visit the path again.  A set built only from the walk
+    // is therefore missing the key, which is indistinguishable from "never had it".  This
+    // pass makes the difference observable.
+    // =========================================================================
+    Pub pub;
+    Snap live;
+
+    // The host holds two keys.  The walk produces them, and each is remembered.
+    CHECK(live.Set(keyA, 1), "tomb/live A");
+    CHECK(live.Set(keyB, 1), "tomb/live B");
+    pub.DocNote(keyA);
+    pub.DocNote(keyB);
+
+    // Nothing is missing yet: no tombstone, and the set is unchanged.
+    CHECK(pub.TombstoneMissing(&live, 2) == 0, "tomb/nothing missing yields no tombstone");
+    CHECK(live.Find(keyA) >= 0 && live.Find(keyB) >= 0, "tomb/both still live");
+
+    // THE HOST USES key A UP.  The container walk now returns only key B; key A is GONE
+    // from the map entirely, which is the measured shape.
+    Snap after;
+    CHECK(after.Set(keyB, 1), "tomb/only B is in the container now");
+    // `DocClear`/`DocNote` are not called for a path the walk never visits, which is exactly
+    // why the ledger (and not the container) has to remember it.
+    CHECK(pub.Has(keyA), "tomb/A is still remembered after it left the container");
+    CHECK(pub.TombstoneMissing(&after, 1) == 1, "tomb/A becomes exactly one tombstone");
+    const inventory::Entry* ea = after.At(after.Find(keyA));
+    CHECK(ea != nullptr, "tomb/A is present in the published set");
+    CHECK(ea && ea->count == 0, "tomb/A is published with count 0");
+    const inventory::Entry* eb = after.At(after.Find(keyB));
+    CHECK(eb && eb->count == 1, "tomb/B is untouched at count 1");
+
+    // Idempotent: a second pass over the same state does not multiply the row.
+    CHECK(pub.TombstoneMissing(&after, 1) == 0, "tomb/a second pass adds nothing");
+    CHECK(after.Count() == 2, "tomb/the set is still two entries");
+
+    // THE HOST PICKS THE KEY UP AGAIN: the count rises, so the collector clears and the
+    // tombstone is carried by a LIVE count instead of a zero.
+    pub.DocClear(keyA);
+    pub.DocNote(keyA);
+    Snap risen;
+    CHECK(risen.Set(keyA, 2), "tomb/A is back with 2");
+    (void)risen.Set(keyB, 1);
+    CHECK(pub.TombstoneMissing(&risen, 2) == 0, "tomb/a key that rose is not tombstoned");
+    const inventory::Entry* ra = risen.At(risen.Find(keyA));
+    CHECK(ra && ra->count == 2, "tomb/A keeps its live count");
+
+    // A BROKEN WALK MUST NOT READ AS A MASS CONSUMPTION.  `hadLive == 0` is "the read
+    // produced nothing", which is a failed enumeration, not "the host lost everything".
+    Snap empty;
+    CHECK(pub.TombstoneMissing(&empty, 0) == 0, "tomb/a failed walk tombstones nothing");
+    CHECK(empty.Count() == 0, "tomb/and publishes nothing");
+}
+
+// ===========================================================================
 int main()
 {
     printf("=== qd inventory tests ===\n");
@@ -504,6 +596,7 @@ int main()
     TestFreshBeforeRetry();
     TestGrantNeverRemoves();
     TestGrantPaths();
+    TestTombstoneLedger();
     printf("=== %d passed, %d failed ===\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

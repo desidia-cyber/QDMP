@@ -341,6 +341,71 @@ fn a_chunked_actor_states_body_is_forwarded_not_dropped() {
     }
 }
 
+/// The OBJECTS and ENEMY containers are chunked too, and were rejected the same way.
+///
+/// MEASURED (round 3, `_test/*/out/relay-*.log`): 624 `malformed datagram ... (kind 0x2a):
+/// needed 128 bits, 0 available` and 301 `(kind 0x14)` in single runs.  `ACTOR_STATES` had
+/// the "stop when the datagram ends" guard and these two did not, so the object lane's
+/// host -> peer leg -- every chest, door, lever, secret wall and pot -- never crossed.
+#[test]
+fn a_chunked_objects_body_is_forwarded_not_dropped() {
+    let mut relay = relay();
+    let relay_addr = relay.local_addr().unwrap();
+
+    let a = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let b = UdpSocket::bind("127.0.0.1:0").unwrap();
+    b.set_nonblocking(true).unwrap();
+
+    a.send_to(&hello("Alice", roles::ANY), relay_addr).unwrap();
+    pump(&mut relay);
+    b.send_to(&hello("Bob", roles::PEER), relay_addr).unwrap();
+    pump(&mut relay);
+    let _ = recv(&a);
+
+    // One chunk of a larger pass: the header says 66 rows, this datagram carries two.
+    let mut body: Vec<u8> = Vec::new();
+    body.extend_from_slice(&9u32.to_le_bytes());
+    body.extend_from_slice(&66u16.to_le_bytes());
+    for i in 0..2u8 {
+        body.extend_from_slice(&[i, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, i]);
+        body.push(2);   // shape = door
+        body.push(1);   // state = open
+    }
+    let packet = Envelope::new(0, 0x0C0D, Body::Log(Log { bytes: body.clone() }));
+    let mut raw = packet.encode().unwrap();
+    raw[5] = 0x2A; // kind = OBJECTS
+
+    a.send_to(&raw, relay_addr).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut events = relay.poll_once();
+    let mut buf = [0u8; 2048];
+    let bytes: Vec<u8>;
+    loop {
+        if let Ok((n, _)) = b.recv_from(&mut buf) {
+            if n > 5 && buf[5] == 0x2A {
+                bytes = buf[..n].to_vec();
+                break;
+            }
+        }
+        if Instant::now() >= deadline {
+            panic!("a chunked object body never reached the other peer: {events:?}");
+        }
+        std::thread::sleep(Duration::from_millis(5));
+        events.extend(relay.poll_once());
+    }
+    assert!(
+        !events.iter().any(|e| matches!(e, Event::Malformed { .. })),
+        "a chunked object body must not be malformed: {events:?}"
+    );
+    match Envelope::decode(&bytes).unwrap().body {
+        Body::Objects(o) => {
+            assert_eq!(o.rev, 9);
+            assert_eq!(o.entries.len(), 2, "the prefix, not the whole set");
+        }
+        other => panic!("expected objects, got {other:?}"),
+    }
+}
+
 #[test]
 fn an_already_assigned_session_is_not_rewritten() {    let mut relay = relay();
     let relay_addr = relay.local_addr().unwrap();

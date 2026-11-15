@@ -856,6 +856,16 @@ authority). A row whose bit1 is clear is a follower's observation and is not app
 Ownership follows proximity exactly as `ENEMY` does: the nearer player's machine runs the
 mover, so the transform the other applies is the one the interacting player sees.
 
+`flags` bits 2-7 (6 bits, added by `platforms`) = **which element of the actor the row
+describes**. This game's elevators do not move the actor: `Elevator_Base` calls
+`MoveComponentTo` on its own `ElevatorPlatformRoot` scene component, so an actor-root read
+reports a lift that never travels. Element `0` is the actor root -- the value every earlier
+sender produced, so an old row still means what it always meant; element `k+1` is the k-th
+child `USceneComponent` **ordered by name**, which both machines enumerate identically
+because both run the same cooked package. An index this machine cannot address falls back to
+the root. The row is still 33 bytes and `qd-core` forwards `flags` verbatim, so nothing on
+the Rust side changed.
+
 ### 3.18 `LOOT` (0x27)
 
 One shared drop set. The game's `UFS_ItemDropSystem::RollItemDrop` is keyed by
@@ -926,6 +936,21 @@ n ×:
 
 18 bytes per row; `rev + n` is 6 bytes. A datagram carries whole rows or it does not go
 out, so a set larger than one body is a **cursor across ticks**, never a fragment.
+
+**`n` IS THE WHOLE SET SIZE, NOT THIS DATAGRAM'S SHARE -- and every decoder must stop when
+the datagram ends.** This is the same rule §3.7 and §3.8 already stated, and the one
+`OBJECTS` and `ENEMY_ROWS` were missing. Round 3 measured the cost: the relay's decoders
+read `n` rows from every chunk, ran out of data, reported the datagram malformed, and dropped
+it -- 624 `kind 0x2a` and 301 `kind 0x14` in single runs. Every host → peer object row was
+destroyed before either peer saw it, so a secret wall, chest or door changed on the host only
+ever reached the peer when the set happened to fit one datagram. A decoder therefore reads
+rows until the body ends, never until `n` is satisfied; `n` is only what the receiver logs and
+what the publisher's pass is measured against.
+
+**A secret wall is published here even though it is a `SavableActor_C`.** Measured:
+`SecretWall_C`'s own `Activate` flips its `Opened` bool and writes NOTHING to
+`SavableActorStates`, so §3.7 has nothing to carry and §3.20 is its only transport. Its state
+IS its own bool, which is this row's model exactly.
 
 `key` is the same construction 3.9's placed-enemy identity uses (`qdenemyid.h`'s PLACED
 rule) with its own seed, so the same path hashed by the enemy lane, the dialogue lane and
@@ -1073,22 +1098,38 @@ is logged as not backed by a local measurement.
 
 ### 3.27 `SAVE` (0x41)
 
-"I saved; write your own slot now." The detector is the game's own save **dispatch**
-(`SaveFunctions_C.SaveGameToDisk`, `FS_GameInstance_C.GI_SaveGameToDisk`, `Save Game to Disk`),
-so a checkpoint rest, the game's own autosave, a menu save and a scripted save all arrive on this
-one body without a per-route hook.
+"I saved; write your own save now." **The receiver never receives a save file -- only the
+instruction**, and it runs its OWN writer on its OWN slot.
 
-**Refused by name, deliberately.** The suspend saves (`WriteSuspendSave`,
-`GI_WriteSuspendSaveImmediately`, `SuspendSaveLoop`, `AsyncSuspendSaveFinished`,
-`UnsafeDeleteSuspendSavesOnSlot`) belong to §3.19, and another machine's suspend snapshot is
-exactly the rollback that lane exists to prevent. The system saves
-(`GI_SaveSystemSaveToDisk`, `GI_QueueSystemSave`, `SaveSystemSaveToDisk`,
-`QueueSaveSystemSaveToDisk`) are per-machine settings, not progression.
+**The detector is a hook on the game's single write primitive.**
+`UGameplayStatics::SaveGameToSlot` (`0x028F2B40`) is the one function every save in this game
+reaches: `analysis/re/combat_save_evidence.txt` §C9.1-2 measured that its only callers are the
+native `FB_SaveUtils` functions plus the exec thunk. A native caller never crosses
+`UObject::ProcessEvent`, so a Blueprint-dispatch detector cannot see the save a player actually
+makes on this build, at any log level (round 3 measured exactly that: `SaveHere` dispatched
+nothing and a checkpoint rest dispatched nothing mirrorable). The ProcessEvent detector
+(`SaveGameToDisk`, `GI_SaveGameToDisk`, `Save Game to Disk`, and the suspend names) is kept as a
+second boundary for a build that routes a save through Blueprint bytecode.
+
+**The route travels, because the two routes write different files.** Round 3 measured that this
+build's player-facing save -- the checkpoint REST -- writes `World0_Suspend_N.sav` and does not
+touch `World0.sav`. A partner that answered a rest with a main-slot write would have saved a
+file its own game never resumes from. So `route` names which of the receiver's own writers must
+run, and the receiver's matching writer runs at the receiver's own current state.
+
+**The system saves stay refused.** `GI_SaveSystemSaveToDisk`, `GI_QueueSystemSave`,
+`SaveSystemSaveToDisk`, `QueueSaveSystemSaveToDisk` are per-machine settings, not progression.
+
+**The suspend safety rule is honoured, not bypassed.** `qdsuspend.h` refuses to *copy* a suspend
+snapshot because another machine's snapshot at another instant is a rollback. That is about
+shipping the FILE; this body ships a REQUEST, which the partner's own game fulfils, so the
+reason does not apply. The peer's `BlockSuspendSaves` hold is left exactly as that lane sets it.
 
 | field | bytes | meaning |
 |---|---|---|
 | `seq` | u32 | the sender's own save counter; monotone, so a retransmit is one request |
 | `role` | u8 | 1 = host, 2 = peer (diagnostics only; `> 2` is refused) |
+| `route` | u8 | 1 = the main slot (`SaveGameToDisk`), 2 = the game's own suspend writer; 0 is accepted as "unspecified" and means 1, and a **5-byte body** (an older sender) is likewise read as route 1 rather than refused |
 
 Reliable. **The receiver does not answer a save with a save.** The write it performs is
 bracketed (`BeginOwnSave` / `EndOwnSave` in `qdprogression.h`), and every save dispatch inside
@@ -1096,8 +1137,11 @@ that bracket is recognised as that write's own echo and is not announced -- one 
 dispatches several of these names, nested, which is why the guard is a bracket and not a count.
 A mirrored save is **deferred, not dropped** while a world load, a travel handshake, a menu, the
 local player's death or a cutscene is in progress, or while the game is mid-suspend-write; a
-deferral that cannot clear in 20 s is logged as a give-up. The write itself is the game's own
-`SaveGameToDisk`, and it is accepted only when the save object's own `LastSaveTime` moves.
+deferral that cannot clear in 20 s is logged as a give-up. For `route = 1` the write is the
+game's own `SaveGameToDisk` and is accepted only when the save object's own `LastSaveTime`
+moves; for `route = 2` it is `GI_WriteSuspendSaveImmediately` / `WriteSuspendSave`, which write
+a separate file and so do not move that stamp -- the call returning is what that route can
+assert, and it says so.
 
 ### Reliable kinds: ack and duplicate suppression
 

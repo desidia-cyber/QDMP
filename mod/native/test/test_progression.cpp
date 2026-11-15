@@ -327,6 +327,28 @@ static void TestSaveVerbs()
     CHECK(!IsSaveVerb("GI_SaveSystemSaveToDisk"), "verb/a system save is refused");
     CHECK(!IsSaveVerb("QueueSystemSave"), "verb/the queued system save is refused");
     CHECK(IsSystemSaveVerb("GI_QueueSystemSave"), "verb/named as a system save");
+
+    // [live-ip2] THE TRIGGER IS A SUPERSET OF THE MIRRORABLE NAMES.  MEASURED round 3: a
+    // checkpoint rest -- the save a player actually makes -- writes
+    // `World0_Suspend_N.sav`, so its dispatch names are suspend names, which `IsSaveVerb`
+    // refuses by design.  The two questions are different and were answered by one list,
+    // which is why the detector never saw the player's own save.
+    CHECK(IsProgressSaveTrigger("SaveGameToDisk"), "trigger/a slot save triggers a mirror");
+    CHECK(IsProgressSaveTrigger("WriteSuspendSave"),
+          "trigger/a rest's suspend write triggers a mirror");
+    CHECK(IsProgressSaveTrigger("GI_WriteSuspendSaveImmediately"),
+          "trigger/the immediate suspend write triggers a mirror");
+    CHECK(!IsProgressSaveTrigger("CancelSuspendSaveLoop"),
+          "trigger/cancelling a save does not trigger one");
+    CHECK(!IsProgressSaveTrigger("UnsafeDeleteSuspendSavesOnSlot"),
+          "trigger/deleting a save does not trigger one");
+    CHECK(!IsProgressSaveTrigger("SaveNamedData"),
+          "trigger/a named-data write is still not a save");
+    CHECK(!IsProgressSaveTrigger("AddItemToInventory"),
+          "trigger/an inventory write is still not a save");
+    CHECK(!IsProgressSaveTrigger(nullptr), "trigger/null does not trigger");
+    CHECK(IsSuspendTrigger("WriteSuspendSave"), "trigger/a suspend write is the rest route");
+    CHECK(!IsSuspendTrigger("SaveGameToDisk"), "trigger/a slot save is the main-slot route");
 }
 
 static void TestSaveGate()
@@ -360,7 +382,8 @@ static void TestSaveMirror()
     CHECK(b.LastLocalMs() == 0, "save/and recorded");
 
     // The partner saved: this machine owes a save.
-    CHECK(b.OnPeerSave(1, 100), "save/the partner's save owes one here");
+    CHECK(b.OnPeerSave(1, 1, 100), "save/the partner's save owes one here");
+    CHECK(b.WantedRoute() == ROUTE_SLOT, "save/the request names the main-slot route");
     CHECK(b.Want(), "save/the want is visible");
     CHECK(!b.TakeSave(200, MakeBlocked(/*loading*/ true, false, false, false, false, false, false), &why),
           "save/a load defers it");
@@ -391,13 +414,13 @@ static void TestSaveMirror()
 
     // The partner repeating the same request (a reliable retransmit) does not queue two saves.
     SaveBoard c;
-    CHECK(c.OnPeerSave(7, 0), "dedup/the first request is honoured");
+    CHECK(c.OnPeerSave(7, 1, 0), "dedup/the first request is honoured");
     CHECK(c.TakeSave(10, clear, &why), "dedup/and served");
-    CHECK(!c.OnPeerSave(7, 10), "dedup/the retransmit is refused by ordinal");
+    CHECK(!c.OnPeerSave(7, 1, 10), "dedup/the retransmit is refused by ordinal");
     CHECK(!c.Want(), "dedup/so a second save is not owed");
 
     // A stale ordinal is refused too.
-    CHECK(!c.OnPeerSave(6, 5000), "dedup/an older ordinal is refused");
+    CHECK(!c.OnPeerSave(6, 1, 5000), "dedup/an older ordinal is refused");
 }
 
 static void TestSaveGiveUp()
@@ -407,7 +430,7 @@ static void TestSaveGiveUp()
     SaveGate blocked = {};
     blocked.menu = true;
     const char* why = "";
-    b.OnPeerSave(1, 0);
+    b.OnPeerSave(1, 1, 0);
     CHECK(!b.TakeSave(1000, blocked, &why), "giveup/a menu keeps it waiting");
     CHECK(!b.TakeSave(kSaveDeferMs + 2000, blocked, &why), "giveup/the deadline expires");
     CHECK(b.TakeGaveUp(), "giveup/the give-up is reported once");
@@ -422,6 +445,29 @@ static void TestSaveManyLocal()
     CHECK(b.OnLocalSave(0), "many/one");
     CHECK(b.OnLocalSave(10), "many/two");
     CHECK(b.OnLocalSave(20), "many/three");
+}
+
+static void TestSaveRoute()
+{
+    // [live-ip2] MEASURED round 3: on this build the player's real save is the checkpoint
+    // REST, which writes `World0_Suspend_N.sav`, so a partner answering a rest with a
+    // main-slot write would have saved a file its own game never resumes from.  The route
+    // travels with the request and the receiver runs its OWN matching writer.
+    SaveBoard b;
+    SaveGate clear = {};
+    const char* why = "";
+    CHECK(b.WantedRoute() == ROUTE_SLOT, "route/nothing owed means the main slot");
+    CHECK(b.OnPeerSave(3, ROUTE_SUSPEND, 100), "route/a rest request is honoured");
+    CHECK(b.WantedRoute() == ROUTE_SUSPEND, "route/and the rest route is remembered");
+    CHECK(b.TakeSave(200, clear, &why), "route/it runs");
+    CHECK(b.WantedRoute() == ROUTE_SUSPEND,
+          "route/the route survives until the writer is chosen");
+
+    // A zero route is "unspecified" and means the main slot, so a body from a sender that
+    // predates the field still mirrors.
+    SaveBoard c;
+    CHECK(c.OnPeerSave(1, 0, 0), "route/an unspecified route is honoured");
+    CHECK(c.WantedRoute() == ROUTE_SLOT, "route/and means the main slot");
 }
 
 // ---------------------------------------------------------------------------
@@ -443,6 +489,7 @@ int main()
     TestSaveMirror();
     TestSaveGiveUp();
     TestSaveManyLocal();
+    TestSaveRoute();
 
     printf("progression: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

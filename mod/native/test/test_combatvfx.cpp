@@ -397,6 +397,34 @@ static void TestReleaseMove()
           "a plain swing names no release");
 }
 
+// ---------------------------------------------------------------------------
+// A CAST HAS TO BE ASKED BEFORE THE DIRECTIONAL SLASHES (wip R44).
+// The grimoire's montage is `Player_FPArms_LeftHand_CastMagic_Montage`.  The rule order used
+// to put the cast test at the very END, after "attack"/"strike", while "_left" was answered
+// earlier -- and "_left" occurs at offset 21 of that name, so every magic use that named its
+// hand came out as a left sword slash and the cast branch was unreachable.
+// ---------------------------------------------------------------------------
+static void TestCastBeforeLeftHand()
+{
+    CheckEq(ClassifyMontage("Player_FPArms_LeftHand_CastMagic_Montage"), K_CAST,
+            "a left-hand cast is a cast, not a left slash");
+    CheckEq(ClassifyMontage("Player_FPArms_CastSpell_Montage"), K_CAST, "castspell is a cast");
+    CheckEq(ClassifyMontage("GrimoireDoMagic"), K_CAST, "the grimoire's own name is a cast");
+    // The names that pinned the OLD order must not move: a sword alt stays an alt, and a
+    // real left slash stays a left slash.
+    CheckEq(ClassifyMontage("Player_FPArms_MagicStoneSword_Alt"), K_THRUST,
+            "a magic-looking SWORD alt is still the sword's alt, not a cast");
+    CheckEq(ClassifyMontage("Player_FPArms_Slash_Left_Montage"), K_SLASH_L,
+            "a real left slash is still a left slash");
+    // Rule 5 of the classifier returns "not a move" for every `Player_Slash_*` name (the
+    // left hand's follow-through during a strike), and that predates the cast fix: pinning
+    // it here is what stops the reordering above from quietly changing it.
+    CheckEq(ClassifyMontage("Player_Slash_LeftDown_Montage"), kNotAMove,
+            "Player_Slash_* is still 'not a move of its own'");
+    CheckEq(ClassifyMontage("Player_ClawSlash_LeftDown_Montage"), K_SLASH_DOWN,
+            "a named left-down claw slash is still a downward slash");
+}
+
 int main()
 {
     TestKindValues();
@@ -408,6 +436,7 @@ int main()
     TestLooksLikeImpactFx();
     TestVisualRoots();
     TestReleaseMove();
+    TestCastBeforeLeftHand();
 
     printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

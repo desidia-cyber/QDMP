@@ -217,12 +217,6 @@ function Invoke-ActNear([int]$i, [string]$name) {
     Set-Control $i 'qd.act' ('near:' + $name + '#' + (Get-Date -Format 'HHmmssfff'))
     Say "  act[$i] -> near:$name"
 }
-function Invoke-DlgVerb([int]$i, [string]$verb) {
-    # `near:dialogue!<verb>` drives the LOCAL player's own DialogueManager (Session 29).
-    $nonce = Get-Date -Format 'HHmmssfff'
-    Set-Control $i 'qd.act' ('near:dialogue!' + $verb + '#' + $nonce)
-    Say "  act[$i] -> near:dialogue!$verb (nonce $nonce)"
-}
 
 function Stop-All {
     Get-Process -Name 'QueensDomain-Win64-Shipping', 'qd-relay' -ErrorAction SilentlyContinue |
@@ -294,7 +288,7 @@ function Start-Boot([string]$tag) {
                           'qd.cheat','qd.cheatarg','qd.travel','qd.hard','qd.level','qd.list',
                           'qd.drops','qd.menu','qd.efunc','qd.eattack','qd.use','qd.pdmg',
                           'qd.petrace','qd.enemies','qd.sequence','qd.enemykill','qd.hitguid',
-                          'qd.obj','qd.gate') {
+                          'qd.obj','qd.gate','qd.selfhp') {
             Set-Control $i $leaf $null
         }
         Set-Control $i 'qd.scan' '1'
@@ -500,18 +494,132 @@ function Invoke-Spectator {
     [void](Check 'flags' $P 'rig: flag dump -- CoopDialogueProbe = 1' 20 'the peer''s own bank holds it too' $mP3)
     Verdict 'flags' $H $both 'the dialogue lane does not disturb the flags lane; the value crossed' ''
 
-    # --- 4. can the rig advance A's line? ---------------------------------
-    Step '4. the dialogue cursor after an advance attempt' 'near:dialogue!DialogueSequenceContinue (measured, not asserted)'
+    # --- 4. B follows an ADVANCE of A's line (Round 2) ---------------------
+    # ROUND 1's open item: the rig could not make A advance, because the advance was looked
+    # for on the MANAGER (`DialogueSequenceContinue` -- not a UFunction, measured twice).
+    # The advance lives on the WIDGET: `DialogueScreen` exports `ConfirmPressed` (the bound
+    # handler of `SequenceConfirmButton`), `NextOption`/`PRevOption`, `OptionClicked`,
+    # `LeaveButtonCLicked` and the two `Show*` graph events.  So the lever writes
+    # `qd.dlg = advance`, the mod presses the widget's own Continue, and the proof is that
+    # B's cursor advances with it.
+    Step '4. A ADVANCES its line; B must follow the next line' `
+         'qd.dlg = advance#<nonce> presses the DialogueScreen widget''s own ConfirmPressed'
     $mH1 = Get-Mark $H
     $mP1 = Get-Mark $P
-    Invoke-DlgVerb $P 'DialogueSequenceContinue'
-    Start-Sleep -Seconds 4
-    $ranAdv = @(Get-Since $P $mP1 | Where-Object { $_ -match 'DialogueManager\.DialogueSequenceContinue' })
-    if ($ranAdv.Count -gt 0) { Note "  [2] $([string]$ranAdv[-1])" }
-    $adv = @(Get-Since $H $mH1 | Where-Object { $_ -match 'dialogue view: update line=' })
-    Verdict 'dlg' $H ($adv.Count -gt 0) 'B followed an advance of A''s line' ($(if ($adv.Count) { [string]$adv[-1] } else { '' }))
+    # What A's cursor is BEFORE, so "it advanced" is a change and not a constant.
+    Set-Control $P 'qd.dlg' ('cursor#' + (Get-Date -Format 'HHmmssfff'))
+    Start-Sleep -Seconds 2
+    $curBefore = @(Get-Since $P $mP1 | Where-Object { $_ -match 'rig: dialogue cursor' })
+    if ($curBefore.Count -gt 0) { Note "  [2] BEFORE $([string]$curBefore[-1])" }
+    Set-Control $P 'qd.dlg' ('advance#' + (Get-Date -Format 'HHmmssfff'))
+    Start-Sleep -Seconds 3
+    $curAfter = @(Get-Since $P $mP1 | Where-Object { $_ -match 'rig: dialogue cursor \(after the press\)' })
+    if ($curAfter.Count -gt 0) { Note "  [2] AFTER  $([string]$curAfter[-1])" }
+    $pressLine = @(Get-Since $P $mP1 | Where-Object { $_ -match 'rig: dialogue widget pressed' })
+    Verdict 'dlg' $P ($pressLine.Count -gt 0) 'the rig pressed the dialogue WIDGET''s own continue (the manager has no advance function)' $(if ($pressLine.Count) { ([string]$pressLine[-1]).Trim() } else { 'no press line: the widget would not take it' })
+    # A's own cursor must have moved.  Parsed, so the check says WHICH field moved.
+    $seqB = -1; $entryB = -1; $optB = -1
+    if ($curBefore.Count -gt 0 -and ([string]$curBefore[-1]) -match 'sequenceIndex=(-?\d+) line=(\d+) entry=(\d+) options=(\d+)') {
+        $seqB = [int]$Matches[1]; $entryB = [int]$Matches[3]; $optB = [int]$Matches[4]
+    }
+    $seqA = -1; $entryA = -1; $optA = -1
+    if ($curAfter.Count -gt 0 -and ([string]$curAfter[-1]) -match 'sequenceIndex=(-?\d+) line=(\d+) entry=(\d+) options=(\d+)') {
+        $seqA = [int]$Matches[1]; $entryA = [int]$Matches[3]; $optA = [int]$Matches[4]
+    }
+    $moved = ($seqB -ge 0 -and $seqA -ge 0 -and ($seqA -ne $seqB -or $entryA -ne $entryB -or $optA -ne $optB))
+    Verdict 'dlg' $P $moved 'A''s own dialogue cursor advanced' ("sequenceIndex {0}->{1} entry {2}->{3} options {4}->{5}" -f $seqB, $seqA, $entryB, $entryA, $optB, $optA)
+    # B must have been told and must have re-driven its widget.
+    $upd = @(Get-Since $H $mH1 | Where-Object { $_ -match 'dialogue view: update line=' })
+    Verdict 'dlg' $H ($upd.Count -gt 0) 'B followed the advance and re-drove its own widget' $(if ($upd.Count) { ([string]$upd[-1]).Trim() } else { 'no update line on the spectator' })
+    if ($upd.Count -gt 0 -and $seqA -ge 0 -and ([string]$upd[-1]) -match 'update line=(\d+)') {
+        $bLine = [int]$Matches[1]
+        Verdict 'dlg' $H ($bLine -eq $seqA) ('B shows the line A is on ({0} on both)' -f $seqA) ("B line=$bLine, A=$seqA")
+    }
     Show-Since $H 'dialogue view:' $mH1 8
+    Show-Since $P 'rig: dialogue (cursor|widget pressed)' $mP1 10
     Save-Shots 'advanced'
+
+    # --- 4b. a CHOICE, and B follows it (Round 2) ---------------------------
+    # A conversation with more than one option is the only place a "chosen option" exists.
+    # The rig moves the option cursor with the widget's own `NextOption` and confirms with
+    # `OptionClicked`/`ConfirmPressed`; B must be told which entry was chosen.
+    Step '4b. A picks an OPTION; B must see the choice' `
+         'qd.dlg = opt<N>#<nonce> presses NextOption + OptionClicked on the widget'
+    $mH2b = Get-Mark $H
+    $mP2b = Get-Mark $P
+    Set-Control $P 'qd.dlg' ('opt1#' + (Get-Date -Format 'HHmmssfff'))
+    Start-Sleep -Seconds 4
+    $optPress = @(Get-Since $P $mP2b | Where-Object { $_ -match 'rig: dialogue option' })
+    Verdict 'dlg' $P ($optPress.Count -gt 0) 'the rig pressed the widget''s own option entry' $(if ($optPress.Count) { ([string]$optPress[-1]).Trim() } else { 'no option line' })
+    # MEASURED, AND THE REASON THIS IS A NOTE AND NOT A CHECK (run 2):
+    #  * the reachable hub NPC (`Fishwife_Ghost_Dialogue`) offers ONE option --
+    #    `options=1` in every cursor line -- so there is no second entry to choose between;
+    #  * and the manager's dumped surface has NO property that holds a CHOSEN index
+    #    (`CurrentDialogueNPC, CurrentDialogue, CurrentAvailableOptions, Dialogue Widget,
+    #    CurrentDialogueSequence, CurrentDialogueSequenceIndex, DisplayingError,
+    #    RunningDialogue, ForceUIInputModeStatus` -- and nothing else), so `ReadLocalDialogueView`
+    #    reports `chosen=65535` for ever on this build.
+    # The WIRE carries `chosen` and the 52 unit assertions cover the "a choice was made" body,
+    # so a build whose manager exposes the index needs no format change -- but claiming a live
+    # choice proof here would be claiming something this content cannot produce.
+    $curOpt = @(Get-Since $P $mP2b | Where-Object { $_ -match 'rig: dialogue cursor \(after the choice\)' })
+    Note ("    MEASURED, not proven: the widget's option entry ran ({0}), but this NPC offers " -f $(if ($optPress.Count) { 'yes' } else { 'no' })) + `
+         'options=1 and the manager exposes no chosen-index property, so "B shows the chosen option"'
+    Note '    is NOT live-proven on this build.  The advance (step 4) is the proven half.'
+    if ($curOpt.Count -gt 0) { Note "  [2] $( [string]$curOpt[-1] )" }
+    Show-Since $P 'rig: dialogue (cursor|option)' $mP2b 10
+    Save-Shots 'chosen'
+
+    # --- 4c. the COMBAT REFUSAL (Round 2) -----------------------------------
+    # ROUND 1's other open item: "combat refusal is damage-recency only; the live run had
+    # god-mode on, so the refusal was never exercised".  This step runs while A is STILL
+    # ALIVE (step 5 kills it), because a refusal needs a publication to refuse.
+    # God mode goes off on B; B's health is dropped, which is exactly what
+    # `DlgLocalInCombat` keys on (a DROP against the previous read, not "an enemy is near");
+    # then A publishes a NEW cursor.  B must keep its camera and its legs, and the lane must
+    # SAY it refused -- an unrecorded refusal is indistinguishable from a bug.
+    Step '4c. the combat refusal: B is not hijacked while it is being hit' `
+         'qd.god off on the host, qd.selfhp drop, then A advances'
+    Set-Control $H 'qd.god' $null
+    Start-Sleep -Seconds 2
+    $mHc = Get-Mark $H
+    # A DROP in the host's own health, read by the lane's 8 s damage window.
+    Set-Control $H 'qd.selfhp' ('55#' + (Get-Date -Format 'HHmmssfff'))
+    Start-Sleep -Seconds 3
+    # A publishes a NEW seq, so the refusal is re-decided for a new publication rather than
+    # inherited from the one it already accepted.
+    Set-Control $P 'qd.dlg' ('advance#' + (Get-Date -Format 'HHmmssfff'))
+    Start-Sleep -Seconds 5
+    $refused = @(Get-Since $H $mHc | Where-Object { $_ -match 'dialogue view: not hijacking the local player' })
+    Show-Since $H 'dialogue view:|combat' $mHc 10
+    Verdict 'dlg' $H ($refused.Count -gt 0) 'B was NOT hijacked while taking damage (the refusal fired)' $(if ($refused.Count) { ([string]$refused[-1]).Trim() } else { 'no refusal line: B may have been hijacked in combat' })
+    Save-Shots 'combat-refused'
+    # PUT THE PAIR BACK SO THE RELEASE IS EXERCISED, WITHOUT NEEDING A SECOND CONVERSATION.
+    # MEASURED (runs 3-6), and this is CONTENT, not the lane:
+    #   * `Fishwife_Ghost_BP` is ONE-SHOT -- after its conversation has run the game's own gate
+    #     says `IsInteractible=0` ("a key press cannot open this object either"), so A cannot
+    #     start a second conversation with it in this session; and
+    #   * its dialogue has ONE advanceable line: `ConfirmPressed` past `sequenceIndex=1` leaves
+    #     the cursor at 1 (`before the press` and `after the press` are identical), so there is
+    #     no NEW seq for B to re-engage on.
+    # The refusal itself is proven above (`not hijacking the local player: it took damage in
+    # the last 8 s`); "re-engages after the window lapses" cannot be shown with exhausted
+    # one-line content and is reported as not-proven rather than forced with a weaker check.
+    Set-Control $H 'qd.god' '400'
+    Start-Sleep -Seconds 10          # the damage window is 8 s
+    $mHr = Get-Mark $H
+    Set-Control $P 'qd.dlg' ('advance#' + (Get-Date -Format 'HHmmssfff'))
+    Start-Sleep -Seconds 5
+    $reeng = @(Get-Since $H $mHr | Where-Object { $_ -match 'dialogue view: (SHOW|update)' })
+    if ($reeng.Count -gt 0) {
+        Verdict 'dlg' $H $true 'B re-engaged once the damage window lapsed (the refusal is recency, not a lock-out)' ([string]$reeng[-1])
+    } else {
+        Note '    NOT PROVEN: B did not re-engage, because this conversation has no further line'
+        Note '    (A''s cursor stayed at sequenceIndex=1) and the NPC is one-shot.  The refusal'
+        Note '    above is the proven half; the re-engage needs different content.'
+    }
+    Show-Since $H 'dialogue view:' $mHr 6
+    Start-Sleep -Seconds 2
 
     # --- 5. A ends; B restores ---------------------------------------------
     Step '5. A''s conversation ends (A dies, the proven end path); B restores' 'qd.kill on A'
@@ -524,15 +632,25 @@ function Invoke-Spectator {
     Set-Control $P 'qd.kill' ('1#' + (Get-Date -Format 'HHmmssfff'))
     [void](Check 'dlg' $P 'rig: kill -> .*ran=1' 25 'the rig killed A (the game''s own end path)' $mP4)
     [void](Check 'dlg' $P 'dialogue: local death ended the conversation' 20 'A''s conversation ended on death' $mP4)
-    $hid = Check 'dlg' $H 'dialogue view: HIDE' 30 'B hid the view' $mH4
-    [void](Check 'dlg' $H 'dialogue view: camera restored' 10 'B''s camera went back to its own pawn' $mH4)
-    [void](Check 'dlg' $H 'dialogue view: input restored' 10 'B''s input was given back' $mH4)
+    # THE RELEASE MAY ALREADY HAVE HAPPENED.  The combat refusal in 4c releases the view (the
+    # lane hides when its player becomes unsafe), and with one-line one-shot content B does not
+    # re-engage, so there is no second view to hide here.  The lane's own "released and restored
+    # everything" is therefore asserted over BOTH windows, which is the claim that matters: no
+    # matter which event ended it, the camera and the legs come back.
+    $hidWin = @(Get-Since $H $mH4 | Where-Object { $_ -match 'dialogue view: HIDE' })
+    $hidSrc = if ($hidWin.Count -gt 0) { $mH4 } else { $mHc }
+    $hidAny = @(Get-Since $H $hidSrc | Where-Object { $_ -match 'dialogue view: HIDE' })
+    $camAny = @(Get-Since $H $hidSrc | Where-Object { $_ -match 'dialogue view: camera restored' })
+    $inpAny = @(Get-Since $H $hidSrc | Where-Object { $_ -match 'dialogue view: input restored' })
+    $hid = ($hidAny.Count -gt 0 -and $camAny.Count -gt 0 -and $inpAny.Count -gt 0)
+    Verdict 'dlg' $H ($hidAny.Count -gt 0) 'B hid the view' $(if ($hidAny.Count) { ([string]$hidAny[-1]).Trim() } else { 'no HIDE line in either window' })
+    Verdict 'dlg' $H ($camAny.Count -gt 0) "B's camera went back to its own pawn" $(if ($camAny.Count) { ([string]$camAny[-1]).Trim() } else { '' })
+    Verdict 'dlg' $H ($inpAny.Count -gt 0) "B's input was given back" $(if ($inpAny.Count) { ([string]$inpAny[-1]).Trim() } else { '' })
     Show-Since $H 'dialogue view:' $mH4 12
     Start-Sleep -Seconds 2
     Save-Shots 'after'
-    Verdict 'dlg' $H $hid 'the spectator released exactly once and restored' ''
+    Verdict 'dlg' $H $hid 'the spectator released and restored its camera and input' ''
     HB 'spectator done'
-
     # --- 6. survival --------------------------------------------------------
     Step '6. both machines survived'
     foreach ($i in @($H, $P)) {

@@ -64,18 +64,34 @@ static uint32_t   g_dismissAt = 0;           // dismiss any death screen from th
 static uint32_t   g_lastScaleLog = 0;
 static uint32_t   g_lastCapLog = 0;
 static uint32_t   g_lastBlockLog = 0;
+static uint32_t   g_lastReloadLog = 0;       // the reload veto's own rate limit
 static uint32_t   g_lastPoll = 0;
 static uint32_t   g_lastSidecar = 0;
 static bool       g_sidecarLoaded = false;
 static uint32_t   g_kills = 0;               // deaths observed this session (for the log)
 
+// WHERE THE INPUT AND MOVEMENT RESTORE ACTUALLY LIVES (measured from the cooked packages).
+//
+// `EnableAllPlayerInput` / `DisableAllPlayerInput` are UFUNCTIONs of `PlayerStatsAndUtils_C`,
+// a **BlueprintFunctionLibrary** -- NOT of the player class.  The first version of this lane
+// resolved them with `FindFunctionInClass(ObjClass(pawn), ...)`, which walks only the pawn's
+// own class chain and never a library, so both missed and every respawn line read `input=0`.
+// A library call is dispatched on the library's own CDO, and that is exactly what the boss-bar
+// lane already does on this build (`BossBarLocal` -> `Default__PlayerStatsAndUtils_C`).
+//
+// `SetIgnoreMoveInput` / `SetIgnoreLookInput` are `APlayerController` entries (every shipped
+// caller passes the controller), and `SetMovementMode` is `UCharacterMovementComponent`'s --
+// reached through the pawn's `CharacterMovement` component, never through the pawn.  Resolving
+// each where it is DECLARED is what turns "the call resolved" into "the player can walk again".
 struct Fns {
     void*    pawnCls = nullptr;
     void*    fKill = nullptr;
     void*    fGameOver = nullptr;
     void*    fMaxHp = nullptr;        // the maximum-health computation, wherever it lives
     void*    maxOwner = nullptr;      // the object whose class declares it (pawn or its stats comp)
+    void*    libCdo = nullptr;        // PlayerStatsAndUtils_C's CDO: the input gate's owner
     void*    fEnableInput = nullptr;
+    void*    fDisableInput = nullptr;
     void*    fSetMove = nullptr;
     void*    fIgnoreMove = nullptr;
     void*    fIgnoreLook = nullptr;
@@ -83,6 +99,22 @@ struct Fns {
     void*    fCpInteract = nullptr;
     void*    fCpInteractHeld = nullptr;
     void*    fCpHeal = nullptr;
+    // THE RELOAD THAT SITS BEHIND "Continue".  Dumped from the cooked packages: `DieUI_C`'s
+    // `ContinueButton` handler is the widget's ONE bound event that imports `OpenLevel`
+    // (`BndEvt__DieUI_ContinueButton_...` -> `OpenLevel`), and proxy.cpp's own hard-travel
+    // note records that "OpenLevel is imported only by menus, death and cheats".  Refusing
+    // these while this machine's player is down is what makes the 3.5 s pose safe whether or
+    // not the screen was dismissed in time.
+    void*    reloadFns[8] = {};
+    int      reloadCount = 0;
+    // THE WIDGET'S OWN CREATION.  `UWidgetBlueprintLibrary::Create` is the single call any
+    // Blueprint uses to make a widget, and `DieUI_C` is made by `FS_PlayerChar` through it
+    // (dumped: the player imports `Create`, `/Game/UI/Menus/DieUI`, `WidgetBlueprintLibrary`
+    // and the `DieUI_C` class).  Refusing THAT dispatch when the requested class is the death
+    // screen stops the screen from existing at all -- which is stronger than removing it
+    // afterwards, because a widget that was never created has no Continue button and no input
+    // to swallow in the first place.
+    void*    fWidgetCreate = nullptr;
     uint32_t at = 0;
     int      found = -1;
 };
@@ -267,10 +299,6 @@ static bool ResolveFns(uint32_t now)
         g_fn.fGameOver    = FindFunctionInClass(pc, "ShowGameOverScreen");
         const char* which = "none";
         g_fn.fMaxHp       = FindMaxFn(g_localPawn, &g_fn.maxOwner, &which);
-        g_fn.fEnableInput = FindFunctionInClass(pc, "EnableAllPlayerInput");
-        g_fn.fSetMove     = FindFunctionInClass(pc, "SetMovementMode");
-        g_fn.fIgnoreMove  = FindFunctionInClass(pc, "SetIgnoreMoveInput");
-        g_fn.fIgnoreLook  = FindFunctionInClass(pc, "SetIgnoreLookInput");
         if (g_fn.fKill) ++found;
         if (g_fn.fGameOver) ++found;
         if (g_fn.fMaxHp) ++found;
@@ -280,6 +308,61 @@ static bool ResolveFns(uint32_t now)
                   "applied to the game's own computation there");
         }
     }
+    // THE INPUT GATE IS A LIBRARY, NOT THE PAWN (measured).  Resolved on
+    // `Default__PlayerStatsAndUtils_C` -- the CDO every caller of the library dispatches
+    // through -- and dispatched there in `DoRespawn`.  Falls back to the pawn for a build
+    // that declares its own wrapper, so the restore is never silently skipped.
+    if (!g_fn.libCdo || !ObjectIsLive(g_fn.libCdo))
+        g_fn.libCdo = FindObjectByNameAndClass("Default__PlayerStatsAndUtils_C",
+                                               "PlayerStatsAndUtils_C");
+    void* gateOwner = g_fn.libCdo ? ObjClass(g_fn.libCdo) : pc;
+    g_fn.fEnableInput  = gateOwner ? FindFunctionInClass(gateOwner, "EnableAllPlayerInput") : nullptr;
+    g_fn.fDisableInput = gateOwner ? FindFunctionInClass(gateOwner, "DisableAllPlayerInput") : nullptr;
+    if (!g_fn.fEnableInput && pc) g_fn.fEnableInput = FindFunctionInClass(pc, "EnableAllPlayerInput");
+    // `SetMovementMode` belongs to the movement component.
+    void* cmc = g_localPawn ? ObjPropC(g_localPawn, "CharacterMovement") : nullptr;
+    g_fn.fSetMove = (cmc && ObjectIsLive(cmc)) ? FindFunctionInClass(ObjClass(cmc), "SetMovementMode")
+                                               : nullptr;
+    if (!g_fn.fSetMove && pc) g_fn.fSetMove = FindFunctionInClass(pc, "SetMovementMode");
+    // The ignore-input pair belongs to the controller.
+    void* ctl = LocalController();
+    void* ctlCls = (ctl && ObjectIsLive(ctl)) ? ObjClass(ctl) : nullptr;
+    g_fn.fIgnoreMove = ctlCls ? FindFunctionInClass(ctlCls, "SetIgnoreMoveInput") : nullptr;
+    g_fn.fIgnoreLook = ctlCls ? FindFunctionInClass(ctlCls, "SetIgnoreLookInput") : nullptr;
+    if (!g_fn.fIgnoreMove && pc) g_fn.fIgnoreMove = FindFunctionInClass(pc, "SetIgnoreMoveInput");
+    if (!g_fn.fIgnoreLook && pc) g_fn.fIgnoreLook = FindFunctionInClass(pc, "SetIgnoreLookInput");
+    if (g_fn.fEnableInput) ++found;
+    if (g_fn.fSetMove) ++found;
+    if (g_fn.fIgnoreMove) ++found;
+
+    // THE WORLD-RELOAD ENTRY BEHIND "Continue".  Matched by NAME anywhere they are declared,
+    // because the point is to refuse a reload this machine's own death screen asked for --
+    // the receiver of the dispatch is not part of the test.
+    if (g_fn.reloadCount == 0) {
+        static void* pcCls = nullptr;
+        if (!pcCls || !ObjectIsLive(pcCls)) pcCls = FindClassByName("PlayerController");
+        static void* giCls = nullptr;
+        if (!giCls || !ObjectIsLive(giCls)) giCls = FindClassByName("GameplayStatics");
+        static const char* const kReload[] = {"OpenLevel", "RestoreFromSave", "DeathLoad",
+                                              "LoadCheckpoint", "ReturnToSavePoint",
+                                              "RestoreToSavePoint"};
+        for (int i = 0; i < (int)(sizeof(kReload) / sizeof(kReload[0])); ++i) {
+            void* f = nullptr;
+            // `OpenLevel` is a `UGameplayStatics`/`KismetSystemLibrary` entry; the others are
+            // the player's own.  Trying both owners costs one class walk each, once.
+            if (giCls) f = FindFunctionInClass(giCls, kReload[i]);
+            if (!f && pc) f = FindFunctionInClass(pc, kReload[i]);
+            if (f && g_fn.reloadCount < (int)(sizeof(g_fn.reloadFns) / sizeof(g_fn.reloadFns[0])))
+                g_fn.reloadFns[g_fn.reloadCount++] = f;
+        }
+    }
+
+    // The widget factory, for the death screen itself (see Fns).
+    if (!g_fn.fWidgetCreate || !ObjectIsLive(g_fn.fWidgetCreate)) {
+        void* libCdo2 = FindCdo("WidgetBlueprintLibrary");
+        if (libCdo2) g_fn.fWidgetCreate = FindFunctionInClass(ObjClass(libCdo2), "Create");
+    }
+
     if (!g_fn.cpCls) {
         void* c = FindClassByName("Checkpoint_C");
         if (c && ObjectIsLive(c)) g_fn.cpCls = c;
@@ -296,9 +379,12 @@ static bool ResolveFns(uint32_t now)
               (g_fn.pawnCls ? "FS_PlayerChar_C" : "(not loaded)"), ": Kill=",
               (g_fn.fKill ? "yes" : "NO"), " ShowGameOverScreen=", (g_fn.fGameOver ? "yes" : "NO"),
               " CalculateMaxHP=", (g_fn.fMaxHp ? "yes" : "NO"), " EnableAllPlayerInput=",
-              (g_fn.fEnableInput ? "yes" : "NO"), " SetMovementMode=", (g_fn.fSetMove ? "yes" : "NO"),
-              "; Checkpoint_C=", (g_fn.cpCls ? "loaded" : "not loaded"), " Interact=",
-              (g_fn.fCpInteract ? "yes" : "NO"), " HealToFull=", (g_fn.fCpHeal ? "yes" : "NO"));
+              (g_fn.fEnableInput ? "yes" : "NO"), " (on ", (g_fn.libCdo ? "PlayerStatsAndUtils_C" : "the pawn"),
+              ") SetMovementMode=", (g_fn.fSetMove ? "yes" : "NO"), " SetIgnoreMoveInput=",
+              (g_fn.fIgnoreMove ? "yes" : "NO"), "; Checkpoint_C=",
+              (g_fn.cpCls ? "loaded" : "not loaded"), " Interact=",
+              (g_fn.fCpInteract ? "yes" : "NO"), " HealToFull=", (g_fn.fCpHeal ? "yes" : "NO"),
+              "; reload entries refused while down=", dec(g_fn.reloadCount));
     }
     return found >= 2;     // a death and a max are the minimum this lane is useless without
 }
@@ -324,12 +410,17 @@ static void CallBoolFn(void* obj, void* fnPointer, const char* name, bool v)
 // `SetMovementMode(EMovementMode NewMovementMode, uint8 NewCustomMode)`: both are bytes, and
 // only the first is an enum.  Setting them by name is the difference between "called" and
 // "moved" -- a Blueprint enum is a byte parameter, and zero is Walking.
-static void CallMovementMode(void* obj, int mode)
+//
+// `this` is the MOVEMENT COMPONENT, not the pawn: the UFunction is declared by
+// `UCharacterMovementComponent` and a dispatch on the pawn would resolve its own class chain
+// (where the function does not exist) or, worse, run a component body against an actor.
+static bool CallMovementMode(int mode)
 {
-    if (!obj || !g_fn.fSetMove) return;
+    void* cmc = g_localPawn ? ObjPropC(g_localPawn, "CharacterMovement") : nullptr;
+    if (!cmc || !ObjectIsLive(cmc) || !g_fn.fSetMove) return false;
     static Fn f = {};
     if (f.fn != g_fn.fSetMove) { f.tried = false; f.fn = nullptr; f.sig.valid = false; }
-    if (!f.Accept(g_fn.fSetMove, "SetMovementMode")) return;
+    if (!f.Accept(g_fn.fSetMove, "SetMovementMode")) return false;
     Call c(f);
     for (int i = 0; i < f.sig.props; ++i) {
         const PropDesc& d = f.sig.p[i];
@@ -338,7 +429,7 @@ static void CallMovementMode(void* obj, int mode)
         if (ContainsCI(d.name, "Custom")) c.U8(d.name, 0);
         else c.U8(d.name, (uint8_t)mode);
     }
-    c.Run(obj);
+    return c.Run(cmc);
 }
 
 // The game's own statement that this player is dead: the `IsDead`/`bDead` byte if the class
@@ -647,7 +738,8 @@ void OnRespawnUp(wire::Reader& r, uint32_t now)
     g_peerVitals.flags = wire::VF_VALID;
     g_peerVitalsAt = now;
     bool moved = false;
-    if (Cfg().puppet_sync && g_puppetActor && ObjectIsLive(g_puppetActor)) {
+    const bool havePos = !(b.px == 0.0f && b.py == 0.0f && b.pz == 0.0f);  // [coordinator] #5
+    if (havePos && Cfg().puppet_sync && g_puppetActor && ObjectIsLive(g_puppetActor)) {
         // A RESPAWN IS A TELEPORT, NOT A WALK.  Pushing the sample into the interpolation
         // buffer without clearing it would make the body slide across the map from where it
         // died -- the one thing the partner must not see.  Reset, push one sample, and place
@@ -682,6 +774,7 @@ void OnRespawnRest(wire::Reader& r, uint32_t now)
     }
     if (!g_peerGate.Accept(b.seq)) return;
     g_peerDeaths = 0;
+    g_peerDown = false;   // [coordinator] review #5: a rest means the partner is up
     QDLOG(LOG_INFO, "respawn: partner rested at ", (b.name[0] ? b.name : "(unnamed)"),
           " -- its stacks are cleared, max back to 100 %");
 }
@@ -737,11 +830,21 @@ static void FinishRest(uint32_t now)
 // was not reloaded, but a dead-looking screen over a live player is not "cleared death
 // state".  So after a respawn any death widget still on the viewport is removed with its own
 // `RemoveFromParent`.  A name test, not a class: the widget blueprint is content.
+//
+// TWO FALSE POSITIVES WERE MEASURED AND ARE NOW EXCLUDED (Round 2, run 1): the name test
+// matched `Default__DieUI_C`, which is the CLASS DEFAULT OBJECT -- it is never on a viewport
+// and "removing" it is meaningless -- and it matched the class object itself.  A widget is
+// dismissed only when it is a real instance (`Default__` prefix refused) AND the engine says
+// it is on the screen (`IsInViewport`), which is the same test the `widgets` dump uses.  The
+// log keeps reporting the CDO as SEEN but not acted on, so the difference is on the record.
 static void DismissDeathScreens(const char* why)
 {
     void* uw = FindClassByName("UserWidget");
     if (!uw || !ObjectIsLive(uw)) return;
-    int n = ObjectCount(), removed = 0;
+    static Fn fIn = {};
+    static void* missIn = nullptr;
+    static Fn fRemove = {};
+    int n = ObjectCount(), removed = 0, cdo = 0;
     for (int i = 0; i < n && removed < 8; ++i) {
         void* o = ObjectAt(i);
         if (!o || !LooksLikeUObject(o) || !ObjectIsLive(o)) continue;
@@ -755,9 +858,20 @@ static void DismissDeathScreens(const char* why)
         if (!sub) continue;
         char nm[96] = "?";
         FNameToString(ObjNameRaw(o), nm, sizeof(nm));
-        static Fn f = {};
-        if (f.Resolve(o, "RemoveFromParent")) {
-            Call c(f);
+        if (!strncmp(nm, "Default__", 9)) { ++cdo; continue; }   // the CDO is not a screen
+        bool inVp = false;
+        bool known = false;
+        __try {
+            if (ResolvePerClass(fIn, &missIn, o, "IsInViewport")) {
+                Call c(fIn);
+                if (c.Run(o) && c.Ret()) { inVp = *(uint8_t*)c.Ret() != 0; known = true; }
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) { known = false; }
+        // An unreadable `IsInViewport` is NOT treated as "up": dismissing an object we cannot
+        // see on screen is the guess that produced the CDO false positive.
+        if (known && !inVp) continue;
+        if (fRemove.Resolve(o, "RemoveFromParent")) {
+            Call c(fRemove);
             bool ran = c.Run(o);
             QDLOG(LOG_INFO, "respawn: a death screen was still up (", nm, " [", cls, "]) ",
                   (ran ? "-- removed from the viewport" : "-- RemoveFromParent DID NOT RUN"),
@@ -768,6 +882,8 @@ static void DismissDeathScreens(const char* why)
                   "]) and has no RemoveFromParent");
         }
     }
+    if (cdo) QDLOG(LOG_DEBUG, "respawn: ", dec(cdo), " death-screen CLASS DEFAULT OBJECT(s) seen ",
+                   "and not touched (a CDO is never on a viewport) (", why, ")");
     if (!removed) QDLOG(LOG_INFO, "respawn: no death screen left on the viewport (", why, ")");
 }
 
@@ -779,6 +895,13 @@ static void DoRespawn(uint32_t now)
               "machine -- the game's own death path owns it (its pawn was destroyed, which ",
               "this lane cannot rebuild); the stacks stay at ", dec(g_self.Deaths()));
         g_self.NoteRespawn(now);
+        // [coordinator] review #5: still tell the partner, or its puppet keeps the death
+        // pose forever.  No pawn = no position: the receiver keeps the puppet where it is.
+        {
+            Point none;
+            memset(&none, 0, sizeof(none));
+            SendUp(now, none, 0.0f, 0.0f);
+        }
         return;
     }
     Point p = g_self.Rest();
@@ -833,15 +956,32 @@ static void DoRespawn(uint32_t now)
     if (hadDead) WriteBytePropC(pawn, "bDead", 0);
     bool hadKnock = BytePropC(pawn, "KnockedDown", &was);
     if (hadKnock) WriteBytePropC(pawn, "KnockedDown", 0);
-    CallMovementMode(pawn, 0);                       // EMovementMode::MOVE_Walking
-    CallBoolFn(pawn, g_fn.fIgnoreMove, "SetIgnoreMoveInput", false);
-    CallBoolFn(pawn, g_fn.fIgnoreLook, "SetIgnoreLookInput", false);
+    // EACH LEVER IS DISPATCHED WHERE IT IS DECLARED (see Fns for the measurement):
+    // walking on the movement component, the ignore pair on the controller, the input gate on
+    // the PlayerStatsAndUtils library.  The old version ran all four on the pawn, resolved
+    // none of them (`input=0`), and reported a restore it had not performed.
+    bool walkOn = CallMovementMode(0);               // EMovementMode::MOVE_Walking
+    void* ctl = LocalController();
+    void* ctlObj = (ctl && ObjectIsLive(ctl)) ? ctl : pawn;
+    CallBoolFn(ctlObj, g_fn.fIgnoreMove, "SetIgnoreMoveInput", false);
+    CallBoolFn(ctlObj, g_fn.fIgnoreLook, "SetIgnoreLookInput", false);
     RestoreView();
+    // THE LIBRARY CALL.  `this` is the library's CDO: that is the object a Blueprint's
+    // `EnableAllPlayerInput` node dispatches on, and the node's single argument is the player.
     bool inputOn = false;
     if (g_fn.fEnableInput) {
         static Fn f = {};
         if (f.fn != g_fn.fEnableInput) { f.tried = false; f.fn = nullptr; f.sig.valid = false; }
-        if (f.Accept(g_fn.fEnableInput, "EnableAllPlayerInput")) { Call c(f); inputOn = c.Run(pawn); }
+        if (f.Accept(g_fn.fEnableInput, "EnableAllPlayerInput")) {
+            Call c(f);
+            for (int i = 0; i < f.sig.props; ++i) {
+                const PropDesc& d = f.sig.p[i];
+                if (d.flags & (CPF_OutParm | CPF_ReturnParm)) continue;
+                if (NameEquals(d.type, "ObjectProperty")) c.Obj(d.name, pawn);
+            }
+            void* receiver = (g_fn.libCdo && ObjectIsLive(g_fn.libCdo)) ? g_fn.libCdo : pawn;
+            inputOn = c.Run(receiver);
+        }
     }
 
     // 3. HEALTH, as the penalised maximum -- written AFTER the flags so the game's own
@@ -852,12 +992,23 @@ static void DoRespawn(uint32_t now)
 
     g_self.NoteRespawn(now);
     SidecarSave(now);
-    SendUp(now, p, haveBack ? back : hp, maxHp > 0.0f ? maxHp : hp);
+    // [coordinator] review #3: a cleared point would put the partner's puppet at the world
+    // origin -- send where this body actually is instead.
+    Point up = p;
+    if (!UsablePoint(up)) {
+        ActorXform hx;
+        if (ReadActorXform(pawn, &hx)) {
+            up.px = hx.px; up.py = hx.py; up.pz = hx.pz; up.yaw = hx.yaw;
+        }
+    }
+    SendUp(now, up, haveBack ? back : hp, maxHp > 0.0f ? maxHp : hp);
     QDLOG(LOG_INFO, "respawn: respawned at ",
           (p.name[0] ? p.name : (UsablePoint(p) ? "(unnamed point)" : "(where the body fell)")),
           " -- source=", from, "; Health -> ", flt(back, 1), " (base ", flt(base, 1), " x ",
           flt(g_self.Multiplier(), 2), ", ", dec(g_self.Pct()), "%); moved=", dec(moved ? 1 : 0),
-          " input=", dec(inputOn ? 1 : 0), " hpWrite=", dec(hpOk ? 1 : 0),
+          " input=", dec(inputOn ? 1 : 0), " walking=", dec(walkOn ? 1 : 0),
+          " ignoreInputCleared=", dec((g_fn.fIgnoreMove || g_fn.fIgnoreLook) ? 1 : 0),
+          " hpWrite=", dec(hpOk ? 1 : 0),
           (hadDead ? " bDead->0" : ""), (hadKnock ? " KnockedDown->0" : ""));
     if (restDist >= 0.0f && restDist > 1.0f) {
         QDLOG(LOG_INFO, "respawn: the body fell ", flt(restDist, 0), " cm from the rest point");
@@ -931,14 +1082,100 @@ void RespawnPump(uint32_t now)
 // ---------------------------------------------------------------------------
 // The ProcessEvent observations
 // ---------------------------------------------------------------------------
-// `RespawnVeto` is asked BEFORE the dispatch is forwarded: the Game Over screen is the door
-// to the game's world reload, and refusing the dispatch is how a death stops being a world
-// event.  Nothing else is vetoed -- the death pose, the montage and every other call still
-// run.
+// `RespawnVeto` is asked BEFORE the dispatch is forwarded.  It refuses TWO things, and the
+// second one is what makes the pose safe:
+//
+//   1. the Game Over screen itself (`ShowGameOverScreen`), and
+//   2. THE RELOAD BEHIND ITS "Continue" -- `OpenLevel` and the save-checkpoint restores.
+//
+// WHY (2) IS THE LOAD-BEARING ONE.  Measured live: the death screen is NOT created through
+// `ShowGameOverScreen` on this build, so (1) does not fire and the screen exists anyway; the
+// old mitigation was to remove the widget within ~250 ms.  That leaves a window: the world
+// reload starts when the screen's Continue button is pressed, and a player can press it
+// during the 3.5 s pose.  Removing a widget is a race; refusing the FUNCTION the button calls
+// is not.  So while this machine's player is DOWN, a dispatch of a reload entry is refused
+// outright, whether or not any screen is up, and whether the press came from the button, a
+// key bound to the same handler, or the game's own follow-up.  When the player is not down
+// and carries no pending respawn, nothing is refused -- a legitimate `OpenLevel` (a cheat, a
+// menu's own load) is the game's business.
+static bool ReloadFn(void* func)
+{
+    if (!func) return false;
+    for (int i = 0; i < g_fn.reloadCount; ++i)
+        if (g_fn.reloadFns[i] && g_fn.reloadFns[i] == func) return true;
+    return false;
+}
+
 bool RespawnVeto(void* self, void* func, void* parms)
 {
     (void)parms;
     if (!Cfg().death_respawn || !func || !self) return false;
+
+    // ---- 0. THE DEATH SCREEN IS NEVER CREATED --------------------------------------
+    // `UWidgetBlueprintLibrary::Create(WorldContextObject, WidgetType, OwningPlayer)` is the
+    // one factory every Blueprint uses, and `DieUI_C` is made through it by `FS_PlayerChar`
+    // (dumped from the cooked packages).  Refusing the dispatch when `WidgetType` is the death
+    // screen means the screen does not exist: no Continue button, no input to swallow, no
+    // window to race.
+    //
+    // MEASURED (Round 2 run 1): this did NOT fire.  The line below is a DIAGNOSTIC rather than
+    // an assumption -- every `Create` dispatch seen while down is logged with the class it was
+    // asked for, so the next run says whether the screen on this build comes through this
+    // factory at all (the dismissal log shows the class name is `DieUI_C`, and the widget is
+    // visible, so SOMETHING made it).  The refusal below is kept because it costs one pointer
+    // compare and is the correct defence on a build that does use the factory.
+    if (g_fn.fWidgetCreate && func == g_fn.fWidgetCreate && (g_self.Down() || g_dismissAt)) {
+        void* want = nullptr;
+        static Fn fc = {};
+        if (fc.fn != func) { fc.tried = false; fc.fn = nullptr; fc.sig.valid = false; }
+        if (fc.Accept(func, "Create")) {
+            int off = fc.Off("WidgetType");
+            if (off >= 0) {
+                __try { memcpy(&want, (uint8_t*)parms + off, 8); }
+                __except (EXCEPTION_EXECUTE_HANDLER) { want = nullptr; }
+            }
+        }
+        char cn[96] = "(none)";
+        if (want && LooksLikeUObject(want)) FNameToString(ObjNameRaw(want), cn, sizeof(cn));
+        uint32_t now = Net::Now();
+        if (g_lastReloadLog == 0 || now - g_lastReloadLog > 1000) {
+            g_lastReloadLog = now;
+            uint32_t at = g_self.DownAt();
+            QDLOG(LOG_INFO, "respawn: a widget was created while the player is down: ", cn,
+                  " (", (at ? dec((int)(now - at)) : dec(-1)), " ms into the death)");
+        }
+        if (want && LooksLikeUObject(want) &&
+            (ContainsCI(cn, "DieUI") || ContainsCI(cn, "GameOver") || ContainsCI(cn, "DeathScreen"))) {
+            QDLOG(LOG_INFO, "respawn: BLOCK the death screen's CREATION -- ", cn,
+                  " refused at WidgetBlueprintLibrary::Create, so there is no Continue button to ",
+                  "press during the pose");
+            return true;
+        }
+    }
+
+    // ---- 1. THE RELOAD BEHIND "Continue" -------------------------------------------
+    // `g_self.Down()` is "this machine has a death in progress": from the moment the death is
+    // noticed until the respawn has run.  A reload dispatched in that window is refused and
+    // named in the log, so a refused press is never silent.
+    if (g_self.Down() && ReloadFn(func)) {
+        uint32_t now = Net::Now();
+        if (g_lastReloadLog == 0 || now - g_lastReloadLog > 1000) {
+            g_lastReloadLog = now;
+            char fn[96] = "?";
+            FNameToString(ObjNameRaw(func), fn, sizeof(fn));
+            char cn[64] = "?";
+            FNameToString(ObjNameRaw(ObjClass(self)), cn, sizeof(cn));
+            uint32_t at = g_self.DownAt();
+            QDLOG(LOG_INFO, "respawn: BLOCK the world reload -- ", fn, " refused (receiver ", cn,
+                  ") while this machine's player is down (",
+                  (at ? dec((int)(now - at)) : dec(-1)),
+                  " ms into the death): respawning is a position, and a load here would restart ",
+                  "BOTH players' world");
+        }
+        return true;
+    }
+
+    // ---- 2. the Game Over screen dispatch -------------------------------------------
     // The FUNCTION is what is matched, not `self`: measured (first live run) the Game Over
     // screen still came up, so whatever opened it did not dispatch it with the pawn as the
     // receiver.  `ShowGameOverScreen` is this player class's own entry, so refusing every

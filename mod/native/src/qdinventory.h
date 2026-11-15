@@ -201,6 +201,9 @@ public:
     void Reset()
     {
         set_.Clear();
+        // The tombstone ledger is cleared with the set that justified it: a new save is a
+        // new container, and a path remembered from the old one names nothing here.
+        tombs_.Clear();
         rev_ = 1;
         dirty_ = true;
         cursor_ = 0;
@@ -212,6 +215,71 @@ public:
     int      Cursor() const { return cursor_; }
     int      Size() const { return set_.Count(); }
     bool     Overflowed() const { return set_.Overflowed(); }
+
+    // ------------------------------------------------------------------
+    // The zero-count tombstone ledger (quest-item mode only)
+    // ------------------------------------------------------------------
+    // WHY THIS EXISTS.  MEASURED live (progression.md round 2/3): a key the HOST used to
+    // zero simply disappeared from the published set, and the peer's copy stayed forever
+    // -- "the host holds none" had no wire form, and this lane's only monotone rule is
+    // "never lower".  So a tombstone is a published entry with count 0, and this ledger is
+    // what keeps that BOUNDED and reversible:
+    //   * `Has` says whether this path was ever on the wire, which is what makes a zero a
+    //     change the partner owes rather than a fact about an entry nobody had;
+    //   * `DocClear` drops the record when the count rises again, so a key that is used
+    //     and re-picked up does not stay tombstoned.
+    // It is separate from `set_` on purpose: `set_` is the body being published right
+    // now, and a tombstone is a MEMORY of what has been sent, which must survive the
+    // pass that carries it.  Bounded like the container (`kMaxEntries`), so no entry the
+    // lane can publish is ever left untracked.
+    bool Has(const char* path) const { return tombs_.Find(path) >= 0; }
+
+    void DocClear(const char* path)
+    {
+        int i = tombs_.Find(path);
+        if (i >= 0) tombs_.RemoveAt(i);
+    }
+
+    // Record that a path has been on the wire (a live count, not a tombstone).  Called
+    // for every entry published with a positive count.
+    void DocNote(const char* path)
+    {
+        if (!path || !path[0] || tombs_.Find(path) >= 0) return;
+        tombs_.Add(path);
+    }
+
+    // ------------------------------------------------------------------
+    // The second pass: a carried path the container no longer contains is a ZERO
+    // ------------------------------------------------------------------
+    // WHY THIS IS NEEDED AT ALL.  MEASURED (round 2/3): using a key up removes it from
+    // `InventoryContents` OUTRIGHT -- there is no element whose count reads 0, so a
+    // collector that only visits live elements can never observe the fall.  The set built
+    // from the container is therefore missing the key, which is indistinguishable from
+    // "the host never had it" and is exactly why the peer kept its copy.
+    //
+    // So: after the container walk, every path this publisher has carried that the walk
+    // did NOT produce is published with count 0.  `hadLive` is the walk's live-entry count
+    // and is used only to refuse the one case where an empty/failed walk must not be read
+    // as "the host lost everything" -- a walk that saw NOTHING and was expected to see
+    // something is a broken read, not a mass consumption.  Returns the number of
+    // tombstone entries written.
+    int TombstoneMissing(Snapshot* snap, int hadLive)
+    {
+        if (!snap || hadLive <= 0) return 0;
+        int n = 0;
+        for (int i = 0; i < tombs_.Count(); ++i) {
+            const char* p = tombs_.At(i);
+            if (!p || !p[0]) continue;
+            if (snap->Find(p) >= 0) continue;      // still held: not a zero
+            if (snap->Set(p, 0)) ++n;
+        }
+        return n;
+    }
+
+    // A carried path the container still contains: forget any stale zero, so the entry is
+    // not published as a tombstone for ever.  Called by the collector when a count > 0 is
+    // seen, which is the only moment the question can arise.
+    int CarriedCount() const { return tombs_.Count(); }
 
     // Re-send the whole set at the next pump without changing it.  Used after a suspend
     // load on the peer: the container here is still the truth, but the peer's copy was
@@ -295,7 +363,56 @@ public:
     }
 
 private:
-    Snapshot set_;
+    // The bounded memory of every path this publisher has ever carried.  `kMaxEntries`
+    // because the container it mirrors is the same size, so nothing publishable is lost.
+    class TombLedger {
+    public:
+        TombLedger() { n_ = 0; overflow_ = false; }
+        bool Full() const { return n_ >= kMaxEntries; }
+        bool Overflowed() const { return overflow_; }
+        int  Count() const { return n_; }
+        int  Find(const char* path) const
+        {
+            if (!path) return -1;
+            for (int i = 0; i < n_; ++i) if (PathEq(e_[i], path)) return i;
+            return -1;
+        }
+        bool Add(const char* path)
+        {
+            if (!path || !path[0]) return false;
+            if (Find(path) >= 0) return true;
+            if (n_ >= kMaxEntries) { overflow_ = true; return false; }
+            if (PathCopy(e_[n_], kMaxPath, path) <= 0) { overflow_ = true; return false; }
+            ++n_;
+            return true;
+        }
+        void Clear()
+        {
+            for (int i = 0; i < n_; ++i) e_[i][0] = 0;
+            n_ = 0;
+            overflow_ = false;
+        }
+        bool RemoveAt(int i)
+        {
+            if (i < 0 || i >= n_) return false;
+            for (int k = i; k + 1 < n_; ++k) memcpy(e_[k], e_[k + 1], kMaxPath);
+            --n_;
+            e_[n_][0] = 0;
+            return true;
+        }
+        const char* At(int i) const
+        {
+            if (i < 0 || i >= n_) return nullptr;
+            return e_[i];
+        }
+    private:
+        char e_[kMaxEntries][kMaxPath];
+        int  n_;
+        bool overflow_;
+    };
+
+    Snapshot  set_;
+    TombLedger tombs_;
     uint32_t rev_;
     bool     dirty_;
     int      cursor_;

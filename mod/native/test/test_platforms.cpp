@@ -381,6 +381,58 @@ static void TestCaptureTest()
                        kCaptureDownCm, &d2), "capture/far below");
 }
 
+// The element index: which part of the mover actor travels.  `Elevator_Base` moves
+// `ElevatorPlatformRoot`, a child scene component, so the actor-root read reports a lift
+// that never moves; the index rides in the six spare bits of the existing MOVERS flags
+// byte (`mover::kMoving` 0x01, `mover::kOwner` 0x02), so element 0 -- the root -- must
+// stay 0 and the wire row must stay 33 bytes.
+static void TestElementIndex()
+{
+    const uint8_t kMovingBit = 0x01, kOwnerBit = 0x02;
+    CHECK(EncodeElem(0) == 0, "elem/the actor root encodes to 0 (the old row's value)");
+    CHECK((EncodeElem(1) & (kMovingBit | kOwnerBit)) == 0,
+          "elem/the index never touches the moving/owner bits");
+    CHECK(DecodeElem(EncodeElem(0)) == 0, "elem/root round-trips");
+    for (int k = 0; k <= kMaxElems; ++k)
+        CHECK(DecodeElem(EncodeElem(k)) == k, "elem/every element index round-trips");
+    uint8_t flags = (uint8_t)(kMovingBit | kOwnerBit | EncodeElem(3));
+    CHECK(DecodeElem(flags) == 3, "elem/the element survives the moving+owner bits");
+    CHECK((flags & kMovingBit) && (flags & kOwnerBit), "elem/the old flag bits are untouched");
+    CHECK(ClampElem(5, 2) == 0, "elem/an element this copy lacks falls back to the root");
+    CHECK(ClampElem(2, 2) == 2, "elem/an element this copy has is kept");
+    CHECK(ClampElem(-3, 4) == 0, "elem/a negative index is the root");
+}
+
+// The element search: root wins, else keep what moves, else adopt the probe.
+static void TestElementSearch()
+{
+    CHECK(StepElem(0, true, false, 2, false) == 0, "search/the root moving keeps the root");
+    CHECK(StepElem(3, false, true, 2, true) == 3, "search/the followed element moving wins");
+    CHECK(StepElem(0, false, false, 2, true) == 2, "search/a moving probe is adopted");
+    CHECK(StepElem(0, false, false, 2, false) == 0, "search/nothing moved: stay put");
+    CHECK(StepElem(4, true, false, 2, true) == 0, "search/the root outranks the probe");
+    CHECK(StepElem(4, false, false, 0, false) == 4, "search/nothing probed: stay put");
+    // The bug this exists for: nothing but a child component moves.
+    int e = StepElem(0, false, false, 1, true);
+    CHECK(e == 1, "search/a child component that moves is found even though the actor does not");
+    e = StepElem(e, false, true, 2, false);
+    CHECK(e == 1, "search/and is kept while it is the one moving");
+}
+
+// The moved test the search and the moving flag share.
+static void TestMovedBy()
+{
+    float a[3] = {100.0f, 200.0f, 300.0f};
+    float b[3] = {100.0f, 200.0f, 300.0f};
+    CHECK(!MovedBy(a, b), "moved/identical places did not move");
+    b[2] = 301.0f;
+    CHECK(MovedBy(a, b), "moved/a centimetre did");
+    b[2] = 300.2f;
+    CHECK(!MovedBy(a, b), "moved/a fifth of the 0.4 cm threshold did not");
+    b[2] = 300.5f;
+    CHECK(MovedBy(a, b), "moved/half a centimetre did");
+}
+
 int main()
 {
     printf("=== qd platforms tests ===\n");
@@ -393,6 +445,9 @@ int main()
     TestRideBelieveFarMeasurement();
     TestRideSwitchPlatformAndIdentity();
     TestCaptureTest();
+    TestElementIndex();
+    TestElementSearch();
+    TestMovedBy();
     printf("=== %d passed, %d failed ===\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

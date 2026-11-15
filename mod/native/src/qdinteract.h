@@ -304,6 +304,18 @@ inline bool ApplyAllowed(uint8_t want, uint8_t local, bool haveLocal, objects::S
     return true;
 }
 
+// The DIRECTION half alone, which is the part that is actually a policy about the world:
+// a one-way shape (chest, pickup, breakable) must never be closed or un-broken by the
+// partner.  Split out because the GUID lane needs the direction test WITHOUT the
+// "already there" short-circuit: a door whose own bool already reads the wanted value can
+// still have its timeline at the other end, and only the visual call fixes that
+// (see WantsExplicitAnim below -- that state is what round 2 measured).
+inline bool DirectionAllowed(uint8_t want, objects::Shape s)
+{
+    if (s == objects::SH_NONE) return true;             // unclassified: no policy to apply
+    return Bidirectional(s) || want != 0;
+}
+
 // ---------------------------------------------------------------------------
 // The call plan: the class' own animation, in the order that preserves both
 // directions and never names a payout
@@ -403,16 +415,74 @@ inline bool PlanLegal(const Step* steps, int n)
 }
 
 // ---------------------------------------------------------------------------
-// Does a SAVABLE actor of this shape need an explicit visual after the container restore?
+// A secret wall: the one family the GUID lane CANNOT carry
+// ---------------------------------------------------------------------------
+// MEASURED (round 2 live, then again in round 3): `SecretWall_C`'s own `Activate` flips
+// its `Opened` bool and writes NOTHING to the `SavableActorStates` container -- its save
+// entry is `isset=0` before and after.  So the container is not the wall's state and the
+// GUID lane has nothing to publish, which is why a wall opened on one machine stayed shut
+// on the other no matter how correct the actor-state lane was.
+//
+// The state that DOES move is the wall's own `Opened` bool, which is exactly the object
+// lane's model (a placed actor, keyed by its cooked path, carrying its own bool).  So a
+// secret wall is the object lane's business even though it is a `SavableActor_C`
+// subclass, and `ObjectsScanStep` must not skip it as "savable-owned".
+//
+// The predicate is NAME-based because it has to be decided before a property read: a
+// class that classifies here still only gets published if it exposes a readable state
+// bool, so `ScienceSecretWall_C` (which carries no `Opened`) is reported by the existing
+// "carries no readable state property" line rather than guessed at.
+inline bool DirectBoolClass(const char* cls)
+{
+    if (!cls || !cls[0]) return false;
+    // The same vocabulary `ShapeOfClass` uses for the secret family, minus the generic
+    // door words: a `SecretZoneDoor` is an ordinary savable door whose container entry
+    // the game DOES write, so it stays on the GUID lane.
+    return objects::HasCI(cls, "SecretWall") || objects::HasCI(cls, "ScienceSecret") ||
+           objects::HasCI(cls, "HiddenWall") || objects::HasCI(cls, "Illusory") ||
+           objects::HasCI(cls, "Illusion") || objects::HasCI(cls, "FakeWall") ||
+           objects::HasCI(cls, "SecretPassage");
+}
+
+// ---------------------------------------------------------------------------
+// Does an actor of this shape need an explicit visual after the container restore?
 // ---------------------------------------------------------------------------
 // `RestoreFromSave` calls the class' own `Restore State From Save Data`.  For a breakable
-// that override calls `Break` and for a secret wall it drives `SetToFinalState`, so those
-// need nothing more.  A plain `Door_Base_C` door's restore only loads `Opened`; the
-// timeline is driven by `SetToOpenState`, and `OpenDoor`/`CloseDoor` both call it.  So a
-// door whose state actually changed gets the same call the game would have made.
+// that override calls `Break`, so those need nothing more.  A plain `Door_Base_C` door's
+// restore only loads `Opened`; the timeline is driven by `SetToOpenState`, and
+// `OpenDoor`/`CloseDoor` both call it.  So a door gets the call the game would have made.
+//
+// WHY THE OLD RULE (`had != want`) WAS WRONG, AND WHAT IT COST
+// ----------------------------------------------------------
+// MEASURED (round 2 live, `world-interact.md`): the host closed a `SwordShrineGate_BP_C`,
+// the peer's container reached 0, and NO close animation ever played on the peer.  Two
+// independent reasons, and `had != want` gets both of them backwards:
+//
+//   * `had` is the actor's own bool, read BEFORE the write.  A door whose bool is already
+//     at the wanted value but whose TIMELINE is at the other end -- the state a mirror
+//     leaves behind when it animates without the bool moving -- reads `had == want` and
+//     is then never animated.  The visual stays wrong forever.
+//   * a door with no readable bool (`haveLocal == false`) passes `had = 0`, so EVERY
+//     close read `had == want` and was never animated.  The one family whose only state
+//     IS its visual was the family the rule skipped.
+//
+// So for a door the answer is "play the class' own visual", full stop: `SetToOpenState`
+// takes the direction and drives the timeline TO that end state, so calling it on a door
+// that is already there is a no-op, and calling it with `false` is how the game closes a
+// door.  The caller only reaches here after the steady-state filters, so this does not
+// add work to the 1 Hz heartbeat.
+inline bool WantsExplicitAnim(objects::Shape s, uint8_t want)
+{
+    (void)want;
+    return s == objects::SH_DOOR;
+}
+
+// Kept as a thin wrapper so a caller that has measured `had` can still say so in one
+// place, and so the reason above stays attached to the signature it replaced.
 inline bool NeedsExplicitAnim(objects::Shape s, uint8_t had, uint8_t want)
 {
-    return s == objects::SH_DOOR && had != want;
+    (void)had;
+    return WantsExplicitAnim(s, want);
 }
 
 } // namespace interact

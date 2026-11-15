@@ -1388,27 +1388,45 @@ inline bool ReadKillXp(Reader& r, KillXpBody* b)
 // qdsuspend.h already owns it.
 //
 // Body: seq(u32, the sender's own save counter -- monotone, so a retransmit is one
-//       request), role(u8, 1 host / 2 peer, diagnostics only).
+//       request), role(u8, 1 host / 2 peer, diagnostics only),
+//       route(u8, 1 main slot / 2 the game's own suspend writer -- WIRE.md 3.27).
 //
 // A mirrored save is never announced again: the receiver's own dispatch is the echo of the
 // save it ran for the partner, and qdprogression.h's SaveBoard brackets exactly that.
+//
+// WHY `route` IS ON THE WIRE.  MEASURED (round 3, progression.md): on this build a
+// checkpoint REST -- the save a player actually makes -- writes `World0_Suspend_N.sav` and
+// does NOT touch `World0.sav`, and `SaveHere` dispatches nothing at all.  A partner that
+// always answered with a main-slot write would have saved a DIFFERENT file than the one its
+// own game resumes from, so the request names the route and the receiver runs its OWN
+// matching writer on its OWN slot.  No save file ever crosses; only the instruction.
 struct SaveBody {
     uint32_t seq;
     uint8_t  role;
+    uint8_t  route;
 };
 
-inline void WriteSave(Writer& w, uint32_t seq, uint8_t role)
+inline void WriteSave(Writer& w, uint32_t seq, uint8_t role, uint8_t route)
 {
     w.U32(seq);
     w.U8(role);
+    w.U8(route);
 }
 
 inline bool ReadSave(Reader& r, SaveBody* b)
 {
-    b->seq  = r.U32();
-    b->role = r.U8();
+    b->seq   = r.U32();
+    b->role  = r.U8();
     if (!r.ok) return false;
     if (b->role > 2) return false;
+    // A body that predates the route byte (5 bytes, seq+role only) means the main slot:
+    // refusing it would lose a partner's save for a field that is a diagnostic plus a
+    // choice, not a fact about the request.
+    if (r.pos >= r.len) { b->route = 1; return true; }
+    b->route = r.U8();
+    if (!r.ok) return false;
+    if (b->route == 0) b->route = 1;
+    if (b->route > 2) return false;
     return true;
 }
 

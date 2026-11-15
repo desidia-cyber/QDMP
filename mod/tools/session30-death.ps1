@@ -545,7 +545,14 @@ function Start-Boot([string]$tag) {
         foreach ($leaf in 'qd.tp','qd.act','qd.hit','qd.cheat','qd.cheatarg','qd.travel','qd.hard',
                           'qd.level','qd.list','qd.near','qd.drops','qd.menu','qd.efunc','qd.eattack',
                           'qd.use','qd.pdmg','qd.kill','qd.petrace','qd.enemies','qd.sequence',
-                          'qd.enemykill','qd.hitguid','qd.obj','qd.flag','qd.gate','qd.take','qd.trigger','qd.selfhp','qd.nohit') {
+                          'qd.enemykill','qd.hitguid','qd.obj','qd.flag','qd.gate','qd.take','qd.trigger','qd.selfhp','qd.nohit',
+                          # THE DIALOGUE LEVER, which this phase now presses (the death screen's
+                          # own Continue).  MEASURED (Round 2): a value left by an earlier run
+                          # fires on the FIRST tick of the next boot -- before any death exists,
+                          # so the lane's veto correctly does not apply -- and `death-continue`
+                          # then drove `OpenLevel` with the player alive, which dropped that
+                          # instance to `title_screen` and made the whole run measure nothing.
+                          'qd.dlg') {
             Set-Control $i $leaf $null
         }
         Set-Control $i 'qd.scan' '1'
@@ -2627,7 +2634,55 @@ function Invoke-DeathPhase([int]$H, [int]$P) {
     Verdict $step $P ($kill.Count -gt 0) 'the rig drove the game own death entry' $(if ($kill.Count) { ([string]$kill[-1]).Trim() } else { '' })
     $d1 = @(Wait-Since $P 'respawn: DEATH #1' $mP 20)
     Verdict $step $P ($d1.Count -gt 0) 'the lane saw the death and stacked 10 %' $(if ($d1.Count) { ([string]$d1[-1]).Trim() } else { '' })
-    $blk = @(Wait-Since $P 'respawn: BLOCK the game.s death flow' $mP 20)
+
+    # ---- 2b. THE CONTINUE-PRESS WINDOW (Round 2) ---------------------------------------
+    # The documented risk was "the reload is only behind Continue, and a player can press it
+    # during the 3.5 s pose".  This presses it DURING the pose, from the rig, twice:
+    #   (a) the death screen's own Continue handler (or `OpenLevel` itself, which is what that
+    #       handler calls -- `DieUI`'s ContinueButton is the widget's only import of it), and
+    #   (b) the same again a moment later, so a one-off dismissal cannot be mistaken for the
+    #       veto.
+    # What must happen: the lane logs the refusal, and NEITHER machine tears its world down.
+    #
+    # THE TIMING IS THE POINT.  `kPoseMs` is 3500 ms from the DEATH line, and a press that
+    # lands after the respawn tests nothing (measured: a press 22 s late logged
+    # `reloadRan=1` with no death in progress -- correctly unrefused, and it dropped that
+    # instance to the title screen).  So the lever is written IMMEDIATELY after the DEATH line
+    # is seen, with no sleeping between the two, and the two presses are ~1 s apart.
+    Note '    pressing the death screen''s own Continue DURING the pose (the documented risk)'
+    $mPress = Get-Mark $P
+    $mPressH = Get-Mark $H
+    Set-Control $P 'qd.dlg' ('death-continue#' + (Get-Date -Format 'HHmmssfff'))
+    Start-Sleep -Milliseconds 1200
+    Set-Control $P 'qd.dlg' ('death-continue#' + (Get-Date -Format 'HHmmssfff'))
+    # The pose is 3.5 s; wait for the respawn line so this step does not run past it.
+    [void](Wait-Since $P 'respawn: respawned at ' $mP 40)
+    $pressLines = @(Get-Since $P $mPress | Where-Object {
+        $_ -match 'rig: death Continue pressed' -or
+        $_ -match 'respawn: BLOCK the world reload' -or
+        $_ -match 'respawn: BLOCK the death screen' })
+    Show-Since $P 'rig: death Continue pressed|respawn: BLOCK ' $mPress 8
+    $refused = @($pressLines | Where-Object { $_ -match 'respawn: BLOCK the world reload' -or $_ -match 'respawn: BLOCK the death screen' })
+    Verdict $step $P ($refused.Count -gt 0) 'a Continue press DURING the pose was refused by the lane' $(if ($refused.Count) { ([string]$refused[-1]).Trim() } else { 'no BLOCK line: the press was not refused' })
+    # THE LOAD ITSELF.  A reload would replace the world: `OpenLevel`/`LoadMapWithLoadingScreen`
+    # either logs the game's own load line or tears the handles down.  Neither may appear.
+    $loadP = @(Get-Since $P $mPress | Where-Object {
+        $_ -match 'world: dropping every world-scoped handle' -or
+        $_ -match 'LoadMapWithLoadingScreen' -or
+        $_ -match 'travel: hard' })
+    Verdict $step $P ($loadP.Count -eq 0) 'the press did NOT reload the world (no load/teardown line)' $(if ($loadP.Count) { ([string]$loadP[-1]).Trim() } else { 'no load or teardown line' })
+    $loadH = @(Get-Since $H $mPressH | Where-Object {
+        $_ -match 'world: dropping every world-scoped handle' -or
+        $_ -match 'LoadMapWithLoadingScreen' })
+    Verdict $step $H ($loadH.Count -eq 0) "the PARTNER's world was not reloaded by the press" $(if ($loadH.Count) { ([string]$loadH[-1]).Trim() } else { 'no load or teardown line' })
+    # ROUND 2: the ORIGINAL risk was "the Game Over dispatch is refused".  Measured live, that
+    # dispatch does not fire on this build at all -- the screen is created some other way -- so
+    # the check must accept EITHER half of the defence: the `ShowGameOverScreen` refusal, or the
+    # reload refusal that closes the window behind Continue (which is the load-bearing one).
+    $blk = @(Get-Since $P $mP | Where-Object {
+        $_ -match 'respawn: BLOCK the game.s death flow' -or
+        $_ -match 'respawn: BLOCK the world reload' -or
+        $_ -match 'respawn: BLOCK the death screen' })
     Verdict $step $P ($blk.Count -gt 0) 'the world-reloading death flow was refused' $(if ($blk.Count) { ([string]$blk[-1]).Trim() } else { '' })
     Save-Shots 'death1-down'
     $up1 = @(Wait-Since $P 'respawn: respawned at ' $mP 40)
@@ -2641,6 +2696,14 @@ function Invoke-DeathPhase([int]$H, [int]$P) {
     }
     $want1 = $base1 * 0.90
     Verdict $step $P ($base1 -gt 0 -and [math]::Abs($hp1 - $want1) -le 1.5) 'the restored HP is 90 % of the base' ("hp={0} want={1} (base {2})" -f $hp1, $want1, $base1)
+    # ROUND 2: THE INPUT/MOVEMENT RESTORE IS REAL, NOT A REPORTED NO-OP.  The first version
+    # resolved `EnableAllPlayerInput` / `SetMovementMode` on the pawn, where neither is
+    # declared, so every line said `input=0`.  The lane now resolves each where it lives
+    # (PlayerStatsAndUtils_C's CDO, the CharacterMovement component, the PlayerController) and
+    # the respawn line must say so.
+    $upLine = if ($up1.Count -gt 0) { [string]$up1[-1] } else { '' }
+    Verdict $step $P ($upLine -match 'input=1') 'the input gate was actually enabled (input=1, not the old no-op)' $upLine.Trim()
+    Verdict $step $P ($upLine -match 'walking=1') 'the movement component was set back to Walking' $upLine.Trim()
     $drop = @(Get-Since $P $mP | Where-Object { $_ -match 'world: dropping every world-scoped handle' })
     Verdict $step $P ($drop.Count -eq 0) 'the dying machine did NOT tear its world down' $(if ($drop.Count) { ([string]$drop[-1]).Trim() } else { 'no teardown line' })
     $wH1 = Get-WorldState $H

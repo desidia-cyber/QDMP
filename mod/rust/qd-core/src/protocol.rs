@@ -1301,12 +1301,25 @@ pub struct Save {
     pub seq: u32,
     /// 1 = host, 2 = peer, 0 = unspecified. Diagnostics only.
     pub role: u8,
+    /// Which of the receiver's OWN writers must run (see [`save_route`]). A route, never
+    /// a save file: this build's player-facing save is the checkpoint REST, which writes
+    /// `World0_Suspend_N.sav`, so a partner answering with a main-slot write would have
+    /// saved a different file than the one its own game resumes from (round 3 live).
+    pub route: u8,
 }
 
 /// `SAVE.role` (WIRE.md §3.27).
 pub mod save_role {
     pub const HOST: u8 = 1;
     pub const PEER: u8 = 2;
+}
+
+/// `SAVE.route` (WIRE.md §3.27). 0 is accepted as "unspecified" and means `SLOT`, so a
+/// 5-byte body from a sender that predates this field still mirrors.
+pub mod save_route {
+    pub const UNSPECIFIED: u8 = 0;
+    pub const SLOT: u8 = 1;
+    pub const SUSPEND: u8 = 2;
 }
 
 /// A decoded body, tagged by its kind.
@@ -1965,6 +1978,7 @@ pub fn encode_body(body: &Body) -> Result<Vec<u8>> {
         Body::Save(s) => {
             w.write_u32(s.seq)?;
             w.write_u8(s.role)?;
+            w.write_u8(s.route)?;
         }
     }
 
@@ -2127,6 +2141,15 @@ pub fn decode_body(kind: Kind, bytes: &[u8]) -> Result<Body> {
             }
             let mut rows = Vec::new();
             for _ in 0..n {
+                // [live-ip2] Same rule as OBJECTS below: a sender whose set has more rows
+                // than one datagram holds caps the body at `MAX_ENEMY_ROWS` (qdwire.h
+                // `WriteEnemyChunk`) while the header still says how big the set is, so a
+                // chunk carries fewer rows than `n`.  Without this stop the RELAY rejected
+                // those datagrams and neither peer saw them (measured: 301 `malformed
+                // datagram ... (kind 0x14)` in one run).
+                if r.is_empty() {
+                    break;
+                }
                 rows.push(EnemyRow {
                     id: read_guid(&mut r)?,
                     x: r.read_i32()?,
@@ -2396,6 +2419,17 @@ pub fn decode_body(kind: Kind, bytes: &[u8]) -> Result<Body> {
             let n = r.read_u16()? as usize;
             let mut entries = Vec::new();
             for _ in 0..n {
+                // [live-ip2] MEASURED (round 3, `_test/*/out/relay-*.log`): `n` is the WHOLE
+                // set size, not this datagram's share (WIRE.md §3.20), so a set larger than
+                // one 1200-byte body arrives as several datagrams each carrying fewer rows
+                // than `n`.  Without this stop the decoder demanded `n` full rows from every
+                // chunk, failed, and the RELAY dropped the datagram before either peer saw
+                // it: 624 `malformed datagram ... (kind 0x2a): needed 128 bits, 0 available`
+                // in one run.  ACTOR_STATES and INVENTORY already had this guard; OBJECTS
+                // did not, which is why the host -> peer object leg never crossed.
+                if r.is_empty() {
+                    break;
+                }
                 let key = read_guid(&mut r)?;
                 let shape = r.read_u8()?;
                 let state = r.read_u8()?;
@@ -2557,7 +2591,14 @@ pub fn decode_body(kind: Kind, bytes: &[u8]) -> Result<Body> {
             if role > save_role::PEER {
                 return Err(Error::OutOfRange { what: "save role", value: i64::from(role) });
             }
-            Body::Save(Save { seq, role })
+            // A 5-byte body (seq+role) predates the route field and means the main slot;
+            // refusing it would lose a partner's save over a diagnostic choice.
+            let route = if r.is_empty() { save_route::SLOT } else { r.read_u8()? };
+            let route = if route == save_route::UNSPECIFIED { save_route::SLOT } else { route };
+            if route > save_route::SUSPEND {
+                return Err(Error::OutOfRange { what: "save route", value: i64::from(route) });
+            }
+            Body::Save(Save { seq, role, route })
         }
         Kind::Log => {
             // The whole body is the message; nothing to parse.
@@ -2589,13 +2630,22 @@ mod tests {
         let zero = KillXp { id: sample_guid(), seq: 0, xp: 0 };
         assert!(decode_body(Kind::KillXp, &encode_body(&Body::KillXp(zero)).unwrap()).is_err());
 
-        let s = Save { seq: 7, role: save_role::PEER };
+        let s = Save { seq: 7, role: save_role::PEER, route: save_route::SUSPEND };
         let bytes = encode_body(&Body::Save(s)).unwrap();
-        assert_eq!(bytes.len(), 5);
+        assert_eq!(bytes.len(), 6);
         assert_eq!(decode_body(Kind::Save, &bytes).unwrap(), Body::Save(s));
         // A role outside the two the build knows is a framing error.
-        let bad = Save { seq: 1, role: 9 };
+        let bad = Save { seq: 1, role: 9, route: save_route::SLOT };
         assert!(decode_body(Kind::Save, &encode_body(&Body::Save(bad)).unwrap()).is_err());
+        // A route outside the two the build knows is a framing error too.
+        let bad_route = Save { seq: 1, role: save_role::HOST, route: 9 };
+        assert!(decode_body(Kind::Save, &encode_body(&Body::Save(bad_route)).unwrap()).is_err());
+        // A 5-byte body predates `route` and means the main slot, not a refusal.
+        let short = bytes[..5].to_vec();
+        match decode_body(Kind::Save, &short).unwrap() {
+            Body::Save(b) => assert_eq!(b.route, save_route::SLOT),
+            other => panic!("expected save, got {other:?}"),
+        }
     }
 
     fn sample_guid() -> Guid {

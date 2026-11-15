@@ -351,6 +351,32 @@ inline Q4 QFromRotator(float pitch, float yaw, float roll)
     return q;
 }
 
+inline Q4 QConj(const Q4& q) { Q4 r = {-q.x, -q.y, -q.z, q.w}; return r; }
+
+// FQuat -> FRotator (degrees), UE4's own formula (FQuat::Rotator): out = pitch, yaw, roll.
+inline void QToRotator(const Q4& q, float out[3])
+{
+    const float r2d = 180.0f / 3.14159265f;
+    float st = q.z * q.x - q.w * q.y;
+    float yy = 2.0f * (q.w * q.z + q.x * q.y);
+    float yx = 1.0f - 2.0f * (q.y * q.y + q.z * q.z);
+    float yaw = atan2f(yy, yx) * r2d;
+    float pitch, roll;
+    if (st < -0.4999995f) {
+        pitch = -90.0f;
+        roll = -yaw - 2.0f * atan2f(q.x, q.w) * r2d;
+    } else if (st > 0.4999995f) {
+        pitch = 90.0f;
+        roll = yaw - 2.0f * atan2f(q.x, q.w) * r2d;
+    } else {
+        pitch = asinf(2.0f * st) * r2d;
+        roll = atan2f(-2.0f * (q.w * q.x + q.y * q.z), 1.0f - 2.0f * (q.x * q.x + q.y * q.y)) * r2d;
+    }
+    while (roll > 180.0f) roll -= 360.0f;
+    while (roll < -180.0f) roll += 360.0f;
+    out[0] = pitch; out[1] = yaw; out[2] = roll;
+}
+
 inline Q4 XfRot(const Xf& x) { Q4 q = {x.qx, x.qy, x.qz, x.qw}; return q; }
 inline V3 XfPos(const Xf& x) { V3 v = {x.tx, x.ty, x.tz}; return v; }
 
@@ -364,6 +390,26 @@ inline Xf XfCompose(const Xf& parent, const Xf& child)
     t = Add(QRotate(XfRot(parent), t), XfPos(parent));
     r.tx = t.x; r.ty = t.y; r.tz = t.z;
     r.sx = parent.sx * child.sx; r.sy = parent.sy * child.sy; r.sz = parent.sz * child.sz;
+    return r;
+}
+
+// `world` expressed in `parent`'s space -- the exact inverse of XfCompose(parent, .),
+// so XfCompose(parent, XfRelativeTo(parent, world)) == world.  Needed to hang a
+// component off a moving socket: the engine stores a transform relative to the socket,
+// while a placement is known in the body's component space (the swing arc, R45).
+inline Xf XfRelativeTo(const Xf& parent, const Xf& world)
+{
+    Xf r = XfIdentity();
+    Q4 qi = QConj(XfRot(parent));
+    Q4 q = QMul(qi, XfRot(world));
+    r.qx = q.x; r.qy = q.y; r.qz = q.z; r.qw = q.w;
+    V3 t = QRotate(qi, Sub(XfPos(world), XfPos(parent)));
+    r.tx = parent.sx != 0.0f ? t.x / parent.sx : t.x;
+    r.ty = parent.sy != 0.0f ? t.y / parent.sy : t.y;
+    r.tz = parent.sz != 0.0f ? t.z / parent.sz : t.z;
+    r.sx = parent.sx != 0.0f ? world.sx / parent.sx : world.sx;
+    r.sy = parent.sy != 0.0f ? world.sy / parent.sy : world.sy;
+    r.sz = parent.sz != 0.0f ? world.sz / parent.sz : world.sz;
     return r;
 }
 
@@ -453,6 +499,26 @@ struct Body {
     bool    deadIn;          // the sender is dying or dead
     uint32_t statusMask;     // STATUS bits shown
     void*   statusFx[16][5]; // Niagara components per bit, one per anchor bone
+    // [combat-grip] The FP arms and the full-body mesh are different rigs: the weapon
+    // socket sits at the same place on both hands but with a different ORIENTATION, so a
+    // socket-relative transform from the first-person side lands rotated on the body.
+    // `grip` is that frame difference measured once from the two rest poses
+    // (inv(L_body) * L_fp); `ApplyEquip` composes it onto every held item.
+    bool    gripCal;         // the FP-socket -> body-bone grip correction is measured
+    uint8_t gripTries;       // bounded retries, so a hopeless calibration is not per-frame
+    Xf      grip[2];         // [0] right, [1] left
+    // The two weapon-bone REST transforms, captured with the rest pose.  Weapon_L is not
+    // in the FK table on this branch (an undriven bone keeps its stored offset from
+    // Hand_L and follows the arm), so its rest transform is captured separately: both are
+    // needed to measure the grip frame difference.
+    Xf      weaponRest[2];   // [0] Weapon_R, [1] Weapon_L (component space, at rest)
+    bool    weaponRestOk[2];
+    // [combat-grip] The body rig has no grip pose, so a held item used to sit in an open
+    // palm.  These are the four-bone finger chains and their rest local transforms.
+    bool    fingersReady;    // the finger chains below were resolved
+    QdName  fbone[2][5][4];  // [hand][finger][segment]
+    Xf      flocal[2][5][4]; // rest local transform of each segment (relative to its parent)
+    uint8_t fcount[2][5];    // segments in each chain
 };
 
 // PLAYER.action kinds (WIRE.md 3.5).  0..4 are the original values; the rest name the
@@ -569,6 +635,35 @@ inline void Jab(Body* b)
     b->actT = 0.22f * b->actDur - 0.04f;
 }
 
+// WHICH SWING, FROM THE SENDER'S ARC.  Ported from the wip line's R47.
+//
+// The body used to pick its swing row from the action counter's PARITY
+// (`row = (actByte >> 5) & 1 ? 0 : 2`), which is a coin toss: the game chooses between
+// `Player_Slash_Right_Montage` and `Player_Slash_LeftDown_Montage` from the direction the
+// player actually swung in, and the counter says nothing about it, so half the partner's
+// swings came out in the wrong direction.
+//
+// The sender already measures the arc's roll and already puts it on the wire: the melee-arc
+// EFFECT row carries (pitch, yaw, roll) in `id`/`yaw`/`pitch`, and `SpawnMeleeArc` reads it
+// to orient the Niagara system.  This is the same number, spent on the POSE: a swing that
+// travels near-horizontal reads as the right-to-left variant and one that turns past a
+// quarter turn reads as the high-right-to-low-left one -- the two moves the game itself
+// has.  Only the generic `A_ATTACK` is refined; an explicit `A_SLASH_R/L/DOWN` is the
+// sender's answer already and is left alone.
+inline void SetSwingVariant(Body* b, float rollDeg)
+{
+    if (!b || b->actKind != A_ATTACK) return;
+    if (!(rollDeg == rollDeg)) return;                 // NaN from a bad row
+    float r = rollDeg;
+    while (r > 180.0f) r -= 360.0f;
+    while (r < -180.0f) r += 360.0f;
+    int row = (fabsf(r) > 90.0f) ? A_SLASH_DOWN : A_SLASH_R;
+    if (row == b->actKind) return;
+    b->actKind = row;
+    QDLOG(LOG_INFO, "body: swing variant from the sender's arc roll ", flt(r, 1),
+          " deg -> ", (row == A_SLASH_DOWN ? "high-right to low-left" : "right to left"));
+}
+
 // `z` shifts the component along the parent's Z.  It is 0 when the parent's origin is the
 // body's feet (the SkeletalMeshActor's root), and the negative capsule half-height when
 // the parent is a Character's capsule, whose origin is its CENTRE.
@@ -629,6 +724,10 @@ inline bool BuildBody(Body* b, void* actor, void* root = nullptr, float poseZ = 
     return true;
 }
 
+// [combat-grip] `CalibrateFingers` is defined below CaptureRest (it only needs the
+// captured rest pose); forward-declare it so CaptureRest can call it.
+inline bool CalibrateFingers(Body* b);
+
 inline bool CaptureRest(Body* b)
 {
     for (int i = 0; i < B_COUNT; ++i) {
@@ -641,8 +740,92 @@ inline bool CaptureRest(Body* b)
         return false;
     }
     b->rigged = true;
+    // The weapon bones' rest transforms (see Body::weaponRest).  A missing Weapon_L is
+    // not fatal: the left grip then stays an identity and the off-hand item keeps the
+    // transform the sender measured.
+    for (int h = 0; h < 2; ++h) {
+        QdName wn;
+        b->weaponRestOk[h] = FNameFromAnsi(h == 0 ? "Weapon_R" : "Weapon_L", &wn) &&
+                             GetBoneXf(b->pose, wn, &b->weaponRest[h]);
+    }
+    CalibrateFingers(b);
     QDLOG(LOG_INFO, "body: rest pose captured, hips at ", flt(b->rest[B_PELVIS].tz, 1), " cm");
     return true;
+}
+
+// [combat-grip] Measure the FP-socket -> body-weapon-bone frame difference once.
+// MEASURED (wip R48): the two rigs put the weapon socket at nearly the same place on the
+// hand (local offset ~ (0,-7,-2) on both) but with a different orientation, so the FP
+// socket-relative transform landed rotated by ~100 deg on the body -- an axe held at the
+// wrong angle while the mesh itself resolved correctly.
+//   body_weapon_local = inv(L_body) * L_fp * fp_socket_local
+// Both L terms are rig constants (a socket/bone relative to its own hand), so the
+// calibration does not depend on the animation pose.  Needs the body's rest pose and the
+// LOCAL player's first-person arms (the only place the FP rig exists).
+
+inline bool CalibrateGrip(Body* b, void* fpArms)
+{
+    if (!b || !b->rigged || !b->pose || !fpArms) return false;
+    static const char* const kHandName[2] = {"Hand_R", "Hand_L"};
+    static const char* const kWeapName[2] = {"Weapon_R", "Weapon_L"};
+    bool any = false;
+    for (int h = 0; h < 2; ++h) {
+        if (!b->weaponRestOk[h]) { b->grip[h] = XfIdentity(); continue; }
+        QdName hn, wn;
+        Xf fpHand, fpWeap;
+        if (!FNameFromAnsi(kHandName[h], &hn) || !FNameFromAnsi(kWeapName[h], &wn)) return false;
+        if (!SocketTransform(fpArms, hn, 2, &fpHand)) return false;
+        if (!SocketTransform(fpArms, wn, 2, &fpWeap)) return false;
+        // lfp: the FP socket inside the FP hand.  lb: the body weapon bone inside the
+        // body hand.  Both are rig constants, so this does not depend on the pose.
+        Xf lfp = XfRelativeTo(fpHand, fpWeap);
+        Xf lb = XfRelativeTo(b->rest[h == 0 ? B_HAND_R : B_HAND_L], b->weaponRest[h]);
+        b->grip[h] = XfRelativeTo(lb, lfp);                 // inv(L_body) * L_fp
+        any = true;
+    }
+    b->gripCal = any;
+    if (any) QDLOG(LOG_INFO, "body: grip calibrated (FP socket -> body weapon bone)");
+    return any;
+}
+
+// [combat-grip] Resolve the body's four-bone finger chains and their rest local
+// transforms.  Called once with the hand at rest; Animate() then curls them when that
+// hand holds an item.  MEASURED (wip R48): 38 bones across both hands.
+inline bool CalibrateFingers(Body* b)
+{
+    if (!b || !b->rigged || !b->pose) return false;
+    static const char* const kChain[5][4] = {
+        {"thumb1", "thumb2", "thumb3", ""},
+        {"index1_base", "index1", "index2", "index3"},
+        {"middle1_base", "middle1", "middle2", "middle3"},
+        {"ring1_base", "ring1", "ring2", "ring3"},
+        {"pinky1_base", "pinky1", "pinky2", "pinky3"},
+    };
+    static const int kHand[2] = {B_HAND_R, B_HAND_L};
+    int total = 0;
+    for (int h = 0; h < 2; ++h) {
+        const char* suffix = h == 0 ? "_r" : "_l";
+        for (int c = 0; c < 5; ++c) {
+            Xf prev = b->rest[kHand[h]];
+            int n = 0;
+            for (int k = 0; k < 4 && kChain[c][k][0]; ++k) {
+                char name[64];
+                wsprintfA(name, "%s%s", kChain[c][k], suffix);
+                QdName fn;
+                Xf cur;
+                if (!FNameFromAnsi(name, &fn) || !GetBoneXf(b->pose, fn, &cur)) { n = 0; break; }
+                b->fbone[h][c][k] = fn;
+                b->flocal[h][c][k] = XfRelativeTo(prev, cur);
+                prev = cur;
+                ++n;
+            }
+            b->fcount[h][c] = (uint8_t)n;
+            total += n;
+        }
+    }
+    b->fingersReady = total > 0;
+    QDLOG(LOG_INFO, "body: finger chains calibrated (", dec(total), " bones)");
+    return b->fingersReady;
 }
 
 // Show `path` in hand h with `rel` relative to the hand's weapon bone: a static mesh
@@ -939,6 +1122,36 @@ inline void Animate(Body* b, float x, float y, float z, float yawDeg, uint32_t n
             i == B_HAND_L || (i == B_HAND_R && fabsf(b->wrist) < 0.5f))
             continue;
         SetBoneXf(b->pose, b->bone[i], t);
+    }
+    // [combat-grip] A hand that holds something closes its fingers around it.  The body
+    // rig has no grip pose, so without this a weapon sits in an open palm.  Curl each
+    // four-bone chain about the bone's local X; an empty hand is left in the rest pose.
+    if (b->fingersReady) {
+        static const float kCurl[5][4] = {
+            {30.0f, 25.0f, 20.0f, 0.0f},     // thumb
+            {20.0f, 45.0f, 50.0f, 35.0f},    // index
+            {20.0f, 45.0f, 50.0f, 35.0f},    // middle
+            {20.0f, 45.0f, 50.0f, 35.0f},    // ring
+            {20.0f, 45.0f, 50.0f, 35.0f},    // pinky
+        };
+        static const int kHandBone[2] = {B_HAND_R, B_HAND_L};
+        for (int h = 0; h < 2; ++h) {
+            if (!b->held[h].path[0]) continue;
+            Xf hand = b->rest[kHandBone[h]];
+            Q4 hq = QMul(acc[kHandBone[h]], XfRot(b->rest[kHandBone[h]]));
+            hand.qx = hq.x; hand.qy = hq.y; hand.qz = hq.z; hand.qw = hq.w;
+            hand.tx = pos[kHandBone[h]].x; hand.ty = pos[kHandBone[h]].y; hand.tz = pos[kHandBone[h]].z;
+            for (int c = 0; c < 5; ++c) {
+                Xf cur = hand;
+                for (int k = 0; k < b->fcount[h][c]; ++k) {
+                    Xf curl = XfIdentity();
+                    Q4 q = QAxisAngle(X, kCurl[c][k] * D);
+                    curl.qx = q.x; curl.qy = q.y; curl.qz = q.z; curl.qw = q.w;
+                    cur = XfCompose(cur, XfCompose(b->flocal[h][c][k], curl));
+                    SetBoneXf(b->pose, b->fbone[h][c][k], cur);
+                }
+            }
+        }
     }
     b->dbgHandL = pos[B_HAND_L];
 }

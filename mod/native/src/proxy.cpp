@@ -185,12 +185,19 @@ typedef void      (*FnSetGlobalDilation)(void* worldContext, float dilation);
 typedef float     (*FnGetGlobalDilation)(void* worldContext);
 typedef void      (*FnStoreEnemy)(void* self, const QdGuid* guid, float respawn, float hp);
 typedef void      (*FnProcessEvent)(void* self, void* func, void* parms);
+// `UGameplayStatics::SaveGameToSlot(USaveGame* SaveGameObject, const FString& SlotName,
+// int32 UserIndex) -> bool`.  This is the ONE primitive every save in this game reaches
+// (analysis/re/combat_save_evidence.txt §C9.1-2: its only callers are the native
+// FB_SaveUtils functions plus the exec thunk), which is why it -- and not ProcessEvent --
+// is where a player's save can be observed.
+typedef bool      (*FnSaveGameToSlot)(void* saveObject, const void* slotName, int32_t userIndex);
 
 FnTick            g_oTick = nullptr;
 FnSetGamePaused   g_oSetGamePaused = nullptr;
 FnSetGlobalDilation g_oSetGlobalDilation = nullptr;
 FnStoreEnemy      g_oStoreEnemy = nullptr;
 FnProcessEvent    g_oProcessEvent = nullptr;
+FnSaveGameToSlot  g_oSaveGameToSlot = nullptr;
 
 Net               g_net;
 bool              g_engineReady = false;
@@ -283,6 +290,11 @@ progression::KillXp     g_killXp;
 progression::SaveBoard  g_saveBoard;
 uint32_t                g_saveSeq = 0;
 void*                   g_xpCls = nullptr;
+// [progression] WHICH OBJECT the resolved offset belongs to, and the save it was resolved
+// against.  MEASURED (round 2 live): no XP name resolves on the PLAYER class at all, and the
+// slot blueprint's own property table carries `XPAmount`, so the counter is a SAVE property.
+void*                   g_xpObj = nullptr;
+void*                   g_xpSaveObj = nullptr;
 int                     g_xpOffset = -1;
 int                     g_xpSize = 0;
 bool                    g_xpIsFloat = false;
@@ -1350,10 +1362,21 @@ void HostApplyIntent(wire::Reader& r)
         // refused here, so the chest opened on the peer and never on the host.  Zero is
         // "no baseline", not an older world; the value itself still goes through the
         // game's own setter and is read back.
+        //
+        // [world-interact] MEASURED (round 3 live): the same deadlock the object lane had in
+        // round 2 reached THIS lane too -- `actor-state intent refused (stale): based_on=10
+        // last_sent=24`, and in round 3 `based_on=159 last_sent=160` / `based_on=160
+        // last_sent=161` on a busy machine.  A revision is only a proxy for "is this request
+        // still meaningful", and the host can measure that directly because it holds the
+        // actor: `WrSetActorState` writes through the game's own setter, reads the container
+        // back, and the direction is legal for the shape (`interact::ApplyAllowed`).  A
+        // stale basis therefore costs nothing here while refusing it costs the whole
+        // peer -> host leg (retried 5 times against a frozen view, then given up).  It is
+        // still REPORTED, because a permanently stale peer is a transport fact worth seeing.
         if (b.based_on_rev != 0 && b.based_on_rev < lastSent) {
-            QDLOG(LOG_INFO, "actor-state intent refused (stale): based_on=",
-                  dec(b.based_on_rev), " last_sent=", dec(lastSent));
-            return;
+            QDLOG(LOG_INFO, "actor-state intent: a stale basis (based_on=", dec(b.based_on_rev),
+                  " last_sent=", dec(lastSent), ") is accepted here; this machine decides",
+                  " on its own state");
         }
         QdGuid g = { b.guid[0], b.guid[1], b.guid[2], b.guid[3] };
         void* actor = nullptr;
@@ -1374,6 +1397,19 @@ void HostApplyIntent(wire::Reader& r)
                     sh = interact::ShapeOfClass(cn);
                 haveHad = ObjectStateOf(actor, sh, &had, &used);
             } __except (EXCEPTION_EXECUTE_HANDLER) { haveHad = false; }
+            // [world-interact] The DIRECTION half of the object lane's acceptance test,
+            // applied to this lane too: a one-way shape (a broken barrel, an opened chest)
+            // must never be closed or un-broken by the partner.  The actor-state lane had
+            // no such test -- it wrote whatever value arrived -- so a mirrored close on a
+            // breakable would have revived it.  `SH_NONE` (a class this build does not
+            // classify) passes, because refusing there would break every lane that
+            // predates the classification.
+            if (!interact::DirectionAllowed(wantByte, sh)) {
+                QDLOG(LOG_INFO, "actor-state intent: guid=", hex32(g.a), " value=",
+                      dec(b.value), " is a direction this shape does not have (a one-way ",
+                      "shape is never closed or un-broken by the partner); ignored");
+                return;
+            }
         }
         char err[192];
         bool changed = false;
@@ -1384,6 +1420,14 @@ void HostApplyIntent(wire::Reader& r)
             // run the actor's own load-path refresh once so the authority's world shows
             // what the partner did.
             bool needRefresh = changed || (haveHad && had != wantByte);
+            // [world-interact] A DOOR IS ALWAYS ANIMATED, even when the container and its
+            // own bool already agree: measured round 2/3, the peer's close reached this
+            // container and no close visual ever ran, because `had == want` (or no readable
+            // bool at all) skipped the one call that drives the timeline.  `changed` alone
+            // is not evidence the door looks right.
+            if (Cfg().interact_sync && interact::WantsExplicitAnim(sh, wantByte)) {
+                needRefresh = true;
+            }
             if (needRefresh && actor && index >= 0) {
                 char rerr[192];
                 if (!WrRefreshActorState(actor, index, b.value, rerr, sizeof(rerr))) {
@@ -1414,10 +1458,18 @@ void HostApplyIntent(wire::Reader& r)
         // == 0` means "this peer has not seen any host object body yet", which is not a
         // stale view, and refusing it was what left G2's chest open on one machine only.
         uint32_t lastSent = g_objPub.Revision() - 1;
+        // [world-interact] MEASURED (round 2 live): refusing a stale basis DEADLOCKED this
+        // lane.  A revision is only a proxy for "is this request still meaningful", and this
+        // machine can measure that directly, because it holds the actor: the
+        // `interact::ApplyAllowed` test below applies ONLY when THIS machine's own state
+        // differs from the request and the request is a legal direction.  A stale basis
+        // therefore costs nothing here, while refusing it cost the whole peer -> host leg
+        // (the intent is retried 5 times against a frozen view and then given up).  It is
+        // still reported, because a permanently stale peer is a transport fact worth seeing.
         if (b.based_on_rev != 0 && b.based_on_rev < lastSent) {
-            QDLOG(LOG_INFO, "object intent refused (stale): based_on=", dec(b.based_on_rev),
-                  " last_sent=", dec(lastSent));
-            return;
+            QDLOG(LOG_INFO, "object intent: a stale basis (based_on=", dec(b.based_on_rev),
+                  " last_sent=", dec(lastSent), ") is accepted here; this machine decides",
+                  " on its own state");
         }
         uint8_t want = (uint8_t)(b.value != 0 ? 1 : 0);
         int idx = ObjectFindByKey(b.guid);
@@ -2395,6 +2447,7 @@ avatar::Body g_body = {};
 uint8_t  g_peerAction = 0;
 int      g_peerAirborne = -1;
 uint32_t g_peerActionMs = 0;
+int16_t  g_peerPitchQ = 0;           // [combat-grip] R45: the peer's view pitch (latest PLAYER row)
 wire::EquipBody g_peerEquip = {};
 bool g_peerEquipDirty = false;
 
@@ -2440,12 +2493,26 @@ avatar::Xf XfFromWire(const int32_t* v)
 
 void ApplyEquip(avatar::Body* b, const wire::EquipBody& e)
 {
+    // [combat-grip] The body's weapon bone and the FP weapon socket sit at the same place
+    // on the hand but with different ORIENTATIONS (measured ~100 deg apart, wip R48), so
+    // the sender's socket-relative transform landed rotated on the body.  Measure that
+    // frame once and compose it onto every held item.  Needs the body's rest pose AND the
+    // LOCAL player's first-person arms, so it is retried: the first equipment packet
+    // arrives before the body is rigged on a fast connect.
+    if (!b->gripCal && b->rigged) {
+        if (b->gripTries < 255) ++b->gripTries;
+        int ao = IsGameplayPawn(g_localPawn) ? FindPropertyOffsetIn(ObjClass(g_localPawn), "Arms") : -1;
+        void* arms = ao >= 0 ? *(void**)((uint8_t*)g_localPawn.Get() + ao) : nullptr;
+        if (arms) avatar::CalibrateGrip(b, arms);
+    }
     bool done[2] = {false, false};
     for (int i = 0; i < e.n; ++i) {
         const wire::EquipItem& it = e.items[i];
         int h = it.hand ? 1 : 0;
         if (done[h] || (it.mesh_kind != 1 && it.mesh_kind != 2)) continue;
-        avatar::SetHeld(b, h, it.path, XfFromWire(it.xform), it.mesh_kind);
+        avatar::Xf rel = XfFromWire(it.xform);
+        if (b->gripCal) rel = avatar::XfCompose(b->grip[h], rel);
+        avatar::SetHeld(b, h, it.path, rel, it.mesh_kind);
         done[h] = true;
     }
     for (int h = 0; h < 2; ++h) if (!done[h]) avatar::SetHeld(b, h, "", avatar::XfIdentity());
@@ -2755,6 +2822,12 @@ void PuppetPump(uint32_t now)
     if (g_peerEquipDirty) {
         g_peerEquipDirty = false;
         ApplyEquip(&g_body, g_peerEquip);
+    } else if (g_body.rigged && !g_body.gripCal && g_body.gripTries < 3) {
+        // [combat-grip] The peer's equipment arrived before this body captured its rest
+        // pose, so the grip frame could not be measured yet.  Re-apply a few times once it
+        // can be (the FP arms may not exist on the first frame either); the held items
+        // keep the transform they were given until then.
+        ApplyEquip(&g_body, g_peerEquip);
     }
     if (g_body.actByte != g_peerAction) {
         QDLOG(LOG_INFO, "peer action kind ", dec(g_peerAction & 0x1F), " #", dec(g_peerAction >> 5));
@@ -2980,7 +3053,7 @@ void SpawnEffect(const wire::EffectBody& e, float offX, float offY)
     // [combat-vfx] kind 5: one Niagara SYSTEM at a world point -- a projectile's
     // impact, or a cast/spell effect the player's action spawns as its own actor.
     // Visual only: nothing it spawns can collide or tick a hit.
-    if (e.kind == 5) { SpawnSystemAt(e, offX, offY); return; }
+    if (e.kind == 5) { if (Cfg().combat_vfx) SpawnSystemAt(e, offX, offY); return; }  // [coordinator] review #9
     if (e.kind != 1) return;
     void* cls = avatar::LoadAsset(e.cls);
     if (!cls) return;
@@ -3622,6 +3695,13 @@ void ArcObservePump(uint32_t now)
         e.id = (uint16_t)wire::QuantizeAngle(r[0]);
         e.pitch = wire::QuantizeAngle(r[2]);
         e.yaw = wire::QuantizeAngle(r[1]);
+        // [combat-grip] R45: mark this arc as CAMERA-RELATIVE, so the receiver anchors its
+        // origin to the WEAPON instead of rebuilding the sender's eye.  In first person the
+        // arc's own origin sits ON the camera (~0,0,-11) and its crescent is drawn forward
+        // of it, because the weapon is in front of the eye; on a third-person body that put
+        // the ring at the HEAD, behind the blade the sender saw.  1 is outside every
+        // lifetime an arc carries (the projectile lane uses 2000-6000 ms).
+        e.life_ms = 1;
         QDLOG(LOG_INFO, "arc: local ", e.cls, " rot=", flt(r[0], 1), ",", flt(r[1], 1), ",", flt(r[2], 1),
               " params=", dec(np), " +", dec((int)(now - atkAt)), "ms");
         FxSend(e);
@@ -3644,12 +3724,79 @@ void SpawnMeleeArc(const wire::EffectBody& e, avatar::Body* b)
     if (avatar::HasCI(parts[0], "thrust")) avatar::Jab(b);
     void* sys = avatar::LoadAsset(parts[0]);
     if (!sys) return;
-    // The arms' frame is the body mesh's frame (Y forward, X left, Z up), so the arc
-    // keeps its relative rotation; it sits at eye height instead of at the camera.
-    float loc[3] = {0.0f, 12.0f, 150.0f};
+    // [combat-vfx] the arc's roll is also the swing's DIRECTION (wip R47): the body used to
+    // pick right-to-left or high-right-to-low-left from the action counter's parity, which
+    // is a coin toss.  Same number, spent on the pose instead of only on the system's
+    // rotation.
     float rot[3] = {wire::DequantizeAngle((int16_t)e.id), wire::DequantizeAngle(e.yaw), wire::DequantizeAngle(e.pitch)};
+    avatar::SetSwingVariant(b, rot[2]);
+    // [combat-grip] R45: THE ARC BELONGS TO THE WEAPON, NOT THE HEAD.  MEASURED: the
+    // sender's arc origin sits on its first-person camera (~0,0,-11) with the crescent
+    // drawn forward of it, because in first person the weapon is in front of the eye.
+    // Rebuilding that camera on a third-person body anchored the ring to the HEAD -- at
+    // shoulder height and behind the blade.  So the origin comes from the body's Weapon_R
+    // socket (the grip the held mesh and the swing both follow), the sender's view pitch
+    // is kept for the arc's lean, and the component is ATTACHED to that socket so it
+    // follows the swing instead of freezing at its spawn pose.
+    float loc[3] = {0.0f, 12.0f, 150.0f};
+    avatar::Q4 arcQ = {0, 0, 0, 1};
+    float scl[3] = {1.0f, 1.0f, 1.0f};
+    bool camRel = false;
+    avatar::Xf sockXf;
+    QdName sockName = {0, 0};
+    bool socketOk = false;
+    if (e.life_ms == 1) {                              // 1: camera-relative transform
+        float pitch = 0.0f;
+        if (b == &g_body) pitch = wire::DequantizeAngle(g_peerPitchQ);
+        else { float vy; if (!LocalViewRotation(&pitch, &vy)) pitch = 0.0f; }
+        if (pitch > 180.0f) pitch -= 360.0f;
+        avatar::V3 at = {0.0f, 10.0f, 110.0f};         // before the rig has posed
+        if (FNameFromAnsi("Weapon_R", &sockName) && sockName.comparison_index != 0) {
+            socketOk = avatar::SocketTransform(b->pose, sockName, 2, &sockXf);
+        }
+        if (socketOk) {
+            at.x = sockXf.tx; at.y = sockXf.ty; at.z = sockXf.tz;
+        } else {
+            avatar::Xf boneXf;                         // socket resolve failed
+            if (avatar::GetBoneXf(b->pose, b->bone[avatar::B_WEAPON_R], &boneXf)) {
+                at.x = boneXf.tx; at.y = boneXf.ty; at.z = boneXf.tz;
+            }
+        }
+        avatar::Q4 cq = avatar::QFromRotator(pitch, 90.0f, 0.0f);
+        loc[0] = at.x; loc[1] = at.y; loc[2] = at.z;
+        arcQ = avatar::QMul(cq, avatar::QFromRotator(rot[0], rot[1], rot[2]));
+        avatar::QToRotator(arcQ, rot);
+        if (e.vx || e.vy || e.vz) { scl[0] = e.vx / 1000.0f; scl[1] = e.vy / 1000.0f; scl[2] = e.vz / 1000.0f; }
+        camRel = true;
+    }
     void* c = NiagaraSpawnAttached(sys, b->pose, loc, rot, true);
     if (!c) { QDLOG(LOG_WARN, "arc: spawn failed for ", parts[0]); return; }
+    bool sockAttached = false;
+    if (camRel) {
+        avatar::Xf x = avatar::XfIdentity();
+        x.qx = arcQ.x; x.qy = arcQ.y; x.qz = arcQ.z; x.qw = arcQ.w;
+        x.tx = loc[0]; x.ty = loc[1]; x.tz = loc[2];
+        x.sx = scl[0]; x.sy = scl[1]; x.sz = scl[2];
+        if (socketOk) {
+            avatar::AttachTo(c, b->pose, sockName);
+            // "called=yes is not evidence": confirm the socket attach actually took
+            // before handing the engine a socket-relative transform.
+            void* ap = avatar::A().attachParent >= 0
+                     ? *(void**)((uint8_t*)c + avatar::A().attachParent) : nullptr;
+            QdName got = {0, 0};
+            if (avatar::A().attachSocket >= 0) got = *(QdName*)((uint8_t*)c + avatar::A().attachSocket);
+            sockAttached = ap == b->pose && got.comparison_index == sockName.comparison_index;
+        }
+        if (sockAttached) {
+            avatar::SetRelativeTransform(c, avatar::XfRelativeTo(sockXf, x));
+        } else {
+            if (socketOk) {                            // undo a half-done attach
+                QdName none = {0, 0};
+                avatar::AttachTo(c, b->pose, none);
+            }
+            avatar::SetRelativeTransform(c, x);
+        }
+    }
     int set = 0;
     for (int k = 1; k < 8 && parts[k][0]; ++k) {
         char* eq = strchr(parts[k], '=');
@@ -3665,7 +3812,10 @@ void SpawnMeleeArc(const wire::EffectBody& e, avatar::Body* b)
         bool ok = nv == 4 ? NiagaraSetColor(c, parts[k], v) : NiagaraSetFloat(c, parts[k], v[0]);
         set += ok ? 1 : 0;
     }
-    QDLOG(LOG_INFO, "arc: shown ", parts[0], " roll=", flt(rot[2], 0), " params set ", dec(set));
+    QDLOG(LOG_INFO, "arc: shown ", parts[0], " roll=", flt(rot[2], 0),
+          camRel ? " at weapon " : " at ",
+          flt(loc[0], 0), ",", flt(loc[1], 0), ",", flt(loc[2], 0),
+          " params set ", dec(set), " socket ", dec(sockAttached ? 1 : 0));
 }
 
 // ---- status effects (STATUS, WIRE.md 3.15) ------------------------------------
@@ -11684,10 +11834,17 @@ void NpcSetBlocked(void* npc, bool block)
     // 58-byte payload, no parameters): it is what restores the interaction state the
     // Blueprint may have set beyond the flag.  Blocking has no such counterpart.
     bool re = block ? false : CallNoArgs(npc, fReenable, "ReenableInteract");
+    // READ BACK, because "BlockInteract=" with no value is indistinguishable from a failed
+    // write in the log (measured: every Round 2 line read `BlockInteract=`).
+    uint8_t back = 0xFF;
+    bool haveBack = BytePropC(npc, "BlockInteract", &back);
     char d[96];
     ObjDescribe(npc, d, sizeof(d));
-    QDLOG(LOG_INFO, "dialogue: ", (block ? "BLOCK " : "unblock "), d,
-          (wrote ? " BlockInteract=" : " BlockInteract NOT FOUND (property absent)"),
+    QDLOG((wrote && haveBack && back == (block ? 1 : 0)) ? LOG_INFO : LOG_WARN,
+          "dialogue: ", (block ? "BLOCK " : "unblock "), d,
+          (wrote ? " BlockInteract=" : " BlockInteract NOT WRITTEN (property absent)"),
+          dec(haveBack ? (int)back : -1),
+          (haveBack ? "" : " (unreadable)"),
           (block ? "" : (re ? " reenabled" : "")));
 }
 
@@ -12387,9 +12544,31 @@ bool DlgBlockInput(bool block)
     bool move = pc && CallFlag1(pc, fMove, "SetIgnoreMoveInput", block);
     bool look = pc && CallFlag1(pc, fLook, "SetIgnoreLookInput", block);
     // The game's own dialogue gate: NPC_Base calls these around a conversation.
+    //
+    // MEASURED (Round 2, run 2): `WARN fn EnableAllPlayerInput: not found` -- the spectator's
+    // input was never unlocked.  The pair lives on `PlayerStatsAndUtils_C`, a
+    // BlueprintFunctionLibrary, NOT on the player pawn; resolving it on the pawn walks the
+    // pawn's own class chain and misses for ever.  The library CDO is the receiver a
+    // Blueprint's own call dispatches on, and the player is its argument.
     static Fn fDis = {}, fEn = {};
-    bool all = CallNoArgs(g_localPawn, block ? fDis : fEn,
-                          block ? "DisableAllPlayerInput" : "EnableAllPlayerInput");
+    static void* libCdo = nullptr;
+    static void* missCdo = nullptr;
+    if (!libCdo || !ObjectIsLive(libCdo)) {
+        libCdo = FindCdo("PlayerStatsAndUtils_C");
+        missCdo = nullptr;
+    }
+    bool all = false;
+    if (libCdo && ResolvePerClass(block ? fDis : fEn, &missCdo, libCdo,
+                                  block ? "DisableAllPlayerInput" : "EnableAllPlayerInput")) {
+        Fn& f = block ? fDis : fEn;
+        Call c(f);
+        for (int i = 0; i < f.sig.props; ++i) {
+            const PropDesc& d = f.sig.p[i];
+            if (d.flags & (CPF_OutParm | CPF_ReturnParm)) continue;
+            if (NameEquals(d.type, "ObjectProperty")) c.Obj(d.name, g_localPawn);
+        }
+        all = c.Run(libCdo);
+    }
     return all || move || look;
 }
 
@@ -12492,6 +12671,14 @@ bool DlgLocalBusy()
     uint8_t dead = 0;
     if (BytePropC(g_localPawn, "IsDead", &dead) && dead) return true;
     if (g_dlg.talking) return true;              // its OWN conversation
+    // [coordinator] review #4: g_dlg.talking is only written under DialogueSync=1, so read
+    // the manager's own running bool too -- never drive a live local conversation.
+    {
+        uint8_t running = 0;
+        void* dm = ObjPropC(g_localPawn, "DialogueManager");
+        if (dm && !DlgSpectating() && BytePropC(dm, "RunningDialogue", &running) && running)
+            return true;
+    }
     if (g_worldTransition) return true;          // a hard map switch is in flight
     char name[sequence::kMaxNameLen];
     if (LocalCutscene(name, sizeof(name))) return true;
@@ -12664,6 +12851,242 @@ void DevDialogueDump(const char* tag)
     }
 }
 
+// [dialogue] PRESS THE DIALOGUE WIDGET'S OWN CONTINUE.
+//
+// The open item in `mod/doc/features/dialogue.md` was that the rig could not make A advance:
+// the MANAGER has no `DialogueSequenceContinue` UFunction (measured: `fn
+// DialogueSequenceContinue: not found`), so every lever that tried to advance the
+// conversation through the manager resolved nothing.
+//
+// The advance is not on the manager -- it is on the WIDGET, and the widget's surface is in the
+// cooked package.  `DialogueScreen` exports exactly:
+//     ConfirmPressed          the bound handler of `SequenceConfirmButton`  <-- advance
+//     NextOption / PRevOption  the option-list cursor
+//     OptionClicked            a picked entry
+//     LeaveButtonCLicked       the leave entry
+//     ShowDialogueSequenceEntry / ShowDialogueOptions   (graph events, this build's own)
+// plus the two delegates `DialogueSequenceContinue__DelegateSignature` and
+// `DialogueOptionChosen__DelegateSignature` that it fires at its owner.  So pressing
+// "continue" IS `ConfirmPressed` on the widget, and choosing an option is `OptionClicked`
+// (or NextOption + ConfirmPressed).  Calling those is the game's own press path, not a
+// simulated key: the widget's handler runs, the delegate fires, the manager advances.
+//
+// Returns what ran, so the log says which of the surface this build accepted.
+struct DlgPressResult { int ran; char what[160]; };
+
+void* DlgFindWidget()
+{
+    void* dm = IsGameplayPawn(g_localPawn) ? ObjPropC(g_localPawn, "DialogueManager") : nullptr;
+    void* w = dm ? ObjPropC(dm, "Dialogue Widget") : nullptr;
+    if (w && ObjectIsLive(w)) return w;
+    return DlgEnsureWidget();
+}
+
+// The advance: `ConfirmPressed` is the bound handler of `SequenceConfirmButton` (the widget's
+// own advance button), so ONE call of it is exactly one player press.  The two `Show*` graph
+// events are only a FALLBACK for a build where the press handler is not callable -- calling
+// them as well as the handler would advance the conversation twice, which the partner would
+// see as a skipped line.
+DlgPressResult DlgPressContinue()
+{
+    DlgPressResult r; r.ran = 0; r.what[0] = 0;
+    void* w = DlgFindWidget();
+    if (!w) { dlgview::Board::Copy(r.what, sizeof(r.what), "no DialogueScreen widget"); return r; }
+    char ran[160] = "";
+    Fn f = {};
+    if (f.Resolve(w, "ConfirmPressed") && f.sig.props == 0) {
+        Call c(f);
+        if (c.Run(w)) { ++r.ran; lstrcpynA(ran, "ConfirmPressed", sizeof(ran)); }
+    }
+    if (!r.ran) {
+        // A build where the press handler is not callable: one graph entry, once.
+        static const char* const kFallback[] = {"ShowDialogueSequenceEntry", "ShowDialogueOptions"};
+        for (int i = 0; i < (int)(sizeof(kFallback) / sizeof(kFallback[0])); ++i) {
+            Fn g = {};
+            if (!g.Resolve(w, kFallback[i]) || g.sig.props != 0) continue;
+            Call c(g);
+            if (c.Run(w)) { ++r.ran; lstrcpynA(ran, kFallback[i], sizeof(ran)); }
+            break;      // ONE advance per press
+        }
+    }
+    if (!r.ran) dlgview::Board::Copy(r.what, sizeof(r.what), "no advance entry ran on the widget");
+    else dlgview::Board::Copy(r.what, sizeof(r.what), ran);
+    return r;
+}
+
+// A choice: move the option cursor N times, then confirm.  `OptionClicked` takes the entry,
+// so a build that has only that path still records the chosen index in the log.
+DlgPressResult DlgPressOption(int index)
+{
+    DlgPressResult r; r.ran = 0; r.what[0] = 0;
+    void* w = DlgFindWidget();
+    if (!w) { dlgview::Board::Copy(r.what, sizeof(r.what), "no DialogueScreen widget"); return r; }
+    char ran[160] = "";
+    if (index > 0) {
+        Fn f = {};
+        if (f.Resolve(w, "NextOption") && f.sig.props == 0) {
+            int moved = 0;
+            for (int i = 0; i < index && i < 16; ++i) { Call c(f); if (c.Run(w)) ++moved; }
+            // A cursor move is reported but is NOT counted as the pick: `ran` is the number of
+            // pick entries that ran, and the rig's check reads it as "did a choice happen".
+            if (moved) lstrcpynA(ran, "NextOption", sizeof(ran));
+        }
+    }
+    // The clicked-entry handler, with the index this machine asked for when the signature
+    // takes an int (the option's own `DialogueOptionEntry` index).  This IS the pick, so it
+    // is not followed by `ConfirmPressed` -- that would confirm a second time.
+    Fn fClick = {};
+    bool picked = false;
+    if (fClick.Resolve(w, "OptionClicked")) {
+        Call c(fClick);
+        for (int i = 0; i < fClick.sig.props; ++i) {
+            const PropDesc& d = fClick.sig.p[i];
+            if (d.flags & (CPF_OutParm | CPF_ReturnParm)) continue;
+            if (NameEquals(d.type, "IntProperty")) c.I32(d.name, index);
+            else if (NameEquals(d.type, "ByteProperty")) c.U8(d.name, (uint8_t)index);
+        }
+        if (c.Run(w)) {
+            if (ran[0]) lstrcatA(ran, "+");
+            lstrcatA(ran, "OptionClicked");
+            ++r.ran;
+            picked = true;
+        }
+    }
+    if (!picked) {
+        Fn fConf = {};
+        if (fConf.Resolve(w, "ConfirmPressed") && fConf.sig.props == 0) {
+            Call c(fConf);
+            if (c.Run(w)) {
+                if (ran[0]) lstrcatA(ran, "+");
+                lstrcatA(ran, "ConfirmPressed");
+                ++r.ran;
+            }
+        }
+    }
+    if (!r.ran) dlgview::Board::Copy(r.what, sizeof(r.what), "no option entry ran on the widget");
+    else dlgview::Board::Copy(r.what, sizeof(r.what), ran);
+    return r;
+}
+
+// The cursor the LOCAL manager holds, for the "did A actually advance" half of the proof.
+void DlgLogLocalCursor(const char* tag)
+{
+    char asset[dlgview::kAssetCap] = "";
+    uint16_t seq2 = 0, entry = 0, options = 0, chosen = dlgview::kNoOption;
+    bool hideName = false;
+    bool have = ReadLocalDialogueView(asset, sizeof(asset), &seq2, &entry, &options, &chosen,
+                                      &hideName);
+    void* dm = IsGameplayPawn(g_localPawn) ? ObjPropC(g_localPawn, "DialogueManager") : nullptr;
+    int32_t si = -1;
+    if (dm) (void)IntPropC(dm, "CurrentDialogueSequenceIndex", &si);
+    QDLOG(LOG_INFO, "rig: dialogue cursor (", tag, ") talking=", dec(have ? 1 : 0),
+          " asset=", (asset[0] ? asset : "-"), " sequenceIndex=", dec(si),
+          " line=", dec((int)seq2), " entry=", dec((int)entry), " options=", dec((int)options),
+          " chosen=", dec((int)chosen));
+}
+
+// A press of the death screen's own Continue.  MEASURED from the cooked `DieUI` package: the
+// widget has `ContinueButton` (an `FS_Button_C`) whose bound handler is
+// `BndEvt__DieUI_ContinueButton_K2Node_ComponentBoundEvent_4_CommonButtonBaseClicked__...`,
+// and that handler is the widget's only import of `OpenLevel`.  So this lever presses the
+// SCREEN's own path: it finds any live `DieUI_C`, fires its Continue handler by name, and if
+// the handler is not callable it calls `OpenLevel` on the game instance directly (which is
+// exactly what the handler does).  Either way the lane's veto is what must refuse it.
+struct DeathPressResult { bool found; bool handlerRan; bool reloadRan; char what[192]; };
+
+DeathPressResult PressDeathContinue()
+{
+    DeathPressResult r = {false, false, false, ""};
+    void* uw = FindClassByName("UserWidget");
+    int n = ObjectCount();
+    void* screen = nullptr;
+    for (int i = 0; uw && i < n; ++i) {
+        void* o = ObjectAt(i);
+        if (!o || !LooksLikeUObject(o) || !ObjectIsLive(o)) continue;
+        char cn[96] = "";
+        if (FNameToString(ObjNameRaw(ObjClass(o)), cn, sizeof(cn)) <= 0) continue;
+        if (!ContainsCI(cn, "DieUI") && !ContainsCI(cn, "GameOver")) continue;
+        // A CLASS DEFAULT OBJECT is not a screen on the viewport (the same false positive the
+        // dismissal path had): pressing a handler on a CDO is meaningless.
+        char on[96] = "";
+        if (FNameToString(ObjNameRaw(o), on, sizeof(on)) > 0 && !strncmp(on, "Default__", 9)) continue;
+        bool sub = false;
+        __try { sub = IsSubclassOf(ObjClass(o), uw); } __except (EXCEPTION_EXECUTE_HANDLER) { sub = false; }
+        if (!sub) continue;
+        screen = o;
+        break;
+    }
+    if (screen) {
+        r.found = true;
+        // THE CONTINUE HANDLER SPECIFICALLY, never `BndEvt__` at large.
+        // MEASURED (Round 2, run 7): a bare `BndEvt__` prefix match picked WHICHEVER bound
+        // handler the class chain yields first, and `DieUI` also binds `QuitTomenuButton` and
+        // `QuitToDesktopButton` -- so the lever pressed QUIT TO MENU, both machines fell back to
+        // `title_screen`, and the rest of the run measured nothing.  The name is what makes the
+        // press the Continue press, so it is matched in full.
+        Fn f = {};
+        char matched[96] = "";
+        if (f.ResolvePrefix(screen, "BndEvt__DieUI_ContinueButton", matched, sizeof(matched))) {
+            Call c(f);
+            r.handlerRan = c.Run(screen);
+        }
+        if (!r.handlerRan) {
+            // Fallback only if that exact binding is not on this build: the screen's own
+            // continue-shaped entries.  `QuitGame` and the quit buttons are deliberately NOT
+            // in this list -- a lever that ends the session is not a test of the reload rail.
+            static const char* const kEntries[] = {"Continue", "OnContinueClicked", "Close"};
+            for (int i = 0; i < (int)(sizeof(kEntries) / sizeof(kEntries[0])) && !r.handlerRan; ++i) {
+                Fn g = {};
+                if (!g.Resolve(screen, kEntries[i])) continue;
+                Call c(g);
+                r.handlerRan = c.Run(screen);
+            }
+        }
+        dlgview::Board::Copy(r.what, sizeof(r.what),
+                             r.found ? (r.handlerRan ? "fired the death screen's own Continue handler"
+                                                     : "the death screen has no callable Continue handler")
+                                     : "no death screen exists on this machine -- the reload entry was still driven direct");
+    }
+    // The reload itself, through the same entry the handler uses.  This is the call the veto
+    // must refuse; running it is how the proof distinguishes "the veto worked" from "nothing
+    // ever asked".  `UGameplayStatics::OpenLevel` is looked up on the library's CDO, and the
+    // LEVEL NAME IS LEFT EMPTY on purpose: the veto matches the FUNCTION, so the refusal is
+    // measured without resolving a map, and an empty name cannot load anything if the veto
+    // ever failed.
+    bool viaStatic = false;
+    {
+        void* libCdo = FindCdo("GameplayStatics");
+        if (libCdo) {
+            Fn f = {};
+            if (f.Resolve(libCdo, "OpenLevel")) {
+                Call c(f);
+                void* world = GWorldPtr();
+                if (f.Off("WorldContextObject") >= 0)
+                    c.Obj("WorldContextObject", g_localPawn ? g_localPawn : world);
+                r.reloadRan = c.Run(libCdo);
+                viaStatic = true;
+            }
+        }
+    }
+    char buf[192];
+    char* d = buf;
+    const char* e = buf + sizeof(buf) - 1;
+    d = detail::Cat(d, e, "screen=");
+    d = detail::CatDec(d, e, r.found ? 1 : 0);
+    d = detail::Cat(d, e, " handler=");
+    d = detail::CatDec(d, e, r.handlerRan ? 1 : 0);
+    d = detail::Cat(d, e, " reloadDispatch=");
+    d = detail::CatDec(d, e, viaStatic ? 1 : 0);
+    d = detail::Cat(d, e, " reloadRan=");
+    d = detail::CatDec(d, e, r.reloadRan ? 1 : 0);
+    d = detail::Cat(d, e, " (");
+    d = detail::Cat(d, e, r.what);
+    d = detail::Cat(d, e, ")");
+    *d = 0;
+    dlgview::Board::Copy(r.what, sizeof(r.what), buf);
+    return r;
+}
+
 void DevDialogueLever(uint32_t now)
 {
     static char path[MAX_PATH];
@@ -12680,6 +13103,62 @@ void DevDialogueLever(uint32_t now)
     if (!DevRigText("QDCOOP_TEST_DLG", "qd.dlg", want, sizeof(want))) return;
     if (!want[0] || strcmp(want, g_devDlgApplied) == 0) return;
     lstrcpynA(g_devDlgApplied, want, sizeof(g_devDlgApplied));
+    // THE LEVERS (Round 2).  A plain tag is the read-only dump; `press`/`advance` presses the
+    // widget's own Continue, `opt<N>` chooses option N, `cursor` prints the local cursor, and
+    // `death-continue` presses the death screen's Continue.  The rig writes a fresh nonce
+    // (`advance#HHmmssfff`) so a repeat is a new instruction.
+    for (int i = 0; want[i]; ++i) if (want[i] == '#') { want[i] = 0; break; }
+    if (!strcmp(want, "advance") || !strcmp(want, "press") || !strcmp(want, "continue")) {
+        DlgLogLocalCursor("before the press");
+        DlgPressResult r = DlgPressContinue();
+        QDLOG(r.ran ? LOG_INFO : LOG_WARN, "rig: dialogue widget pressed -- ", r.what,
+              " (ran=", dec(r.ran), ")");
+        DlgLogLocalCursor("after the press");
+        return;
+    }
+    if (!strncmp(want, "opt", 3)) {
+        int idx = atoi(want + 3);
+        if (idx < 0) idx = 0;
+        DlgLogLocalCursor("before the choice");
+        DlgPressResult r = DlgPressOption(idx);
+        QDLOG(r.ran ? LOG_INFO : LOG_WARN, "rig: dialogue option ", dec(idx), " pressed -- ",
+              r.what, " (ran=", dec(r.ran), ")");
+        DlgLogLocalCursor("after the choice");
+        return;
+    }
+    if (!strcmp(want, "leave") || !strcmp(want, "close")) {
+        // The player's own "end this conversation".  `LeaveButtonCLicked` is a DELEGATE
+        // signature export, not a callable UFunction (measured: `LeaveButtonCLicked ran=0`), so
+        // the reliable lever is the one Round 1 already proved ends a conversation cleanly:
+        // the local player's own `DialogueManager.End`.  The widget is closed too, so the
+        // screen does not linger over a conversation that has ended.
+        void* w = DlgFindWidget();
+        DlgLogLocalCursor("before the leave");
+        Fn f = {};
+        bool closed = false;
+        if (w && f.Resolve(w, "RemoveFromView") && f.sig.props == 0) { Call c(f); closed = c.Run(w); }
+        void* dm = IsGameplayPawn(g_localPawn) ? ObjPropC(g_localPawn, "DialogueManager") : nullptr;
+        bool ended = false, hid = false;
+        if (dm) {
+            static Fn fEnd = {}, fHide = {};
+            ended = CallNoArgs(dm, fEnd, "End");
+            hid = CallNoArgs(dm, fHide, "HideDialogueWidget");
+            WriteBytePropC(dm, "RunningDialogue", 0);
+        }
+        QDLOG(LOG_INFO, "rig: dialogue leave -- RemoveFromView=", dec(closed ? 1 : 0),
+              " DialogueManager.End=", dec(ended ? 1 : 0), " HideDialogueWidget=", dec(hid ? 1 : 0));
+        DlgLogLocalCursor("after the leave");
+        return;
+    }
+    if (!strcmp(want, "cursor")) {
+        DlgLogLocalCursor("requested");
+        return;
+    }
+    if (!strcmp(want, "death-continue")) {
+        DeathPressResult r = PressDeathContinue();
+        QDLOG(r.found ? LOG_INFO : LOG_WARN, "rig: death Continue pressed -- ", r.what);
+        return;
+    }
     DevDialogueDump(want);
 }
 
@@ -12798,6 +13277,25 @@ struct MoverActorRec {
     float    ease_yaw;
     bool     ease_have;
     bool     moved;         // it moved since the previous frame
+    // [platforms] THE ELEMENT.  `Elevator_Base` (the parent of every lever elevator --
+    // read out of the pak: it exports `ElevatorPlatformRoot` and imports
+    // `MoveComponentTo` / `K2_GetComponentLocation`) moves a CHILD SCENE COMPONENT, not
+    // the actor, so an actor-root read reports a lift that never travels.  Element 0 is
+    // the actor root; k+1 is the k-th child USceneComponent ordered by NAME (both
+    // machines run the same cooked package, so the index means the same thing on both).
+    // See qdplatforms.h §1b and platforms::StepElem.
+    void*    elems[platforms::kMaxElems];
+    char     elemNames[platforms::kMaxElems][platforms::kElemNameLen];
+    int      elemN;
+    int      elem;                                  // follow this element now
+    int      elemProbe;                             // round-robin cursor for the search
+    // Indexed by the 1-BASED element id, so slot 0 is the actor root and slot k is
+    // element k.  One slot past kMaxElems on purpose: a probe index is
+    // `1 + (0 .. elemN-1)`, which reaches elemN, so an array of kMaxElems would be written
+    // one past its end the moment a mover had kMaxElems children.
+    float    probeLast[platforms::kMaxElems + 1][3];   // last place seen, per element
+    bool     probeHave[platforms::kMaxElems + 1];
+    int      ease_elem;                             // element the owner's row means
 };
 
 // [platforms] the local player's ride (this machine's own player) and the partner's ride.
@@ -12827,9 +13325,147 @@ bool IsMoverClass(void* cls)
     return platforms::IsMoverClass(cn);
 }
 
-void MoverResetAll()
+// [platforms] Read a SCENE COMPONENT's world place.
+//
+// The raw offsets the actor read uses are wrong here: a child component's
+// `RelativeLocation` is expressed in its PARENT's frame, while the mover lane, the rider
+// capture and the reconstructed draw all work in world space.  `K2_GetComponentLocation`
+// / `K2_GetComponentRotation` are the engine's own accessors and return their value in
+// the param block.
+bool ReadComponentXform(void* comp, ActorXform* x)
 {
-    g_movers.Reset();
+    static Fn fLoc = {}, fRot = {};
+    if (!comp || !ObjectIsLive(comp)) return false;
+    if (!fLoc.Resolve(comp, "K2_GetComponentLocation")) return false;
+    if (!fRot.fn) fRot.Resolve(comp, "K2_GetComponentRotation");
+    __try {
+        {
+            Call c(fLoc);
+            if (!c.Run(comp)) return false;
+            const float* v = (const float*)c.Ret();
+            if (!v) return false;
+            x->px = v[0]; x->py = v[1]; x->pz = v[2];
+        }
+        x->pitch = x->yaw = x->roll = 0.0f;
+        x->vx = x->vy = x->vz = 0.0f;
+        if (fRot.fn && fRot.sig.valid) {
+            Call cr(fRot);
+            if (cr.Run(comp)) {
+                const float* r = (const float*)cr.Ret();
+                if (r) { x->pitch = r[0]; x->yaw = r[1]; x->roll = r[2]; }
+            }
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    return motion::SanePos(x->px, x->py, x->pz);
+}
+
+// [platforms] Put a scene component where the owner's row says.  Same reasoning as the
+// read: the transform on the wire is a WORLD place, so it goes back through the engine's
+// own world setter rather than into the relative-location field.
+bool SetComponentXform(void* comp, float px, float py, float pz, float yaw)
+{
+    static Fn fSet = {};
+    if (!comp || !ObjectIsLive(comp) || !motion::SanePos(px, py, pz)) return false;
+    if (!fSet.fn) {
+        if (!fSet.Resolve(comp, "K2_SetWorldLocationAndRotation"))
+            fSet.Resolve(comp, "SetWorldLocationAndRotation");
+    }
+    if (!fSet.fn || !fSet.sig.valid) return false;
+    __try {
+        Call c(fSet);
+        if (uint8_t* p = c.At("NewLocation", 12)) {
+            float v[3] = {px, py, pz};
+            memcpy(p, v, 12);
+        } else if (uint8_t* p2 = c.At("Location", 12)) {
+            float v[3] = {px, py, pz};
+            memcpy(p2, v, 12);
+        } else return false;
+        if (uint8_t* r = c.At("NewRotation", 12)) {
+            float v[3] = {0.0f, yaw, 0.0f};
+            memcpy(r, v, 12);
+        } else if (uint8_t* r2 = c.At("Rotation", 12)) {
+            float v[3] = {0.0f, yaw, 0.0f};
+            memcpy(r2, v, 12);
+        }
+        if (uint8_t* s = c.At("bSweep", 1)) *s = 0;
+        if (uint8_t* t = c.At("bTeleport", 1)) *t = 1;
+        return c.Run(comp);
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+// [platforms] The element's place, whichever kind it is.
+bool ReadElemXform(MoverActorRec& r, int elem, ActorXform* x)
+{
+    elem = platforms::ClampElem(elem, r.elemN);
+    if (elem <= 0) return ReadActorXform(r.actor, x);
+    return ReadComponentXform(r.elems[elem - 1], x);
+}
+
+bool SetElemXform(MoverActorRec& r, int elem, float px, float py, float pz, float yaw)
+{
+    elem = platforms::ClampElem(elem, r.elemN);
+    if (elem <= 0) return SetActorXform(r.actor, px, py, pz, yaw);
+    return SetComponentXform(r.elems[elem - 1], px, py, pz, yaw);
+}
+
+// [platforms] Attach a child scene component to a tracked mover.  Called from the
+// incremental GObjects pass, so it costs one Outer compare per object the scan already
+// visits.  The actor's own RootComponent is skipped: it IS element 0.
+//
+// The scene-component class is looked up HERE rather than taken from `avatar::A()`, so the
+// mover lane has no dependency on the body module having been initialised: without this
+// class the whole element search silently does nothing, which is the failure mode this
+// code exists to remove.
+static void* MoverSceneClass()
+{
+    static void* cached = nullptr;
+    if (cached && ObjectIsLive(cached)) return cached;
+    cached = FindClassByName("SceneComponent");
+    return cached;
+}
+
+void MoverAttachChild(void* obj, void* cls)
+{
+    if (!cls || !g_actor.ok || g_moverActorN <= 0) return;
+    void* outer = ObjOuter(obj);
+    if (!outer) return;
+    for (int i = 0; i < g_moverActorN; ++i) {
+        MoverActorRec& r = g_moverActors[i];
+        if (r.actor != outer) continue;
+        if (r.elemN >= platforms::kMaxElems) return;
+        for (int k = 0; k < r.elemN; ++k) if (r.elems[k] == obj) return;
+        __try {
+            if (g_actor.rootComponent >= 0 &&
+                obj == *(void**)((uint8_t*)outer + g_actor.rootComponent)) return;
+            void* sceneCls = MoverSceneClass();
+            if (!sceneCls || !DerivesFrom(cls, sceneCls)) return;
+        } __except (EXCEPTION_EXECUTE_HANDLER) { return; }
+        char nm[platforms::kElemNameLen];
+        if (FNameToString(ObjNameRaw(obj), nm, sizeof(nm)) <= 0) return;
+        // Insert in NAME order, so the index is the same number on both machines.
+        int at = r.elemN;
+        for (int k = 0; k < r.elemN; ++k) {
+            if (strcmp(nm, r.elemNames[k]) < 0) { at = k; break; }
+        }
+        for (int k = r.elemN; k > at; --k) {
+            r.elems[k] = r.elems[k - 1];
+            memcpy(r.elemNames[k], r.elemNames[k - 1], platforms::kElemNameLen);
+        }
+        lstrcpynA(r.elemNames[at], nm, platforms::kElemNameLen);
+        r.elems[at] = obj;
+        ++r.elemN;
+        // The list shifted, so every cached probe place is about the wrong element now.
+        for (int k = 0; k <= platforms::kMaxElems; ++k) r.probeHave[k] = false;
+        uint32_t id0 = 0;
+        memcpy(&id0, r.id, 4);
+        QDLOG(LOG_INFO, "platforms: element ", dec(at + 1), "/", dec(r.elemN), " of id=",
+              hex32(id0), " is ", r.elemNames[at], " (a scene component the mover can carry)");
+        return;
+    }
+}
+
+void MoverResetAll()
+{    g_movers.Reset();
     g_moverActorN = 0;
     g_moverScanCursor = 0;
     g_ride.Reset();
@@ -12862,7 +13498,11 @@ void MoverScanStep()
         void* o = ObjectAtSafe(g_moverScanCursor++);
         if (!o || !LooksLikeUObject(o)) continue;
         void* c = ObjClass(o);
-        if (!c || !IsMoverClass(c)) continue;
+        if (!c) continue;
+        // [platforms] the object is not a mover -- but it may be a MOVER'S COMPONENT, and
+        // that is the element that actually travels in this game's elevators.  One Outer
+        // compare against the tracked table, on objects the scan already visits.
+        if (!IsMoverClass(c)) { MoverAttachChild(o, c); continue; }
         __try {
             if (!IsSubclassOf(c, actorBase) || !ActorInThisWorld(o, world)) continue;
         } __except (EXCEPTION_EXECUTE_HANDLER) { continue; }
@@ -12915,6 +13555,18 @@ void MoverApply(const mover::Sample& s)
         r.ease_to[1] = wire::DequantizePos(s.y);
         r.ease_to[2] = wire::DequantizePos(s.z);
         r.ease_yaw = wire::DequantizeAngle(s.yaw);
+        // [platforms] which element the row is about.  Clamped to what THIS copy can
+        // address, so a peer with a component this machine has not spawned falls back to
+        // the actor root instead of writing the wrong component.
+        r.ease_elem = platforms::ClampElem(platforms::DecodeElem(s.flags), r.elemN);
+        if (r.ease_elem != r.elem) {
+            uint32_t id0 = 0;
+            memcpy(&id0, r.id, 4);
+            QDLOG(LOG_INFO, "platforms: mover id=", hex32(id0), " following the OWNER on "
+                  "element ", dec(r.ease_elem),
+                  (r.ease_elem > 0 ? r.elemNames[r.ease_elem - 1] : "> (the actor root)"));
+            r.elem = r.ease_elem;
+        }
         r.ease_have = true;
         return;
     }
@@ -13002,9 +13654,113 @@ void MoverPlaceRider(uint32_t now)
     }
 }
 
+// [platforms] RIG-ONLY: make a named mover's FOLLOWED ELEMENT travel.
+//
+// WHY THIS EXISTS.  A lift that moves is the half of this lane round 1 could not prove, and
+// this content will not start one from a scripted call: measured in s32 run 1, the game's
+// own `StartElevatorTowardsEnd` and `Activate` both returned `ran=yes` on
+// `Mausoleum_Lift_00_BP_C` and its transform did not change.  This lever adds `dz` to ONE
+// tracked mover's selected element over N beats, so the OWNER's own mover pump sees a real
+// delta and publishes real rows: everything downstream (K_MOVERS rows, the follower's
+// easing, the element index, the rider's place in the platform's axes) is the lane's own
+// code, not this lever.  It is a test instrument, not a sync path: it is only compiled into
+// a run that passes `-UserDir` and has the control file.
+//
+// `qd.mover = <name substring>[,<dz cm>[,<beats>]]`  ("#" re-arms the same instruction)
+bool CmdArg(const char* key, char* out, int cap);      // defined with the rig levers below
+void DevMoverNudge(uint32_t now)
+{
+    static char path[MAX_PATH];
+    static int on = -1;
+    static char applied[128] = "";
+    static uint32_t poll = 0, lastBeat = 0;
+    static int idx = -1, left = 0;
+    static float perStep = 0.0f;
+    if (on < 0) {
+        char ud[260];
+        bool rig = CmdArg("-UserDir", ud, sizeof(ud)) && ud[0] != 0;
+        DevRigPath("QDCOOP_TEST_MOVER", "qd.mover", path, sizeof(path));
+        on = (path[0] != 0 && rig) ? 1 : 0;
+        if (on) QDLOG(LOG_INFO, "rig: mover nudge lever enabled '", path, "'");
+    }
+    if (!on) return;
+    if (now - poll >= 400) {
+        poll = now;
+        char spec[128];
+        if (DevRigText("QDCOOP_TEST_MOVER", "qd.mover", spec, sizeof(spec)) && spec[0] &&
+            strcmp(spec, applied) != 0) {
+            lstrcpynA(applied, spec, sizeof(applied));
+            for (int i = 0; spec[i]; ++i) if (spec[i] == '#') { spec[i] = 0; break; }
+            float ndz = 0.0f;
+            int beats = 20;
+            int wantElem = -1;
+            if (char* c1 = strchr(spec, ',')) {
+                *c1 = 0;
+                ndz = (float)atof(c1 + 1);
+                if (char* c2 = strchr(c1 + 1, ',')) {
+                    beats = atoi(c2 + 1);
+                    if (char* c3 = strchr(c2 + 1, ',')) wantElem = atoi(c3 + 1);
+                }
+            }
+            if (beats < 1) beats = 1;
+            idx = -1;
+            for (int i = 0; i < g_moverActorN; ++i) {
+                char p[256];
+                StablePathOf(g_moverActors[i].actor, p, sizeof(p));
+                if (strstr(p, spec)) { idx = i; break; }
+            }
+            if (idx < 0) {
+                QDLOG(LOG_WARN, "rig: mover -- no tracked mover matches '", spec, "' (",
+                      dec(g_moverActorN), " tracked)");
+            } else if (!g_movers.IsOwner(g_moverActors[idx].id)) {
+                QDLOG(LOG_WARN, "rig: mover -- this machine does not OWN '", spec,
+                      "'; the nudge would be overwritten by the owner. Skipped.");
+                idx = -1;
+            } else {
+                if (wantElem >= 0) {
+                    MoverActorRec& r = g_moverActors[idx];
+                    r.elem = platforms::ClampElem(wantElem, r.elemN);
+                    r.ease_have = false;
+                    QDLOG(LOG_INFO, "rig: mover -- following element ", dec(r.elem),
+                          (r.elem > 0 ? r.elemNames[r.elem - 1] : "> (the actor root)"),
+                          " of ", dec(r.elemN), " on purpose");
+                }
+                perStep = ndz / (float)beats;
+                left = beats;
+                lastBeat = 0;
+                QDLOG(LOG_INFO, "rig: mover nudge ", spec, " dz=", flt(ndz, 1), " in ",
+                      dec(beats), " beat(s), element ", dec(g_moverActors[idx].elem),
+                      (g_moverActors[idx].elem > 0
+                           ? g_moverActors[idx].elemNames[g_moverActors[idx].elem - 1]
+                           : "the actor root"));
+            }
+        }
+    }
+    if (idx < 0 || left <= 0) return;
+    if (now - lastBeat < 150) return;
+    lastBeat = now;
+    MoverActorRec& r = g_moverActors[idx];
+    if (!ObjectIsLive(r.actor)) { idx = -1; return; }
+    ActorXform cur;
+    if (!ReadElemXform(r, r.elem, &cur)) { idx = -1; left = 0; return; }
+    float nz = cur.pz + perStep;
+    if (!SetElemXform(r, r.elem, cur.px, cur.py, nz, cur.yaw)) {
+        QDLOG(LOG_WARN, "rig: mover -- the write to element ", dec(r.elem), " was refused");
+        idx = -1; left = 0;
+        return;
+    }
+    --left;
+    if (left % 5 == 0 || left == 0)
+        QDLOG(LOG_INFO, "rig: mover nudge z=", flt(nz, 1), " (", dec(left), " beat(s) left)");
+}
+
 void MoverPump(uint32_t now)
 {
-    if (!Cfg().mover_sync) return;
+    if (!Cfg().mover_sync) {
+        static bool warned = false;   // [coordinator] review #8
+        if (Cfg().platform_ride && !warned) { warned = true; QDLOG(LOG_WARN, "platforms: PlatformRide=1 needs MoverSync=1 -- the rider lane is inert"); }
+        return;
+    }
     static void* lastWorld = nullptr;
     void* world = GWorldPtr();
     if (world != lastWorld) {
@@ -13021,6 +13777,7 @@ void MoverPump(uint32_t now)
     // so a budget per frame keeps the cost invisible and still completes a pass in a
     // few seconds.
     MoverScanStep();
+    DevMoverNudge(now);          // [platforms] rig-only: make a followed element travel
     if (!EnsureActorApi()) return;
 
     ActorXform me;
@@ -13031,9 +13788,69 @@ void MoverPump(uint32_t now)
             g_moverActors[i] = g_moverActors[--g_moverActorN];
             continue;
         }
-        ActorXform x;
-        if (ReadActorXform(a, &x)) {
+        ActorXform rootXf;
+        if (ReadActorXform(a, &rootXf)) {
             MoverActorRec& rec = g_moverActors[i];
+            // [platforms] THE ELEMENT SEARCH.  The root is read every frame (cheap: a raw
+            // field read); a child component is read through the engine's world getter, so
+            // it is only sampled for movers near a player -- the only ones anybody rides.
+            float probeRoot[3] = {rootXf.px, rootXf.py, rootXf.pz};
+            bool rootMoved = rec.probeHave[0] && platforms::MovedBy(probeRoot, rec.probeLast[0]);
+            memcpy(rec.probeLast[0], probeRoot, sizeof(probeRoot));
+            rec.probeHave[0] = true;
+            float nearD = 1.0e17f;
+            if (haveMe) {
+                float dx = me.px - rootXf.px, dy = me.py - rootXf.py, dz = me.pz - rootXf.pz;
+                nearD = dx * dx + dy * dy + dz * dz;
+            }
+            {
+                float dx = g_peerPos[0] - rootXf.px, dy = g_peerPos[1] - rootXf.py,
+                      dz = g_peerPos[2] - rootXf.pz;
+                float d2 = dx * dx + dy * dy + dz * dz;
+                if (d2 < nearD) nearD = d2;
+            }
+            bool nearBy = nearD < 4000.0f * 4000.0f;
+            if (nearBy && rec.elemN > 0) {
+                bool curMoved = false;
+                if (rec.elem > 0 && platforms::ClampElem(rec.elem, rec.elemN) == rec.elem) {
+                    ActorXform ex;
+                    if (ReadElemXform(rec, rec.elem, &ex)) {
+                        float p[3] = {ex.px, ex.py, ex.pz};
+                        curMoved = platforms::MovedBy(p, rec.cur);
+                    }
+                }
+                int pk = 1 + (rec.elemProbe++ % rec.elemN);
+                bool probedMoved = false;
+                {
+                    ActorXform ex;
+                    if (ReadElemXform(rec, pk, &ex)) {
+                        float p[3] = {ex.px, ex.py, ex.pz};
+                        probedMoved = rec.probeHave[pk] && platforms::MovedBy(p, rec.probeLast[pk]);
+                        memcpy(rec.probeLast[pk], p, sizeof(p));
+                        rec.probeHave[pk] = true;
+                    }
+                }
+                int was = rec.elem;
+                rec.elem = platforms::StepElem(rec.elem, rootMoved, curMoved, pk, probedMoved);
+                if (rec.elem != was) {
+                    uint32_t id0 = 0;
+                    memcpy(&id0, rec.id, 4);
+                    QDLOG(LOG_INFO, "platforms: mover id=", hex32(id0), " now follows element ",
+                          dec(rec.elem), (rec.elem > 0 ? " (" : " (the actor root"),
+                          (rec.elem > 0 ? rec.elemNames[rec.elem - 1] : ""), ")",
+                          (rec.elem > 0 ? " -- the ACTOR does not move, this component does"
+                                        : ""));
+                    rec.ease_have = false;
+                }
+            } else if (rec.elem != 0) {
+                rec.elem = 0;
+                rec.ease_have = false;
+            }
+            ActorXform x = rootXf;
+            if (rec.elem > 0) {
+                ActorXform ex;
+                if (ReadElemXform(rec, rec.elem, &ex)) x = ex;
+            }
             // [platforms] the moving test is a real frame-to-frame delta, not a wish.
             float mdx = x.px - rec.cur[0], mdy = x.py - rec.cur[1], mdz = x.pz - rec.cur[2];
             rec.moved = (mdx > 0.4f || mdx < -0.4f || mdy > 0.4f || mdy < -0.4f ||
@@ -13049,6 +13866,9 @@ void MoverPump(uint32_t now)
             s.z = wire::QuantizePos(x.pz);
             s.yaw = wire::QuantizeAngle(x.yaw);
             s.pitch = wire::QuantizeAngle(x.pitch);
+            // [platforms] which element this row describes, in the six spare bits of the
+            // existing flags byte: the wire row stays 33 B and Rust passes flags through.
+            s.flags = platforms::EncodeElem(rec.elem);
             float localD = 1.0e17f, peerD = 1.0e17f;   // < INT64_MAX, so the cast is defined
             if (haveMe) {
                 float dx = me.px - x.px, dy = me.py - x.py, dz = me.pz - x.pz;
@@ -13066,7 +13886,8 @@ void MoverPump(uint32_t now)
 
     // [platforms] the follower's staircase, fixed.  A machine that is NOT the owner moves
     // its copy onto the owner's last row every frame; a gap over 300 cm is a discontinuity
-    // and is taken at once.
+    // and is taken at once.  It writes the ELEMENT the row names, which is the component
+    // for this game's elevators and the actor for a mover that really moves its actor.
     for (int i = 0; i < g_moverActorN; ++i) {
         MoverActorRec& r = g_moverActors[i];
         if (g_movers.IsOwner(r.id) || !r.ease_have) continue;
@@ -13075,9 +13896,11 @@ void MoverPump(uint32_t now)
         for (int k = 0; k < 3; ++k)
             cur[k] = platforms::EaseAxis(cur[k], r.ease_to[k], alpha, platforms::kEaseSnapCm);
         float yaw = platforms::EaseAxis(r.cur_yaw, r.ease_yaw, alpha, 45.0f);
-        if (SetActorXform(r.actor, cur[0], cur[1], cur[2], yaw)) {
-            r.cur[0] = cur[0]; r.cur[1] = cur[1]; r.cur[2] = cur[2];
-            r.cur_yaw = yaw;
+        if (SetElemXform(r, r.ease_elem, cur[0], cur[1], cur[2], yaw)) {
+            if (r.ease_elem == r.elem) {
+                r.cur[0] = cur[0]; r.cur[1] = cur[1]; r.cur[2] = cur[2];
+                r.cur_yaw = yaw;
+            }
         }
     }
 
@@ -14265,18 +15088,25 @@ void* ResolveInvItem(const char* path)
 struct InvCollect {
     inventory::Snapshot* snap;
     int                  dropped;
+    inventory::HostPublisher* pub;   // the tombstone ledger's own set (has/has-not)
 };
 
 void CollectInventoryItem(void* item, int32_t count, void* user)
 {
     InvCollect* c = (InvCollect*)user;
-    // A zero is indistinguishable from absence on this lane and can never grant
-    // anything; keeping it out of the body keeps the body to facts.
-    if (count <= 0) return;
 
-    // Two bytes of headroom over kMaxPath so a path exactly at the limit is accepted and
-    // a longer one is rejected by Snapshot rather than silently truncated into an alias
-    // of a different asset.
+    // [progression] A KEY THAT REACHED ZERO IS A TOMBSTONE, NOT AN ABSENCE.
+    // MEASURED (round 2/3 live): the host used its last `AquaDoorKey_1_Data`, the host
+    // published `inventory host set 64 entries` (the entry simply vanished) and the peer
+    // kept its copy forever -- "the host holds none" had no wire form at all, so the
+    // partner's key was never taken away.  The decision this lane now makes: in
+    // quest-item mode a path that HAS been published and now reads 0 IS published, with
+    // count 0, as a bounded tombstone.  The set stays bounded because a tombstone is only
+    // kept for a path this lane already carried, and the tombstone is dropped the moment
+    // the count rises again (see `DocClear`).
+    //
+    // Outside quest-item mode the old rule stands: a zero is indistinguishable from
+    // absence on a whole-container mirror and can never grant anything.
     char path[inventory::kMaxPath + 2];
     int n = 0;
     __try {
@@ -14286,20 +15116,44 @@ void CollectInventoryItem(void* item, int32_t count, void* user)
         n = 0;
     }
     if (n <= 0) { ++c->dropped; return; }
-    // [progression] Only quest/key items cross.  A normal item is this player's own and
-    // is not published -- which is also why the body's `n` is the filtered size.
+
     if (Cfg().quest_item_sync && !InvEntryIsQuest(item, path)) return;
+
+    if (count <= 0) {
+        // Only a path this machine already published can be tombstoned: an entry the
+        // host never held is not a change the partner owes anything for, and inventing
+        // one would put every zero in the container on the wire.
+        if (!c->pub || !c->pub->Has(path)) return;
+        if (!c->snap->Set(path, 0)) ++c->dropped;
+        return;
+    }
+    // The count rose again: the tombstone is no longer the truth, so the ledger forgets
+    // it and the set returns to carrying only entries the host actually holds.
+    if (c->pub) { c->pub->DocClear(path); c->pub->DocNote(path); }
     if (!c->snap->Set(path, count)) ++c->dropped;
 }
 
 void ObserveHostInventory(uint32_t now)
 {
     g_invNow.Clear();
-    InvCollect c = { &g_invNow, 0 };
+    InvCollect c = { &g_invNow, 0, &g_invPub };
     int live = InventoryEnumerate(&CollectInventoryItem, &c);
     if (live < 0) {                       // the save was replaced under us; next tick
         g_invHaveSnapshot = false;
         return;
+    }
+    // [progression] THE TOMBSTONE SECOND PASS.  MEASURED (round 2/3): using a key up
+    // removes it from `InventoryContents` ENTIRELY, so the container walk above never
+    // visits that path and cannot report "zero" -- there is no element left to read.  The
+    // first version of this fix therefore depended on a `count <= 0` visit that never
+    // happens, and the peer's copy would have survived exactly as before.
+    //
+    // So the ledger is walked after the container: a path this publisher has carried that
+    // the walk did NOT see is a path whose count fell to zero, and it is published as
+    // count 0 -- which is the tombstone.  It is bounded by the ledger, and `DocClear` in
+    // the collector removes it again the moment the count rises.
+    if (Cfg().quest_item_sync) {
+        g_invPub.TombstoneMissing(&g_invNow, live);
     }
     g_invSnapshotSave = Save().save;
     g_invHaveSnapshot = true;
@@ -14727,32 +15581,48 @@ void XpResolve()
 {
     void* pawn = LocalPawn();
     if (!pawn) return;
-    void* cls = ObjClass(pawn);
-    if (cls == g_xpCls) return;
-    g_xpCls = cls;
+    void* save = Save().save;
+    void* pcls = ObjClass(pawn);
+    void* scls = save ? ObjClass(save) : nullptr;
+    if (pcls == g_xpCls && save == g_xpSaveObj) return;
+    g_xpCls = pcls;
+    g_xpSaveObj = save;
+    g_xpObj = nullptr;
     g_xpOffset = -1;
     g_xpSize = 0;
     g_xpIsFloat = false;
-    // Order: the player's own counter first, then the save-shaped names the analysis lists.
-    // The name that resolved is logged once, because a wrong property would make every delta
-    // zero and would look exactly like "the game never paid".
+    // Order: the player's own counter first (a pawn-carried counter, if a build has one), then
+    // the SAVE OBJECT.  MEASURED on the live rig (round 2): neither machine resolves any of
+    // these names on `FS_PlayerChar_C`, while the analysis's property table for the slot
+    // blueprint carries `XPAmount` -- the counter is save state, not pawn state, which is also
+    // why it survives a level change.  The name and the OBJECT that resolved are logged once,
+    // because a wrong property makes every delta zero and looks exactly like "the game never
+    // paid".
+    void* obj[2] = { pawn, save };
+    void* cls[2] = { pcls, scls };
     static const char* const kNames[] = {"XP", "XPAmount", "XPIncrease", "CurrentLevelXPProgress"};
-    for (unsigned i = 0; i < sizeof(kNames) / sizeof(kNames[0]); ++i) {
-        int off = 0, size = 0;
-        bool isFloat = false;
-        if (!XpProbe(cls, kNames[i], &off, &size, &isFloat)) continue;
-        g_xpOffset = off;
-        g_xpSize = size;
-        g_xpIsFloat = isFloat;
-        QDLOG(LOG_INFO, "xp: the local player's counter is ", kNames[i],
-              (isFloat ? " (float)" : " (int)"), " size=", dec(size));
-        return;
+    for (int t = 0; t < 2; ++t) {
+        if (!obj[t] || !cls[t]) continue;
+        if (t == 1 && obj[1] == obj[0]) continue;
+        for (unsigned i = 0; i < sizeof(kNames) / sizeof(kNames[0]); ++i) {
+            int off = 0, size = 0;
+            bool isFloat = false;
+            if (!XpProbe(cls[t], kNames[i], &off, &size, &isFloat)) continue;
+            g_xpObj = obj[t];
+            g_xpOffset = off;
+            g_xpSize = size;
+            g_xpIsFloat = isFloat;
+            QDLOG(LOG_INFO, "xp: the local player's counter is ", kNames[i],
+                  (isFloat ? " (float)" : " (int)"), " size=", dec(size),
+                  (t == 0 ? "" : " (read from the save slot)"));
+            return;
+        }
     }
     if (!g_xpSaidNoCounter) {
         g_xpSaidNoCounter = true;
         QDLOG(LOG_WARN, "xp: the local player exposes no XP counter (tried XP, XPAmount, "
-                        "XPIncrease, CurrentLevelXPProgress); the kill-XP lane does nothing "
-                        "rather than invent an award");
+                        "XPIncrease, CurrentLevelXPProgress on the pawn AND the save slot); "
+                        "the kill-XP lane does nothing rather than invent an award");
     }
 }
 
@@ -14789,7 +15659,9 @@ void ProgressionOnDeath(const uint32_t guid[4], uint32_t now)
     void* pawn = LocalPawn();
     XpResolve();
     int32_t before = 0;
-    if (!XpRead(pawn, &before)) return;   // no counter: nothing to measure, nothing to claim
+    // [progression] The counter may live on the SAVE SLOT rather than the pawn; XpResolve
+    // records which object it resolved against, so the read follows the resolution.
+    if (!XpRead(g_xpObj ? g_xpObj : pawn, &before)) return;   // no counter: nothing to measure, nothing to claim
     g_killXp.LocalDeath(guid, before, now);
 }
 
@@ -14813,10 +15685,12 @@ void ProgressionPayXp(int32_t amount, char* why, int cap)
     else { ErrSet(why, cap, "Player_GiveXP takes no numeric amount pin", ""); return; }
 
     int32_t before = 0, after = 0;
-    const bool hadBefore = XpRead(pawn, &before);
+    XpResolve();
+    void* xo = g_xpObj ? g_xpObj : pawn;
+    const bool hadBefore = XpRead(xo, &before);
     ReadBack rb;
     if (!Invoke(pawn, fn, sig, args, &rb, why, cap)) return;
-    if (!hadBefore || !XpRead(pawn, &after)) {
+    if (!hadBefore || !XpRead(xo, &after)) {
         QDLOG(LOG_INFO, "xp: paid ", dec(amount), " to the local player (the counter is not "
                                                   "readable here; the call returned)");
         return;
@@ -14835,6 +15709,22 @@ void ProgressionPayXp(int32_t amount, char* why, int cap)
 // `GI_SaveGameToDisk` is the wrapper, tried when the library one has no such function.  Both
 // are UFUNCTIONs, so both are reached the way every other write in this module is: a
 // validated signature, inputs filled BY TYPE, and a read-back.
+//
+// HOW A SAVE IS DETECTED, AND WHY NOT THROUGH ProcessEvent
+// ------------------------------------------------------
+// MEASURED (round 3 live, progression.md): `SaveHere` ran and dispatched NOTHING, and a
+// checkpoint rest wrote `World0_Suspend_1.sav` without dispatching a Blueprint save verb
+// either.  The reason is in the analysis, not in the lane: C9 closed this question --
+// **every save in this game funnels through `UGameplayStatics::SaveGameToSlot`
+// @ `0x028F2B40`, whose only callers are the native `FB_SaveUtils` plugin functions plus
+// the exec thunk** (`analysis/re/combat_save_evidence.txt` §C9.1-2).  A native C++ caller
+// never crosses `UObject::ProcessEvent`, so a ProcessEvent-based detector could never see
+// the save a player actually makes.  It was not misconfigured; it was watching the wrong
+// boundary.
+//
+// So the detector is a HOOK ON THAT ONE PRIMITIVE.  Every route -- the suspend loop, a
+// checkpoint rest, a menu save, an autosave -- reaches it, and the slot name it is handed
+// says WHICH route, which is what makes the mirror run the partner's matching writer.
 uint32_t SaveStamp(void* save)
 {
     if (!save) return 0;
@@ -14845,6 +15735,48 @@ uint32_t SaveStamp(void* save)
     __try { memcpy(&v, (const uint8_t*)save + off, 4); }
     __except (EXCEPTION_EXECUTE_HANDLER) { v = 0; }
     return v;
+}
+
+// UE4 `FString` is `{ TCHAR* Data; int32 Num; int32 Max; }` on Win64, and `Num` counts the
+// terminating NUL.  The slot name is ASCII by construction (`GetSaveSlotName` composes
+// `World0`, `World0_Suspend_0`, ...), so a plain narrow copy is lossless for this purpose.
+int FStringToAnsi(const void* fstring, char* out, int cap)
+{
+    if (out && cap > 0) out[0] = 0;
+    if (!fstring || !out || cap <= 1) return 0;
+    const wchar_t* data = nullptr;
+    int32_t num = 0;
+    __try {
+        data = *(const wchar_t* const*)fstring;
+        num = *(const int32_t*)((const uint8_t*)fstring + 8);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+    if (!data || num <= 0 || num > 512) return 0;
+    int n = 0;
+    __try {
+        for (int i = 0; i < num - 1 && n < cap - 1; ++i) {
+            wchar_t c = data[i];
+            out[n++] = (c > 0 && c < 128) ? (char)c : '?';
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        out[0] = 0;
+        return 0;
+    }
+    out[n] = 0;
+    return n;
+}
+
+// The route a slot name names.  `World0_Suspend_0/1` is the game's timed/rest route; every
+// other slot is the main save.  Reported so a live run can see WHICH writer the partner
+// will be asked to run.
+uint8_t SaveRouteOfSlot(const char* slot)
+{
+    if (!slot || !slot[0]) return (uint8_t)progression::ROUTE_SLOT;
+    return progression::ContainsCI(slot, "Suspend") ? (uint8_t)progression::ROUTE_SUSPEND
+                                                    : (uint8_t)progression::ROUTE_SLOT;
 }
 
 bool SaveCallVerb(void* obj, const char* fnName, void* world, void* save, char* why, int cap)
@@ -14875,13 +15807,43 @@ bool SaveCallVerb(void* obj, const char* fnName, void* world, void* save, char* 
 
 // 1 = written and the save's own stamp moved; 0 = no writer could be reached; -1 = the call
 // returned but the stamp did not move (reported, never counted as a verified write).
-int ProgressionSaveToDisk(char* why, int cap)
+//
+// ROUTE-AWARE, because the two routes write DIFFERENT FILES and this game resumes from the
+// one its own route writes.  MEASURED (round 3): a checkpoint rest writes
+// `World0_Suspend_N.sav`, so a partner answering a rest with the main-slot writer would
+// have saved `World0.sav` -- a file its own rest would never load.  `ROUTE_SUSPEND` runs the
+// game's OWN suspend writer, which is the same call the rest made; `ROUTE_SLOT` runs the
+// slot writer as before.
+int ProgressionSaveToDisk(uint8_t route, char* why, int cap)
 {
     if (why && cap > 0) why[0] = 0;
     void* world = GWorldPtr();
     void* save = Save().save;
     if (!world || !save) { ErrSet(why, cap, "no active save", ""); return 0; }
     const uint32_t before = SaveStamp(save);
+
+    if (route == progression::ROUTE_SUSPEND) {
+        // The game's own suspend write, in the order a rest reaches it: the instance's
+        // immediate writer first (what a rest and the timer both use), then the plain
+        // wrapper.  `WriteSuspendSave` is on the instance in this build (the analysis'
+        // "IsSuspendSave / WriteSuspendSave" list); a build that exposes it only as the
+        // `GI_` form is covered by the second name.
+        void* gi = GameInstanceObj();
+        char e1[160] = "", e2[160] = "";
+        bool called = false;
+        if (gi) called = SaveCallVerb(gi, "GI_WriteSuspendSaveImmediately", world, save, e1, sizeof(e1));
+        if (!called && gi) called = SaveCallVerb(gi, "WriteSuspendSave", world, save, e2, sizeof(e2));
+        if (!called) {
+            ErrSet(why, cap, "no suspend writer: ",
+                   e1[0] ? e1 : (e2[0] ? e2 : "neither suspend name resolved on this build"));
+            return 0;
+        }
+        // A suspend write does NOT move `LastSaveTime` on the slot object -- it writes a
+        // different file -- so "the stamp moved" is not this route's oracle.  The call
+        // returning is all this can assert, and it is reported as exactly that.
+        QDLOG(LOG_INFO, "save: the suspend writer returned for the partner's rest");
+        return 1;
+    }
 
     char e1[160] = "", e2[160] = "";
     bool called = false;
@@ -14931,34 +15893,75 @@ progression::SaveGate SaveGateNow()
     return g;
 }
 
-// --- the save DETECTOR (called from the ProcessEvent hook) -------------------------
+// --- the save DETECTOR ------------------------------------------------------------
+// TWO boundaries reach this, and either is enough on its own:
+//   * the NATIVE primitive hook (`HK_SaveGameToSlot`) -- the one every save in this game
+//     goes through, so this is the one that actually fires for a player's save;
+//   * the Blueprint dispatch (`SaveVerbObserve`, called from HK_ProcessEvent) -- kept
+//     because a build that routes a save through a Blueprint name that does not go on to
+//     call the primitive would otherwise be invisible.
+// The board de-duplicates, so both seeing one save is one request: the bracket
+// `BeginOwnSave`/`EndOwnSave` covers the mirror's own write, and `kSaveDedupMs` covers a
+// primitive call that lands a frame after its dispatch.
+void SaveAnnounce(const char* what, const char* slotName, uint8_t route, uint32_t now)
+{
+    if (!g_net.Connected()) return;
+    if (!g_saveBoard.OnLocalSave(now)) {
+        QDLOG(LOG_DEBUG, "save: swallowed the echo of the save this machine ran for the "
+                         "partner (", what, ")");
+        return;
+    }
+    ++g_saveSeq;
+    uint8_t body[24];
+    wire::Writer w(body, sizeof(body));
+    wire::WriteSave(w, g_saveSeq, (uint8_t)(g_net.IsHost() ? 1 : 2), route);
+    if (!w.ok || !g_net.SendReliable(wire::K_SAVE, body, w.len)) {
+        QDLOG(LOG_WARN, "save: could not tell the partner about this save (", what, ")");
+        return;
+    }
+    QDLOG(LOG_INFO, "save: this machine saved (", what, ", slot ", slotName, ", ",
+          (route == progression::ROUTE_SUSPEND ? "the rest/suspend route" : "the main slot"),
+          "); telling the partner to write its own");
+}
+
+// The primitive itself.  Forwarded FIRST and unconditionally: this is the game's own write
+// and the mod never suppresses it -- a save the player asked for must happen even if the
+// lane then has nothing to say.
+bool HK_SaveGameToSlot(void* saveObject, const void* slotName, int32_t userIndex)
+{
+    const bool ok = g_oSaveGameToSlot ? g_oSaveGameToSlot(saveObject, slotName, userIndex)
+                                      : false;
+    if (!Cfg().partner_save_sync) return ok;
+    // Log the CALL even when the write failed: "the game tried and returned false" and
+    // "the game never tried" are different facts, and only this line separates them.
+    char slot[160];
+    FStringToAnsi(slotName, slot, sizeof(slot));
+    QDLOG(LOG_INFO, "save: the game's own writer ran (slot ", slot, ", ok=",
+          dec(ok ? 1 : 0), ")");
+    if (!ok) return ok;
+    if (g_worldTransition) return ok;   // a world is being torn down; no lane bookkeeping
+    SaveAnnounce("SaveGameToSlot", slot, SaveRouteOfSlot(slot), Net::Now());
+    return ok;
+}
+
 void SaveVerbObserve(void* self, void* func)
 {
     (void)self;
     if (!Cfg().partner_save_sync || !func) return;
     char nm[96];
     if (FNameToString(ObjNameRaw(func), nm, sizeof(nm)) <= 0) return;
-    if (!progression::IsSaveVerb(nm)) return;
-    uint32_t now = Net::Now();
-    // The dispatch of a save this machine is running FOR the partner is that save's own
-    // echo.  The bracket is exact -- one logical save dispatches several of these names,
-    // nested -- so nothing has to guess a depth or a count.
-    if (!g_saveBoard.OnLocalSave(now)) {
-        QDLOG(LOG_DEBUG, "save: swallowed the echo of the save this machine ran for the "
-                         "partner (", nm, ")");
-        return;
-    }
-    if (!g_net.Connected()) return;
-    ++g_saveSeq;
-    uint8_t body[24];
-    wire::Writer w(body, sizeof(body));
-    wire::WriteSave(w, g_saveSeq, (uint8_t)(g_net.IsHost() ? 1 : 2));
-    if (!w.ok || !g_net.SendReliable(wire::K_SAVE, body, w.len)) {
-        QDLOG(LOG_WARN, "save: could not tell the partner about this save (", nm, ")");
-        return;
-    }
-    QDLOG(LOG_INFO, "save: this machine saved (", nm, "); telling the partner to write its "
-                    "own slot");
+    // [progression] THE TRIGGER IS A SUPERSET OF THE MIRRORABLE NAMES.  MEASURED (round 3):
+    // a checkpoint REST -- the save a player actually makes on this build -- writes
+    // `World0_Suspend_N.sav`, and its dispatch names are the suspend writer's, which
+    // `IsSaveVerb` refuses so a suspend body can never be COPIED to the partner.  The two
+    // questions are different: "may this body be mirrored?" (no) and "is this a moment the
+    // player's progress hit the disk?" (yes).  So the trigger accepts both and the ROUTE
+    // travels with the request; the receiver always runs its OWN writer on its OWN slot.
+    if (!progression::IsProgressSaveTrigger(nm)) return;
+    const uint8_t route = progression::IsSuspendTrigger(nm)
+                              ? (uint8_t)progression::ROUTE_SUSPEND
+                              : (uint8_t)progression::ROUTE_SLOT;
+    SaveAnnounce(nm, "-", route, Net::Now());
 }
 
 // --- the peer's key-item count follows the host's ----------------------------------
@@ -14979,7 +15982,12 @@ void ProgressionQuestRemovalPump(uint32_t now)
 
     for (int i = 0; i < g_progHost.Count(); ++i) {
         const progression::HostCount* hc = g_progHost.At(i);
-        if (!hc || hc->count <= 0) continue;
+        // [progression] A ZERO IS A TOMBSTONE, NOT SKIPPED STATE.  The host used its last
+        // copy, published `count 0`, and this is the half that makes the partner's key
+        // disappear -- with the game's own consumer, exactly as a use would.  Round 2/3
+        // measured the gap: `count <= 0` was skipped here, so "the host holds none" was a
+        // fact this lane read and then discarded.
+        if (!hc || hc->count < 0) continue;
         if (!progression::IsQuestItemPath(hc->path)) continue;
 
         int32_t local = 0;
@@ -15009,7 +16017,7 @@ void ProgressionPump(uint32_t now)
         void* pawn = LocalPawn();
         XpResolve();
         int32_t xpNow = 0;
-        const bool haveXp = XpRead(pawn, &xpNow);
+        const bool haveXp = XpRead(g_xpObj ? g_xpObj : pawn, &xpNow);
         progression::XpOut out[4];
         const int n = g_killXp.Tick(now, haveXp, xpNow, out, 4);
         for (int i = 0; i < n; ++i) {
@@ -15047,13 +16055,18 @@ void ProgressionPump(uint32_t now)
         const char* why = "";
         if (g_saveBoard.TakeSave(now, g, &why)) {
             // The bracket: everything this save dispatches is its own echo, and the board
-            // reports it instead of announcing it.
+            // reports it instead of announcing it.  The primitive hook is INSIDE this
+            // bracket too, which is why the mirror's own write cannot bounce back.
+            const uint8_t route = g_saveBoard.WantedRoute();
             g_saveBoard.BeginOwnSave(now);
             char err[160];
-            const int r = ProgressionSaveToDisk(err, sizeof(err));
+            const int r = ProgressionSaveToDisk(route, err, sizeof(err));
             g_saveBoard.EndOwnSave(Net::Now());
             if (r > 0) {
-                QDLOG(LOG_INFO, "save: wrote this machine's own slot for the partner's save");
+                QDLOG(LOG_INFO, "save: wrote this machine's own ",
+                      (route == progression::ROUTE_SUSPEND ? "suspend save (the partner's rest)"
+                                                           : "main slot"),
+                      " for the partner's save");
             } else if (r == 0) {
                 QDLOG(LOG_WARN, "save: the game's own writer refused: ", err);
             } else {
@@ -15188,7 +16201,7 @@ void PeerApplyActorStates(wire::Reader& r, uint32_t now)
     // those would be a needless walk of every live object.
     int ownerCount = -1;
 
-    int seen = 0, applied = 0, held = 0, confirmed = 0, failed = 0;
+    int seen = 0, applied = 0, held = 0, confirmed = 0, failed = 0, closedIgnored = 0;
     while (r.ok && r.pos < r.len) {
         uint32_t g[4];
         r.Guid(g);
@@ -15228,6 +16241,10 @@ void PeerApplyActorStates(wire::Reader& r, uint32_t now)
         // No copy here yet: the container is already right and the next body will find
         // the actor once its level streams in.
         if (mirrorSame && (!actor || index < 0)) continue;
+        // [world-interact] EXCEPT for a shape whose whole appearance is its visual: with no
+        // live actor there is nothing to animate, so the container stays the record and the
+        // next body retries -- which is the same rule, stated so the door case is not
+        // silently the one that never converges.
 
         // What THIS machine's copy reads, before the container write and restore.
         objects::Shape sh = objects::SH_NONE;
@@ -15242,7 +16259,21 @@ void PeerApplyActorStates(wire::Reader& r, uint32_t now)
                     sh = interact::ShapeOfClass(cn);
                 haveHad = ObjectStateOf(actor, sh, &had, &used);
             } __except (EXCEPTION_EXECUTE_HANDLER) { haveHad = false; }
-            if (mirrorSame && haveHad && had == wantByte) continue;
+            // [world-interact] MEASURED (round 3 live): this early return is what skipped the
+            // close visual.  The peer's own door read `Opened=1` and the host published 0, so
+            // `had != want` here -- but the CONTAINER already held 0 (a previous body had
+            // written it) which is the state this test does not see, and when the two did
+            // agree the animation below was skipped entirely.  A shape that needs an explicit
+            // visual must reach it, so a door skips neither short-circuit.
+            if (!(Cfg().interact_sync && interact::WantsExplicitAnim(sh, wantByte))) {
+                if (mirrorSame && haveHad && had == wantByte) continue;
+            }
+            // [world-interact] The direction policy, on the receiving side of the absolute
+            // body: a one-way shape is never closed or un-broken by the partner.
+            if (!interact::DirectionAllowed(wantByte, sh)) {
+                if (wantByte == 0) ++closedIgnored;
+                continue;
+            }
         }
 
         QdGuid q = { g[0], g[1], g[2], g[3] };
@@ -15250,6 +16281,29 @@ void PeerApplyActorStates(wire::Reader& r, uint32_t now)
         bool changed = false;
         if (WrSetActorState(q, v, actor, index, err, sizeof(err), &changed)) {
             ++applied;
+            // [world-interact] THE "STREAMED IN LATER" CASE, PROPERLY.  MEASURED (round 3
+            // live): the peer wrote `value=0` through the game's own writer -- so the actor
+            // existed -- but the body-level owner table had been built before it streamed in,
+            // so `actor` was null here and both the restore and the close visual were
+            // skipped.  `sh` was therefore `SH_NONE` too, which is why nothing animated while
+            // the container (and the log) said the door had closed.
+            //
+            // `WrSetActorState` resolves the actor itself from the GUID when the hint is
+            // null, so the fix is to ask for that resolution here and use it.
+            if ((!actor || index < 0) && Cfg().interact_sync) {
+                void* found = nullptr;
+                int fidx = -1;
+                if (FindActorStateOwner(q, &found, &fidx) && found && fidx >= 0) {
+                    actor = found;
+                    index = fidx;
+                    __try {
+                        char cn[96];
+                        if (FNameToString(ObjNameRaw(ObjClass(actor)), cn, sizeof(cn)) > 0)
+                            sh = interact::ShapeOfClass(cn);
+                        haveHad = ObjectStateOf(actor, sh, &had, &used);
+                    } __except (EXCEPTION_EXECUTE_HANDLER) { haveHad = false; }
+                }
+            }
             // The host's value is now in our container.  The 4 Hz local detector will
             // see the write a moment later; remembering it here is what stops it being
             // offered back as an intent.
@@ -15258,6 +16312,12 @@ void PeerApplyActorStates(wire::Reader& r, uint32_t now)
             // Refresh when the container changed OR this copy's own state disagrees (a
             // door that streamed in after the container did).
             bool needRefresh = changed || (haveHad && had != wantByte);
+            // [world-interact] A door is ALWAYS animated: measured round 2/3, the peer's
+            // close reached this container and no close visual ran, because `had == want`
+            // (or no readable bool) skipped the call that drives the timeline.
+            if (Cfg().interact_sync && interact::WantsExplicitAnim(sh, wantByte)) {
+                needRefresh = true;
+            }
             if (needRefresh && actor && index >= 0) {
                 char rerr[192];
                 if (!WrRefreshActorState(actor, index, v, rerr, sizeof(rerr))) {
@@ -15289,10 +16349,11 @@ void PeerApplyActorStates(wire::Reader& r, uint32_t now)
         // INFO only when the body changed something.  The 1 Hz heartbeat carries the same
         // seven values every second, and logging that at INFO buries the one line a live
         // run is looking for: the moment a door or chest actually converged.
-        int acted = applied + held + confirmed + failed;
+        int acted = applied + held + confirmed + failed + closedIgnored;
         QDLOG(failed ? LOG_WARN : (acted ? LOG_INFO : LOG_DEBUG),
               "actor states applied=", dec(applied), " held=", dec(held),
               " confirmed=", dec(confirmed), " failed=", dec(failed),
+              " close-ignored=", dec(closedIgnored),
               " rev=", dec(rev), " n=", dec((int)n));
     }
 }
@@ -15682,7 +16743,18 @@ void ObjectsScanStep()
             continue;
         }
         if (!ActorIsPlaced(o)) continue;
-        if (ObjectIsSavableOwned(o)) { ++g_objSkippedSavable; continue; }
+        // [world-interact] A SECRET WALL IS THE OBJECT LANE'S, even though it is a
+        // SavableActor_C.  MEASURED (round 2 and round 3 live, world-interact.md): its own
+        // `Activate` flips `Opened` and writes NOTHING to the SavableActorStates container
+        // (`isset=0` before and after), so the GUID lane has nothing to publish and a wall
+        // opened on one machine stayed shut on the other no matter how correct that lane
+        // was.  The state that moves is the wall's own bool -- exactly this lane's model --
+        // so it is published here and applied through the class' own `SetToFinalState`.
+        if (ObjectIsSavableOwned(o) &&
+            !(Cfg().interact_sync && interact::DirectBoolClass(cn))) {
+            ++g_objSkippedSavable;
+            continue;
+        }
 
         bool have = false;
         for (int i = 0; i < g_objActorN; ++i) {
@@ -15781,18 +16853,30 @@ void HostPushObjects(uint32_t now)
 
     if (!g_objPub.Due(now)) return;
 
-    uint8_t body[wire::kMaxBody];
-    objects::Publisher::Chunk c = g_objPub.Peek(body, sizeof(body));
-    if (c.blocked) {
-        QDLOG(LOG_WARN, "object sync: no row fits one datagram; the lane is stalled");
-        return;
-    }
-    uint32_t rev = g_objPub.Revision();
-    bool changed = g_objPub.Dirty();
-    if (!g_net.SendReliable(wire::K_OBJECTS, body, c.bytes)) return;
-    if (g_objPub.Commit(c.entries, now)) {
-        QDLOG(changed ? LOG_INFO : LOG_DEBUG, "objects sent rev=", dec(rev),
-              " objects=", dec(g_objPub.Size()));
+    // [world-interact] MEASURED (round 2 live, mod/doc/features/world-interact.md): `Due()` is
+    // true for the whole of a HALF-SENT pass, so a set larger than one datagram (66 rows at
+    // kMaxBody=1200) was re-attempted on every tick -- ~30 datagrams of 1.2 KB a second on the
+    // reliable channel while the incremental scan kept growing the set and restarting the pass.
+    // The peer could not keep up: its `peer-rev` froze at 3 while this machine published rev 41,
+    // and every peer -> host object intent was then refused as stale, which is why a pot broken
+    // on the peer never broke here.  Finish the pass in ONE tick instead, bounded, so a pass
+    // costs one tick and at most four datagrams.
+    for (int guard = 0; guard < 4; ++guard) {
+        uint8_t body[wire::kMaxBody];
+        objects::Publisher::Chunk c = g_objPub.Peek(body, sizeof(body));
+        if (c.blocked) {
+            QDLOG(LOG_WARN, "object sync: no row fits one datagram; the lane is stalled");
+            return;
+        }
+        if (c.entries <= 0) return;
+        uint32_t rev = g_objPub.Revision();
+        bool changed = g_objPub.Dirty();
+        if (!g_net.SendReliable(wire::K_OBJECTS, body, c.bytes)) return;
+        if (g_objPub.Commit(c.entries, now)) {
+            QDLOG(changed ? LOG_INFO : LOG_DEBUG, "objects sent rev=", dec(rev),
+                  " objects=", dec(g_objPub.Size()));
+            return;
+        }
     }
 }
 
@@ -15831,6 +16915,22 @@ void PeerApplyObjects(wire::Reader& r, uint32_t now)
         const char* used = nullptr;
         bool haveLocal = ObjectStateOf(g_objActors[idx].actor,
                                        (objects::Shape)g_objActors[idx].shape, &local, &used);
+        // [world-interact] MEASURED (round 3 live, run D): a body that left the host BEFORE
+        // this peer's own change was queued arrived here with `kNoPending` -- the detector
+        // had not observed the change yet, so the queue had nothing to hold -- and the body
+        // applied the OLD value, closing the wall the peer had just opened.  `OnHostEntry`
+        // cannot see that window; the MIRROR can, because it holds the last value the host
+        // ever published.  `local != mirror` therefore means "this machine has a change the
+        // host has not acknowledged", and a body must not undo it: the peer's intent is
+        // already on its way and the host's next body will carry the answer.
+        if (haveLocal) {
+            uint8_t acked = 0;
+            bool ackedKnown = g_objMirror.Known(row.key, &acked);
+            if (ackedKnown && acked != local && row.state != local) {
+                ++held;
+                continue;
+            }
+        }
         if (!interact::ApplyAllowed(row.state, local, haveLocal,
                                     (objects::Shape)g_objActors[idx].shape)) {
             if (row.state == 0) ++closedIgnored;
@@ -15932,6 +17032,13 @@ void ObjectsPump(uint32_t now)
     if (connected && !wasConnected) g_objPub.ForceDirty();
     wasConnected = connected;
 
+    // [world-interact] THE PEER OBSERVES ITS OWN WORLD BEFORE IT APPLIES THE HOST'S.
+    // MEASURED (round 3 live, run D): the host's body arrived between the moment the peer
+    // changed a wall and the moment its detector (250 ms) noticed, so the queue had nothing
+    // to hold and the stale body closed the wall.  Running the local detector first narrows
+    // that window to one tick and, together with the mirror guard in `PeerApplyObjects`,
+    // makes "a body cannot undo a change this machine has not had acknowledged" a
+    // structural property rather than a timing coincidence.
     if (g_net.IsHost()) HostPushObjects(now);
     else if (g_net.IsPeer()) PeerObjectIntentPump(now);
 }
@@ -15989,6 +17096,10 @@ void DispatchInbound(const InboundPacket& p, uint32_t now)
             g_peerActionMs = row.sample_ms;
             g_peerAction = row.action;
             g_peerAirborne = (row.flags & 0x01) ? 0 : 1;
+            // [combat-grip] R45: the arc leans by the VIEW pitch.  On the sender that is
+            // its camera; here it is whatever PLAYER row last carried, so the partner's
+            // swing keeps the way it was aimed.
+            g_peerPitchQ = row.pitch;
         }
         g_puppet.DataArrived(now);
         break;
@@ -16142,8 +17253,11 @@ void DispatchInbound(const InboundPacket& p, uint32_t now)
         if (!Cfg().partner_save_sync) break;
         wire::SaveBody b;
         if (!wire::ReadSave(r, &b)) return;
-        if (g_saveBoard.OnPeerSave(b.seq, now))
-            QDLOG(LOG_INFO, "save: the partner saved; writing this machine's own slot");
+        if (g_saveBoard.OnPeerSave(b.seq, b.route, now))
+            QDLOG(LOG_INFO, "save: the partner saved (",
+                  (b.route == progression::ROUTE_SUSPEND ? "the rest/suspend route"
+                                                         : "the main slot"),
+                  "); running this machine's own matching writer");
         break;
     }
     case wire::K_OBJECTS:
@@ -21207,6 +22321,12 @@ void DevAvatarTest(uint32_t now)
         return;
     }
     if (!ObjectIsLive(body.actor)) { QDLOG(LOG_INFO, "dev mirror: body gone"); stage = -1; return; }
+    // [combat-grip] The same grip retry the puppet path does: the mirror body captures its
+    // rest pose a frame or two after it is built, and the grip frame can only be measured
+    // once it has.
+    if (g_localEquip.rev == lastEquipRev && body.rigged && !body.gripCal && body.gripTries < 3) {
+        ApplyEquip(&body, g_localEquip);
+    }
     if (g_localEquip.rev != lastEquipRev) {
         lastEquipRev = g_localEquip.rev;
         static char hold[220];
@@ -21426,6 +22546,377 @@ void DevProbe(uint32_t now)
 // FS_PlayerChar_C.AutoEquipItem, so a weapon swap / thrown weapon can be exercised on a
 // save that owns only the starting sword.  The game persists it into that instance's
 // save like any pickup.
+//
+// [combat-vfx] `AutoEquipItem` FILLS AN EMPTY HAND; it does not replace a held weapon.
+// Measured in s32 run 1: eight weapons granted, `local equipment rev 2: 2 item(s)`, the
+// dagger in the LEFT hand and RustySword still in the right -- so the variety this lane has
+// to prove cannot be reached through Grant+AutoEquip alone.  The two levers below are the
+// game's own `FS_PlayerChar_C.EquipItem(Item, SlotIndex)` and its own `WeaponSystem`
+// functions (`NextWeapon` IS the weapon swap), and they are re-callable, so one run can
+// walk a whole list of weapons instead of one per run.
+void DevEquipLevers(uint32_t now)
+{
+    static char epath[MAX_PATH], wpath[MAX_PATH];
+    static int on = -1;
+    static char eApplied[192] = "", wApplied[64] = "";
+    static uint32_t poll = 0;
+    if (on < 0) {
+        char ud[260];
+        bool rig = CmdArg("-UserDir", ud, sizeof(ud)) && ud[0] != 0;
+        DevRigPath("QDCOOP_TEST_EQUIP", "qd.equip", epath, sizeof(epath));
+        DevRigPath("QDCOOP_TEST_WSYS", "qd.wsys", wpath, sizeof(wpath));
+        on = ((epath[0] || wpath[0]) && rig) ? 1 : 0;
+        if (on) QDLOG(LOG_INFO, "rig: equip levers enabled equip='", epath, "' wsys='", wpath, "'");
+    }
+    if (!on) return;
+    if (now - poll < 400) return;
+    poll = now;
+    if (!IsGameplayPawn(g_localPawn)) return;
+
+    if (epath[0]) {
+        char spec[192];
+        if (DevRigText("QDCOOP_TEST_EQUIP", "qd.equip", spec, sizeof(spec)) && spec[0] &&
+            strcmp(spec, eApplied) != 0) {
+            lstrcpynA(eApplied, spec, sizeof(eApplied));
+            for (int i = 0; spec[i]; ++i) if (spec[i] == '#') { spec[i] = 0; break; }
+            int slot = -1;
+            bool select = false;
+            if (char* at = strchr(spec, ',')) {
+                *at = 0;
+                if (at[1] == 's') select = true; else slot = atoi(at + 1);
+            }
+            void* item = avatar::LoadAsset(spec);
+            if (!item) { QDLOG(LOG_WARN, "rig: equip -- cannot load ", spec); return; }
+            void* target = g_localPawn;
+            if (select) {
+                target = ObjPropC(g_localPawn, "WeaponSystem");
+                if (!target) target = FindInstanceOf("WeaponSystem_C");
+            }
+            const char* verb = select ? "SetSelectedWeaponByItem" : "EquipItem";
+            static Fn f = {};
+            f.fn = nullptr; f.tried = false; f.sig.valid = false;
+            if (!target || !f.Resolve(target, verb)) {
+                QDLOG(LOG_WARN, "rig: equip -- no ", verb, " on ",
+                      (select ? "WeaponSystem" : "the pawn"));
+                LogFunctionsOf(target, "equip target", 240);
+                return;
+            }
+            Call c(f);
+            if (uint8_t* p = c.At("Item", 8)) *(void**)p = item;
+            if (!select) { if (uint8_t* p = c.At("SlotIndex", 4)) *(int32_t*)p = slot < 0 ? 0 : slot; }
+            bool ok = c.Run(target);
+            QDLOG(LOG_INFO, "rig: equip ", verb, "(", spec, ", slot ", dec(slot), ") ran=",
+                  dec(ok ? 1 : 0));
+        }
+    }
+
+    if (wpath[0]) {
+        char spec[64];
+        if (DevRigText("QDCOOP_TEST_WSYS", "qd.wsys", spec, sizeof(spec)) && spec[0] &&
+            strcmp(spec, wApplied) != 0) {
+            lstrcpynA(wApplied, spec, sizeof(wApplied));
+            for (int i = 0; spec[i]; ++i) if (spec[i] == '#') { spec[i] = 0; break; }
+            for (int i = 0; spec[i]; ++i) if (spec[i] == '+') spec[i] = ' ';
+            void* ws = ObjPropC(g_localPawn, "WeaponSystem");
+            if (!ws) ws = FindInstanceOf("WeaponSystem_C");
+            if (!ws) { QDLOG(LOG_WARN, "rig: wsys -- no WeaponSystem on this pawn"); return; }
+            if (strncmp(spec, "List", 4) == 0) {
+                LogFunctionsOf(ws, "WeaponSystem", 240);
+                QDLOG(LOG_INFO, "rig: wsys listed the WeaponSystem functions");
+                return;
+            }
+            static Fn f = {};
+            f.fn = nullptr; f.tried = false; f.sig.valid = false;
+            if (!f.Resolve(ws, spec)) {
+                QDLOG(LOG_WARN, "rig: wsys -- no UFunction '", spec, "' on WeaponSystem");
+                LogFunctionsOf(ws, "WeaponSystem", 240);
+                return;
+            }
+            Call c(f);
+            bool ok = c.Run(ws);
+            QDLOG(LOG_INFO, "rig: wsys ", spec, " ran=", dec(ok ? 1 : 0));
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// [combat-grip] THE ATTACK LEVER -- drive the game's own attack input.
+// ---------------------------------------------------------------------------
+// WHY THIS EXISTS.  Rounds 1 and 2 could not fire a single weapon-specific attack on the
+// rig: `send-input.ps1 -Button left` posts WM_LBUTTONDOWN and this build reads the mouse
+// through RAW input, so the press never arrives; WM_KEYDOWN for R/Q did not deliver
+// either.  Every weapon-specific attack montage, and the widened projectile gate that
+// depends on one, stayed unit-tested only.
+//
+// WHAT A REAL PRESS DOES.  `DefaultInput.ini` binds action `Attack` to
+// LeftMouseButton/Gamepad_RightTrigger.  The engine turns that binding into a call to the
+// pawn's compiled Blueprint event for the action --
+// `InpActEvt_Attack_K2Node_InputActionEvent` -- exactly as the interaction lever already
+// drives `InpActEvt_Interact` (measured: that one RUNS).  So the lever calls that event
+// directly with the same `KeyEvent` a press and a release deliver, which is the input
+// path minus the window, and the game's own code does everything else (hitboxes,
+// montages, projectiles, charge timing).
+//
+// The suffix is compiler-generated, hence a PREFIX lookup -- and the prefix matches MORE
+// THAN ONE function (measured: two for `Attack`), which is why every match is called.
+//
+// `qd.attack` spec:  "<action>[,gap_ms][,count]"  -- e.g. `Attack,120` for a tap,
+// `Attack,300,2` for opener-then-strike, `SecondaryAttack` for the alt attack,
+// `UltraAttack` for the keyboard-bound ultra, `NormalDaggerThrow` for the throw.
+// `List` dumps the pawn's functions; `Info:<word>` prints every InpActEvt_* signature;
+// `Call:<action>` calls one action's events and reports the montage each one moved.
+struct DevAttackState {
+    char     request[64];    // the raw leaf including its `#nonce`
+    char     applied[64];    // the same spec with the nonce removed
+    char     action[32];     // the action that spec named
+    int      stage;          // 0 idle, 1 waiting for the next repeat, 2 done
+    uint32_t stageAt;
+    int      holdMs;         // ms between repeats
+    int      left;           // repeats still to fire (`count`)
+};
+static DevAttackState g_atk = {"", "", "", 0, 0, 0, 1};
+// HOW THE ATTACK INPUT IS ACTUALLY DELIVERED (measured, round 3).
+// -----------------------------------------------------------------
+// The pawn declares the compiled input event for an action MORE THAN ONCE: the dump shows
+// two `InpActEvt_Attack_K2Node_InputActionEvent` entries.  A prefix lookup returns only the
+// first, and calling that one RAN (`called=1`) and left the arms at `montage none` -- which
+// is exactly why rounds 1 and 2 concluded "no synthetic attack input works".  Calling the
+// SECOND one plays the opener (`local montage Player_Stab_Charge_Montage -> kind 14 sent
+// 14`).  So the lever calls EVERY event with the prefix, in declaration order, which is what
+// the engine's own input dispatch does once per binding.
+//
+// Neither event carries a `KeyEvent` parameter (measured: `keyEventParam=0`), so a press
+// and a release are the same call; the game advances its own state machine on the next call
+// (`TickAttackKey` is on the pawn).  `count` is therefore how many times the binding fires:
+// 1 = the opener, 2 = opener then strike.
+// Every compiled input event for one action, in the class chain's declaration order.
+// Returns how many were called; `outHasKey` says whether any declared a KeyEvent.
+static int RigFireAction(const char* action, char* firstName, int fnCap, int* outHasKey)
+{
+    if (firstName && fnCap > 0) firstName[0] = 0;
+    if (outHasKey) *outHasKey = 0;
+    if (!g_localPawn || !action || !action[0]) return 0;
+    static const int kStructChildrenOff = 0x48;
+    char pref[48];
+    wsprintfA(pref, "InpActEvt_%s", action);
+    const int plen = (int)strlen(pref);
+    int called = 0;
+    for (void* c = ObjClass(g_localPawn); c && called < 8; c = SuperOf(c)) {
+        void* f = *(void**)((uint8_t*)c + kStructChildrenOff);
+        for (int guard = 0; f && guard < 4096; ++guard) {
+            char nm[96];
+            bool mine = FNameToString(ObjNameRaw(f), nm, sizeof(nm)) > 0 && strncmp(nm, pref, plen) == 0;
+            if (mine && IsFunctionObject(f)) {
+                Fn fn = {};
+                fn.fn = f;
+                fn.sig = Signature(f);
+                if (!fn.sig.valid) { f = *(void**)((uint8_t*)f + 0x28); continue; }
+                bool hasKey = false;
+                for (int i = 0; i < fn.sig.props; ++i)
+                    if (strcmp(fn.sig.p[i].name, "KeyEvent") == 0) hasKey = true;
+                if (hasKey && outHasKey) *outHasKey = 1;
+                Call call(fn);
+                if (hasKey) call.U8("KeyEvent", 0);       // EInputEvent::IE_Pressed
+                bool ok = call.Run(g_localPawn);
+                if (firstName && fnCap > 0 && !firstName[0]) lstrcpynA(firstName, nm, fnCap);
+                ++called;
+                QDLOG(LOG_INFO, "rig: attack fired #", dec(called), " ", nm,
+                      " keyEvent=", dec(hasKey ? 1 : 0), " called=", dec(ok ? 1 : 0));
+            }
+            f = *(void**)((uint8_t*)f + 0x28);            // UField::Next
+        }
+    }
+    return called;
+}
+
+// The pawn's compiled input event for one action, resolved by prefix and cached per
+// (pawn, action) like RigCallVerbPrefix does for interactables.  File scope: a
+// function-local `static Fn` needs a thread-safe init guard, which requires object
+// unwinding and rules out `__try` (LIVE-TEST-LOG R76).
+
+// Fire `action`'s binding once: every compiled event with that prefix, in order.  Returns
+// how many were called (0 = the build has no such event).
+static int RigPressAction(const char* action)
+{
+    char first[96] = "";
+    int hasKey = 0;
+    void* before = LocalArmsMontage();
+    int n = RigFireAction(action, first, sizeof(first), &hasKey);
+    if (n == 0) {
+        QDLOG(LOG_WARN, "rig: attack -- no InpActEvt_", action,
+              " on the pawn (the build has no compiled event for this action)");
+        return 0;
+    }
+    // The arms' ACTIVE MONTAGE is the oracle: "the event ran" is not evidence it did
+    // anything (the FIRST of the two Attack events runs and changes nothing).
+    void* after = LocalArmsMontage();
+    char a1[96] = "", a2[96] = "";
+    if (before) FNameToString(ObjNameRaw(before), a1, sizeof(a1));
+    if (after) FNameToString(ObjNameRaw(after), a2, sizeof(a2));
+    QDLOG(LOG_INFO, "rig: attack ", action, " fired ", dec(n), " event(s) keyEvent=", dec(hasKey),
+          " -> montage ", (a1[0] ? a1 : "none"), " => ", (a2[0] ? a2 : "none"),
+          (before != after ? "  CHANGED" : ""));
+    return n;
+}
+
+// [combat-grip] DIAGNOSTIC: what the pawn actually declares for the attack inputs, and
+// what each of those events does when called.  `qd.atkinfo` = "<action>" or "all".
+// WHY: the first live run resolved `InpActEvt_Attack_K2Node_InputActionEvent` and it RAN
+// and played no montage -- the same symptom the interaction lane measured when it pressed
+// the wrong object's event.  This says which events exist, their parameters, and which one
+// (if any) moves the arms' montage.
+static void RigAttackInfo(const char* what)
+{
+    if (!g_localPawn) return;
+    void* cls = ObjClass(g_localPawn);
+    // Walk the class chain's Children (the same list FindFunctionInClassPrefix walks) and
+    // print every InpActEvt_* with its full signature: the name alone does not say which
+    // action an event belongs to nor whether it can be told a press from a release.
+    static const int kStructChildrenOff = 0x48;
+    int shown = 0;
+    for (void* c = cls; c && shown < 200; c = SuperOf(c)) {
+        void* f = *(void**)((uint8_t*)c + kStructChildrenOff);
+        for (int guard = 0; f && guard < 4096; ++guard) {
+            if (ObjOuter(f) != c) break;
+            char nm[96];
+            if (FNameToString(ObjNameRaw(f), nm, sizeof(nm)) > 0 && strncmp(nm, "InpActEvt_", 10) == 0 &&
+                IsFunctionObject(f)) {
+                if (what && what[0] && strcmp(what, "all") != 0 &&
+                    !avatar::HasCI(nm, what)) { f = *(void**)((uint8_t*)f + 0x28); continue; }
+                char outer[96];
+                if (FNameToString(ObjNameRaw(ObjOuter(f)), outer, sizeof(outer)) <= 0) outer[0] = 0;
+                char lab[200];
+                wsprintfA(lab, "%s.%s", outer, nm);
+                LogSignature(lab, Signature(f));
+                ++shown;
+            }
+            f = *(void**)((uint8_t*)f + 0x28);          // UField::Next
+        }
+    }
+    QDLOG(LOG_INFO, "rig: atkinfo ", dec(shown), " input events for '", (what ? what : ""), "'");
+}
+
+// Call each InpActEvt_<action>* event on the pawn and report whether the arms' montage
+// changed.  `qd.atkcall` = "<action>"  (e.g. "Attack", "SecondaryAttack", "UltraAttack").
+static void RigAttackCall(const char* action)
+{
+    if (!g_localPawn || !action || !action[0]) return;
+    void* cls = ObjClass(g_localPawn);
+    static const int kStructChildrenOff = 0x48;
+    int tried = 0;
+    for (void* c = cls; c && tried < 30; c = SuperOf(c)) {
+        void* f = *(void**)((uint8_t*)c + kStructChildrenOff);
+        for (int guard = 0; f && guard < 4096; ++guard) {
+            char nm[96];
+            bool mine = false;
+            if (FNameToString(ObjNameRaw(f), nm, sizeof(nm)) > 0) {
+                char pref[48];
+                wsprintfA(pref, "InpActEvt_%s", action);
+                mine = strncmp(nm, pref, (int)strlen(pref)) == 0;
+            }
+            if (mine && IsFunctionObject(f)) {
+                void* before = LocalArmsMontage();
+                Fn fn = {};
+                fn.fn = f;
+                fn.sig = Signature(f);
+                if (fn.sig.valid) {
+                    // Pass KeyEvent when the event declares one: 0 = IE_Pressed.
+                    bool hasKey = false;
+                    for (int i = 0; i < fn.sig.props; ++i)
+                        if (strcmp(fn.sig.p[i].name, "KeyEvent") == 0) hasKey = true;
+                    Call call(fn);
+                    if (hasKey) call.U8("KeyEvent", 0);
+                    bool ok = call.Run(g_localPawn);
+                    Sleep(120);
+                    void* after = LocalArmsMontage();
+                    char a1[96] = "", a2[96] = "";
+                    if (before) FNameToString(ObjNameRaw(before), a1, sizeof(a1));
+                    if (after) FNameToString(ObjNameRaw(after), a2, sizeof(a2));
+                    QDLOG(LOG_INFO, "rig: atkcall ", nm, " keyEventParam=", dec(hasKey ? 1 : 0),
+                          " called=", dec(ok ? 1 : 0), " montage ", (a1[0] ? a1 : "none"), " -> ",
+                          (a2[0] ? a2 : "none"), (before != after ? "  CHANGED" : ""));
+                    if (after) {
+                        // Leave it running long enough for the action pump to observe it.
+                        Sleep(400);
+                    }
+                }
+                ++tried;
+            }
+            f = *(void**)((uint8_t*)f + 0x28);
+        }
+    }
+    QDLOG(LOG_INFO, "rig: atkcall tried ", dec(tried), " events for '", action, "'");
+}
+
+// QDCOOP_TEST_ATTACK (<UserDir>\qd.attack): drive the game's own attack input, so the
+// weapon-specific montages and the projectiles behind them can be reached on the rig.
+//   "<action>[,hold_ms][,count]"   e.g. `Attack,120` / `Attack,900` / `UltraAttack`
+//   "List"                         dump the pawn's functions (look for InpActEvt_)
+void DevAttackLever(uint32_t now)
+{
+    static char path[MAX_PATH];
+    static int on = -1;
+    static uint32_t poll = 0;
+    if (on < 0) {
+        DevRigPath("QDCOOP_TEST_ATTACK", "qd.attack", path, sizeof(path));
+        on = path[0] != 0;
+        if (on) QDLOG(LOG_INFO, "rig: attack lever enabled (qd.attack)");
+    }
+    if (!on || now - poll < 300) return;
+    poll = now;
+    if (!IsGameplayPawn(g_localPawn)) return;
+
+    char spec[64];
+    if (!DevRigText("QDCOOP_TEST_ATTACK", "qd.attack", spec, sizeof(spec)) || !spec[0]) return;
+    // The nonce is part of the comparison: the SAME action must be fireable twice, and a
+    // spec that differs only in `#nonce` is a new request, not a repeat of the last burst.
+    if (strcmp(spec, g_atk.request) == 0) {
+        // Same request: continue the repeat ladder it started.
+        if (g_atk.stage == 1 && now - g_atk.stageAt >= (uint32_t)g_atk.holdMs) {
+            g_atk.stageAt = now;
+            if (RigPressAction(g_atk.action) == 0) g_atk.stage = 2;
+            else if (--g_atk.left <= 0) g_atk.stage = 2;
+        }
+        return;
+    }
+    lstrcpynA(g_atk.request, spec, sizeof(g_atk.request));
+    for (int i = 0; spec[i]; ++i) if (spec[i] == '#') { spec[i] = 0; break; }
+    lstrcpynA(g_atk.applied, spec, sizeof(g_atk.applied));
+
+    if (strncmp(g_atk.applied, "List", 4) == 0) {
+        LogFunctionsOf(g_localPawn, "pawn", 400);
+        QDLOG(LOG_INFO, "rig: attack listed the pawn's functions (look for InpActEvt_)");
+        return;
+    }
+    if (strncmp(g_atk.applied, "Info:", 5) == 0) { RigAttackInfo(g_atk.applied + 5); return; }
+    if (strncmp(g_atk.applied, "Call:", 5) == 0) { RigAttackCall(g_atk.applied + 5); return; }
+
+    // "<action>[,hold_ms][,count]"
+    char action[32] = "";
+    int holdMs = 120, count = 1;
+    {
+        char work[64];
+        lstrcpynA(work, g_atk.applied, sizeof(work));
+        char* save = nullptr;
+        char* t = strtok_s(work, ",", &save);
+        if (t) lstrcpynA(action, t, sizeof(action));
+        t = strtok_s(nullptr, ",", &save);
+        if (t) holdMs = atoi(t);
+        t = strtok_s(nullptr, ",", &save);
+        if (t) count = atoi(t);
+    }
+    if (!action[0]) return;
+    if (holdMs < 40) holdMs = 40;
+    if (count < 1) count = 1;
+    lstrcpynA(g_atk.action, action, sizeof(g_atk.action));
+    g_atk.holdMs = holdMs;
+    g_atk.left = count;
+    g_atk.stageAt = now;
+    if (RigPressAction(action) == 0) { g_atk.stage = 2; return; }
+    if (--g_atk.left > 0) g_atk.stage = 1; else g_atk.stage = 2;
+    QDLOG(LOG_INFO, "rig: attack ", action, " gap ", dec(holdMs), " ms x", dec(count));
+}
+
 // QDCOOP_TEST_SELFHP (<UserDir>\qd.selfhp = "<hp>[#nonce]"): TEST INSTANCES ONLY -- set this
 // machine's own player HP, so the partner's vitals bar has a value to follow.
 void DevSelfHpLever(uint32_t now)
@@ -21457,6 +22948,69 @@ void DevSelfHpLever(uint32_t now)
     FloatPropC(g_localPawn, "Health", &back);
     g_selfHpHoldUntil = now + 20000;
     QDLOG(LOG_INFO, "rig: selfhp -> ", flt(v, 1), " wrote=", dec(ok ? 1 : 0), " read back ", flt(back, 1));
+}
+
+// QDCOOP_TEST_PROJ (<UserDir>\qd.proj = "<projectile class path>[#nonce]"): TEST
+// INSTANCES ONLY -- spawn ONE projectile actor of that class, owned and instigated by the
+// local pawn, 120 cm ahead of it.
+//
+// WHY THIS EXISTS.  The widened projectile gate (a spawned actor is a player projectile if
+// it carries `ProjectileMovement` OR its class name says so, walked up the super chain) is
+// the half of combat-vfx that rounds 1 and 2 could only unit-test: the rig could not make
+// the game fire a gun.  `qd.attack` now drives the game's own attack input, but the guns
+// are ENERGY weapons (`GunPowerLogic`, `ItemTags.EnergyWeapon`) and refuse to fire without
+// charge, and this save's `WeaponSystem.AllWeapons` is empty (R39), so a gun's own fire path
+// is unreachable here.
+//
+// This lever exercises the LANE, and says so plainly: the actor is a real projectile class
+// spawned through the engine's own deferred-spawn pair (the same call the game's Blueprint
+// makes), with the pawn as Owner and Instigator, so the effect lane sees exactly what it
+// would see after a shot.  What it does NOT prove: that the game's trigger pulls.  That is
+// `qd.attack`'s half, proven separately on the families whose attack input does fire.
+void DevSpawnProjectile(uint32_t now)
+{
+    static char path[MAX_PATH];
+    static int on = -1;
+    static char applied[64] = "";
+    static uint32_t poll = 0;
+    if (on < 0) { DevRigPath("QDCOOP_TEST_PROJ", "qd.proj", path, sizeof(path)); on = path[0] != 0; }
+    if (!on || now - poll < 400) return;
+    poll = now;
+    if (!IsGameplayPawn(g_localPawn)) return;
+    char spec[128];
+    if (!DevRigText("QDCOOP_TEST_PROJ", "qd.proj", spec, sizeof(spec)) || !spec[0]) return;
+    if (!strcmp(spec, applied)) return;
+    lstrcpynA(applied, spec, sizeof(applied));
+    for (int i = 0; spec[i]; ++i) if (spec[i] == '#') { spec[i] = 0; break; }
+    void* cls = avatar::LoadAsset(spec);
+    if (!cls) { QDLOG(LOG_WARN, "rig: proj -- cannot load ", spec); return; }
+    ActorXform x;
+    if (!ReadActorXform(g_localPawn, &x)) return;
+    float yaw = x.yaw * 3.14159265f / 180.0f;
+    float px = x.px + cosf(yaw) * 120.0f;
+    float py = x.py + sinf(yaw) * 120.0f;
+    void* a = SpawnActorAt(cls, px, py, x.pz + 40.0f, x.yaw);
+    if (!a) { QDLOG(LOG_WARN, "rig: proj -- spawn failed for ", spec); return; }
+    // The lane's ownership test reads exactly these two, so a lever that left them null
+    // would test nothing.
+    bool ownOk = false, instOk = false;
+    {
+        void* pw = g_localPawn;
+        __try {
+            int o = FindPropertyOffsetIn(ObjClass(a), "Owner");
+            if (o >= 0) { *(void**)((uint8_t*)a + o) = pw; ownOk = true; }
+            int n = FindPropertyOffsetIn(ObjClass(a), "Instigator");
+            if (n >= 0) { *(void**)((uint8_t*)a + n) = pw; instOk = true; }
+        } __except (EXCEPTION_EXECUTE_HANDLER) { ownOk = instOk = false; }
+    }
+    if (!ownOk || !instOk) QDLOG(LOG_WARN, "rig: proj -- Owner/Instigator not set (own=",
+                                 dec(ownOk ? 1 : 0), " inst=", dec(instOk ? 1 : 0), ")");
+    char cn[96] = "?";
+    FNameToString(ObjNameRaw(ObjClass(a)), cn, sizeof(cn));
+    QDLOG(LOG_INFO, "rig: proj spawned ", cn, " at ", flt(px, 0), ",", flt(py, 0), ",",
+          flt(x.pz + 40.0f, 0), " (handler down, kills itself)");
+    // The handler kills itself; a 0.1 s fuse would be too short for the effect scan to see
+    // the BeginPlay record, so leave it to the game's own lifetime.
 }
 
 void DevGive(uint32_t now)
@@ -22243,6 +23797,9 @@ bool HK_Tick(void* engineLoop)
     DevProbe(now);
     DevProbe2(now);
     DevGive(now);
+    DevEquipLevers(now);         // [combat-vfx] EquipItem(slot) / WeaponSystem verb
+    DevAttackLever(now);         // [combat-grip] the game's own attack input (InpActEvt_*)
+    DevSpawnProjectile(now);     // [combat-grip] spawn a real projectile class for the lane
     DevSelfHpLever(now);
     PuppetPump(now);
     FxPump(now);
@@ -23727,6 +25284,7 @@ DWORD WINAPI BootstrapThread(LPVOID)
         const QdTarget* tDil = nullptr;
         const QdTarget* tStore = nullptr;
         const QdTarget* tPE = nullptr;
+        const QdTarget* tSave = nullptr;
         const QdTarget* tVis = nullptr;
         const QdTarget* tLoad = nullptr;
         for (unsigned k = 0; k < kQdTargetCount; ++k) {
@@ -23737,6 +25295,7 @@ DWORD WINAPI BootstrapThread(LPVOID)
             if (NameEquals(kQdTargets[k].name, "UGameplayStatics::SetGlobalTimeDilation")) tDil = &kQdTargets[k];
             if (NameEquals(kQdTargets[k].name, "StoreEnemySaveState")) tStore = &kQdTargets[k];
             if (NameEquals(kQdTargets[k].name, "UObject::ProcessEvent")) tPE = &kQdTargets[k];
+            if (NameEquals(kQdTargets[k].name, "UGameplayStatics::SaveGameToSlot")) tSave = &kQdTargets[k];
         }
         // A missing target must be LOUD. The first version looked these up by
         // exact name and silently installed nothing when the names were padded, so
@@ -23750,6 +25309,15 @@ DWORD WINAPI BootstrapThread(LPVOID)
         else QDLOG(LOG_WARN, "target not found in the table: SetGlobalTimeDilation");
         if (tStore) { if (InstallHook(*tStore, (void*)&HK_StoreEnemySaveState, (void**)&g_oStoreEnemy)) ++installed; }
         else QDLOG(LOG_WARN, "target not found in the table: StoreEnemySaveState");
+        // [progression] The one primitive every save in this game reaches
+        // (`analysis/re/combat_save_evidence.txt` §C9.1-2).  Hooked only when the lane is
+        // on, so a session without save mirroring leaves the engine's writer untouched.
+        if (tSave && Cfg().partner_save_sync) {
+            if (InstallHook(*tSave, (void*)&HK_SaveGameToSlot, (void**)&g_oSaveGameToSlot)) ++installed;
+        } else if (Cfg().partner_save_sync) {
+            QDLOG(LOG_WARN, "target not found in the table: UGameplayStatics::SaveGameToSlot "
+                            "-- save mirroring has no detector on this build");
+        }
         QDLOG(LOG_INFO, "hooks installed: ", dec(installed), " of 4 (ProcessEvent is opt-in)");
         // The streaming veto is an engine-wide setter; it is hooked only when the union
         // is switched on, so a session without it runs the engine untouched.
@@ -23765,6 +25333,7 @@ DWORD WINAPI BootstrapThread(LPVOID)
         // Enemy sync needs it to see the host rest (RestObserve).
         if (tPE && (Cfg().puppet_sync || Cfg().enemy_sync || Cfg().player_body || Cfg().trigger_sync ||
                     Cfg().partner_save_sync ||
+                    Cfg().death_respawn ||   // [coordinator] review #2: the veto lives in HK_ProcessEvent
                     Cfg().log_level >= LOG_TRACE || DevEnvInt("QDCOOP_PE_TRACE", 0))) {
             InstallHook(*tPE, (void*)&HK_ProcessEvent, (void**)&g_oProcessEvent);
         }

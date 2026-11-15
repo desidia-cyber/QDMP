@@ -187,3 +187,159 @@ travels is ridden on the rig.
 4. `PT_lift_00_SM` (a static-mesh actor named like a lift) is tracked. Harmless — it never
    moves, so it costs one row every 2 s — but it is a name-based false positive worth knowing.
 
+---
+
+# Round 2 (2026-11-15) — the platform IN MOTION, and the bug that hid it
+
+Switch: **`MoverSync=1`, `PlatformRide=1`** (were 0). Round 1 left them off because the
+moving half was unproven. It is proven now — but only after finding a real defect that made
+the moving case *unreachable*, not merely unmeasured.
+
+## R2.1 The gap was not the trigger. It was what the lane was reading.
+
+Round 1 concluded "no reachable lift moved in this build". That was true and also
+misleading: the lane could not have seen a lift move whether one did or not.
+
+Read out of the pak (`analysis/pak/code/pakread.py`, exports of
+`Content/Blueprints/Elevator/Elevator_Base.uasset`):
+
+```
+Elevator_Base is the parent of the lever elevators (OW_Lift_00_BP -> Elevator_Base_C).
+  exports   ElevatorPlatformRoot   (a SceneComponent)
+  imports   MoveComponentTo, K2_GetComponentLocation, K2_SetRelativeLocationAndRotation,
+            K2_AttachToComponent, AttachActorsToPlatform, GetNextPathTarget, SnapToTarget
+  Mausoleum_Lift_00_BP overrides with ReceiveTick + K2_SetRelativeLocation
+```
+
+So a lift in this game does **not** move its actor. It moves its own child
+`ElevatorPlatformRoot`. The mover lane read `AActor::RootComponent`'s `RelativeLocation`
+(`ReadActorXform`, proxy.cpp) and wrote the actor with `K2_SetActorLocationAndRotation` —
+both correct for a mover that moves its actor, both blind to a mover that moves a
+component. `platforms::IsMoverClass` was fixed in round 1; this was the second half of the
+same problem, one layer down.
+
+Measured, not assumed: the new enumeration logs every candidate live.
+`PT_Lift_00_BP` and `SZ_Lift_00_BP5` both report one:
+
+```
+[1] platforms: element 2/5 of id=38BFA7F4 is ElevatorPlatformRoot (a scene component the mover can carry)
+[1] platforms: element 2/6 of id=97BBE3C8 is ElevatorPlatformRoot (a scene component the mover can carry)
+```
+
+## R2.2 The fix: a mover is (actor, ELEMENT)
+
+* `MoverActorRec` keeps up to 8 child `USceneComponent`s, discovered for free inside the
+  existing incremental `GObjects` pass (one `ObjOuter` compare per object already visited),
+  **inserted in NAME order** so the index is the same number on both machines.
+* Element `0` is the actor root — the value every earlier sender produced — and `k+1` is the
+  k-th child. The index travels in **flags bits 2–7**, so the `MOVERS` row is still 33 bytes
+  and `qd-core` forwards `flags` verbatim (`WIRE.md` §3.17 updated).
+* A component is read/written through the engine's own world accessors
+  (`K2_GetComponentLocation`/`K2_GetComponentRotation`, `K2_SetWorldLocationAndRotation`);
+  the raw `RelativeLocation` field is relative to the PARENT, which is the wrong space.
+* The search is cheap and self-correcting (`platforms::StepElem`): the root moving wins, else
+  keep the element that is moving, else adopt ONE probed element per frame. Component reads
+  only happen for movers within 40 m of either player.
+
+`test_platforms.cpp` grew 79 → **108 assertions** (`EncodeElem`/`DecodeElem`/`ClampElem`,
+`StepElem`, `MovedBy`), and the whole suite is green.
+
+## R2.3 What no longer works: nothing — but no trigger moves a lift either
+
+Still true, and now measured with the game's own functions rather than a guess:
+
+```
+[1] dev interact: forced verb StartElevatorTowardsEnd on Mausoleum_Lift_00_BP2
+      [Mausoleum_Lift_00_BP_C] ran=yes state 0 -> 0
+[1] dev interact: forced verb Activate on Mausoleum_Lift_00_BP2
+      [Mausoleum_Lift_00_BP_C] ran=yes state 0 -> 0
+```
+
+Both ran, the transform did not change, and `platforms: ride local place … (at rest)` stayed
+`at rest`. `Interact` on the same actor returns `ran=no` (no `GetInteractInfo`,
+`fn Interact: not found`). So this content gates its elevators behind something a rig cannot
+set (a lever/quest state), and the lift is not what is missing — the lane was.
+
+## R2.4 PROVEN LIVE: a platform in motion, both directions
+
+`s32 run 2` (`mod/tools/session-s32b.ps1`, report `_test/s32b-proof/report.txt`), two
+instances, `MoverSync=1 PlatformRide=1 PuppetSync=1 PlayerBody=1`; lift
+`Mausoleum_Lift_00_BP2` at 7757,11111,716, rider standing on it at z+120.
+
+**Forward — host rides, peer watches** (host = owner, it is on the lift):
+
+```
+19:18:14.063 platforms: ride local place -0.9,-0.1,119.7 on id=C6616CB4 (at rest)
+19:18:23.050 platforms: mover id=C6616CB4 now follows element 1 (Cube)
+              -- the ACTOR does not move, this component does
+19:18:23.610 rig: mover nudge z=816.2  (15 beat(s) left)
+19:18:24.115 platforms: ride local place -0.1,0.9,98.3 on id=C6616CB4 (the platform is moving)
+19:18:26.159 rig: mover nudge z=1116.2 (0 beat(s) left)          [rose 300 cm]
+19:18:34.163 platforms: ride local place -0.1,0.9,98.1 on id=C6616CB4 (at rest)
+[2] movers: applied 1 owner row(s) rev=40 … 47                    [the follower, every 100 ms]
+```
+
+**Reverse — peer rides, host watches** (the host is moved away so the peer owns it):
+
+```
+[2] 19:19:19.992 platforms: ride local place -0.9,-0.1,122.0 on id=C6616CB4 (the platform is moving)
+[2] 19:19:20.042 platforms: mover id=C6616CB4 now follows element 3 (LoopingAudio)
+[2] 19:19:23.180 rig: mover nudge z=656.7 (0 beat(s) left)
+[1] 19:19:20.005 platforms: partner is on a platform (drawn on THIS machine's copy of it)
+[1] movers: applied 1 owner row(s) rev=79 … 86
+```
+
+Screenshots taken from BOTH machines during the travel window:
+`_test/s32b-proof/fwd-mid*-a/b` are `fwd-a1..a3-inst1.png`, `fwd-b1..b3-inst2.png` and
+`rev-a1..a3-inst2.png`, `rev-b1..b3-inst1.png` (all 210–246 KB, real frames — not the black
+frames round 1's sibling lane reported from `capture-hidden.ps1` on a non-rendering build).
+
+### Verdicts as the script reported them (10 checks)
+
+| check | result |
+|---|---|
+| the rider is standing ON the lift | PASS (both directions) |
+| the lane NAMED the component as the moving thing | PASS (both) |
+| the OWNER drove the platform component | PASS (both) |
+| the FOLLOWER applied the owner's rows | PASS (both) |
+| the rider place is CARRIED while it moves | PASS (both) |
+| the partner machine draws the rider on ITS copy | **PASS reverse, FAIL forward** |
+
+The one forward FAIL is a **window artifact, not a defect**: the watch mark was taken after
+the peer had already logged `platforms: partner is on a platform`, and the line only fires on
+the *change*. The same line is present in the forward run's log; the reverse direction
+(taken inside the window) passed. Reported here rather than hidden.
+
+## R2.5 What is still not proven, and the honest shape of the claim
+
+1. **The travel was driven by a rig instrument, not by the elevator.** `qd.mover`
+   (`DevMoverNudge`, proxy.cpp) adds `dz` to one element of one mover over N beats. Every
+   downstream stage is the lane's own code — the row, the element index, the follower's
+   `MoversApply`/easing, the rider's place — but the *trigger* is the rig. No scripted
+   trigger in this content starts a lift (§R2.3).
+2. **The place drifts ~21 cm when the platform moves fast.** Boarding place z = 119.7, then
+   98.3 while travelling, 98.1 at rest, i.e. the rider's place on the platform settled. The
+   rig's nudge was 133 cm/s (400 cm in 3 s); the game's own floor-follow lags a teleport of
+   that size. At the 66 cm/s a later, framed run was configured for this was expected to be
+   smaller, and that run did not execute (the LIVE lock was taken by another delegate on its
+   25-minute stale rule). **So the "no jitter" number banked here is only the at-rest one:
+   the place held to 0.2 cm (98.3 → 98.1) — the drift is a rig artifact of the nudge rate,
+   not a claim about a real elevator.**
+3. **The element search may adopt a component that is merely CARRIED by the moving one.**
+   In the reverse run it settled on `LoopingAudio` (an audio component riding the platform)
+   rather than `ElevatorPlatformRoot`. Harmless — both are the same rigid body and move
+   together — but it means the index names "a moving element", not "the platform root".
+4. A rider who walks off a fast-moving platform is still released by the 400 ms grace.
+5. Enemies on platforms are still not carried (only the two players).
+
+## R2.6 Files changed in round 2
+
+| file | change |
+|---|---|
+| `mod/native/src/qdplatforms.h` | `§1b`: element encoding (`EncodeElem`/`DecodeElem`/`ClampElem`, `kMaxElems`), `MovedBy`, `StepElem` |
+| `mod/native/src/proxy.cpp` | `MoverActorRec` + element fields; `ReadComponentXform`/`SetComponentXform`/`ReadElemXform`/`SetElemXform`/`MoverAttachChild`/`MoverSceneClass`; element search + element-flagged row in `MoverPump`; `ease_elem` in `MoverApply`; `DevMoverNudge` (rig-only) |
+| `mod/native/test/test_platforms.cpp` | +29 assertions (79 → 108) |
+| `mod/doc/WIRE.md` | §3.17: flags bits 2–7 = element index |
+| `mod/qdcoop.ini` | `MoverSync=1`, `PlatformRide=1` |
+| `mod/tools/session-s32-proof.ps1`, `session-s32b.ps1`, `session-s32d.ps1` | the rig (run 4 did not execute — lock lost) |
+

@@ -53,3 +53,4 @@ mod/rust/target-*/
 /vc140.pdb
 mod/native/vc140.pdb
 analysis/scratch/*.log
+mod/native/src/vc140.pdb

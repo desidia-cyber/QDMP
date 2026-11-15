@@ -368,6 +368,10 @@ public:
         }
         r->peerXp = xp;
         r->peerSeq = seq;
+        // [coordinator] review #1: this machine may have settled first with paid == 0
+        // (the common ordering -- both sides settle 400 ms after the same death). Re-open
+        // the record so Tick emits XP_PAY_LOCAL; the peerSeq replay guard keeps it once.
+        if (r->settled && r->paid <= 0) r->awarded = false;
         return true;
     }
 
@@ -567,6 +571,17 @@ static const uint32_t kSaveDedupMs   = 1500;   // the partner repeating the same
 static const uint32_t kSaveDeferMs   = 20000;  // how long a blocked save may wait
 static const uint32_t kSaveEchoMs    = 800;    // a deferred echo lands inside this
 
+// WHICH ROUTE the partner must mirror (WIRE.md §3.27's `route` byte).
+// MEASURED (round 3): this build's player-facing save is the checkpoint REST, and a rest
+// writes `World0_Suspend_N.sav`, not the main slot.  A partner that answered a rest with a
+// main-slot write would have saved a DIFFERENT file than the one its own game resumes
+// from, so the route travels with the request and the receiver runs the matching writer on
+// its OWN slot.  The receiver never receives a save file: only the instruction.
+enum SaveRoute : uint8_t {
+    ROUTE_SLOT    = 1,   // SaveFunctions_C.SaveGameToDisk -- the main slot
+    ROUTE_SUSPEND = 2,   // the game's own suspend writer -- what a checkpoint rest uses
+};
+
 // What the CALLER measured about the local game.  Every field is a fact the caller can read;
 // nothing here is inferred by this header.
 struct SaveGate {
@@ -620,6 +635,7 @@ public:
         gaveUp_ = false;
         savedForPeer_ = 0;
         echoed_ = 0;
+        route_ = 0;
     }
 
     // The caller is about to run the game's own save on the partner's behalf.  Everything
@@ -648,8 +664,10 @@ public:
     }
 
     // The partner says it saved.  Returns false for a duplicate of the request already
-    // being served; true when a save is now owed.
-    bool OnPeerSave(uint32_t seq, uint32_t now)
+    // being served; true when a save is now owed.  `route` names which of THIS machine's
+    // own writers must run, because on this build the player's real save is the suspend
+    // route and answering it with a main-slot write would save the wrong file.
+    bool OnPeerSave(uint32_t seq, uint8_t route, uint32_t now)
     {
         if (havePeer_ && (int32_t)(seq - peerSeq_) <= 0) return false;
         if (havePeer_ && (uint32_t)(now - peerAt_) < kSaveDedupMs) {
@@ -660,12 +678,16 @@ public:
         havePeer_ = true;
         peerSeq_ = seq;
         peerAt_ = now;
+        route_ = route ? route : (uint8_t)ROUTE_SLOT;
         if (want_) return false;                 // already owed; one save serves both
         want_ = true;
         wantAt_ = now;
         gaveUp_ = false;
         return true;
     }
+
+    // The route the owed save must use (ROUTE_SLOT when nothing is owed).
+    uint8_t WantedRoute() const { return route_ ? route_ : (uint8_t)ROUTE_SLOT; }
 
     // Decide what to do this tick.  Returns true when the caller must run the game's own
     // save now; the board then accounts for the echo it will cause.
@@ -718,6 +740,7 @@ private:
     bool     gaveUp_;
     uint32_t savedForPeer_;
     uint32_t echoed_;
+    uint8_t  route_;
 };
 
 // The save dispatch names that are NOT mirrored (qdsuspend.h owns those).
@@ -759,6 +782,43 @@ inline bool IsSaveVerb(const char* name)
     for (unsigned i = 0; i < sizeof(kV) / sizeof(kV[0]); ++i)
         if (SameText(name, kV[i])) return true;
     return false;
+}
+
+// THE REST POINT IS A SUSPEND SAVE ON THIS BUILD, SO THE REST POINT MUST BE A TRIGGER
+// ----------------------------------------------------------------------------------
+// MEASURED (round 3 live, `progression.md`): resting at a `Checkpoint_C` wrote
+// `World0_Suspend_1.sav` and did NOT touch `World0.sav`; `SaveHere` dispatched no save at
+// all.  So on this build the game commits the player's PROGRESS to disk through its
+// suspend writer, and `IsSaveVerb` -- which refuses suspend names on purpose, so a suspend
+// body can never be COPIED to the partner -- therefore never saw the one save a player
+// actually makes.  The detector was correct and blind.
+//
+// The two questions are different and were being answered by one list:
+//   * "may this body be mirrored as a copy?"     -> suspend: NEVER (qdsuspend.h's reason).
+//   * "is this a moment the player's progress hit the disk?" -> suspend: YES.
+//
+// So the trigger is a SUPERSET of `IsSaveVerb`, and the ACTION it causes is never a copy:
+// the partner runs its OWN writer on its OWN slot.  `Cancel*` and the delete/cleanup
+// names are excluded because they destroy saves rather than create one.
+inline bool IsProgressSaveTrigger(const char* name)
+{
+    if (!name) return false;
+    if (IsSaveVerb(name)) return true;
+    if (!IsSuspendSaveVerb(name)) return false;
+    // Refused as triggers: these remove or cancel a save, they do not make one.
+    static const char* const kNo[] = {
+        "CancelSuspendSaveLoop", "UnsafeDeleteSuspendSavesOnSlot",
+    };
+    for (unsigned i = 0; i < sizeof(kNo) / sizeof(kNo[0]); ++i)
+        if (SameText(name, kNo[i])) return false;
+    return true;
+}
+
+// True when the trigger was a suspend-name dispatch, so the live line can say WHICH route
+// fired.  Reported because the two routes need different proof.
+inline bool IsSuspendTrigger(const char* name)
+{
+    return name && IsSuspendSaveVerb(name) && IsProgressSaveTrigger(name);
 }
 
 // A system save (`FS_SystemSave`, options/input bindings) is per-machine settings, not

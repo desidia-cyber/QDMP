@@ -130,6 +130,15 @@ HostAuthoritative=1   ; do not set this to 0
 [Tuning]
 PlayerHz=30
 EnemyRowsPerTick=20
+; --- added 2026-11-16 (co-op feature round, mod/doc/features/*.md) ---
+InteractSync=1        ; every door/breakable/lever/secret wall, with its own animation
+QuestItemSync=1       ; only key/quest items cross; all other loot and inventory stay local
+KillXPSync=1          ; both players get each kill's XP once
+PartnerSaveSync=1     ; one player saves -> the other saves its own slot
+PlatformRide=1        ; partner standing on a moving platform rides it (needs MoverSync=1)
+CombatVfx=1           ; every weapon in hand, weapon attacks, projectiles, casts, impacts
+DialogueView=1        ; partner sees the dialogue, camera on the speaker, then restored
+DeathRespawn=1        ; respawn at your last rest without a reload; -10% max HP per death until rest
 ```
 
 `LogLevel=2` (info) for play.  `3` (debug) is for a test run — it is much larger and only

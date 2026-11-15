@@ -237,11 +237,47 @@ int main()
     // ---- the savable lane's explicit-animation decision ---------------------
     CHECK(interact::NeedsExplicitAnim(objects::SH_DOOR, 0, 1), "door open animates");
     CHECK(interact::NeedsExplicitAnim(objects::SH_DOOR, 1, 0), "door close animates");
-    CHECK(!interact::NeedsExplicitAnim(objects::SH_DOOR, 1, 1), "already-open door stays");
-    CHECK(!interact::NeedsExplicitAnim(objects::SH_DOOR, 0, 0), "already-shut door stays");
+    // [live-ip2] MEASURED round 2/3: `had != want` skipped the close visual whenever the
+    // door's own bool already read the wanted value (or it had no readable bool at all),
+    // so a mirrored close reached the peer's container and never played.  A door is now
+    // ALWAYS animated, in both directions.
+    CHECK(interact::NeedsExplicitAnim(objects::SH_DOOR, 1, 1),
+          "an already-open door is still animated (its timeline may be at the other end)");
+    CHECK(interact::NeedsExplicitAnim(objects::SH_DOOR, 0, 0),
+          "an already-shut door is still animated (the mirrored close)");
+    CHECK(interact::WantsExplicitAnim(objects::SH_DOOR, 0), "a close wants a visual");
+    CHECK(!interact::WantsExplicitAnim(objects::SH_BARRICADE, 0),
+          "a breakable has no close visual");
+    CHECK(!interact::WantsExplicitAnim(objects::SH_NONE, 0),
+          "an unclassified shape wants no visual");
     CHECK(!interact::NeedsExplicitAnim(objects::SH_BARRICADE, 0, 1),
           "breakable restore already calls Break");
     CHECK(!interact::NeedsExplicitAnim(objects::SH_CHEST, 0, 1), "chest restore is the visual");
+
+    // ---- the direction policy, split from "already there" -------------------
+    CHECK(interact::DirectionAllowed(0, objects::SH_DOOR), "a door may be closed");
+    CHECK(interact::DirectionAllowed(1, objects::SH_DOOR), "a door may be opened");
+    CHECK(!interact::DirectionAllowed(0, objects::SH_BARRICADE),
+          "a broken breakable is never un-broken");
+    CHECK(!interact::DirectionAllowed(0, objects::SH_CHEST), "a chest is never re-closed");
+    CHECK(!interact::DirectionAllowed(0, objects::SH_PICKUP), "a pickup is never un-picked");
+    CHECK(interact::DirectionAllowed(1, objects::SH_BARRICADE), "a breakable may be broken");
+    CHECK(interact::DirectionAllowed(0, objects::SH_NONE),
+          "an unclassified shape has no policy to refuse");
+
+    // ---- the secret-wall family is the object lane's, by name ----------------
+    // MEASURED round 2/3: `SecretWall_C`'s own `Activate` never writes the
+    // SavableActorStates container, so the GUID lane cannot carry it and its own bool is
+    // the state.  These are the classes that must therefore be published directly.
+    CHECK(interact::DirectBoolClass("SecretWall_C"), "SecretWall_C is a direct-bool class");
+    CHECK(interact::DirectBoolClass("ScienceSecretWall_C"),
+          "ScienceSecretWall_C is a direct-bool class");
+    CHECK(interact::DirectBoolClass("HiddenWall_C"), "HiddenWall_C is a direct-bool class");
+    CHECK(!interact::DirectBoolClass("SecretZoneDoor_BP_C"),
+          "a SecretZoneDoor is an ordinary savable door (its container IS written)");
+    CHECK(!interact::DirectBoolClass("Door_Base_C"), "a plain door is a savable door");
+    CHECK(!interact::DirectBoolClass("Barrel_C"), "a breakable is not a secret wall");
+    CHECK(!interact::DirectBoolClass(nullptr), "null classifies as no");
 
     // ---- the words that must not be matched as substrings -------------------
     CHECK(interact::HasWordCI("Pot_Fat_C", "Pot"), "pot is a word here");

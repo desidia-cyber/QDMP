@@ -145,6 +145,50 @@ inline bool IsMoverClass(const char* cls)
 }
 
 // ---------------------------------------------------------------------------
+// 1b. WHICH ELEMENT OF THE ACTOR MOVES
+// ---------------------------------------------------------------------------
+// THE BUG THIS EXISTS FOR.  The mover lane read the ACTOR transform
+// (`AActor::RootComponent`'s RelativeLocation).  But `Elevator_Base` -- the parent of every
+// lever elevator in this game, read out of the pak: exports `ElevatorPlatformRoot`, and its
+// ubergraph imports `MoveComponentTo`, `K2_GetComponentLocation`,
+// `K2_SetRelativeLocationAndRotation`) does not move the actor at all: it moves its own
+// `ElevatorPlatformRoot` SCENE COMPONENT.  `Mausoleum_Lift_00_BP` likewise ticks and calls
+// `K2_SetRelativeLocation`.  So an actor-root read sees a lift that never moves, which is
+// exactly what Session 31 measured (`their transform does not change`) about a lift nobody
+// had made travel yet.
+//
+// THE RULE.  A mover is (actor, element).  Element 0 is the actor root, which is what every
+// earlier session measured and what a mover that really does move its actor still uses.
+// Element k+1 is the k-th child `USceneComponent`, ORDERED BY NAME -- the two machines run
+// the same cooked package, so they enumerate the same components in the same order and the
+// index means the same thing on both.  The index travels in the top six bits of the
+// existing `MOVERS` row `flags` byte, so the wire shape (33 B) and the Rust side are
+// untouched: `flags` bit0 moving, bit1 owner, bits 2-7 element.
+static const int kMaxElems    = 8;
+static const int kElemNameLen = 40;
+
+static const uint8_t kElemShift = 2;
+static const uint8_t kElemMask  = 0x3F;
+
+inline uint8_t EncodeElem(int elem)
+{
+    if (elem < 0) elem = 0;
+    if (elem > kMaxElems) elem = 0;
+    return (uint8_t)(((uint32_t)elem << kElemShift) & kElemMask);
+}
+
+inline int DecodeElem(uint8_t flags) { return (int)((flags & kElemMask) >> kElemShift); }
+
+// The element a frame's flags name, clamped to what this machine can address.  A row from a
+// peer that has more components than this copy falls back to the root rather than writing
+// the wrong component.
+inline int ClampElem(int elem, int haveN)
+{
+    if (elem <= 0) return 0;
+    return elem <= haveN ? elem : 0;
+}
+
+// ---------------------------------------------------------------------------
 // 2. Geometry
 // ---------------------------------------------------------------------------
 static constexpr float kPi = 3.14159265358979323846f;
@@ -175,6 +219,37 @@ inline bool SanePos(const float p[3])
         if (v > kMax || v < -kMax) return false;
     }
     return true;
+}
+
+// Did a spot move between two samples?  `kSpotCm` is the same 0.4 cm the mover lane already
+// uses as its "this frame moved" threshold, so the element search and the moving test agree.
+static constexpr float kSpotCm = 0.4f;
+
+inline bool MovedBy(const float a[3], const float b[3])
+{
+    for (int i = 0; i < 3; ++i) {
+        float d = a[i] - b[i];
+        if (d > kSpotCm || d < -kSpotCm) return true;
+    }
+    return false;
+}
+
+// ONE FRAME OF THE ELEMENT SEARCH.  The mover lane cannot afford to poll every component of
+// every mover every frame, so it commits to one element and probes one other per frame:
+//
+//   * the root moving always wins -- that is a mover that really does move its actor, and
+//     it is the case every earlier session measured;
+//   * otherwise the element it already follows is kept while it moves;
+//   * otherwise the one probed element is adopted if IT moved.
+//
+// `probed` is an element index (1..n) or 0 for "nothing probed this frame".  Returns the
+// element to follow from the next frame on.
+inline int StepElem(int cur, bool rootMoved, bool curMoved, int probed, bool probedMoved)
+{
+    if (rootMoved) return 0;
+    if (cur > 0 && curMoved) return cur;
+    if (probed > 0 && probedMoved) return probed;
+    return cur;
 }
 
 // A rider's place in the platform's axes, rebuilt on THIS machine's copy of the platform.

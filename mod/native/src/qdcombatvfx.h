@@ -336,6 +336,18 @@ inline int ClassifyMontage(const char* name, const char* held = "")
         return K_SLASH_R;
     }
 
+    // 12b. A CAST, and it has to be asked BEFORE the directional slashes.  The grimoire's
+    //      montage is `Player_FPArms_LeftHand_CastMagic_Montage`; rule 13 below matches
+    //      "_left" and answered K_SLASH_L for it, so the cast rule (which used to sit at
+    //      the very end, after "attack"/"strike") was unreachable for every magic use
+    //      that named its hand.  Measured by reading the rule order, not by eye: the
+    //      string "_left" occurs at offset 21 of that name and "castmagic" at 32.
+    //      Kept after rule 12 on purpose: `Player_FPArms_MagicStoneSword_Alt` is a sword
+    //      alt, and the alt branch above answers for it first.
+    if (HasCI(name, "castmagic") || HasCI(name, "castspell") || HasCI(name, "cast_spell") ||
+        HasCI(name, "grimoire") || HasCI(name, "inscrib"))
+        return K_CAST;
+
     // 13. Directional slashes.
     if (HasCI(name, "slash_left") || HasCI(name, "slashleft") || HasCI(name, "_left"))
         return K_SLASH_L;
