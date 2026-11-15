@@ -19,6 +19,7 @@
 #pragma once
 
 #include "qdreflect.h"
+#include "qdcombatvfx.h"
 #include <math.h>
 
 namespace qd {
@@ -455,12 +456,18 @@ struct Body {
 };
 
 // PLAYER.action kinds (WIRE.md 3.5).  0..4 are the original values; the rest name the
-// move so the body can play something that reads as it.
+// move so the body can play something that reads as it.  The last three are the moves
+// the weapon-specific montage sets needed (qdcombatvfx.h): a gun firing, a scythe
+// sweeping, a claw/katar flurry.  The kind travels in 5 bits of the action byte, so
+// they need no wire change.
 enum ActKind {
     A_NONE = 0, A_ATTACK = 1, A_HURT = 2, A_DYING = 3, A_DEAD = 4,
     A_SLASH_R = 5, A_SLASH_L = 6, A_SLASH_DOWN = 7, A_THRUST = 8, A_CHARGE = 9,
     A_THROW = 10, A_USE = 11, A_SWAP = 12, A_CAST = 13,
     A_CHARGE_THRUST = 14,    // held before a stab (A_CHARGE is held before a swing)
+    A_SHOOT = 15,            // a gun / crossbow / launcher fires
+    A_SPIN = 16,             // scythe, flail, morning star
+    A_FLURRY = 17,           // claw, katar, cestus
 };
 
 inline bool IsChargeKind(int k) { return k == A_CHARGE || k == A_CHARGE_THRUST; }
@@ -487,16 +494,12 @@ inline bool HasCI(const char* s, const char* k)
 // Returns the move the release plays (A_ATTACK = a swing, A_THRUST = a stab), or 0.
 inline int ChargeOpenerMove(const char* n)
 {
-    if (!n || !n[0]) return 0;
-    if (HasCI(n, "std_charge_attack") || HasCI(n, "rotated_charge_attack")) return A_ATTACK;
-    if (HasCI(n, "stab_charge")) return A_THRUST;
-    if (HasCI(n, "altattack_charge") || HasCI(n, "charge_attack") || HasCI(n, "chargeable") ||
-        HasCI(n, "lance_charge")) {
-        if (HasCI(n, "rapier") || HasCI(n, "katar") || HasCI(n, "knife") || HasCI(n, "lance") ||
-            HasCI(n, "stab") || HasCI(n, "spear")) return A_THRUST;
-        return A_ATTACK;
-    }
-    return 0;
+    // cxf::ReleaseMove is this same rule with the weapon read out of the montage name.
+    // The list below matched only weapons whose word appeared in it, so a charge on
+    // anything else fell through to "a swing" without the sender ever noticing.
+    int m = cxf::ReleaseMove(n, cxf::ShapeOfName(n));
+    if (m == cxf::K_NONE) return 0;
+    return m == cxf::K_THRUST ? A_THRUST : A_ATTACK;
 }
 
 // The first-person arms' montage -> kind.  -1: not an action of its own (the left
@@ -505,35 +508,15 @@ inline int ChargeOpenerMove(const char* n)
 // swing), Player_Slash_Right_Montage, Player_Slash_LeftDown_Montage,
 // Player_FPArms_LeftHand_MeleeResponse_Montage, Player_SwapRightWeapon,
 // Player_FPArms_Base_Jump_Action_Left_Montage, ..._Jump_Landing_Left_Montage.
-inline int ClassifyMontage(const char* n)
+inline int ClassifyMontage(const char* n, const char* held = nullptr)
 {
-    if (!n || !n[0]) return 0;
-    if (HasCI(n, "death") || HasCI(n, "_die") || HasCI(n, "dying")) return A_DYING;
-    if (HasCI(n, "meleeresponse") || HasCI(n, "jump") || HasCI(n, "landing")) return -1;
-    if (HasCI(n, "swap") || HasCI(n, "equip")) return A_SWAP;
-    // Measured on the sword and the axe: every click plays Std_Charge_Attack (the
-    // strike lands 0.33-0.58 s into it), then the left hand's MeleeResponse, then a
-    // Slash_Right / Slash_LeftDown follow-through that alternates per attack.  So the
-    // charge-attack montage IS the swing, and the slash montages are not new moves.
-    if (int m = ChargeOpenerMove(n)) return m == A_THRUST ? A_CHARGE_THRUST : A_CHARGE;
-    if (HasCI(n, "player_slash_")) return -1;
-    // Alt attacks: the rusty sword's lunge, the rapier's flurry.
-    if (HasCI(n, "dash") || HasCI(n, "startup")) return A_THRUST;
-    if (HasCI(n, "applyacid")) return A_USE;
-    if (HasCI(n, "charge") || HasCI(n, "windup") || HasCI(n, "wind_up")) return A_CHARGE;
-    if (HasCI(n, "throw") || HasCI(n, "dagger")) return A_THROW;
-    if (HasCI(n, "drink") || HasCI(n, "consum") || HasCI(n, "eat") || HasCI(n, "potion") ||
-        HasCI(n, "useitem") || HasCI(n, "use_item")) return A_USE;
-    if (HasCI(n, "cast") || HasCI(n, "spell") || HasCI(n, "magic") || HasCI(n, "grimoire")) return A_CAST;
-    if (HasCI(n, "stab") || HasCI(n, "thrust") || HasCI(n, "poke") || HasCI(n, "lunge") ||
-        HasCI(n, "pierce") || HasCI(n, "spear")) return A_THRUST;
-    if (HasCI(n, "down") || HasCI(n, "overhead") || HasCI(n, "slam") || HasCI(n, "smash") ||
-        HasCI(n, "vertical")) return A_SLASH_DOWN;
-    if (HasCI(n, "slash_left") || HasCI(n, "slashleft") || HasCI(n, "_left")) return A_SLASH_L;
-    if (HasCI(n, "slash") || HasCI(n, "swing") || HasCI(n, "attack") || HasCI(n, "hit") ||
-        HasCI(n, "combo") || HasCI(n, "strike")) return A_SLASH_R;
-    if (HasCI(n, "hurt") || HasCI(n, "damage") || HasCI(n, "flinch")) return A_HURT;
-    return -1;
+    // The rule lives in qdcombatvfx.h: it reads the WEAPON out of the montage name
+    // (the game names every weapon's montages after that weapon) and picks the move
+    // that weapon makes.  The English-keyword list this replaced turned every
+    // weapon-specific alt attack it did not recognise -- hammer, claw, lance,
+    // greatsword, every gun -- into a generic right-to-left sword swing, or into
+    // nothing at all.
+    return cxf::ClassifyMontage(n, held);
 }
 
 inline uint8_t ActionByte(int kind, int seq) { return (uint8_t)(((seq & 7) << 5) | (kind & 0x1F)); }
@@ -563,6 +546,9 @@ inline void SetAction(Body* b, uint8_t byte)
     case A_CAST:       b->actDur = 0.70f; break;
     case A_HURT:       b->actDur = 0.35f; break;
     case A_ATTACK:     b->actDur = 0.90f; break;   // strike 0.2-0.52 s, as measured
+    case A_SHOOT:      b->actDur = 0.36f; break;   // a shot is a snap, not a swing
+    case A_SPIN:       b->actDur = 0.78f; break;   // a scythe sweep travels a long arc
+    case A_FLURRY:     b->actDur = 0.30f; break;   // one strike of a multi-hit set
     default:           b->actDur = 0.52f; break;
     }
     // Released out of a held charge: the arm is already up, so only 80 ms are left
@@ -783,13 +769,22 @@ inline void Animate(Body* b, float x, float y, float z, float yawDeg, uint32_t n
     else       { R[0] = 4.0f + armDeg * sl;         R[2] = -32.0f; R[3] = 12.0f + 18.0f * s; }
     R[0] += airArm; R[1] = 0.0f; R[4] = 0.0f;
     Lp[0] = 4.0f - armDeg * sl + airArm; Lp[1] = 0.0f; Lp[2] = 32.0f; Lp[3] = 12.0f + 18.0f * s; Lp[4] = 0.0f;
+    // A two-handed weapon is held by BOTH hands, so the free left hand comes across
+    // to the shaft instead of hanging at the side (a partner carrying a greatsword
+    // otherwise looks like it is held by one hand and floating).  Only when the left
+    // hand holds nothing: an off-hand dagger or shield keeps its own pose, and it is
+    // the item, not the weapon's shape, that decides that.
+    if (armed && !b->held[1].path[0] &&
+        cxf::ShapeTwoHanded(cxf::ShapeOfName(b->held[0].path), b->held[0].path)) {
+        Lp[0] = 52.0f + airArm; Lp[1] = 18.0f; Lp[2] = 6.0f; Lp[3] = 72.0f; Lp[4] = -8.0f;
+    }
 
     // Action overlay: wind from where the arm was to the move's start pose, swing to
     // its end pose, recover to the normal pose.
     float leanFwd = 0.0f;
     if (b->actKind != A_NONE) {
         b->actT += b->actSlow > 1.0f ? dt / b->actSlow : dt;
-        static const float K[8][2][5] = {
+        static const float K[11][2][5] = {
             //            start {pitch, yaw, abd, fore, twist}      end
             /*SLASH_R*/ {{ 95,  75, -10,  45,  28}, { 80, -55, -10,  5, -22}},
             /*SLASH_L*/ {{ 95, -45, -10,  75, -22}, { 85,  70, -10,  5,  22}},
@@ -799,6 +794,9 @@ inline void Animate(Body* b, float x, float y, float z, float yawDeg, uint32_t n
             /*SWAP   */ {{-10,  15, -20,  25,   0}, { 18,   0, -26, 62,   0}},
             /*HURT   */ {{ 30,  20, -35,  70, -10}, { 18,   0, -26, 62,   0}},
             /*CHG_THR*/ {{ 62,  14, -12, 118,  24}, { 62,  14, -12, 118, 24}},
+            /*SHOOT  */ {{ 86,   6,  -8,  22,   4}, { 78,   2,  -8,  26,  -4}},
+            /*SPIN   */ {{ 78, -72, -14,  34, -32}, { 74,  78, -14,  10,  30}},
+            /*FLURRY */ {{102,  58, -12,  64,  26}, { 72, -42, -12,  16, -20}},
         };
         int row = -1;
         switch (b->actKind) {
@@ -813,6 +811,9 @@ inline void Animate(Body* b, float x, float y, float z, float yawDeg, uint32_t n
         case A_SWAP: row = 5; break;
         case A_HURT: row = 6; break;
         case A_CHARGE_THRUST: row = 7; break;
+        case A_SHOOT: row = 8; break;
+        case A_SPIN: row = 9; break;
+        case A_FLURRY: row = 10; break;
         default: break;                  // throw / use / cast lead with the left hand
         }
         float u = b->actT / b->actDur;

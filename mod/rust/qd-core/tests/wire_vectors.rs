@@ -306,6 +306,21 @@ fn vectors() -> Vec<Vector> {
             expected: "21 04 00 00 00 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 01 0c 00 03 00",
         },
         Vector {
+            name: "dialogue_view",
+            body: Body::DialogueView(DialogueView {
+                seq: 4,
+                npc: sample_guid(),
+                slot: slots::PEER,
+                flags: dialogue_view_flags::OPTIONS | dialogue_view_flags::CHOSEN,
+                sequence: 2,
+                entry: 1,
+                options: 3,
+                chosen: 1,
+                asset: "Knight_Arjaot_Dialogue_00".to_owned(),
+            }),
+            expected: "50 04 00 00 00 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 01 03 02 00 01 00 03 00 01 00 19 00 4b 6e 69 67 68 74 5f 41 72 6a 61 6f 74 5f 44 69 61 6c 6f 67 75 65 5f 30 30",
+        },
+        Vector {
             name: "level_union",
             body: Body::LevelUnion(LevelUnion {
                 bits: vec![0b0000_0101, 0b0000_0010],

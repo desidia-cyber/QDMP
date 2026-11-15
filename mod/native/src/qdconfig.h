@@ -36,21 +36,32 @@ struct Config {
     int  inventory_sync;   // host -> peer InventoryContents mirror + grants
     int  actor_state_sync; // SavableActorStates
     int  object_sync;      // placed world objects that are NOT SavableActors (K_OBJECTS)
+    int  interact_sync;    // worlds' doors/breakables/secret mechanisms (qdinteract.h)
     int  enemy_sync;       // enemy rows + StoreEnemySaveState
     int  mirror_spawn;     // construct a copy of an enemy this machine never spawned
     int  puppet_sync;      // remote body spawn/drive
     int  player_body;      // ... as the game's own player class (B7 / G4 / G5)
     int  dialogue_sync;    // lock + first-answer-decides
+    int  dialogue_view;    // drive the partner's own dialogue widget in spectator mode (0x50)
     int  stream_union;     // level-streaming union guard
     int  travel_sync;      // G6 map/world announcement, follow and hard handshake
     int  cutscene_sync;    // play/hold a partner's cutscene, resume together
     int  mover_sync;       // owner-authoritative moving world objects
+    int  platform_ride;    // a rider's place ON the platform, keyed by the platform (K_PLATFORM_RIDE)
     int  loot_sync;        // one shared drop set
     int  suspend_guard;    // hold the peer's timed suspend save, repair a load
     int  suppress_pause;   // stop a menu freeze from freezing the session
     int  object_scan;      // walk GObjects to find UFunctions (OFF: it exits the game)
     int  trigger_sync;     // a partner entering a placed event volume fires it here (K_TRIGGER)
     int  boss_pull_in;     // ... and a boss arena's trigger moves a far partner in first
+    // [progression] mod/doc/features/progression.md.  Three separate switches because
+    // they are three separate risks: a narrowed lane, an invented award, and a write to
+    // this machine's own save slot.
+    int  quest_item_sync;  // only Items/KeyItems entries cross; loot stays per-player
+    int  kill_xp_sync;     // a kill pays both players, measured, exactly once each
+    int  partner_save_sync; // the partner's save writes this machine's own slot
+    int  combat_vfx;       // every player projectile copied, plus its impact and cast VFX (EFFECT kind 5)
+    int  death_respawn;    // a death is per player: back at the owner's rest point, penalised (qdrespawn.h)
 
     // behaviour
     int  host_authoritative;   // 1 = only the host writes world facts
@@ -84,11 +95,22 @@ inline void ConfigDefaults()
     // and writes the object's own state bool, so enable it only on a run that is looking
     // for the `object apply:` line (`SYNC-GAPS` section 5.5).
     c.object_sync      = 0;
+    // The world-interact coverage layer (qdinteract.h): the extended door/breakable/
+    // secret classification, the class' own bidirectional animation plan, and the
+    // savable door's explicit SetToOpenState after its restore.  OFF until a live run
+    // has shown the partner's door open with the SAME animation and a broken barrel
+    // stay broken on both machines (mod/doc/features/world-interact.md).
+    c.interact_sync    = 0;
     // OFF like every write path: the receiver DISPATCHES a Blueprint event on its own
     // trigger.  Enable it on a run that looks for `trigger: replayed the partner's`.
     c.trigger_sync     = 0;
     // ON when the lane is on: without it a boss arena closes on a partner standing outside.
     c.boss_pull_in     = 1;
+    // OFF until a live run has shown `effect: impact ...` and `effect: cast ...` on
+    // the watching instance.  This is the widest visual lane: it copies EVERY player
+    // projectile class (not just daggers) and spawns the impact and cast systems the
+    // receiving side could otherwise never play.
+    c.combat_vfx       = 0;
     c.enemy_sync       = 0;
     // ON: proven live in 780_SZ_Depths (LIVE-TEST-LOG Session 16).  This is the one write
     // path that CONSTRUCTS a full gameplay enemy Blueprint -- `Dragon_Green_BP_C` and friends
@@ -105,6 +127,12 @@ inline void ConfigDefaults()
     // on a run that is already looking for B7's answer (`API-GAPS` section 5).
     c.player_body      = 0;
     c.dialogue_sync    = 0;
+    // PROVEN LIVE (mod/doc/features/dialogue.md, run 3: the partner's dialogue box came up
+    // with its speaker and line, the camera framed the speaker, input was locked, and A's
+    // death released all three).  The built-in default stays OFF so a MISSING ini cannot
+    // hijack a player's camera; the shipped `qdcoop.ini` turns it on.  The lane calls
+    // DISPLAY functions only -- the dialogue's outcomes still ride the flag lane.
+    c.dialogue_view    = 0;
     c.stream_union     = 0;
     // Travel is independent of the streaming union on purpose: a hard map switch is a
     // world change, not a sublevel load, and it must still be followed with
@@ -112,10 +140,24 @@ inline void ConfigDefaults()
     c.travel_sync      = 0;
     c.cutscene_sync    = 0;
     c.mover_sync       = 0;
+    c.platform_ride    = 0;
     c.loot_sync        = 0;
     c.suspend_guard    = 0;
     c.suppress_pause   = 0;
     c.object_scan      = 0;
+    // OFF like every write path.  This one REFUSES a dispatch (the Game Over screen, which
+    // pauses this world and reloads both players' world), teleports the local player and
+    // writes its health.  Enable it after a run has shown the `respawn:` lines
+    // (mod/doc/features/death-respawn.md).
+    c.death_respawn    = 0;
+
+    // OFF until proven live, like every other write path.  `quest_item_sync` also
+    // NARROWS two proven lanes (the inventory mirror and the shared drop set), so it is
+    // the one to flip first: with it off, behaviour is exactly what it was before this
+    // module existed.
+    c.quest_item_sync = 0;
+    c.kill_xp_sync = 0;
+    c.partner_save_sync = 0;
 
     c.host_authoritative = 1;
     c.allow_plaintext_internet = 0;
@@ -245,21 +287,29 @@ inline int ConfigLoad()
         else if (detail::StrEq(k, "InventorySync")) c.inventory_sync = detail::ParseInt(v, c.inventory_sync);
         else if (detail::StrEq(k, "ActorStateSync")) c.actor_state_sync = detail::ParseInt(v, c.actor_state_sync);
         else if (detail::StrEq(k, "ObjectSync"))    c.object_sync = detail::ParseInt(v, c.object_sync);
+        else if (detail::StrEq(k, "InteractSync"))  c.interact_sync = detail::ParseInt(v, c.interact_sync);
         else if (detail::StrEq(k, "TriggerSync"))   c.trigger_sync = detail::ParseInt(v, c.trigger_sync);
         else if (detail::StrEq(k, "BossPullIn"))    c.boss_pull_in = detail::ParseInt(v, c.boss_pull_in);
+        else if (detail::StrEq(k, "QuestItemSync")) c.quest_item_sync = detail::ParseInt(v, c.quest_item_sync);
+        else if (detail::StrEq(k, "KillXPSync"))    c.kill_xp_sync = detail::ParseInt(v, c.kill_xp_sync);
+        else if (detail::StrEq(k, "PartnerSaveSync")) c.partner_save_sync = detail::ParseInt(v, c.partner_save_sync);
+    else if (detail::StrEq(k, "CombatVfx"))     c.combat_vfx = detail::ParseInt(v, c.combat_vfx);
         else if (detail::StrEq(k, "EnemySync"))     c.enemy_sync = detail::ParseInt(v, c.enemy_sync);
         else if (detail::StrEq(k, "MirrorSpawn"))   c.mirror_spawn = detail::ParseInt(v, c.mirror_spawn);
         else if (detail::StrEq(k, "PuppetSync"))    c.puppet_sync = detail::ParseInt(v, c.puppet_sync);
         else if (detail::StrEq(k, "PlayerBody"))    c.player_body = detail::ParseInt(v, c.player_body);
         else if (detail::StrEq(k, "DialogueSync"))  c.dialogue_sync = detail::ParseInt(v, c.dialogue_sync);
+        else if (detail::StrEq(k, "DialogueView"))  c.dialogue_view = detail::ParseInt(v, c.dialogue_view);
         else if (detail::StrEq(k, "StreamUnion"))   c.stream_union = detail::ParseInt(v, c.stream_union);
         else if (detail::StrEq(k, "TravelSync"))    c.travel_sync = detail::ParseInt(v, c.travel_sync);
         else if (detail::StrEq(k, "CutsceneSync"))  c.cutscene_sync = detail::ParseInt(v, c.cutscene_sync);
         else if (detail::StrEq(k, "MoverSync"))     c.mover_sync = detail::ParseInt(v, c.mover_sync);
+        else if (detail::StrEq(k, "PlatformRide"))  c.platform_ride = detail::ParseInt(v, c.platform_ride);
         else if (detail::StrEq(k, "LootSync"))      c.loot_sync = detail::ParseInt(v, c.loot_sync);
         else if (detail::StrEq(k, "SuspendGuard"))  c.suspend_guard = detail::ParseInt(v, c.suspend_guard);
         else if (detail::StrEq(k, "SuppressMenuPause")) c.suppress_pause = detail::ParseInt(v, c.suppress_pause);
         else if (detail::StrEq(k, "ObjectScan"))   c.object_scan = detail::ParseInt(v, c.object_scan);
+        else if (detail::StrEq(k, "DeathRespawn"))  c.death_respawn = detail::ParseInt(v, c.death_respawn);
         else if (detail::StrEq(k, "HostAuthoritative")) c.host_authoritative = detail::ParseInt(v, c.host_authoritative);
         else if (detail::StrEq(k, "AllowPlaintextInternet")) c.allow_plaintext_internet = detail::ParseInt(v, c.allow_plaintext_internet);
         else if (detail::StrEq(k, "SpawnAttemptsMax")) c.spawn_attempts_max = detail::ParseInt(v, c.spawn_attempts_max);

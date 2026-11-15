@@ -114,6 +114,7 @@ static void Compare(const char* name, const uint8_t* got, int gotLen)
     bool kindKnown = (kind >= 0x01 && kind <= 0x04) ||
                      (kind >= 0x10 && kind <= 0x19) ||
                      (kind >= 0x20 && kind <= 0x2B) ||
+                     (kind >= 0x50 && kind <= 0x53) ||   // reserved dialogue block
                      (kind == 0x30);
     if (!kindKnown) {
         ++g_fail;
@@ -404,6 +405,34 @@ static void TestAll()
         Writer w(buf, sizeof(buf));
         WriteDialogue(w, d);
         Compare("dialogue_state", buf, w.len);
+    }
+
+    // dialogue_view: seq, npc, slot, flags, sequence, entry, options, chosen, asset name
+    {
+        DialogueViewBody d;
+        memset(&d, 0, sizeof(d));
+        d.seq = 4;
+        d.npc[0] = 0x03020100u; d.npc[1] = 0x07060504u;
+        d.npc[2] = 0x0b0a0908u; d.npc[3] = 0x0f0e0d0cu;
+        d.slot = 1;
+        d.flags = 0x01 | 0x02;
+        d.sequence = 2;
+        d.entry = 1;
+        d.options = 3;
+        d.chosen = 1;
+        strcpy(d.asset, "Knight_Arjaot_Dialogue_00");
+        Writer w(buf, sizeof(buf));
+        WriteDialogueView(w, d);
+        Compare("dialogue_view", buf, w.len);
+
+        Reader r(buf, w.len);
+        DialogueViewBody got;
+        CHECK(ReadDialogueView(r, &got), "dialogue_view reads back");
+        CHECK(got.seq == 4 && got.slot == 1 && got.flags == 3 && got.sequence == 2 &&
+              got.entry == 1 && got.options == 3 && got.chosen == 1,
+              "dialogue_view fields round-trip");
+        CHECK(strcmp(got.asset, d.asset) == 0, "dialogue_view asset round-trips");
+        CHECK(r.pos == r.len, "dialogue_view body fully consumed");
     }
 
     // level_union: bits_len(2), bits{0x05,0x02}, has_names=1, n=3, names

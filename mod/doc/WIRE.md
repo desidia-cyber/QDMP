@@ -74,6 +74,13 @@ arrives late is still correct.
 | `0x29` | `BOSS` | both | reliable | on change |
 | `0x2A` | `OBJECTS` | host → peer | reliable | on change + 5 s repair |
 | `0x2B` | `ENEMY_SPAWN` | owner → follower | reliable | once per key |
+| `0x48` | `PLATFORM_RIDE` | each → other | unreliable, latest wins | on change + 1 Hz |
+| `0x50` | `DIALOGUE_VIEW` | each → other | unreliable, latest wins | on change + 1 Hz |
+| `0x54` | `RESPAWN_DOWN` | each → other | reliable | event (a death) |
+| `0x55` | `RESPAWN_UP` | each → other | reliable | event (a respawn) |
+| `0x56` | `RESPAWN_REST` | each → other | reliable | event (a rest) |
+| `0x40` | `KILL_XP` | each → other | reliable | once per death |
+| `0x41` | `SAVE` | each → other | reliable | once per save |
 | `0x30` | `LOG` | both | unreliable | event |
 
 The design rule being followed (DollsMP 12 §4.6 E8): **the event channel is a
@@ -131,7 +138,9 @@ u8   action           bits 0-4 kind, bits 5-7 a counter bumped on every new move
                       same kind twice still restarts on the receiver). Kinds: 0 idle,
                       1 attack, 2 hurt, 3 dying, 4 dead, 5 slash right, 6 slash left,
                       7 slash down, 8 thrust, 9 charge (held), 10 throw, 11 use item,
-                      12 weapon swap, 13 cast
+                      12 weapon swap, 13 cast, 14 charge-thrust (held before a stab),
+                      15 shoot (gun/crossbow/launcher), 16 spin (scythe/flail),
+                      17 flurry (claw/katar/cestus)
 u8   flags            bit0 grounded, bit1 aiming, bit2 sprinting, bit3 crouched,
                       bit4 dialogue, bit5 menu
 ```
@@ -142,7 +151,12 @@ Size: 1+4+12+4+6+1+1+1 = 30 B.
 (`avatar::ClassifyMontage`; measured: every melee click plays
 `Player_FPArms_Std_Charge_Attack_Montage` -> kind 1, the strike lands 0.33-0.58 s in;
 the `Player_Slash_*` follow-throughs and the left hand's `MeleeResponse` are not new
-moves). `flags` bit0 (grounded) is `MovementMode != MOVE_Falling`; the receiver uses it
+moves). The classifier reads the WEAPON out of the montage name — the game names every
+weapon's montages after that weapon — and picks the move that weapon makes, so a
+hammer's alt is an overhead (7), a lance's is a thrust (8), a claw's is a flurry (17),
+a scythe's a sweep (16) and a gun's a shot (15). The held item's mesh path is the
+fallback when the name says nothing. The kind is 5 bits, so the three newer kinds needed
+no format change. `flags` bit0 (grounded) is `MovementMode != MOVE_Falling`; the receiver uses it
 for the airborne pose instead of guessing from vertical speed. Unreliable rows can
 arrive out of order: the receiver takes `action`/`flags` only from a row whose
 `sample_ms` is not older than the last one it took.
@@ -568,21 +582,33 @@ n × {
 ```
 
 The sender finds held items as visible `StaticMeshComponent`s and `SkeletalMeshComponent`s of
-`WeaponVisuals_C`-derived actors attached to its pawn (`ScanLocalEquip`). The
-receiver loads the mesh by path (`LoadAsset_Blocking`) and attaches it to the
-body's `Weapon_R` / `Weapon_L` bone. Asset identity is a path, never a pointer.
+`WeaponVisuals_C`-derived actors attached to its pawn (`ScanLocalEquip`). Every hand
+item's visual is one of TWO unrelated Blueprint roots — `WeaponVisuals_C` for the
+weapons and `Dagger_Visuals_Base_C` for every dagger / thrown / off-hand item, neither
+deriving from the other — so the scan accepts both and, for the one-offs, the
+`<Item>_Visuals` / `<Item>_InHandVisuals` name the game gives them (pickups and
+inspect-only props excluded). The receiver loads the mesh by path
+(`LoadAsset_Blocking`) and attaches it to the body's `Weapon_R` / `Weapon_L` bone.
+Asset identity is a path, never a pointer.
 
 ### 3.14 `EFFECT` (0x16) / `EFFECT_MOVE` (0x17)
 
 A thrown weapon or spell of the sender's -- the game's "magic" (Fireball,
 MagicFireDagger, ...) is a projectile actor deriving from `Dagger_Projectile_Base_C`.
+It is not the only shape: the player's guns, the crossbow bolt, the rocket, the
+spear/hammer throws, the arc projectiles and the travelling ground waves derive
+straight from `Actor` and share no ancestor with it (qdcombatvfx.h lists them), so a
+projectile is recognized by `ProjectileMovement` OR by the class name the game gave it,
+never by one class.
 Spawn and end travel as `EFFECT` (reliable); position updates as `EFFECT_MOVE`
 (unreliable, superseded by the next). Same body for both:
 
 ```
-u8   kind             1 = projectile spawned, 2 = ended, 3 = moved, 4 = melee arc
+u8   kind             1 = projectile spawned, 2 = ended, 3 = moved, 4 = melee arc,
+                      5 = one Niagara system at a point (impact / cast VFX)
 u16  id               the sender's handle; spawn, moves and end share it
-str  class            "<package>.<object>" of the actor class (spawn only, else "")
+str  class            "<package>.<object>" of the actor class (kind 1) or of the
+                      Niagara SYSTEM (kind 5), else ""
 i32  x, y, z          1/8 cm
 i16  pitch, yaw       1/65536 turn
 i32  vx, vy, vz       1/8 cm/s (i32: projectiles outrun PLAYER's i16)
@@ -632,6 +658,26 @@ mesh (whose frame is the arms' frame: Y forward, X left) at eye height with that
 relative rotation and sets each parameter (`SetVariableLinearColor` / `SetVariableFloat`).
 UE 4.27 stores a type HANDLE in the parameter store, not the type, so the sender infers
 the type from the name (`*Color*` = LinearColor, else float).
+
+**kind 5, a Niagara system at a point** (reliable, `CombatVfx=1`). Two things the other
+kinds cannot carry:
+
+* **The IMPACT of a projectile.** The copy cannot collide, so the game's own hit
+  reaction never runs on it and a thrown dagger used to stop in mid-air. At spawn the
+  sender reads the impact system off the projectile's attached Niagara components
+  (the name rule is `*_Impact`, `*_ImpactFX`, `*_ProjectileImpact`, `*_Explosion`,
+  `*_GroundBlast`; never a trail/muzzle/charge system in the same folder), and at the
+  end it sends that system at the point the real projectile stopped. `class` is the
+  system's path; the receiver calls `SpawnSystemAtLocation` with `bAutoDestroy`, so the
+  copy's lifetime is the system's own.
+* **A cast / charge / muzzle effect that is a WORLD actor.** The grimoire's
+  `GrimoireDoMagic`, a weapon's charge glow and a gun's muzzle flash are not children of
+  `Arms`, so the arc lane cannot see them. The sender watches actors that begin play
+  inside a 2.5 s window after its own action byte changes, keeps one only if its
+  Owner/Instigator is the local pawn, it is not a projectile, and it owns a Niagara
+  component, and sends that system's path — at most 3 per window.
+
+Both are visual only: a system, no actor, no collision, no damage.
 
 ### 3.15 `STATUS` (0x18)
 
@@ -915,6 +961,144 @@ receiver logs `close-ignored`.
 The global counters a chest touches (`TotalChestsOpened`) are **not** part of this lane.
 They ride `WORLD_FLAGS` (3.6) exactly as they did before, so nothing is counted twice.
 
+### 3.22 `DIALOGUE_VIEW` (0x50)
+
+The **cursor** the talking player's `DialogueManager` is showing, so the partner can put
+the same conversation on **its own** game's dialogue widget. `DIALOGUE` (3.11) already says
+*who* is talking to *which* NPC; this says *where in the conversation* they are.
+
+| field | bytes | meaning |
+|---|---|---|
+| `seq` | u32 | increments per state change; a lower value is discarded |
+| `npc` | 16 | the NPC actor's stable placed-object id (the same one `DIALOGUE` carries) |
+| `slot` | u8 | 0 or 1 while talking, `0xFF` = the conversation ended |
+| `flags` | u8 | bit0 options on screen, bit1 a choice was made, bit2 hide the speaker's name |
+| `sequence` | u16 | the talker's `CurrentDialogueSequenceIndex` |
+| `entry` | u16 | entry index inside that sequence (0 when the build exposes none) |
+| `options` | u16 | how many options the talker may pick from (0 = no option list) |
+| `chosen` | u16 | the option the talker picked, `0xFFFF` = none yet |
+| `asset` | str | the `FS_DialogueData` object's own name, e.g. `Knight_Arjaot_Dialogue_00` |
+
+**The lines do not travel.** They live in the cooked `FS_DialogueData` asset (61 of them),
+which both machines loaded from the same package; the asset's *object name* is the identity.
+Sending text would mean re-implementing the localisation lookup (`Game.locres`, nine
+locales) and would make the two machines disagree on the one thing the game already agrees
+on.
+
+**The outcomes do not travel either, and they did not before.** The receiver calls only the
+DISPLAY levers — `ShowDialogueWidget`, `ShowDialogueSequenceEntry`, `ShowDialogueOptions`,
+`HideDialogueWidget` — and never `StartDialogue`, `RunAction`, `SaveNamedData` or
+`DialogueSequenceEnded`. A dialogue's `NamedSaveDataValueChanges` and `ActionToRun` are
+gameplay: running them on a second machine is the double-turn-in the `DIALOGUE` lock was
+built to prevent. They ride `WORLD_FLAGS` / `INTENT kind 1` exactly as they always did, so
+both players' flags agree while only one machine's conversation produced them.
+
+`seq` is per sender and latest-wins (the `CUTSCENE`/`DIALOGUE` rule): a lost datagram costs
+a beat, and a sender silent for 5 s is treated as not talking, so a crash cannot leave the
+partner's camera hijacked. The receiver remembers the `(slot, seq)` publication it declined
+or hid, so the 1 Hz republish does not re-decide it; a genuine next line is a new `seq`.
+
+### 3.24 `RESPAWN_DOWN` (0x54), `RESPAWN_UP` (0x55), `RESPAWN_REST` (0x56)
+
+**A death is per-player, not a world event** (SYNC-DESIGN §2.9, `qdrespawn.h`). In single
+player a death opens the Game Over screen — which pauses that machine's world clock — and
+its "Continue" reloads the world from the save. In co-op that reload runs under the
+survivor too. This lane replaces it: the pose plays, the Game Over dispatch is refused on
+the machine that owns the dead player, and after ~3.5 s that player is put back at **its
+own last rest point** with a penalised maximum. Nothing here calls a rest, writes an actor
+state, clears an enemy record or asks for a level load.
+
+The machine that OWNS a player is the only authority on that player: there is deliberately
+no intent for this lane (an intent is a request to the host, and a player's own health is
+not the host's to grant).
+
+Bodies (the envelope's `kind` says which one; no body repeats it):
+
+```
+RESPAWN_DOWN  deaths u8 | pct u8 | seq u8 | x i32 | y i32 | z i32
+RESPAWN_UP    deaths u8 | pct u8 | seq u8 | x i32 | y i32 | z i32 | yaw i16
+              | hp u16 | hp_max u16 | name: u16 len + UTF-8
+RESPAWN_REST  deaths u8 (=0) | pct u8 (=100) | seq u8 | x i32 | y i32 | z i32
+              | name: u16 len + UTF-8
+```
+
+* **Positions are the wire's own 1/8 cm integers** (§3.5), the same encoding `PLAYER` uses:
+  one encoding for "where a player is" in the whole protocol.
+* **`pct` must equal `100 − 10·deaths`, floored at 10** — the penalty ladder
+  (90 %, 80 %, … , 10 %). A body where the stack and the percentage disagree, a `REST`
+  that carries a stack, or an `UP` with `hp > hp_max` is **refused**, not applied: applying
+  it would either heal a penalised player or penalise a rested one.
+* **`seq` is a per-lane counter, applied newest-wins** (`SeqGate`): a duplicate `UP` would
+  teleport the partner's puppet back to a rest point the player has left, so a repeat is
+  dropped, and the comparison is a **signed** byte — 255 → 0 is newer, not 255 steps older.
+* **Reliable.** A death and a respawn are events. A lost `UP` is not fatal (the 30 Hz
+  `PLAYER` rows carry the new position) but the puppet would slide across the map instead of
+  teleporting, and the partner's bar would lag until the next `STATUS`.
+* **`name`** is the rest point's `<actor>/<level>` key: the log names the point on both
+  machines, and the owner refuses a point from another map (respawning into an unloaded
+  level would need exactly the load this lane exists to avoid).
+
+The receiver does two things and nothing else: on `DOWN` it plays the death pose on the
+puppet and remembers the stack; on `UP` it **teleports** the puppet (interpolation buffer
+reset, one sample, placed in the same frame — no lerp across the map) and updates the
+partner's bar. Its own enemies, progress, area and world are not touched.
+
+### 3.26 `KILL_XP` (0x40)
+
+One death paid one player's XP; the other player is paid the same amount. Both machines run a
+copy of a death, and the game's award is Blueprint state -- `FS_PlayerChar_C.Player_GiveXP`,
+`AddXP`, the `XPGained` delegate -- with **no** native symbol in the image (`exe_names.txt` has
+none of them), so whether a given machine's copy pays is not something either machine can
+predict. The amount is therefore **measured**, never derived from the enemy's data:
+
+* each machine watches its own player's XP counter across the death;
+* the machine whose game paid reports what it actually paid;
+* the other machine pays that amount with the game's own `Player_GiveXP`, and **only** when its
+  own measurement was zero.
+
+If both copies paid, both report and both reports are ignored: nothing is awarded twice. If
+neither paid, nothing crosses and the log says so. An award the game did not make is never
+invented, and a machine with no readable XP counter sends and pays nothing at all.
+
+| field | bytes | meaning |
+|---|---|---|
+| `id` | 16 | the enemy's key -- the identity every other enemy lane uses |
+| `seq` | u16 | the death's ordinal for that key (`0` = unknown). A reliable retransmit carries the same value and is not a second award; a respawned kill is a higher one |
+| `xp` | u32 | the measured award. `0` is refused by the decoder -- an award of nothing is not an award -- and so is anything over 1 000 000 |
+
+Reliable: an award lost to a dropped datagram is a player who fought for nothing. A record
+expires after 3 minutes, and a report for a death this machine holds **no copy** of is paid after
+a 3 s grace window -- so an enemy that exists on one machine only still pays both players -- and
+is logged as not backed by a local measurement.
+
+### 3.27 `SAVE` (0x41)
+
+"I saved; write your own slot now." The detector is the game's own save **dispatch**
+(`SaveFunctions_C.SaveGameToDisk`, `FS_GameInstance_C.GI_SaveGameToDisk`, `Save Game to Disk`),
+so a checkpoint rest, the game's own autosave, a menu save and a scripted save all arrive on this
+one body without a per-route hook.
+
+**Refused by name, deliberately.** The suspend saves (`WriteSuspendSave`,
+`GI_WriteSuspendSaveImmediately`, `SuspendSaveLoop`, `AsyncSuspendSaveFinished`,
+`UnsafeDeleteSuspendSavesOnSlot`) belong to §3.19, and another machine's suspend snapshot is
+exactly the rollback that lane exists to prevent. The system saves
+(`GI_SaveSystemSaveToDisk`, `GI_QueueSystemSave`, `SaveSystemSaveToDisk`,
+`QueueSaveSystemSaveToDisk`) are per-machine settings, not progression.
+
+| field | bytes | meaning |
+|---|---|---|
+| `seq` | u32 | the sender's own save counter; monotone, so a retransmit is one request |
+| `role` | u8 | 1 = host, 2 = peer (diagnostics only; `> 2` is refused) |
+
+Reliable. **The receiver does not answer a save with a save.** The write it performs is
+bracketed (`BeginOwnSave` / `EndOwnSave` in `qdprogression.h`), and every save dispatch inside
+that bracket is recognised as that write's own echo and is not announced -- one logical save
+dispatches several of these names, nested, which is why the guard is a bracket and not a count.
+A mirrored save is **deferred, not dropped** while a world load, a travel handshake, a menu, the
+local player's death or a cutscene is in progress, or while the game is mid-suspend-write; a
+deferral that cannot clear in 20 s is logged as a give-up. The write itself is the game's own
+`SaveGameToDisk`, and it is accepted only when the save object's own `LastSaveTime` moves.
+
 ### Reliable kinds: ack and duplicate suppression
 
 A receiver acks every copy of a reliable kind (`ACK` with the envelope `seq`) and
@@ -922,6 +1106,36 @@ delivers only the first; it remembers the last 64 reliable seqs and forgets them
 seq arrives more than 4096 below the highest seen (the sender restarted). Before this
 existed, nothing acked: a reliable body was resent until the sender gave up and every
 copy was applied (measured: one Fireball spawned six times).
+
+### 3.23 `PLATFORM_RIDE` (0x48)
+
+Where a **rider stands on a moving platform**, in that platform's own axes. The companion
+of `MOVERS`: `MOVERS` says where the platform is, this says where the person on it is.
+
+```
+u32  ms               the sender's clock (ordering only)
+u16  n                rows in this body (never split across a datagram)
+n × { guid id, i32 ox, i32 oy, i32 oz, i16 oyaw, u8 flags }
+```
+
+31 bytes a row, at most 4 rows. `id` is the platform's stable identity — the same key
+`MOVERS` uses, so a receiver resolves **its own copy** of that platform. `ox`/`oy`/`oz` are
+the rider's place in the platform's axes (1/8 cm, as `PLAYER`); `oyaw` is the rider's
+heading *relative* to the platform (1/65536 turn), so a turning platform carries the facing.
+
+`flags` bit0 = on (the sender's player is on this platform), bit1 = the platform is moving.
+A row with bit0 clear means "I stepped off".
+
+**Why the place and not the position.** A rider's "position minus the platform's position"
+is *not* steady: measured 50–900 cm from one frame to the next, because the pawn and the
+platform are sampled at different moments of the sender's frame. A standing passenger's
+place **in the platform's axes** does not change at all while the platform moves. So the
+sender does not measure it mid-ride (see `qdplatforms.h` for the exact rule, ported from
+dollsMP `docs/sync/36` §9), and the receiver rebuilds the drawn place as
+`its own copy of the platform + axes × place`. That is what makes a rider sit still on a
+platform that is itself moving.
+
+Latest wins on `ms`: a reordered body cannot put the partner back on a platform they left.
 
 ## 4. Lane discipline
 

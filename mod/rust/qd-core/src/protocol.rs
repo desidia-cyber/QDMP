@@ -110,6 +110,23 @@ pub enum Kind {
     EnemySpawn = 0x2B,
     /// A partner's body began/ended overlapping a placed event volume (WIRE.md §3.21).
     Trigger = 0x2C,
+    /// The dialogue cursor the talker is showing, so the partner can display it (WIRE.md §3.22).
+    DialogueView = 0x50,
+    /// Where a rider stands ON a moving platform, in that platform's own axes
+    /// (WIRE.md §3.23). The companion of [`Kind::Movers`]: `MOVERS` says where the
+    /// platform is, this says where the person standing on it is.
+    PlatformRide = 0x48,
+    /// A player's death, respawn and rest, stated by the machine that OWNS that player
+    /// (WIRE.md §3.24, `qdrespawn.h`). There is no intent for this lane: an intent is a
+    /// request to the host, and a player's own health is not the host's to grant.
+    RespawnDown = 0x54,
+    RespawnUp = 0x55,
+    RespawnRest = 0x56,
+    /// One death paid one player's XP; the other pays its own the same amount
+    /// (WIRE.md §3.26).
+    KillXp = 0x40,
+    /// "I saved; write your own slot now" (WIRE.md §3.27).
+    Save = 0x41,
     Log = 0x30,
 }
 
@@ -144,6 +161,13 @@ impl Kind {
             0x2A => Objects,
             0x2B => EnemySpawn,
             0x2C => Trigger,
+            0x48 => PlatformRide,
+            0x50 => DialogueView,
+            0x54 => RespawnDown,
+            0x55 => RespawnUp,
+            0x56 => RespawnRest,
+            0x40 => KillXp,
+            0x41 => Save,
             0x30 => Log,
             other => return Err(Error::UnknownKind(other)),
         })
@@ -183,6 +207,13 @@ impl Kind {
             Objects => "objects",
             EnemySpawn => "enemy_spawn",
             Trigger => "trigger",
+            PlatformRide => "platform_ride",
+            DialogueView => "dialogue_view",
+            RespawnDown => "respawn_down",
+            RespawnUp => "respawn_up",
+            RespawnRest => "respawn_rest",
+            KillXp => "kill_xp",
+            Save => "save",
             Log => "log",
         }
     }
@@ -203,6 +234,11 @@ impl Kind {
                 | Kind::Objects
                 | Kind::EnemySpawn
                 | Kind::Trigger
+                | Kind::KillXp
+                | Kind::Save
+                | Kind::RespawnDown
+                | Kind::RespawnUp
+                | Kind::RespawnRest
         )
     }
 
@@ -226,6 +262,8 @@ impl Kind {
                 | Kind::Cutscene
                 | Kind::Movers
                 | Kind::Loot
+                | Kind::PlatformRide
+                | Kind::DialogueView
         )
     }
 }
@@ -728,6 +766,44 @@ pub struct DialogueState {
     pub entry: u16,
 }
 
+/// `DIALOGUE_VIEW` body (WIRE.md §3.22).
+///
+/// The cursor the talking machine's `DialogueManager` is showing, so the partner can drive
+/// its OWN game's dialogue widget with it.  The lines are not here: they live in the cooked
+/// `FS_DialogueData` asset, identified by its object name, which both machines load from
+/// the same package.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct DialogueView {
+    /// Increments per state change; a lower `seq` is discarded.
+    pub seq: u32,
+    /// Stable id of the NPC actor (the same 128-bit placed-object key `DIALOGUE` uses).
+    pub npc: Guid,
+    /// 0 or 1 while talking; 0xFF = the conversation ended.
+    pub slot: u8,
+    /// bit0 options on screen, bit1 a choice was made, bit2 hide the speaker's name.
+    pub flags: u8,
+    /// The talker's `CurrentDialogueSequenceIndex`.
+    pub sequence: u16,
+    /// The entry index inside that sequence (0 when the build does not expose one).
+    pub entry: u16,
+    /// Every option the talker can pick from (0 = no option list on screen).
+    pub options: u16,
+    /// The option the talker picked; 0xFFFF = none yet.
+    pub chosen: u16,
+    /// The `FS_DialogueData` object's own name.
+    pub asset: String,
+}
+
+/// `DIALOGUE_VIEW.flags` (WIRE.md §3.22).
+pub mod dialogue_view_flags {
+    pub const OPTIONS: u8 = 0x01;
+    pub const CHOSEN: u8 = 0x02;
+    pub const HIDE_NAME: u8 = 0x04;
+}
+
+/// The "no option picked" sentinel both sides use for `DIALOGUE_VIEW.chosen`.
+pub const DIALOGUE_VIEW_NO_OPTION: u16 = 0xFFFF;
+
 /// `LEVEL_UNION` body (WIRE.md §3.12).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct LevelUnion {
@@ -857,6 +933,42 @@ pub mod mover_flags {
     pub const MOVING: u8 = 1;
     /// The sender is the authority for this mover.
     pub const OWNER: u8 = 2;
+}
+
+/// One row of `PLATFORM_RIDE` (WIRE.md §3.23): where a rider stands ON a platform.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PlatformRideRow {
+    /// The platform's stable 128-bit id — the same key `MOVERS` uses.
+    pub id: Guid,
+    /// The rider's place in the platform's own axes, 1/8 cm.
+    pub ox: i32,
+    pub oy: i32,
+    pub oz: i32,
+    /// The rider's heading RELATIVE to the platform, 1/65536 turn.
+    pub oyaw: i16,
+    /// See [`platform_ride_flags`].
+    pub flags: u8,
+}
+
+pub mod platform_ride_flags {
+    /// The sender's player is on this platform.
+    pub const ON: u8 = 1;
+    /// ... and the platform is moving.
+    pub const MOVING: u8 = 2;
+}
+
+/// `PLATFORM_RIDE` body (WIRE.md §3.23).
+///
+/// The rider's place is carried **in the platform's axes**, never as a world position: a
+/// rider's "position minus the platform's" jumps 50–900 cm from one sample to the next
+/// because the pawn and the platform are sampled at different moments of the sender's
+/// frame, while a standing passenger's place on the platform does not change at all. The
+/// receiver reconstructs from its own copy of the platform.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PlatformRide {
+    /// The sender's clock; a reordered body is discarded.
+    pub ms: u32,
+    pub rows: Vec<PlatformRideRow>,
 }
 
 /// `MOVERS` body (WIRE.md §3.17). Owner-authoritative absolute state.
@@ -1095,6 +1207,108 @@ pub mod trigger_flags {
     pub const BOSS: u8 = 0x01;
 }
 
+/// `RESPAWN_DOWN` body (WIRE.md §3.24).
+///
+/// The machine that OWNS a player says its player died. Positions are the wire's own 1/8 cm
+/// integers, exactly like [`PlayerRow`]: one encoding for "where a player is" in the whole
+/// protocol. `pct` must equal [`respawn_penalty::pct_for`]`(deaths)`, and a body where the
+/// two disagree is refused rather than applied — applying it would either heal a penalised
+/// player or penalise a rested one.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RespawnDown {
+    /// Deaths this player now carries (0..`MAX_STACKS`).
+    pub deaths: u8,
+    /// The maximum-health percentage after this death.
+    pub pct: u8,
+    /// Per-lane counter: the newest is applied and a duplicate is dropped (a second UP would
+    /// teleport the puppet back to a rest point the player has since left).
+    pub seq: u8,
+    /// Where the body went down.
+    pub px: i32,
+    pub py: i32,
+    pub pz: i32,
+}
+
+/// `RESPAWN_UP` body (WIRE.md §3.24): the player is back, at its own last rest point.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RespawnUp {
+    pub deaths: u8,
+    pub pct: u8,
+    pub seq: u8,
+    /// The rest point the body came back to.
+    pub px: i32,
+    pub py: i32,
+    pub pz: i32,
+    /// 1/65536 turn.
+    pub yaw: i16,
+    /// The restored health and the (penalised) maximum, whole points.
+    pub hp: u16,
+    pub hp_max: u16,
+    /// The rest point's `<actor>/<level>` key, for the logs on both sides.
+    pub name: String,
+}
+
+/// `RESPAWN_REST` body (WIRE.md §3.24): a rest cleared the stacks. Always `0` deaths and
+/// `100` percent — a rest body that carries a stack would clear a penalty on the receiver
+/// that the sender still has.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RespawnRest {
+    pub deaths: u8,
+    pub pct: u8,
+    pub seq: u8,
+    pub px: i32,
+    pub py: i32,
+    pub pz: i32,
+    pub name: String,
+}
+
+/// The death penalty ladder (WIRE.md §3.24, `qdrespawn.h`): each death costs 10 % of the
+/// BASE maximum, stacking, to a floor of 10 %. A rest restores 100 % and clears it.
+pub mod respawn_penalty {
+    pub const STEP_PCT: u8 = 10;
+    pub const FLOOR_PCT: u8 = 10;
+    /// The stack at which the ladder reaches the floor; a tenth death changes nothing.
+    pub const MAX_STACKS: u8 = (100 - FLOOR_PCT) / STEP_PCT;
+
+    pub fn pct_for(deaths: u8) -> u8 {
+        let d = if deaths > MAX_STACKS { MAX_STACKS } else { deaths };
+        let p = 100 - STEP_PCT * d;
+        if p < FLOOR_PCT {
+            FLOOR_PCT
+        } else {
+            p
+        }
+    }
+}
+
+/// `KILL_XP` body (WIRE.md §3.26). One death paid one machine's player `xp`; the other
+/// machine pays its own player the same amount if its own game did not. `xp` is what the
+/// sender MEASURED, never a value derived from the enemy's data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct KillXp {
+    /// The enemy's key — the same identity every other enemy lane uses.
+    pub id: Guid,
+    /// The death's ordinal for that key, so a retransmit is not a second award.
+    pub seq: u16,
+    /// The measured award. Never zero: an award of nothing is not an award.
+    pub xp: u32,
+}
+
+/// `SAVE` body (WIRE.md §3.27). "I saved; write your own slot now."
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Save {
+    /// The sender's own save counter — monotone, so a retransmit is one request.
+    pub seq: u32,
+    /// 1 = host, 2 = peer, 0 = unspecified. Diagnostics only.
+    pub role: u8,
+}
+
+/// `SAVE.role` (WIRE.md §3.27).
+pub mod save_role {
+    pub const HOST: u8 = 1;
+    pub const PEER: u8 = 2;
+}
+
 /// A decoded body, tagged by its kind.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Body {
@@ -1125,6 +1339,13 @@ pub enum Body {
     Objects(Objects),
     EnemySpawn(EnemySpawn),
     Trigger(Trigger),
+    PlatformRide(PlatformRide),
+    DialogueView(DialogueView),
+    RespawnDown(RespawnDown),
+    RespawnUp(RespawnUp),
+    RespawnRest(RespawnRest),
+    KillXp(KillXp),
+    Save(Save),
     Log(Log),
 }
 
@@ -1152,12 +1373,19 @@ impl Body {
             Body::Damage(_) => Kind::Damage,
             Body::Cutscene(_) => Kind::Cutscene,
             Body::Movers(_) => Kind::Movers,
+            Body::PlatformRide(_) => Kind::PlatformRide,
             Body::Loot(_) => Kind::Loot,
             Body::Suspend(_) => Kind::Suspend,
             Body::Boss(_) => Kind::Boss,
             Body::Objects(_) => Kind::Objects,
             Body::EnemySpawn(_) => Kind::EnemySpawn,
             Body::Trigger(_) => Kind::Trigger,
+            Body::DialogueView(_) => Kind::DialogueView,
+            Body::RespawnDown(_) => Kind::RespawnDown,
+            Body::RespawnUp(_) => Kind::RespawnUp,
+            Body::RespawnRest(_) => Kind::RespawnRest,
+            Body::KillXp(_) => Kind::KillXp,
+            Body::Save(_) => Kind::Save,
             Body::Log(_) => Kind::Log,
         }
     }
@@ -1600,6 +1828,18 @@ pub fn encode_body(body: &Body) -> Result<Vec<u8>> {
                 w.write_u8(r.flags)?;
             }
         }
+        Body::PlatformRide(p) => {
+            w.write_u32(p.ms)?;
+            write_count(&mut w, p.rows.len())?;
+            for r in &p.rows {
+                write_guid(&mut w, &r.id)?;
+                w.write_i32(r.ox)?;
+                w.write_i32(r.oy)?;
+                w.write_i32(r.oz)?;
+                w.write_i16(r.oyaw)?;
+                w.write_u8(r.flags)?;
+            }
+        }
         Body::Loot(l) => {
             w.write_u32(l.rev)?;
             write_count(&mut w, l.entries.len())?;
@@ -1662,6 +1902,70 @@ pub fn encode_body(body: &Body) -> Result<Vec<u8>> {
             w.write_u32(t.pz.to_bits())?;
             write_str(&mut w, &t.name)?;
         }
+        Body::DialogueView(d) => {
+            w.write_u32(d.seq)?;
+            write_guid(&mut w, &d.npc)?;
+            w.write_u8(d.slot)?;
+            w.write_u8(d.flags)?;
+            w.write_u16(d.sequence)?;
+            w.write_u16(d.entry)?;
+            w.write_u16(d.options)?;
+            w.write_u16(d.chosen)?;
+            write_str(&mut w, &d.asset)?;
+        }
+        Body::RespawnDown(b) => {
+            check_respawn_stack(b.deaths, b.pct)?;
+            w.write_u8(b.deaths)?;
+            w.write_u8(b.pct)?;
+            w.write_u8(b.seq)?;
+            w.write_i32(b.px)?;
+            w.write_i32(b.py)?;
+            w.write_i32(b.pz)?;
+        }
+        Body::RespawnUp(b) => {
+            check_respawn_stack(b.deaths, b.pct)?;
+            if b.hp > b.hp_max {
+                return Err(Error::OutOfRange {
+                    what: "respawn hp above hp_max",
+                    value: i64::from(b.hp),
+                });
+            }
+            w.write_u8(b.deaths)?;
+            w.write_u8(b.pct)?;
+            w.write_u8(b.seq)?;
+            w.write_i32(b.px)?;
+            w.write_i32(b.py)?;
+            w.write_i32(b.pz)?;
+            w.write_i16(b.yaw)?;
+            w.write_u16(b.hp)?;
+            w.write_u16(b.hp_max)?;
+            write_str(&mut w, &b.name)?;
+        }
+        Body::RespawnRest(b) => {
+            check_respawn_stack(b.deaths, b.pct)?;
+            if b.deaths != 0 {
+                return Err(Error::OutOfRange {
+                    what: "respawn rest with stacks",
+                    value: i64::from(b.deaths),
+                });
+            }
+            w.write_u8(b.deaths)?;
+            w.write_u8(b.pct)?;
+            w.write_u8(b.seq)?;
+            w.write_i32(b.px)?;
+            w.write_i32(b.py)?;
+            w.write_i32(b.pz)?;
+            write_str(&mut w, &b.name)?;
+        }
+        Body::KillXp(k) => {
+            write_guid(&mut w, &k.id)?;
+            w.write_u16(k.seq)?;
+            w.write_u32(k.xp)?;
+        }
+        Body::Save(s) => {
+            w.write_u32(s.seq)?;
+            w.write_u8(s.role)?;
+        }
     }
 
     if !w.is_byte_aligned() {
@@ -1677,6 +1981,19 @@ fn write_count(w: &mut BitWriter, n: usize) -> Result<()> {
     let n = u16::try_from(n)
         .map_err(|_| Error::LimitExceeded { what: "entry count", limit: u16::MAX as usize, got: n })?;
     w.write_u16(n)
+}
+
+/// The death lane's one cross-field rule (WIRE.md §3.24): a stack and a percentage that
+/// disagree describe a state neither machine can have, so a body carrying them is refused
+/// rather than applied. Shared by the encoder and the decoder so the two cannot drift.
+fn check_respawn_stack(deaths: u8, pct: u8) -> Result<()> {
+    if deaths > respawn_penalty::MAX_STACKS {
+        return Err(Error::OutOfRange { what: "respawn stacks", value: i64::from(deaths) });
+    }
+    if pct != respawn_penalty::pct_for(deaths) {
+        return Err(Error::OutOfRange { what: "respawn pct", value: i64::from(pct) });
+    }
+    Ok(())
 }
 
 /// Decode a body of a known kind.
@@ -2015,6 +2332,26 @@ pub fn decode_body(kind: Kind, bytes: &[u8]) -> Result<Body> {
             }
             Body::Movers(Movers { rev, rows })
         }
+        Kind::PlatformRide => {
+            let ms = r.read_u32()?;
+            let n = r.read_u16()? as usize;
+            let mut rows = Vec::with_capacity(n.min(4));
+            // Same prefix rule as the other absolute containers (WIRE.md 3.6/3.17).
+            for _ in 0..n {
+                if r.is_empty() {
+                    break;
+                }
+                rows.push(PlatformRideRow {
+                    id: read_guid(&mut r)?,
+                    ox: r.read_i32()?,
+                    oy: r.read_i32()?,
+                    oz: r.read_i32()?,
+                    oyaw: r.read_i16()?,
+                    flags: r.read_u8()?,
+                });
+            }
+            Body::PlatformRide(PlatformRide { ms, rows })
+        }
         Kind::Loot => {
             let rev = r.read_u32()?;
             let n = r.read_u16()? as usize;
@@ -2124,6 +2461,104 @@ pub fn decode_body(kind: Kind, bytes: &[u8]) -> Result<Body> {
             let name = read_str(&mut r)?;
             Body::Trigger(Trigger { key, event, volume, flags, px, py, pz, name })
         }
+        Kind::DialogueView => {
+            let seq = r.read_u32()?;
+            let npc = read_guid(&mut r)?;
+            let slot = r.read_u8()?;
+            if slot != DIALOGUE_SLOT_FREE && slot > slots::PEER {
+                return Err(Error::OutOfRange { what: "dialogue_view slot", value: i64::from(slot) });
+            }
+            let flags = r.read_u8()?;
+            if flags & !(dialogue_view_flags::OPTIONS
+                | dialogue_view_flags::CHOSEN
+                | dialogue_view_flags::HIDE_NAME)
+                != 0
+            {
+                return Err(Error::OutOfRange { what: "dialogue_view flags", value: i64::from(flags) });
+            }
+            Body::DialogueView(DialogueView {
+                seq,
+                npc,
+                slot,
+                flags,
+                sequence: r.read_u16()?,
+                entry: r.read_u16()?,
+                options: r.read_u16()?,
+                chosen: r.read_u16()?,
+                asset: read_str(&mut r)?,
+            })
+        }
+        Kind::RespawnDown => {
+            let deaths = r.read_u8()?;
+            let pct = r.read_u8()?;
+            check_respawn_stack(deaths, pct)?;
+            Body::RespawnDown(RespawnDown {
+                deaths,
+                pct,
+                seq: r.read_u8()?,
+                px: r.read_i32()?,
+                py: r.read_i32()?,
+                pz: r.read_i32()?,
+            })
+        }
+        Kind::RespawnUp => {
+            let deaths = r.read_u8()?;
+            let pct = r.read_u8()?;
+            check_respawn_stack(deaths, pct)?;
+            let seq = r.read_u8()?;
+            let px = r.read_i32()?;
+            let py = r.read_i32()?;
+            let pz = r.read_i32()?;
+            let yaw = r.read_i16()?;
+            let hp = r.read_u16()?;
+            let hp_max = r.read_u16()?;
+            if hp > hp_max {
+                return Err(Error::OutOfRange {
+                    what: "respawn hp above hp_max",
+                    value: i64::from(hp),
+                });
+            }
+            Body::RespawnUp(RespawnUp { deaths, pct, seq, px, py, pz, yaw, hp, hp_max, name: read_str(&mut r)? })
+        }
+        Kind::RespawnRest => {
+            let deaths = r.read_u8()?;
+            let pct = r.read_u8()?;
+            check_respawn_stack(deaths, pct)?;
+            if deaths != 0 {
+                return Err(Error::OutOfRange {
+                    what: "respawn rest with stacks",
+                    value: i64::from(deaths),
+                });
+            }
+            Body::RespawnRest(RespawnRest {
+                deaths,
+                pct,
+                seq: r.read_u8()?,
+                px: r.read_i32()?,
+                py: r.read_i32()?,
+                pz: r.read_i32()?,
+                name: read_str(&mut r)?,
+            })
+        }
+        Kind::KillXp => {
+            let id = read_guid(&mut r)?;
+            let seq = r.read_u16()?;
+            let xp = r.read_u32()?;
+            // An award of nothing is not an award, and an implausible one is a framing
+            // error: refuse both here rather than let the native side pay for it.
+            if xp == 0 || xp > 1_000_000 {
+                return Err(Error::OutOfRange { what: "kill_xp award", value: i64::from(xp) });
+            }
+            Body::KillXp(KillXp { id, seq, xp })
+        }
+        Kind::Save => {
+            let seq = r.read_u32()?;
+            let role = r.read_u8()?;
+            if role > save_role::PEER {
+                return Err(Error::OutOfRange { what: "save role", value: i64::from(role) });
+            }
+            Body::Save(Save { seq, role })
+        }
         Kind::Log => {
             // The whole body is the message; nothing to parse.
             Body::Log(Log { bytes: bytes.to_vec() })
@@ -2140,6 +2575,28 @@ pub fn decode_body(kind: Kind, bytes: &[u8]) -> Result<Body> {
 mod tests {
     use super::*;
     use crate::flags;
+
+    #[test]
+    fn kill_xp_and_save_round_trip() {
+        // The two [progression] kinds. The native encoder in mod/native/src/qdwire.h is the
+        // second implementation; this is the one the relay validates with, so a mismatch
+        // here is a datagram the relay rejects rather than a silent drift.
+        let k = KillXp { id: sample_guid(), seq: 3, xp: 40 };
+        let bytes = encode_body(&Body::KillXp(k)).unwrap();
+        assert_eq!(bytes.len(), 22);
+        assert_eq!(decode_body(Kind::KillXp, &bytes).unwrap(), Body::KillXp(k));
+        // An award of nothing and an implausible award are refused, not carried.
+        let zero = KillXp { id: sample_guid(), seq: 0, xp: 0 };
+        assert!(decode_body(Kind::KillXp, &encode_body(&Body::KillXp(zero)).unwrap()).is_err());
+
+        let s = Save { seq: 7, role: save_role::PEER };
+        let bytes = encode_body(&Body::Save(s)).unwrap();
+        assert_eq!(bytes.len(), 5);
+        assert_eq!(decode_body(Kind::Save, &bytes).unwrap(), Body::Save(s));
+        // A role outside the two the build knows is a framing error.
+        let bad = Save { seq: 1, role: 9 };
+        assert!(decode_body(Kind::Save, &encode_body(&Body::Save(bad)).unwrap()).is_err());
+    }
 
     fn sample_guid() -> Guid {
         Guid::from_bytes([
@@ -2773,6 +3230,7 @@ mod tests {
             Kind::Status,
             Kind::DialogueState,
             Kind::LevelUnion,
+            Kind::DialogueView,
         ] {
             assert!(k.is_latest_wins(), "{k:?} must be latest-wins");
             assert!(!k.is_reliable());
@@ -2781,6 +3239,35 @@ mod tests {
         for k in [Kind::Hello, Kind::Welcome, Kind::Keepalive, Kind::Ack, Kind::Intent, Kind::Log] {
             assert!(!(k.is_reliable() && k.is_latest_wins()));
         }
+    }
+
+    #[test]
+    fn dialogue_view_rejects_a_bad_slot_and_unknown_flags() {
+        let body = Body::DialogueView(DialogueView {
+            seq: 1,
+            slot: slots::PEER,
+            flags: dialogue_view_flags::OPTIONS,
+            asset: "Merchant_Dialogue".to_owned(),
+            ..Default::default()
+        });
+        let bytes = encode_body(&body).unwrap();
+        assert_eq!(decode_body(Kind::DialogueView, &bytes).unwrap(), body);
+
+        // Slot: only 0, 1 and "free" mean anything.
+        let mut bad_slot = bytes.clone();
+        bad_slot[4 + 16] = 2;               // seq(4) + guid(16), then slot
+        assert!(matches!(
+            decode_body(Kind::DialogueView, &bad_slot),
+            Err(Error::OutOfRange { what: "dialogue_view slot", .. })
+        ));
+
+        // Flags: a bit this build cannot interpret is refused, not ignored.
+        let mut bad_flags = bytes;
+        bad_flags[4 + 16 + 1] = 0x80;
+        assert!(matches!(
+            decode_body(Kind::DialogueView, &bad_flags),
+            Err(Error::OutOfRange { what: "dialogue_view flags", .. })
+        ));
     }
 
     #[test]
@@ -2930,6 +3417,38 @@ mod tests {
     }
 
     #[test]
+    fn platform_ride_round_trips_and_is_latest_wins() {
+        // The rider lane is a STATE lane: a lost sample is repaired by the next one, and a
+        // stale one must never win (it would put the partner back on a platform they left).
+        assert!(!Kind::PlatformRide.is_reliable());
+        assert!(Kind::PlatformRide.is_latest_wins());
+        assert_eq!(Kind::PlatformRide.as_u8(), 0x48);
+        assert_eq!(Kind::from_u8(0x48).unwrap(), Kind::PlatformRide);
+        assert_eq!(Kind::PlatformRide.name(), "platform_ride");
+
+        let b = PlatformRide {
+            ms: 1234,
+            rows: vec![PlatformRideRow {
+                id: sample_guid(),
+                ox: 120,
+                oy: -64,
+                oz: 8,
+                oyaw: 16384,
+                flags: platform_ride_flags::ON | platform_ride_flags::MOVING,
+            }],
+        };
+        let bytes = encode_body(&Body::PlatformRide(b.clone())).unwrap();
+        // 4 (ms) + 2 (n) + 16 + 12 + 2 + 1 = 37.
+        assert_eq!(bytes.len(), 37);
+        assert_eq!(
+            decode_body(Kind::PlatformRide, &bytes).unwrap(),
+            Body::PlatformRide(b.clone())
+        );
+        // A body that ends mid-row is a framing error, not a short read.
+        assert!(decode_body(Kind::PlatformRide, &bytes[..30]).is_err());
+    }
+
+    #[test]
     fn boss_is_reliable_and_not_latest_wins() {
         // A boss bar that fails to appear because a datagram was lost is exactly the
         // failure a player reports as "the boss fight is broken", so this lane is
@@ -3057,5 +3576,74 @@ mod tests {
         assert_eq!(bytes[20], 2, "boss phase");
         assert_eq!(&bytes[21..23], &[0x01, 0x00], "path length");
         assert_eq!(bytes[23], b'A');
+    }
+
+    /// The death lane (WIRE.md §3.24): the ladder, the three bodies, and what they refuse.
+    #[test]
+    fn respawn_ladder_and_bodies() {
+        use respawn_penalty as pen;
+        assert_eq!(pen::MAX_STACKS, 9);
+        assert_eq!(pen::pct_for(0), 100);
+        assert_eq!(pen::pct_for(1), 90);
+        assert_eq!(pen::pct_for(2), 80);
+        assert_eq!(pen::pct_for(9), 10);
+        assert_eq!(pen::pct_for(10), 10, "a tenth death cannot go below the floor");
+        assert_eq!(pen::pct_for(255), 10);
+
+        let down = RespawnDown { deaths: 2, pct: 80, seq: 7, px: -222_772, py: -123_226, pz: -122_712 };
+        let bytes = encode_body(&Body::RespawnDown(down.clone())).unwrap();
+        // deaths, pct, seq then three little-endian i32.
+        assert_eq!(&bytes[0..3], &[2, 80, 7]);
+        assert_eq!(bytes.len(), 15);
+        assert_eq!(decode_body(Kind::RespawnDown, &bytes).unwrap(), Body::RespawnDown(down.clone()));
+
+        let up = RespawnUp {
+            deaths: 2,
+            pct: 80,
+            seq: 8,
+            px: 32_080,
+            py: -13_880,
+            pz: 408,
+            yaw: -17_294,
+            hp: 320,
+            hp_max: 320,
+            name: "Checkpoint17/100_GR".into(),
+        };
+        let bytes = encode_body(&Body::RespawnUp(up.clone())).unwrap();
+        assert_eq!(decode_body(Kind::RespawnUp, &bytes).unwrap(), Body::RespawnUp(up));
+
+        let rest = RespawnRest {
+            deaths: 0,
+            pct: 100,
+            seq: 9,
+            px: 32_080,
+            py: -13_880,
+            pz: 408,
+            name: "Checkpoint17/100_GR".into(),
+        };
+        let bytes = encode_body(&Body::RespawnRest(rest.clone())).unwrap();
+        assert_eq!(decode_body(Kind::RespawnRest, &bytes).unwrap(), Body::RespawnRest(rest));
+
+        // The kinds say which body it is, so a body does not repeat the kind byte.
+        assert_eq!(Kind::RespawnDown.as_u8(), 0x54);
+        assert_eq!(Kind::RespawnUp.as_u8(), 0x55);
+        assert_eq!(Kind::RespawnRest.as_u8(), 0x56);
+        assert!(Kind::RespawnUp.is_reliable());
+        assert_eq!(Kind::from_u8(0x54).unwrap(), Kind::RespawnDown);
+
+        // A stack and a percentage that disagree describe a state neither machine can have.
+        let mut bad = down.clone();
+        bad.pct = 100;
+        assert!(encode_body(&Body::RespawnDown(bad)).is_err());
+        // ... and the decoder refuses it too, not just the encoder.
+        let mut wire = encode_body(&Body::RespawnDown(down.clone())).unwrap();
+        wire[1] = 100;
+        assert!(decode_body(Kind::RespawnDown, &wire).is_err());
+        // A rest that carries a stack would clear a penalty the sender still has.
+        let bad_rest = RespawnRest { deaths: 3, pct: 70, ..Default::default() };
+        assert!(encode_body(&Body::RespawnRest(bad_rest)).is_err());
+        // hp above hp_max is refused.
+        let bad_up = RespawnUp { hp: 400, hp_max: 320, ..Default::default() };
+        assert!(encode_body(&Body::RespawnUp(bad_up)).is_err());
     }
 }

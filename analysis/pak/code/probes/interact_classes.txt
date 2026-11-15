@@ -1,0 +1,243 @@
+﻿== world-interact coverage: 117 blueprint classes classified ==
+
+-- door (52) --
+  AqrStatuePuzzleDoor_C                      QueensDomain/Content/RuinsLevel/AquaRuins/OfferingPuzzle/AqrStatuePuzzleDoor.uasset
+      names: Activate, Deactivate, Restore State From Save Data
+  AquaBossDoor_BP_C                          QueensDomain/Content/RuinsLevel/AquaRuins/BossDoor/AquaBossDoor_BP.uasset
+      names: Activate, Deactivate, Restore State From Save Data
+  AquaBossExitDoor_C                         QueensDomain/Content/RuinsLevel/AquaRuins/AquaBossExitDoor.uasset
+      names: SetToOpenState
+  AquaDoor_00_C                              QueensDomain/Content/RuinsLevel/AquaRuins/AquaDoor_00.uasset
+      names: SetToOpenState, Restore State From Save Data
+  AquaGate_00_BP_C                           QueensDomain/Content/RuinsLevel/AquaRuins/AquaGate_00_BP.uasset
+      names: SetToOpenState
+  AquaGate_01_BP_C                           QueensDomain/Content/RuinsLevel/AquaRuins/AquaGate_01_BP.uasset
+      names: SetToOpenState
+  BloodRitualDoor_BP_C                       QueensDomain/Content/RuinsLevel/ForbiddenDoors/BloodRitualDoor_BP.uasset
+      names: -
+  CastleFrontDoor_BP_C                       QueensDomain/Content/OtherWorld/Castle_Ext/CastleFrontDoor_BP.uasset
+      names: SetToOpenState
+  Castle_Door_Int_BP_C                       QueensDomain/Content/OtherWorld/Castle_Ext/Castle_Int/CastleDoor_Int_00/Castle_Door_Int_BP.uasset
+      names: Opened, SetToOpenState, Activate
+  DAquaDoor_01_C                             QueensDomain/Content/RuinsLevel/SecretZones/RitualSite/prop/DAquaDoor_01.uasset
+      names: SetToOpenState, Restore State From Save Data
+  DesBoss_Gate_C                             QueensDomain/Content/Enemies/JosamiKnight_00/DesBoss/DesBoss_Gate.uasset
+      names: SetToOpenState, Activate, Deactivate
+  Door_Base_C                                QueensDomain/Content/Blueprints/Door_Base.uasset
+      names: Opened, DoorClosed, SetToOpenState, Activate, Deactivate, Restore State From Save Data
+  EggDoor_BP_C                               QueensDomain/Content/RuinsLevel/Mausoleum/EggDoor_BP.uasset
+      names: SetToOpenState
+  ForbiddenDoor_BaseClass_C                  QueensDomain/Content/RuinsLevel/ForbiddenDoors/ForbiddenDoor_BaseClass.uasset
+      names: Opened, SetToOpenState, Activate
+  Forbidden_Door_00_BP_C                     QueensDomain/Content/RuinsLevel/ForbiddenDoors/Forbidden_Door_00_BP.uasset
+      names: -
+  GraveyardBoss_Gate_C                       QueensDomain/Content/RuinsLevel/AquaRuins/GraveyardBoss_Gate.uasset
+      names: SetToOpenState, Restore State From Save Data
+  JigekiDoor_BP_C                            QueensDomain/Content/RuinsLevel/SecretZones/RitualSite/prop/JigekiDoor_BP.uasset
+      names: SetToOpenState, Activate, Deactivate, Restore State From Save Data
+  JosamiPrisonDoor_C                         QueensDomain/Content/RuinsLevel/SecretZones/priosn/JosamiPrisonDoor.uasset
+      names: Opened
+  KitchenDoor_BP_C                           QueensDomain/Content/RuinsLevel/Mausoleum/Kitchen/KitchenDoor/KitchenDoor_BP.uasset
+      names: SetToOpenState, Activate
+  LibGate_00_BP_C                            QueensDomain/Content/RuinsLevel/Library/LibGate_00_BP.uasset
+      names: SetToOpenState
+  LibGate_00_BP_Circle_C                     QueensDomain/Content/RuinsLevel/Library/LibGate_00_BP_Circle.uasset
+      names: -
+  Lib_BossDoor_BP_C                          QueensDomain/Content/RuinsLevel/Library/BossDoor/Lib_BossDoor_BP.uasset
+      names: SetToOpenState, Activate
+  Lib_Door_01_BP_C                           QueensDomain/Content/RuinsLevel/Library/FrontDoor/Lib_Door_01_BP.uasset
+      names: SetToOpenState, Activate
+  Lib_FrontDoor_BP_C                         QueensDomain/Content/RuinsLevel/Library/FrontDoor/Lib_FrontDoor_BP.uasset
+      names: SetToOpenState, Activate
+  Lib_IntDoor_00_BP_C                        QueensDomain/Content/RuinsLevel/Library/FrontDoor/Lib_IntDoor_00_BP.uasset
+      names: Opened, SetToOpenState, Activate
+  Lib_MidDoor_BP1_C                          QueensDomain/Content/RuinsLevel/Library/FrontDoor/Lib_MidDoor_BP1.uasset
+      names: SetToOpenState, Activate
+  Lib_TrapDoors_00_BP_C                      QueensDomain/Content/RuinsLevel/Library/FrontDoor/Lib_TrapDoors_00_BP.uasset
+      names: SetToOpenState
+  Lib_TreasureGate_BP_C                      QueensDomain/Content/RuinsLevel/Library/BossDoor/Lib_TreasureGate_BP.uasset
+      names: SetToOpenState, Deactivate
+  M_DoorSmall_00_BP_C                        QueensDomain/Content/RuinsLevel/Mausoleum/MSmallDoor/M_DoorSmall_00_BP.uasset
+      names: SetToOpenState, Activate, Deactivate
+  M_WodasGate_00_BP_C                        QueensDomain/Content/RuinsLevel/Mausoleum/M_WodasGate_00_BP.uasset
+      names: SetToOpenState
+  Necro_Boss_Door_C                          QueensDomain/Content/Enemies/Necronomicon/Necro_Boss_Door.uasset
+      names: Activate, Deactivate
+  OW_BridgeDoor_C                            QueensDomain/Content/OtherWorld/CastleBridge/OW_BridgeDoor.uasset
+      names: SetToOpenState
+  OW_TP_Shutter_BP_C                         QueensDomain/Content/OtherWorld/OW_TP/OW_TP_Shutter_BP.uasset
+      names: SetToOpenState
+  OW_Tower_RobotShutter_BP_C                 QueensDomain/Content/OtherWorld/OW_Props/OW_Tower_RobotShutter_BP.uasset
+      names: Activate, Deactivate
+  OfficeDoor_00_BP_C                         QueensDomain/Content/RuinsLevel/ForbiddenDoors/OfficeDoor_00_BP.uasset
+      names: -
+  PT_Door_C                                  QueensDomain/Content/RuinsLevel/SecretZones/PuwemaTemple/PT_Door.uasset
+      names: SetToOpenState
+  Queen_Door_Bp_C                            QueensDomain/Content/OtherWorld/Castle_Ext/Castle_Int/Queen_Door_Bp.uasset
+      names: Opened, SetToOpenState
+  ROS_Door_BP_C                              QueensDomain/Content/RuinsLevel/SecretZones/RoS/MovingShit/ROS_Door_BP.uasset
+      names: SetToOpenState
+  Ros_Cage_Gate_BP_C                         QueensDomain/Content/RuinsLevel/SecretZones/RoS/MovingShit/Ros_Cage_Gate_BP.uasset
+      names: SetToOpenState, Deactivate
+  SG_Door_Beepee_C                           QueensDomain/Content/RuinsLevel/StoneGarden/Door/SG_Door_Beepee.uasset
+      names: SetToOpenState, Activate, Deactivate
+  SZ_BoringDoor_00_BP_C                      QueensDomain/Content/RuinsLevel/SecretZones/SZ_BoringDoor_00_BP.uasset
+      names: -
+  SZ_Door_02_BP_C                            QueensDomain/Content/RuinsLevel/SecretZones/SecretZoneDoor/SZ_Door_02_BP.uasset
+      names: Opened, SetToOpenState
+  SZ_JailDoor_BP_C                           QueensDomain/Content/RuinsLevel/SecretZones/Props/SZ_JailDoor_BP.uasset
+      names: Opened, SetToOpenState, Activate
+  ScienceSecretWall_C                        QueensDomain/Content/Blueprints/ScienceSecretWall.uasset
+      names: -
+  SecretWall_C                               QueensDomain/Content/Blueprints/SecretWall.uasset
+      names: Opened, Activate, Deactivate, Restore State From Save Data
+  SecretZoneDoor_BP_C                        QueensDomain/Content/RuinsLevel/SecretZones/SecretZoneDoor/SecretZoneDoor_BP.uasset
+      names: Opened, SetToOpenState
+  SecretZoneDoor_Blue_BP_C                   QueensDomain/Content/RuinsLevel/SecretZones/SecretZoneDoor/SecretZoneDoor_Blue_BP.uasset
+      names: -
+  SecretZoneDoor_Green_BP_C                  QueensDomain/Content/RuinsLevel/SecretZones/SecretZoneDoor/SecretZoneDoor_Green_BP.uasset
+      names: -
+  SecretZoneDoor_Red_BP_C                    QueensDomain/Content/RuinsLevel/SecretZones/SecretZoneDoor/SecretZoneDoor_Red_BP.uasset
+      names: -
+  Shop_Door_00_BP_C                          QueensDomain/Content/RuinsLevel/VideoSettings/Shop_Door_00_BP.uasset
+      names: SetToOpenState, Activate
+  SwordShrineGate_BP_C                       QueensDomain/Content/Props/SwordShrine/SwordShrineGate_BP.uasset
+      names: Opened, SetToOpenState, SetTOEndState, Activate
+  TowerDoor_00_BP_C                          QueensDomain/Content/RuinsLevel/ForbiddenDoors/TowerDoor_00_BP.uasset
+      names: -
+
+-- breakable (33) --
+  Barrel_C                                   QueensDomain/Content/Props/Containers/Barrel.uasset
+      names: -
+  Barrel_Hard_C                              QueensDomain/Content/Props/Containers/Variants/Barrel_Hard.uasset
+      names: -
+  Barrel_Mossy_C                             QueensDomain/Content/Props/Containers/Variants/Barrel_Mossy.uasset
+      names: -
+  BreakableBarricade_C                       QueensDomain/Content/Blueprints/BreakableBarricade/BreakableBarricade.uasset
+      names: BrokeBarricade, SetActorEnableCollision, Restore State From Save Data
+  Crate_C                                    QueensDomain/Content/Props/Containers/Crate.uasset
+      names: -
+  Crate_Hard_C                               QueensDomain/Content/Props/Containers/Variants/Crate_Hard.uasset
+      names: -
+  Crate_Mossy_C                              QueensDomain/Content/Props/Containers/Variants/Crate_Mossy.uasset
+      names: -
+  M_Kitchen_Pot_00_BP_C                      QueensDomain/Content/RuinsLevel/Mausoleum/Kitchen/M_Kitchen_Pot_00_BP.uasset
+      names: -
+  M_Kitchen_Pot_01_BP_C                      QueensDomain/Content/RuinsLevel/Mausoleum/Kitchen/M_Kitchen_Pot_01_BP.uasset
+      names: -
+  M_Kitchen_Pot_01a_BP1_C                    QueensDomain/Content/RuinsLevel/Mausoleum/Kitchen/M_Kitchen_Pot_01a_BP1.uasset
+      names: -
+  OW_BigCrate_BP_C                           QueensDomain/Content/OtherWorld/Castle_Ext/Castle_Int/props/OW_BigCrate_BP.uasset
+      names: -
+  OW_BigCrate_BP_C                           QueensDomain/Content/OtherWorld/OW_Props/OW_BigCrate_BP.uasset
+      names: -
+  OW_MachineBarrel_BP_C                      QueensDomain/Content/OtherWorld/Castle_Ext/Castle_Int/props/OW_MachineBarrel_BP.uasset
+      names: -
+  OW_MachineBarrel_BP_C                      QueensDomain/Content/OtherWorld/OW_Props/OW_MachineBarrel_BP.uasset
+      names: -
+  Permabreakable_base_C                      QueensDomain/Content/Props/Containers/Permabreakable_base.uasset
+      names: Break, AlreadyBroke, PreviewBroken, SetActorEnableCollision, Restore State From Save Data
+  Pot_Base_C                                 QueensDomain/Content/Props/Pots/Pot_Base.uasset
+      names: Break, SetActorEnableCollision
+  Pot_Fat_2_C                                QueensDomain/Content/Props/Pots/pots2/Pot_Fat_2.uasset
+      names: -
+  Pot_Fat_C                                  QueensDomain/Content/Props/Pots/Pot_Fat.uasset
+      names: -
+  Pot_Fat_C                                  QueensDomain/Content/Props/Pots/pots3/Pot_Fat.uasset
+      names: -
+  Pot_Fat_Sci_C                              QueensDomain/Content/Props/Pots/Pots_Sci/Pot_Fat_Sci.uasset
+      names: -
+  Pot_Small_2_C                              QueensDomain/Content/Props/Pots/pots2/Pot_Small_2.uasset
+      names: -
+  Pot_Small_Base_C                           QueensDomain/Content/Props/Pots/Pot_Small_Base.uasset
+      names: -
+  Pot_Small_Base_C                           QueensDomain/Content/Props/Pots/pots3/Pot_Small_Base.uasset
+      names: -
+  Pot_Small_Sci_C                            QueensDomain/Content/Props/Pots/Pots_Sci/Pot_Small_Sci.uasset
+      names: -
+  Pot_Tall_2_C                               QueensDomain/Content/Props/Pots/pots2/Pot_Tall_2.uasset
+      names: -
+  Pot_Tall_Base_C                            QueensDomain/Content/Props/Pots/Pot_Tall_Base.uasset
+      names: -
+  Pot_Tall_Base_C                            QueensDomain/Content/Props/Pots/pots3/Pot_Tall_Base.uasset
+      names: -
+  Pot_Tall_Sci_C                             QueensDomain/Content/Props/Pots/Pots_Sci/Pot_Tall_Sci.uasset
+      names: -
+  ScifiCrate_BP_C                            QueensDomain/Content/Props/Containers/ScifiCrate_BP.uasset
+      names: -
+  ScifiCrate_Hard_BP_C                       QueensDomain/Content/Props/Containers/Variants/ScifiCrate_Hard_BP.uasset
+      names: -
+  ScifiCrate_Rusty_BP_C                      QueensDomain/Content/Props/Containers/Variants/ScifiCrate_Rusty_BP.uasset
+      names: -
+  Wellcover_Breakable_C                      QueensDomain/Content/Blueprints/BreakableBarricade/Wellcover_Breakable.uasset
+      names: -
+  or_pot_tall_bp_C                           QueensDomain/Content/OldMapContent/Props/or_pot_tall_bp.uasset
+      names: Break
+
+-- activatable (32) --
+  AquaLever_00_C                             QueensDomain/Content/RuinsLevel/AquaRuins/AquaLever_00.uasset
+      names: -
+  FS_Button_C                                QueensDomain/Content/UI/UI_Style/FS_Button.uasset
+      names: -
+  Gargoyle_Switch_C                          QueensDomain/Content/Enemies/Gargler_00/Gargoyle_Switch.uasset
+      names: Activate, Restore State From Save Data
+  Invisibutton_C                             QueensDomain/Content/UI/UI_Style/ButtonStyles/Invisibutton.uasset
+      names: -
+  Jigeki_Rune_BP_C                           QueensDomain/Content/RuinsLevel/Mausoleum/QueensGrave/Jigeki_Rune_BP.uasset
+      names: -
+  Lever_C                                    QueensDomain/Content/LD45/Blueprints/Objects/Gate/Lever.uasset
+      names: Activated, ToggledOn, Activate, Deactivate, Restore State From Save Data
+  Lib_Switchbox_BP_C                         QueensDomain/Content/RuinsLevel/Library/props/Lib_Switchbox_BP.uasset
+      names: -
+  M_GraveStone_0Button2_BP1_C                QueensDomain/Content/RuinsLevel/Mausoleum/GRGraves/M_GraveStone_0Button2_BP1.uasset
+      names: -
+  MausoLever_00_C                            QueensDomain/Content/RuinsLevel/Mausoleum/MausoLever_00.uasset
+      names: -
+  OW_Lever_00_BP_C                           QueensDomain/Content/OtherWorld/Castle_Ext/Castle_Int/props/OW_Lever_00_BP.uasset
+      names: -
+  OW_Lever_00_BP_C                           QueensDomain/Content/OtherWorld/OW_Props/OW_Lever_00_BP.uasset
+      names: -
+  OptionsList_ButtonGroup_C                  QueensDomain/Content/UI/Menus/OptionsMenu/OptionsList_ButtonGroup.uasset
+      names: -
+  OptionsMenu_GenericButton_C                QueensDomain/Content/UI/Menus/OptionsMenu/OptionsMenu_GenericButton.uasset
+      names: -
+  PTSeal_SipehaRune_BP_C                     QueensDomain/Content/RuinsLevel/Mausoleum/QueensGrave/PTSeal_SipehaRune_BP.uasset
+      names: -
+  PT_Lever_00_BP_C                           QueensDomain/Content/RuinsLevel/SecretZones/PuwemaTemple/PT_Lever_00_BP.uasset
+      names: -
+  Puwema_Rune_BP_C                           QueensDomain/Content/RuinsLevel/Mausoleum/QueensGrave/Puwema_Rune_BP.uasset
+      names: -
+  RuneButton_C                               QueensDomain/Content/RuinsLevel/Mausoleum/QueensGrave/RuneButton.uasset
+      names: ToggledOn, Activate
+  RuneCharm_Egg_BP_C                         QueensDomain/Content/Items/Accessories/RuneVisionAccessory/Charms/RuneCharm_Egg_BP.uasset
+      names: -
+  RuneCharm_Food_BP_C                        QueensDomain/Content/Items/Accessories/RuneVisionAccessory/Charms/RuneCharm_Food_BP.uasset
+      names: -
+  RuneCharm_Lizer_BP_C                       QueensDomain/Content/Items/Accessories/RuneVisionAccessory/Charms/RuneCharm_Lizer_BP.uasset
+      names: -
+  RuneCharm_Skull_BP_C                       QueensDomain/Content/Items/Accessories/RuneVisionAccessory/Charms/RuneCharm_Skull_BP.uasset
+      names: -
+  RuneVisionCharm_Pickup_C                   QueensDomain/Content/Items/Accessories/RuneVisionAccessory/RuneVisionCharm_Pickup.uasset
+      names: -
+  RuneVisionMask_ItemMergeActor_C            QueensDomain/Content/Player/ItemmergeAnim/RuneVisionMask_ItemMergeActor.uasset
+      names: -
+  RuneVisionUnlock1_Pickup_C                 QueensDomain/Content/Items/Accessories/RuneVisionAccessory/RuneVisionUnlock1_Pickup.uasset
+      names: -
+  RuneVisionUnlock2_Pickup_C                 QueensDomain/Content/Items/Accessories/RuneVisionAccessory/RuneVisionUnlock2_Pickup.uasset
+      names: -
+  RuneVisionUnlock3_Pickup_C                 QueensDomain/Content/Items/Accessories/RuneVisionAccessory/RuneVisionUnlock3_Pickup.uasset
+      names: -
+  RuneVisionUnlock4_Pickup_C                 QueensDomain/Content/Items/Accessories/RuneVisionAccessory/RuneVisionUnlock4_Pickup.uasset
+      names: -
+  Runecharm_Chest_BP_C                       QueensDomain/Content/Items/Accessories/RuneVisionAccessory/Charms/Runecharm_Chest_BP.uasset
+      names: -
+  Runecharm_Sci_BP_C                         QueensDomain/Content/Items/Accessories/RuneVisionAccessory/Charms/Runecharm_Sci_BP.uasset
+      names: -
+  ShopExitButton_C                           QueensDomain/Content/Blueprints/Shop/ShopExitButton.uasset
+      names: -
+  SipehaRune_BP_C                            QueensDomain/Content/RuinsLevel/Mausoleum/QueensGrave/SipehaRune_BP.uasset
+      names: -
+  Wodaso_Rune_BP_C                           QueensDomain/Content/RuinsLevel/Mausoleum/QueensGrave/Wodaso_Rune_BP.uasset
+      names: -
+
+examined 158 BlueprintGeneratedClass packages

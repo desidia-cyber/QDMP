@@ -51,6 +51,22 @@ enum Kind {
     K_OBJECTS     = 0x2A,
     K_ENEMY_SPAWN = 0x2B,
     K_TRIGGER     = 0x2C,   // a partner's body entered/left a placed event volume (qdtrigger.h)
+    // [progression] One death paid one player's XP; the other pays its own the same amount.
+    // WIRE.md 3.26.
+    K_KILL_XP     = 0x40,
+    // [progression] "I saved; write your own slot now."  WIRE.md 3.27.
+    K_SAVE        = 0x41,
+    // [platforms] where a RIDER stands, in the platform's own axes (qdplatforms.h).  The
+    // companion of K_MOVERS: MOVERS says where the platform is, this says where the person
+    // on it stands.  Reserved for this module (0x48-0x4B).
+    K_PLATFORM_RIDE = 0x48,
+    K_DIALOGUE_VIEW = 0x50, // the dialogue cursor the talker is showing (qddialogue2.h)
+    // [death-respawn] A player's death, respawn and rest, stated by the machine that OWNS
+    // that player (qdrespawn.h).  Reliable: a death is an event, and a lost UP leaves the
+    // partner's puppet where the body fell until the next position row.
+    K_RESPAWN_DOWN = 0x54,
+    K_RESPAWN_UP   = 0x55,
+    K_RESPAWN_REST = 0x56,
     K_LOG         = 0x30,
 };
 
@@ -77,10 +93,15 @@ enum IntentKind {
 // travel heartbeat alone producing 5 attempts every 2 s for the life of the session.
 inline bool IsReliableKind(uint8_t kind)
 {
+    // [progression] Tested FIRST, on its own line: the list below is edited by every lane
+    // that adds a kind, so an append there is one more place this lane could silently
+    // lose its ack and retransmission.
+    if (kind == K_KILL_XP || kind == K_SAVE) return true;
     return kind == K_HELLO || kind == K_WELCOME || kind == K_INTENT ||
            kind == K_EFFECT || kind == K_ENEMY_DETAIL || kind == K_TRAVEL ||
            kind == K_DAMAGE || kind == K_SUSPEND || kind == K_BOSS ||
-           kind == K_OBJECTS || kind == K_ENEMY_SPAWN || kind == K_TRIGGER;
+           kind == K_OBJECTS || kind == K_ENEMY_SPAWN || kind == K_TRIGGER ||
+           kind == K_RESPAWN_DOWN || kind == K_RESPAWN_UP || kind == K_RESPAWN_REST;
 }
 
 // --------------------------------------------------------------------------
@@ -802,6 +823,55 @@ inline bool ReadDialogue(Reader& r, DialogueBody* d)
     return r.ok;
 }
 
+// ---- dialogue spectator view (K_DIALOGUE_VIEW 0x50, qddialogue2.h) --------
+// The cursor the talking machine's DialogueManager is showing, so the partner can display
+// the same conversation on its OWN game's dialogue widget.  The lines are NOT in the body:
+// they live in the cooked `FS_DialogueData` asset, identified by its OBJECT NAME, which
+// both machines load from the same package.  What travels is the cursor plus the number of
+// options the talker is offered and the one it picked -- never the dialogue's outcomes,
+// which ride the flag lane as they always did.  Unreliable and latest-wins: a lost sample
+// costs a beat, the next one repairs it.
+struct DialogueViewBody {
+    uint32_t seq;
+    uint32_t npc[4];      // qddialogue.h StableId of the NPC actor
+    uint8_t  slot;        // 0xFF = not talking
+    uint8_t  flags;       // bit0 options on screen, bit1 a choice was made, bit2 hide the name
+    uint16_t sequence;    // CurrentDialogueSequenceIndex
+    uint16_t entry;       // entry index inside that sequence (0 when unreadable)
+    uint16_t options;     // every option the talker can pick from (0 = none on screen)
+    uint16_t chosen;      // 0xFFFF = none yet
+    char     asset[96];   // the FS_DialogueData object's own name
+};
+
+static const uint16_t kDialogueViewNoOption = 0xFFFF;
+
+inline void WriteDialogueView(Writer& w, const DialogueViewBody& d)
+{
+    w.U32(d.seq);
+    w.Guid(d.npc);
+    w.U8(d.slot);
+    w.U8(d.flags);
+    w.U16(d.sequence);
+    w.U16(d.entry);
+    w.U16(d.options);
+    w.U16(d.chosen);
+    w.Str(d.asset);
+}
+
+inline bool ReadDialogueView(Reader& r, DialogueViewBody* d)
+{
+    d->seq = r.U32();
+    r.Guid(d->npc);
+    d->slot  = r.U8();
+    d->flags = r.U8();
+    d->sequence = r.U16();
+    d->entry    = r.U16();
+    d->options  = r.U16();
+    d->chosen   = r.U16();
+    if (r.Str(d->asset, sizeof(d->asset)) < 0) return false;
+    return r.ok;
+}
+
 // ---- level union ----------------------------------------------------------
 // Body: bits_len(u16), the bitset bytes, then has_names(u8) and, if set, a name
 // table.  The order matters and is cross-checked against doc/vectors.txt
@@ -1078,6 +1148,73 @@ inline bool ReadMovers(Reader& r, MoversBody* b)
     return r.ok;
 }
 
+// ---- platform rides (WIRE.md 3.23) -----------------------------------------
+// [platforms] Where a RIDER stands, in the platform's own axes, keyed by the platform's
+// stable id -- the second half of the moving-platform problem.  `MOVERS` says where the
+// platform is; this says where the person standing on it is.  The receiver rebuilds the
+// place from ITS OWN copy of the platform, so the doll is on the platform to the
+// centimetre even when the two copies run a few frames apart.
+//
+// WHY THE ABSOLUTE POSITION IS NOT ENOUGH (dollsMP `docs/sync/36` §9, measured): a rider's
+// "position minus the platform's position" jumps 50-900 cm from one sample to the next,
+// because the pawn and the platform are sampled at different moments of the sender's frame.
+// A standing passenger's place IN THE PLATFORM'S AXES, by contrast, does not change at all
+// while the platform moves -- which is what this row carries.
+//
+// Body: ms(u32 -- the sender's clock, for ordering only), n(u16, never split across a
+// datagram), n x {guid id, i32 ox, i32 oy, i32 oz, i16 oyaw, u8 flags}.  Row 31 bytes;
+// 4 rows bound the body at 130 bytes.
+static const uint8_t kRideOn     = 0x01;   // the sender's player is on this platform
+static const uint8_t kRideMoving = 0x02;   // and the platform is moving
+
+struct PlatformRideRow {
+    uint32_t id[4];
+    int32_t  ox, oy, oz;    // the rider's place in the platform's axes, 1/8 cm
+    int16_t  oyaw;          // the rider's heading RELATIVE to the platform, 1/65536 turn
+    uint8_t  flags;
+};
+
+struct PlatformRideBody {
+    uint32_t ms;
+    uint16_t n_sent;
+    uint16_t n;             // rows stored (bounded by kPlatformRidesMax)
+    PlatformRideRow row[4];
+};
+
+static const int kPlatformRidesMax = 4;
+
+inline void WritePlatformRide(Writer& w, const PlatformRideBody& b)
+{
+    w.U32(b.ms);
+    w.U16((uint16_t)b.n);
+    for (int i = 0; i < b.n; ++i) {
+        w.Guid(b.row[i].id);
+        w.I32(b.row[i].ox); w.I32(b.row[i].oy); w.I32(b.row[i].oz);
+        w.I16(b.row[i].oyaw);
+        w.U8(b.row[i].flags);
+    }
+}
+
+inline bool ReadPlatformRide(Reader& r, PlatformRideBody* b)
+{
+    b->ms = r.U32();
+    b->n_sent = r.U16();
+    b->n = 0;
+    // Same prefix rule as the other absolute containers: `n` is the sender's count and a
+    // datagram carries a prefix, so stop when the body is exhausted rather than refusing.
+    for (int i = 0; i < (int)b->n_sent && r.ok && r.Room(1); ++i) {
+        if (b->n >= kPlatformRidesMax) return false;
+        PlatformRideRow& t = b->row[b->n];
+        r.Guid(t.id);
+        t.ox = r.I32(); t.oy = r.I32(); t.oz = r.I32();
+        t.oyaw = r.I16();
+        t.flags = r.U8();
+        if (!r.ok) return false;
+        ++b->n;
+    }
+    return r.ok;
+}
+
 // ---- loot (WIRE.md 3.18) ---------------------------------------------------
 // A shared drop set plus tombstones.  Body: rev(u32), n(u16), n x {u32 source_hash,
 // i32 drop_index, u8 taken, u8 flags, i16 yaw, i32 px, i32 py, i32 pz, str item_path}.
@@ -1206,6 +1343,74 @@ inline bool ReadSuspend(Reader& r, SuspendBody* s)
     return r.ok;
 }
 
+
+// ---- kill XP (WIRE.md 3.26) -------------------------------------------------
+// One death paid one machine's player `xp`; the other machine pays its own player the same
+// amount IF its own game did not.  `xp` is what the sender MEASURED -- never a value derived
+// from the enemy's data, because this build exposes no enemy XP field and the award is
+// Blueprint state (qdprogression.h states the whole reason).  A machine that measured
+// nothing sends nothing, so a kill the game did not pay for is never invented.
+//
+// Body: guid(16, the enemy's key -- the identity every other enemy lane uses),
+//       seq(u16, the death's ordinal for that key, so a retransmit is not a second award),
+//       xp(u32, the measured amount).
+//
+// Reliable: an award lost to a dropped datagram is a player who fought for nothing.
+struct KillXpBody {
+    uint32_t guid[4];
+    uint16_t seq;
+    uint32_t xp;
+};
+
+inline void WriteKillXp(Writer& w, const uint32_t guid[4], uint16_t seq, int32_t xp)
+{
+    w.Guid(guid);
+    w.U16(seq);
+    w.U32((uint32_t)xp);
+}
+
+inline bool ReadKillXp(Reader& r, KillXpBody* b)
+{
+    r.Guid(b->guid);
+    b->seq = r.U16();
+    b->xp  = r.U32();
+    if (!r.ok) return false;
+    // An award of nothing is not an award, and an implausible one is a framing error.
+    if (b->xp == 0 || b->xp > 1000000u) return false;
+    return true;
+}
+
+// ---- save (WIRE.md 3.27) ----------------------------------------------------
+// "I saved; write your own slot now."  The detector is the game's own save DISPATCH
+// (`SaveFunctions_C.SaveGameToDisk` and the instance's `GI_SaveGameToDisk`), so a rest
+// point, the game's autosave, a menu save and a scripted save all arrive on this one body.
+// A suspend save is deliberately NOT mirrored: it is another machine's snapshot, and
+// qdsuspend.h already owns it.
+//
+// Body: seq(u32, the sender's own save counter -- monotone, so a retransmit is one
+//       request), role(u8, 1 host / 2 peer, diagnostics only).
+//
+// A mirrored save is never announced again: the receiver's own dispatch is the echo of the
+// save it ran for the partner, and qdprogression.h's SaveBoard brackets exactly that.
+struct SaveBody {
+    uint32_t seq;
+    uint8_t  role;
+};
+
+inline void WriteSave(Writer& w, uint32_t seq, uint8_t role)
+{
+    w.U32(seq);
+    w.U8(role);
+}
+
+inline bool ReadSave(Reader& r, SaveBody* b)
+{
+    b->seq  = r.U32();
+    b->role = r.U8();
+    if (!r.ok) return false;
+    if (b->role > 2) return false;
+    return true;
+}
 
 // ---- inventory ------------------------------------------------------------
 // Body: rev(u32), n(u16), then n x {str path, i32 count}.  Cross-checked against

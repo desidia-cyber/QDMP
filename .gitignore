@@ -47,3 +47,9 @@ mod/tools/probe2-*
 
 # --- live test instance (game user dirs, seeded saves, pid files) ---
 /_test/
+
+# --- per-delegate build dirs / stray PDBs ---
+mod/rust/target-*/
+/vc140.pdb
+mod/native/vc140.pdb
+analysis/scratch/*.log
