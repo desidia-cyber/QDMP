@@ -9272,6 +9272,27 @@ void EnemySpawnPump(uint32_t now)
             if ((uint32_t)(now - r.mirrorPathAt) < kBossRedescribeMs) continue;
             bossRedescribe = true;
         }
+        // [coordinator] THE RATE IS PER BOSS KEY, NOT PER RECORD.  Several records can carry the
+        // same key (measured: Dragon_Green 5CD10AA4 re-offered twice every ~150 ms, each record on
+        // its own 2.5 s clock), and every offer is a reliable datagram that holds a slot.
+        if (r.isBoss) {
+            static uint32_t offeredKey[16][4];
+            static uint32_t offeredAt[16];
+            static int offeredN = 0;
+            int slot = -1;
+            for (int k = 0; k < offeredN; ++k)
+                if (boss::SameKey(offeredKey[k], r.guid)) { slot = k; break; }
+            if (slot >= 0 && (uint32_t)(now - offeredAt[slot]) < kBossRedescribeMs) {
+                r.mirrorPathSent = true;
+                r.mirrorPathAt = offeredAt[slot];
+                continue;
+            }
+            if (slot < 0) {
+                slot = (offeredN < 16) ? offeredN++ : (int)(now % 16);
+                memcpy(offeredKey[slot], r.guid, 16);
+            }
+            offeredAt[slot] = now;
+        }
         if (!ObjectIsLive(r.actor) || EnemyDead(r.actor)) continue;
         if (!g_own.Running(r.guid)) continue;      // only the machine that simulates it
         ActorXform x;
