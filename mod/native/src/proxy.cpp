@@ -20417,6 +20417,13 @@ void InstallTestInputHooks()
 {
     char ud[260];
     if (!CmdArg("-UserDir", ud, sizeof(ud)) || !ud[0]) return;      // a player's game: untouched
+    // [coordinator] A test instance a HUMAN plays (session-manual.ps1) must own the mouse and
+    // focus: with these hooks the window could never be activated and neither keyboard nor
+    // mouse reached the game (reported by the tester, 2026-11-16).
+    if (DevEnvInt("QDCOOP_INTERACTIVE", 0)) {
+        QDLOG(LOG_INFO, "test input: QDCOOP_INTERACTIVE=1 -- cursor/focus left to the game (a human plays this instance)");
+        return;
+    }
     struct H { const char* name; void* detour; void** orig; } hs[] = {
         {"ClipCursor", (void*)h_ClipCursor, (void**)&o_ClipCursor},
         {"SetCursorPos", (void*)h_SetCursorPos, (void**)&o_SetCursorPos},
