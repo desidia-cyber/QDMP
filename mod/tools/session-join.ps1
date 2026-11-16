@@ -166,8 +166,9 @@ foreach ($i in 1, 2) {
 $seedJson = Join-Path $inst[2].Root 'join-seed.json'
 $peerFlags = [ordered]@{ QDJoinProofPeerAhead = 1; CheckpointUnlockCount = 7 }
 $peerFlags | ConvertTo-Json | Set-Content -LiteralPath $seedJson -Encoding ASCII
-$saveRoot = Join-Path $inst[2].Root 'Saved\SaveGames'
-$apply = & python (Join-Path $here 'qdsave.py') apply-flags --root $saveRoot (Join-Path $saveRoot 'World0.sav') --json $seedJson 2>&1
+$saveRoot = Join-Path $inst[2].Root 'Saved_qd2\SaveGames'   # [coordinator] make_test_instance names it Saved_qd<N>
+Copy-Item -LiteralPath $seedJson -Destination (Join-Path $saveRoot 'join-seed.json') -Force   # [coordinator] qdsave reads --json relative to --root
+$apply = & python (Join-Path $here 'qdsave.py') apply-flags --root $saveRoot 'World0.sav' --json 'join-seed.json' 2>&1
 $apply | ForEach-Object { Note ("  qdsave: {0}" -f $_) }
 if ($LASTEXITCODE -ne 0) { Say 'REFUSED: qdsave.py apply-flags failed; the peer save is not seeded ahead'; exit 2 }
 

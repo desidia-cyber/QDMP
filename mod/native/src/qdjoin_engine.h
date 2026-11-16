@@ -76,9 +76,10 @@ static uint32_t     g_serveAckedAt = 0;
 static const uint32_t kWaitMs        = 12000;   // how long a peer waits for a full state
 static const uint32_t kRetryReqMs    = 1500;    // re-ask while waiting
 static const uint32_t kMaxRequests   = 6;
+static uint32_t       g_lastChunkAt  = 0;   // [coordinator] when a state chunk last arrived
 static const uint32_t kBusyTailMs    = 2500;    // the echo window after the apply
 static const int      kServePerTick  = 8;       // chunks a host sends in one frame
-static const int      kServeRepeats  = 20;      // how many full passes before giving up
+static const int      kServeRepeats  = 75;   // [coordinator] was 20 (~16 s): a peer still loading stalls longer than that      // how many full passes before giving up
 static const uint32_t kServeRepeatMs = 800;
 
 // ---------------------------------------------------------------------------
@@ -442,39 +443,44 @@ static bool JoinStamp(char* out, int cap)
     return n > 0 && n < cap;
 }
 
-// The instance's save directory: `-UserDir=<dir>` gives `<dir>\Saved\SaveGames`; without it
-// the game uses `<project>\Saved\SaveGames`, and the executable lives two levels below the
-// project directory.
+// The save directory the GAME writes to.  [coordinator] A shipping UE4 game on Windows saves
+// under %LOCALAPPDATA%\<Project>\Saved\SaveGames -- NOT next to the executable -- and
+// `-saveddirsuffix=<x>` renames `Saved` to `Saved_<x>`.  The first version guessed
+// `<exe>\..\..\Saved\SaveGames`, so on a real player's machine the backup failed and the
+// reconcile refused itself (measured on the rig as `save directory does not exist ...
+// inst2\Saved\SaveGames` while the game wrote `inst2\Saved_qd2\SaveGames`).
+static bool JoinDirExists(const char* d)
+{
+    DWORD a = GetFileAttributesA(d);
+    return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY);
+}
+
 static bool JoinSaveDir(char* out, int cap)
 {
     if (!out || cap < 32) return false;
     out[0] = 0;
-    const char* cmd = GetCommandLineA();
-    if (cmd) {
-        const char* p = cmd;
-        while ((p = strstr(p, "-UserDir=")) != nullptr) {
-            p += 9;
-            char dir[192]; int w = 0;
-            if (*p == '"') {
-                ++p;
-                while (*p && *p != '"' && w < (int)sizeof(dir) - 1) dir[w++] = *p++;
-            } else {
-                while (*p && *p != ' ' && *p != '\t' && w < (int)sizeof(dir) - 1) dir[w++] = *p++;
-            }
-            dir[w] = 0;
-            if (!w) break;
-            int n = snprintf(out, (size_t)cap, "%s\\Saved\\SaveGames", dir);
-            if (n > 0 && n < cap) return true;
-            break;
-        }
+    char sfx[64] = "", savedName[80] = "Saved";
+    if (CmdArg("-saveddirsuffix", sfx, sizeof(sfx)) && sfx[0])
+        snprintf(savedName, sizeof(savedName), "Saved_%s", sfx);
+    char base[MAX_PATH] = "";
+    if (CmdArg("-UserDir", base, sizeof(base)) && base[0]) {
+        int n = snprintf(out, (size_t)cap, "%s\\%s\\SaveGames", base, savedName);
+        return n > 0 && n < cap;
     }
+    char la[MAX_PATH];
+    DWORD got = GetEnvironmentVariableA("LOCALAPPDATA", la, MAX_PATH);
+    if (got > 0 && got < MAX_PATH) {
+        int n = snprintf(out, (size_t)cap, "%s\\QueensDomain\\%s\\SaveGames", la, savedName);
+        if (n > 0 && n < cap && JoinDirExists(out)) return true;
+    }
+    // Last resort (a portable/odd install): next to the project directory.
     char exe[MAX_PATH];
-    DWORD got = GetModuleFileNameA(nullptr, exe, MAX_PATH);
+    got = GetModuleFileNameA(nullptr, exe, MAX_PATH);
     if (got == 0 || got >= MAX_PATH) return false;
     int cut = (int)got;
     while (cut > 0 && exe[cut - 1] != '\\' && exe[cut - 1] != '/') --cut;
     exe[cut] = 0;
-    int n = snprintf(out, (size_t)cap, "%s..\\..\\Saved\\SaveGames", exe);
+    int n = snprintf(out, (size_t)cap, "%s..\\..\\%s\\SaveGames", exe, savedName);
     return n > 0 && n < cap;
 }
 
@@ -1233,6 +1239,11 @@ void JoinOnState(wire::Reader& r, uint32_t now)
         return;
     }
     g_recvHas |= (uint8_t)(1u << (h.cat - 1));
+    // [coordinator] DATA IS ARRIVING: the wait is measured from the LAST chunk, not from the
+    // request.  MEASURED (join run, relaunched peer): every row arrived but the game thread
+    // stalled 19 s while loading, the 12 s deadline fired first and the reconcile was dropped.
+    g_lastChunkAt = now;
+    g_deadline = now + kWaitMs;
     int total = join::TotalRows(g_hostState, h.cat, h.sub);
     QDLOG(LOG_DEBUG, "join: state ", join::CatName(h.cat), " first=", dec((int)h.first),
           " rows=", dec(n), " have=", dec(total), " of ", dec((int)h.total));
@@ -1270,6 +1281,7 @@ void JoinOnEnd(wire::Reader& r, uint32_t now)
 
 void JoinOnReq(wire::Reader& r, uint32_t now)
 {
+    resp::RespawnAnnounceAgain();   // [coordinator] a (re)joining partner needs this player's stacks
     if (!Cfg().join_reconcile || !g_net.IsHost()) return;
     uint32_t seq = 0;
     uint8_t cat = 0;
@@ -1350,7 +1362,12 @@ void JoinPump(uint32_t now)
     // ---- peer: establish detection ----
     uint32_t session = g_net.Session();
     uint32_t lastRx = g_net.LastRxMs();
-    uint32_t silence = (lastRx != 0) ? (uint32_t)(now - lastRx) : 0;
+    // [coordinator] SIGNED: the socket thread stamps last_rx_ms_ after this tick captured `now`,
+    // so `now - lastRx` is often slightly NEGATIVE; unsigned it wrapped to ~4e9 ms of "silence"
+    // and the next tick declared "the link came back" -- MEASURED: a re-request of the whole
+    // world state every 100-400 ms for the life of the session.
+    int32_t gap = (lastRx != 0) ? (int32_t)(now - lastRx) : 0;
+    uint32_t silence = gap > 0 ? (uint32_t)gap : 0u;
     if (lastRx != 0 && silence > 3000) g_silent = true;
     bool reconnected = g_silent && silence < 700;
     bool newSession = (!g_wasConnected || session != g_lastSession);
@@ -1408,6 +1425,11 @@ void JoinPump(uint32_t now)
             QDLOG(LOG_WARN, "join: the host did not answer after ", dec(g_requests),
                   " requests; giving up on this establishment");
             g_phase = PH_DONE;
+            return;
+        }
+        if (g_requests > 0 && g_lastChunkAt && (uint32_t)(now - g_lastChunkAt) < kRetryReqMs) {
+            // [coordinator] the host is still streaming; re-asking would restart it from row 0
+            g_nextReq = now + kRetryReqMs;
             return;
         }
         if (g_requests > 0) {

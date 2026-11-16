@@ -1044,6 +1044,11 @@ static void DoRespawn(uint32_t now)
 // ---------------------------------------------------------------------------
 // The tick
 // ---------------------------------------------------------------------------
+// [coordinator] the join lane calls this when a (relaunched) partner asks for the world:
+// the relay session id may be unchanged, so the per-session announce would not fire again.
+static bool g_announceAgain = false;
+void RespawnAnnounceAgain() { g_announceAgain = true; }
+
 void RespawnPump(uint32_t now)
 {
     if (!Cfg().death_respawn) return;
@@ -1052,6 +1057,32 @@ void RespawnPump(uint32_t now)
     if (now - g_lastPoll < 200) return;
     g_lastPoll = now;
     ResolveFns(now);
+
+    // [coordinator] ANNOUNCE THE STACKS ON EVERY NEW SESSION.  The partner learns this player's
+    // stacks only from DOWN/UP/REST, so stacks restored from the sidecar at boot were never
+    // told: MEASURED (join run) `audit: DESYNC deaths host host=9 peer=0` for the whole session.
+    // An UP with the current place is harmless to the receiver (it clears a down pose and
+    // places the puppet where it already is).
+    {
+        static uint32_t announcedSession = 0;
+        uint32_t sess = g_net.Session();
+        if (g_net.Connected() && sess != 0 && (sess != announcedSession || g_announceAgain) && !g_self.Down()) {
+            g_announceAgain = false;
+            announcedSession = sess;
+            Point here;
+            memset(&here, 0, sizeof(here));
+            ActorXform hx;
+            if (ReadActorXform(g_localPawn, &hx)) {
+                here.px = hx.px; here.py = hx.py; here.pz = hx.pz; here.yaw = hx.yaw;
+            }
+            float cur = 0.0f;
+            bool haveCur = PawnHealth(&cur);
+            float mx = BaseMaxFallback();
+            SendUp(now, here, haveCur ? cur : 0.0f, mx > 0.0f ? ScaledMax(mx, g_self.Deaths()) : 0.0f);
+            QDLOG(LOG_INFO, "respawn: told the new session this player's stacks (", dec(g_self.Deaths()),
+                  " death(s), max ", dec(g_self.Pct()), "%)");
+        }
+    }
 
     // The base maximum is learned from the highest health this machine has seen: healing
     // caps at the maximum, so this is a lower bound and is only a last resort.

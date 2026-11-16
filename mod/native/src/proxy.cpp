@@ -28343,6 +28343,10 @@ static void AuditNsdVisit(const char* key, int32_t value, void* user)
     // player's own counters (join-sync's monotone list).  MEASURED (Queen run 3):
     // `audit: DESYNC flags IntroMusicState host=1 peer=0` -- correct behaviour, not a desync.
     if (qd::join::FlagStaysLocal(key) || qd::join::FlagMonotoneOnly(key)) return;
+    // [coordinator] A missing NamedSaveData key reads as 0 in this game, so 0 and "absent" are
+    // the same fact.  MEASURED (join run): a flag the reconcile reverted to 0 on the peer was
+    // reported forever as `host=-1 peer=0`.
+    if (value == 0) return;
     c->set->Add(key, value);
 }
 
