@@ -169,6 +169,12 @@ inline bool IsReliableKind(uint8_t kind)
     // lost ACK makes the host repeat the whole state every 800 ms).  The STATE chunks are
     // periodic state and stay unreliable.
     if (kind == K_JOIN_REQ || kind == K_JOIN_END || kind == K_JOIN_ACK) return true;
+    // [coordinator] The boss lanes SEND these three reliably but they were never listed here,
+    // so the receiver never acked them: MEASURED (Queen run 2, 11:51-11:57) 1122 + 968
+    // `reliable send abandoned: kind=0x5C` and ~1800 `no free reliable slot` drops of OTHER
+    // kinds (intents, travel, suspend, objects, enemy spawn, save, the ending choice) --
+    // the boss phase repair starved every one-shot lane in the session.
+    if (kind == K_BOSS_PHASE || kind == K_BOSS_ARENA || kind == K_BOSS_END) return true;
     return kind == K_HELLO || kind == K_WELCOME || kind == K_INTENT ||
            kind == K_EFFECT || kind == K_ENEMY_DETAIL || kind == K_TRAVEL ||
            kind == K_DAMAGE || kind == K_SUSPEND || kind == K_BOSS ||

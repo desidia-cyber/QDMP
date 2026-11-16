@@ -11357,6 +11357,19 @@ static bool FindCopy(Branch br, EnemyRec** out, char* cls, int cap)
             }
         }
     }
+    // [coordinator] play-p3b F2: on the partner's machine the boss is a MIRROR (constructed from
+    // the owner's description), and the phase lane already drives mirrors.  Without this pass a
+    // partner with no shared-bar key could never find the copy to run the ending on.
+    for (int i = 0; i < g_enN; ++i) {
+        EnemyRec& r = g_en[i];
+        if (!r.haveGuid || !r.mirror || !ObjectIsLive(r.actor)) continue;
+        char cn[64] = "";
+        if (FNameToString(ObjNameRaw(ObjClass(r.actor)), cn, sizeof(cn)) <= 0) continue;
+        if (!ClassInBranch(br, cn)) continue;
+        *out = &r;
+        if (cls && cap > 0) lstrcpynA(cls, cn, cap);
+        return true;
+    }
     return false;
 }
 
@@ -28326,6 +28339,10 @@ static void AuditNsdVisit(const char* key, int32_t value, void* user)
 {
     AuditNsdCtx* c = (AuditNsdCtx*)user;
     if (!c || !c->set || !key || !key[0]) return;
+    // [coordinator] Per-player flags are not shared state: shop stock (gap-world) and each
+    // player's own counters (join-sync's monotone list).  MEASURED (Queen run 3):
+    // `audit: DESYNC flags IntroMusicState host=1 peer=0` -- correct behaviour, not a desync.
+    if (qd::join::FlagStaysLocal(key) || qd::join::FlagMonotoneOnly(key)) return;
     c->set->Add(key, value);
 }
 
@@ -28427,8 +28444,12 @@ static bool AuditCollect(uint8_t cat, audit::Set* out, uint32_t now)
             if (!r.haveGuid) continue;
             if ((r.guid[0] | r.guid[1] | r.guid[2] | r.guid[3]) == 0) continue;
             if (r.posKey) { ++posKeys; continue; }
-            audit::KeyHex(k, sizeof(k), r.guid);
-            out->Add(k, 1);                     // alive unless a ledger says otherwise
+            // [coordinator] ALIVE IS NOT ADDED.  "No record" and "alive" are the same fact in
+            // this game (an enemy with no save record spawns alive), but which records exist
+            // depends on what each machine happened to stream in, so the alive set compared
+            // presence, not state: MEASURED (Queen run, 11:29-11:37) 293 of 320 enemy diff
+            // lines were `host=1 peer=-1`.  Only the DEAD set below is compared; dead on one
+            // side and missing on the other is still reported.
         }
         if (posKeys) {
             static uint32_t saidAt = 0;
@@ -28673,8 +28694,32 @@ static void AuditDiffPending(uint32_t now)
     int n = audit::DiffSets(auditl::mine, auditl::theirs, rows, audit::kMaxDiffRows, &total);
     uint32_t age = auditl::board.Age(auditl::wantCat, now);
     bool host = g_net.IsHost();
+    // [coordinator] ACTOR ROWS: a SavableActorStates row can only be applied on a machine that
+    // has that actor streamed in, so "absent here" is a desync only when the actor IS here.
+    // The machine that HOLDS the row cannot judge the other's streaming, so it leaves the
+    // verdict to the machine that lacks it.  MEASURED (Queen run 3): the only persistent
+    // actor rows were enemy spawners (RattyBugger, BookBug) in areas one side never loaded.
+    static ActorStateOwner auditOwners[512];
+    int auditOwnerN = -1;
+    int real = 0;
     for (int i = 0; i < n; ++i) {
         const audit::DiffRow& r = rows[i];
+        if (auditl::wantCat == audit::CAT_ACTORS) {
+            if (r.have_local && !r.have_peer) continue;          // the partner judges it
+            if (!r.have_local && r.have_peer) {
+                if (auditOwnerN < 0) auditOwnerN = BuildActorStateOwners(auditOwners, 512);
+                bool loadedHere = false;
+                char hk[audit::kKeyCap];
+                for (int j = 0; j < auditOwnerN && !loadedHere; ++j) {
+                    uint32_t g[4] = {auditOwners[j].guid.a, auditOwners[j].guid.b,
+                                     auditOwners[j].guid.c, auditOwners[j].guid.d};
+                    audit::KeyHex(hk, sizeof(hk), g);
+                    loadedHere = lstrcmpiA(hk, r.key) == 0;
+                }
+                if (!loadedHere) continue;                       // not streamed in here
+            }
+        }
+        ++real;
         // host/peer, not local/peer: the two machines print the SAME line for the same
         // disagreement, so the two logs can be diffed against each other directly.
         bool hHave = host ? r.have_local : r.have_peer;
@@ -28691,13 +28736,17 @@ static void AuditDiffPending(uint32_t now)
         QDLOG(LOG_WARN, "audit: ", audit::CatName(auditl::wantCat), " has ", dec(total),
               " differing items; ", dec(n), " printed");
     }
-    if (total == 0) {
+    if (total == 0 || (auditl::wantCat == audit::CAT_ACTORS && real == 0 && total <= n)) {
         // The digests disagreed but every item matches: a count-only difference, which
         // happens when a key is added and removed between the two passes.  Saying so is the
         // honest answer, and it is not something a player can see.
         QDLOG(LOG_INFO, "audit: ", audit::CatName(auditl::wantCat),
               " digest differed but every item matches (", dec(auditl::mine.n), " vs ",
-              dec(auditl::theirs.n), " items)");
+              dec(auditl::theirs.n), " items",
+              (audit::ScopedPresence(auditl::wantCat) ? "; keys held on one side only are "
+               "a streaming fact" : ""), ") -- agreed");
+        auditl::board.MarkAgreed(auditl::wantCat);
+        return;
     }
     // The episode has been reported in full.  The next dump for this category waits for the
     // 30 s repeat clock instead of the 2 s request retry: the first live run re-printed every

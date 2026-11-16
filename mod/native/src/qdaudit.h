@@ -300,12 +300,20 @@ static const int kMaxDiffRows = 64;
 // Writes at most `cap` rows; returns the number of rows that DIFFER (which may exceed
 // `cap`, so the caller can say how many were not printed).  A row where both sides hold
 // the key with the same value is never written.
+// [coordinator] A SCOPED category's membership follows what each machine has streamed in
+// (movers it tracks, bosses it holds a copy of), so a key present on one side only is a
+// streaming fact, not a desync; only keys BOTH hold are compared.  MEASURED (Queen run):
+// 701 `movers` and 43 `boss` lines, every one `[absent on the host/peer]`.
+inline bool ScopedPresence(uint8_t cat) { return cat == CAT_MOVERS || cat == CAT_BOSS; }
+
 inline int DiffSets(const Set& local, const Set& peer, DiffRow* out, int cap, int* total_out)
 {
     int wrote = 0;
     int differed = 0;
+    const bool scoped = ScopedPresence(local.cat ? local.cat : peer.cat);
     for (int i = 0; i < local.n; ++i) {
         int j = peer.Find(local.it[i].key);
+        if (scoped && j < 0) continue;
         bool same = (j >= 0) && peer.it[j].value == local.it[i].value;
         if (same) continue;
         ++differed;
@@ -321,6 +329,7 @@ inline int DiffSets(const Set& local, const Set& peer, DiffRow* out, int cap, in
     }
     for (int j = 0; j < peer.n; ++j) {
         if (local.Find(peer.it[j].key) >= 0) continue;
+        if (scoped) continue;
         ++differed;
         if (wrote >= cap) continue;
         DiffRow& r = out[wrote++];
@@ -575,6 +584,10 @@ public:
             items_compared_ += (int)s.local_count;
 
             bool same = (s.local_digest == s.peer_digest) && (s.local_count == s.peer_count);
+            // [coordinator] digests that differ but whose items were diffed and all matched
+            // (a scoped category, or a count-only race) stay agreed until either side changes.
+            if (!same && s.agreed && s.local_digest == s.agreed_l && s.peer_digest == s.agreed_p)
+                same = true;
             if (same) {
                 if (s.open) {
                     s.open = false;
@@ -634,6 +647,21 @@ public:
     {
         CatState* s = Slot(cat);
         if (s) s->diff_at = now;
+    }
+
+    // [coordinator] The item diff found no real difference: remember this digest pair as
+    // agreed and close the episode, so the summary does not report a desync nobody can see.
+    void MarkAgreed(uint8_t cat)
+    {
+        CatState* s = Slot(cat);
+        if (!s) return;
+        s->agreed = true;
+        s->agreed_l = s->local_digest;
+        s->agreed_p = s->peer_digest;
+        s->open = false;
+        s->open_at = 0;
+        s->last_report = 0;
+        s->diff_at = 0;
     }
 
     // The partner's chunked item dump for `cat`.  A dump is complete when every row the
@@ -721,6 +749,8 @@ private:
         uint16_t items_total;
         uint16_t items_got;
         bool     items_complete;
+        bool     agreed = false;     // [coordinator] the last item diff found nothing
+        uint64_t agreed_l = 0, agreed_p = 0;
     };
 
     CatState* Slot(uint8_t cat)

@@ -152,7 +152,7 @@ static const uint32_t kOwnerSilentMs = 6000;
 
 // A phase body is re-sent at this interval while the fight is running, so a single lost
 // datagram cannot leave a boss mid-transition. Matches the bar's own repair cadence.
-static const uint32_t kPhaseRepairMs = 2000;
+static const uint32_t kPhaseRepairMs = 10000;   // [coordinator] was 2000: reliable repairs of 6 castle bosses starved the reliable slots (337 drops)
 
 // The transition is an EVENT: within this window the receiver treats the announcement as
 // "run the transition now" rather than "sample this state".
