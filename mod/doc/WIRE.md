@@ -48,40 +48,47 @@ arrives late is still correct.
 
 | kind | name | direction | reliability | rate |
 |---|---|---|---|---|
-| `0x01` | `HELLO` | peer → relay → host | reliable | once, retried |
-| `0x02` | `WELCOME` | host → peer | reliable | once, retried |
+| `0x01` | `HELLO` | peer ↁErelay ↁEhost | reliable | once, retried |
+| `0x02` | `WELCOME` | host ↁEpeer | reliable | once, retried |
 | `0x03` | `KEEPALIVE` | both | unreliable | 1 Hz idle |
 | `0x04` | `ACK` | both | unreliable | piggybacked / 10 Hz |
-| `0x10` | `PLAYER` | each → other | unreliable, latest wins | 30–60 Hz |
-| `0x11` | `WORLD_FLAGS` | host → peer | unreliable, latest wins | on change + 1 Hz |
-| `0x12` | `ACTOR_STATES` | host → peer | unreliable, latest wins | on change + 1 Hz |
-| `0x13` | `INVENTORY` | host → peer | unreliable, latest wins | on change + 1 Hz |
+| `0x10` | `PLAYER` | each ↁEother | unreliable, latest wins | 30 E0 Hz |
+| `0x11` | `WORLD_FLAGS` | host ↁEpeer | unreliable, latest wins | on change + 1 Hz |
+| `0x12` | `ACTOR_STATES` | host ↁEpeer | unreliable, latest wins | on change + 1 Hz |
+| `0x13` | `INVENTORY` | host ↁEpeer | unreliable, latest wins | on change + 1 Hz |
 | `0x14` | `ENEMY` | both | unreliable, latest wins | 20 Hz |
-| `0x15` | `EQUIPMENT` | each → other | unreliable, latest wins | on change + 1 Hz |
-| `0x16` | `EFFECT` | each → other | reliable | event (projectile spawned / ended) |
-| `0x17` | `EFFECT_MOVE` | each → other | unreliable, latest wins | ~15 Hz per live projectile |
-| `0x18` | `STATUS` | each → other | unreliable, latest wins | on change + 1 Hz |
+| `0x15` | `EQUIPMENT` | each ↁEother | unreliable, latest wins | on change + 1 Hz |
+| `0x16` | `EFFECT` | each ↁEother | reliable | event (projectile spawned / ended) |
+| `0x17` | `EFFECT_MOVE` | each ↁEother | unreliable, latest wins | ~15 Hz per live projectile |
+| `0x18` | `STATUS` | each ↁEother | unreliable, latest wins | on change + 1 Hz |
 | `0x19` | `ENEMY_DETAIL` | both | reliable | on change |
-| `0x20` | `INTENT` | peer → host | reliable | event |
-| `0x21` | `DIALOGUE` | each → other | unreliable, latest wins | on change + 1 Hz |
+| `0x20` | `INTENT` | peer ↁEhost | reliable | event |
+| `0x21` | `DIALOGUE` | each ↁEother | unreliable, latest wins | on change + 1 Hz |
 | `0x22` | `LEVEL_UNION` | both | unreliable, latest wins | 2 Hz + on change |
 | `0x23` | `TRAVEL` | both | reliable | on change + 0.5 Hz |
-| `0x24` | `DAMAGE` | host → peer | reliable | event |
+| `0x24` | `DAMAGE` | host ↁEpeer | reliable | event |
 | `0x25` | `CUTSCENE` | both | unreliable, latest wins | on change + 1 Hz |
-| `0x26` | `MOVERS` | owner → follower | unreliable, latest wins | 10 Hz |
+| `0x26` | `MOVERS` | owner ↁEfollower | unreliable, latest wins | 10 Hz |
 | `0x27` | `LOOT` | both | unreliable, latest wins | on change + 1 Hz |
 | `0x28` | `SUSPEND` | both | reliable | event |
 | `0x29` | `BOSS` | both | reliable | on change |
-| `0x2A` | `OBJECTS` | host → peer | reliable | on change + 5 s repair |
-| `0x2B` | `ENEMY_SPAWN` | owner → follower | reliable | once per key |
-| `0x48` | `PLATFORM_RIDE` | each → other | unreliable, latest wins | on change + 1 Hz |
-| `0x50` | `DIALOGUE_VIEW` | each → other | unreliable, latest wins | on change + 1 Hz |
-| `0x54` | `RESPAWN_DOWN` | each → other | reliable | event (a death) |
-| `0x55` | `RESPAWN_UP` | each → other | reliable | event (a respawn) |
-| `0x56` | `RESPAWN_REST` | each → other | reliable | event (a rest) |
-| `0x40` | `KILL_XP` | each → other | reliable | once per death |
-| `0x41` | `SAVE` | each → other | reliable | once per save |
+| `0x2A` | `OBJECTS` | host ↁEpeer | reliable | on change + 5 s repair |
+| `0x2B` | `ENEMY_SPAWN` | owner ↁEfollower | reliable | once per key |
+| `0x2C` | `TRIGGER` | each ↁEother | reliable | event (a volume overlap) |
 | `0x30` | `LOG` | both | unreliable | event |
+| `0x40` | `KILL_XP` | each ↁEother | reliable | once per death |
+| `0x41` | `SAVE` | each ↁEother | reliable | once per save |
+| `0x48` | `PLATFORM_RIDE` | each ↁEother | unreliable, latest wins | on change + 1 Hz |
+| `0x50` | `DIALOGUE_VIEW` | each ↁEother | unreliable, latest wins | on change + 1 Hz |
+| `0x54` | `RESPAWN_DOWN` | each ↁEother | reliable | event (a death) |
+| `0x55` | `RESPAWN_UP` | each ↁEother | reliable | event (a respawn) |
+| `0x56` | `RESPAWN_REST` | each ↁEother | reliable | event (a rest) |
+| `0x58` | `AUDIT` | each ↁEother | unreliable, latest wins | every 10 s + on change |
+| `0x59` | `AUDIT_REQ` | each ↁEother | unreliable | on a digest mismatch past 3 s |
+| `0x5A` | `AUDIT_ITEMS` | each ↁEother | unreliable, cursor across ticks | in answer to `AUDIT_REQ` |
+| `0x5C` | `BOSS_PHASE` | owner ↁEfollower | reliable | on change + 2 s repair |
+| `0x5D` | `BOSS_ARENA` | host ↁEpeer | reliable | on change |
+| `0x5E` | `BOSS_END` | each ↁEother | reliable | once per choice |
 
 The design rule being followed (DollsMP 12 §4.6 E8): **the event channel is a
 fast path; the state channel is the authority and the repair.** Every
@@ -117,7 +124,7 @@ str  save_level       the level co-op may start in
 u32  flags_rev        current revision of the host's flag bank
 ```
 
-### 3.3 `KEEPALIVE` (0x03) — empty body.
+### 3.3 `KEEPALIVE` (0x03)  Eempty body.
 
 ### 3.4 `ACK` (0x04)
 
@@ -151,8 +158,8 @@ Size: 1+4+12+4+6+1+1+1 = 30 B.
 (`avatar::ClassifyMontage`; measured: every melee click plays
 `Player_FPArms_Std_Charge_Attack_Montage` -> kind 1, the strike lands 0.33-0.58 s in;
 the `Player_Slash_*` follow-throughs and the left hand's `MeleeResponse` are not new
-moves). The classifier reads the WEAPON out of the montage name — the game names every
-weapon's montages after that weapon — and picks the move that weapon makes, so a
+moves). The classifier reads the WEAPON out of the montage name  Ethe game names every
+weapon's montages after that weapon  Eand picks the move that weapon makes, so a
 hammer's alt is an overhead (7), a lance's is a thrust (8), a claw's is a flurry (17),
 a scythe's a sweep (16) and a gun's a shot (15). The held item's mesh path is the
 fallback when the name says nothing. The kind is 5 bits, so the three newer kinds needed
@@ -172,20 +179,20 @@ would have.)
 ```
 u32  rev              sender's revision, minted by the host only
 u16  n                total entries in the container on the sender
-n × { str name, i32 value }
+n ÁE{ str name, i32 value }
 ```
 
 `rev` is the monotonic counter described in `qdflags.h`: a peer refuses to lower a
 value, and a host increments `rev` on every write it originates. It is host-minted and
 never minted by a peer (`E1b`: never let two peers mint keys in one space).
 
-**Chunking — the decision this document previously left implicit.**  There is
+**Chunking  Ethe decision this document previously left implicit.**  There is
 deliberately **no cursor or "produced" field**.  `n` is the size of the sender's
 container; the receiver learns how many entries arrived by parsing until the body ends.
 A sender that cannot fit everything advances a local cursor and continues on the next
 tick, and wraps when it reaches the end. An extra count field was tried and removed: it
 has to be patched after the header is written, and a patched count can disagree with
-the bytes next to it. Convergence does not depend on chunking at all — the container is
+the bytes next to it. Convergence does not depend on chunking at all  Ethe container is
 re-sent on change and at 1 Hz, so a lost chunk is repaired by the next pass.
 
 ### 3.7 `ACTOR_STATES` (0x12)
@@ -193,7 +200,7 @@ re-sent on change and at 1 Hz, so a lost chunk is repaired by the next pass.
 ```
 u32  rev
 u16  n
-n × { guid guid, i32 value }
+n ÁE{ guid guid, i32 value }
 ```
 
 Same no-cursor rule as 3.6.
@@ -203,7 +210,7 @@ Same no-cursor rule as 3.6.
 ```
 u32  rev
 u16  n
-n × { str item_path, i32 count }
+n ÁE{ str item_path, i32 count }
 ```
 
 `item_path` is the soft object path the save stores, e.g.
@@ -215,11 +222,11 @@ paths, never pointers").
 
 ```
 u16  n                total rows this sender will send for this tick's batch
-n × { guid guid, i32 x, i32 y, i32 z, i16 yaw, u16 hp, u8 flags }
+n ÁE{ guid guid, i32 x, i32 y, i32 z, i16 yaw, u16 hp, u8 flags }
 ```
 `flags` bit0 alive, bit1 driven (the receiver must freeze its copy because the sender
 runs this enemy), bit2 has-body, bit3 peer-owns (the sender has handed this enemy to
-the receiver and freezes its own copy), **bits 4–5 the identity source** (below).
+the receiver and freezes its own copy), **bits 4 E the identity source** (below).
 
 **Direction.** `ENEMY` is bidirectional even though the name suggests otherwise: the
 machine that *owns* an enemy publishes its rows. Ownership follows the nearer player,
@@ -232,9 +239,9 @@ follows the owner's rows, exactly as the peer used to follow the host's.
 two 128-bit hashes of different things can collide, so the source bits are part of the
 key rather than a hint. There are three sources, tried in this order:
 
-| bits 4–5 | source | key |
+| bits 4 E | source | key |
 |---|---|---|
-| 0 | `SPAWNER` | the authored `FGuid` of the enemy's spawner (`EnemySpawner_C.GetSaveGUID()`), the same key `StoreEnemySaveState` persists by — one spawner owns one enemy |
+| 0 | `SPAWNER` | the authored `FGuid` of the enemy's spawner (`EnemySpawner_C.GetSaveGUID()`), the same key `StoreEnemySaveState` persists by  Eone spawner owns one enemy |
 | 1 | `PLACED` | FNV-1a 128 of the actor's cooked path `"<world>/<level>/<object name>"` |
 | 2 | `SUMMON` | FNV-1a 128 of `"<summoner key hex>:<x>,<y>,<z>#<n>"` |
 
@@ -258,7 +265,7 @@ numbering is safe.
 A row for a hash-derived key (`PLACED` or `SUMMON`) that this machine does not know is
 matched against the local records that were themselves derived from a position. If exactly
 one sits within 300 cm of it, it is the same enemy and the local record adopts the sender's
-key and source — the sender ran the spawn, so its key is the truth. An ambiguous match (two
+key and source  Ethe sender ran the spawn, so its key is the truth. An ambiguous match (two
 candidates in range) is refused and logged, never guessed. A `SPAWNER` key is exact, so a
 mismatch there is a genuinely different enemy and is never absorbed.
 
@@ -280,7 +287,7 @@ the 1200 B body cap, so one datagram per tick at 20 Hz = 15.9 KB/s worst case.
 
 **Row budget.** At most 20 rows per datagram at N=2 (DollsMP 12 §4.1.1's
 formula), remaining rows round-robin to the next tick. Never split a row. Here `n`
-is the number of rows actually in this body, not a container total — the enemy stream
+is the number of rows actually in this body, not a container total  Ethe enemy stream
 has no container, it is a snapshot of the live set.
 
 ### 3.9a `ENEMY_DETAIL` (0x19)
@@ -297,7 +304,7 @@ str  path            montage asset path, "" when `anim` is 0
 Anim kinds: 0 none, 1 attack, 2 hurt, 3 die, 4 roar, 5 cast, 6 move.
 
 Why this is a body of its own and not more fields on the row: a row is a *sample*
-(20 Hz, latest wins, losing one costs a sample) while this is an *event* — a montage
+(20 Hz, latest wins, losing one costs a sample) while this is an *event*  Ea montage
 starts once, a status mask changes when a debuff lands and again when it expires. It
 is sent reliably and only on change, by whichever machine owns that enemy.
 
@@ -306,7 +313,7 @@ cooked assets, but the order in which each discovers them is its own; an index w
 select a different animation on each side, and the failure looks like "the enemy
 attacks with the wrong move" rather than like a sync bug.
 
-`seq` is per-enemy and wraps 255 → 1, so a receiver keys "already applied" on the pair
+`seq` is per-enemy and wraps 255 ↁE1, so a receiver keys "already applied" on the pair
 (`seq`, `path`), never on `seq` alone.
 
 Status bits are mirrored onto the copy only where the property actually exists on the
@@ -325,7 +332,7 @@ before it is sent: each change is scored by its distance from the **receiver's**
 (the machine that draws the copy), and the lane is bounded to 10 bodies per rolling
 second with a per-enemy minimum interval (100 ms for a critical event near the player,
 up to 2 s for a cosmetic one far away, never for a cosmetic one beyond 150 m). Attack,
-hurt, death, cast and roar are critical — they are what a player judges the fight by —
+hurt, death, cast and roar are critical  Ethey are what a player judges the fight by  E
 while locomotion is ambience. A refused change is kept pending and retried on the next
 pump, so the lane degrades to "later", never to "never".
 
@@ -349,7 +356,7 @@ driven rather than inferred:
   bar should be up; the receiver calls its own `ActivateBossHPBar` / `DeactivateBossHPbar`.
 - **Arena exit.** `EnemySpawner_C.PlayerTeleportedOutOfBossArena()` is a zero-argument
   spawner event overridden by 20 boss-spawner Blueprints. The *cause* is computed per
-  machine, but the *fact* — "a player left the arena" — is one bool, so the sender says the
+  machine, but the *fact*  E"a player left the arena"  Eis one bool, so the sender says the
   fact and the receiver raises the event on its own spawner.
 
 **Phases are not expressible** and are not faked: there is no shared phase field in any
@@ -368,13 +375,13 @@ selected `03FDBC21`, a key the peer held no copy of at all (it was outside the 2
 radius), while the peer's own `17181166` was a key the host held as a standing death. The
 selection is therefore a round trip:
 
-- `ASK` (host → peer) — "do you hold a live copy of this key?". No state changes.
-- `ACK` (peer → host) — yes, and the receiver may keep its own bar raised for it.
-- `NACK` (peer → host) — no; the host marks the key ineligible for 3 s, chooses the next
+- `ASK` (host ↁEpeer)  E"do you hold a live copy of this key?". No state changes.
+- `ACK` (peer ↁEhost)  Eyes, and the receiver may keep its own bar raised for it.
+- `NACK` (peer ↁEhost)  Eno; the host marks the key ineligible for 3 s, chooses the next
   candidate, and re-arms that key's `ENEMY_SPAWN` class description (the peer may gain a
   copy while the fight is running). A silence for 1.5 s is treated as a NACK.
 - `BAR_ON` is only sent after an ACK. If nothing is showable on both machines, **no bar is
-  raised on either** — the honest agreement, not a full bar on one screen and an empty one
+  raised on either**  Ethe honest agreement, not a full bar on one screen and an empty one
   on the other.
 
 Liveness is the owner's: the machine that RUNS the enemy (`enemyown::OwnerSet::Running`)
@@ -401,17 +408,17 @@ str  path            the enemy ACTOR's class asset path, "<package>.<object>"
 ```
 
 A spawner only spawns while *its own* machine's player is inside its activation range
-(`PlayerIsInActivationRange`, which reads `GetPlayerCharacter` — player 0 of that machine),
+(`PlayerIsInActivationRange`, which reads `GetPlayerCharacter`  Eplayer 0 of that machine),
 so an enemy whose spawner activated on one machine **does not exist at all** on the other.
 Measured in `780_SZ_Depths`: the Green Dragon (`Dragon_Green_BP_C`, key `17181166`) is a
 live actor on the owner and the partner "holds no copy of this GUID". Every other enemy
-lane — rows, detail, boss, damage — is addressed to a *copy*, so on the machine with no
+lane  Erows, detail, boss, damage  Eis addressed to a *copy*, so on the machine with no
 actor there is nothing to follow, nothing to hit and nothing to kill.
 
 The rows already say a key is alive and where it is. What a row cannot carry is **which
 class to construct**, and it cannot be derived: a summon's key hashes its summoner and a
 spawn point, and a placed key hashes a path, so neither names a package. The class
-therefore rides the wire as an asset path, for the same reason `ENEMY_DETAIL.path` does —
+therefore rides the wire as an asset path, for the same reason `ENEMY_DETAIL.path` does  E
 both machines load the same cooked assets in their own order, so an index would select a
 different class on each side.
 
@@ -423,7 +430,7 @@ Rules that keep this a repair rather than a second simulation:
   datagram was lost is a partner fighting an invisible boss.
 - The copy is constructed through the engine's **deferred spawn** pair, with `Paused`,
   `bIsAIDisabled`, `AutoPossessPlayer` and `AutoPossessAI` cleared in the window before
-  `FinishSpawning` — the same window B7's player body uses, and the only place those
+  `FinishSpawning`  Ethe same window B7's player body uses, and the only place those
   properties still decide anything.
 - It carries the owner's key from its first frame, has **no `OwningSpawner`**, and is
   marked so that it never publishes rows, is never persisted by `StoreEnemySaveState`, and
@@ -460,31 +467,31 @@ kind 8 (enemy record):    guid spawner, i32 respawn_centi, i32 hp_centi
 kind 9 (object state):    guid key, u8 shape, u8 state
 ```
 
-**Kind 2** — an item the peer obtained that the host does not have. `count` is the peer's
+**Kind 2**  Ean item the peer obtained that the host does not have. `count` is the peer's
 **cumulative own contribution** for that path, not a delta: the number of that item the
 peer holds that the host did not give it. The host applies only the increase over the
 highest value it has already applied for that path.
 
 Cumulative rather than a delta, because the grant is additive on the receiving side: a
 delta resent after a lost acknowledgement would add the item twice, while a cumulative
-value is idempotent — a repeat applies nothing, a lower value is refused (a use travels
+value is idempotent  Ea repeat applies nothing, a lower value is refused (a use travels
 as kind 3), a higher value applies only the increment. This is deliberately a different
 rule from kind 1's `based_on_rev` gate: for a monotone counter a replay *is* stale, but
 for a cumulative grant a replay is exactly what recovers a lost body. `based_on_rev` is
 carried for diagnostics on this kind and is not the acceptance test.
 
-The peer measures its own contribution as `local − (what the host granted this peer)`,
-never as `local − (the host's total)`: subtracting the host's total would make an item
+The peer measures its own contribution as `local ∁E(what the host granted this peer)`,
+never as `local ∁E(the host's total)`: subtracting the host's total would make an item
 both players picked up independently cancel to zero and lose one of the two gains.
 
-**Kind 3** — an item the peer used. `count` is the peer's **cumulative use** for thatpath, not a delta. The host's ledger removes only the increase over the highest value it
+**Kind 3**  Ean item the peer used. `count` is the peer's **cumulative use** for thatpath, not a delta. The host's ledger removes only the increase over the highest value it
 has already removed (through `SaveFunctions_C.TryConsumingItemFromInventory`, read back
 with the native counter), so a retransmit and a reorder are exactly-once. While a use is
-outstanding, the peer's grant target is `host count − outstanding use`, which is what stops
+outstanding, the peer's grant target is `host count ∁Eoutstanding use`, which is what stops
 the next host body from handing the consumed item back. `based_on_rev` is diagnostic only,
 for the same reason as kind 2.
 
-**Kind 7** — the peer's player hit a copy the host is driving. `damage_frac` is the HP
+**Kind 7**  Ethe peer's player hit a copy the host is driving. `damage_frac` is the HP
 the copy lost, as a fraction of its max in 1/65535 units (it may exceed 65535 for an
 overkill), so the host scales it by its own max and applies it through the enemy's own
 damage entry, `TryApplyDamage` (the `FB_Damageable` interface message). It is **not**
@@ -496,15 +503,15 @@ because `INTENT` is reliable and de-duplicated by `seq` (a resent hit is applied
 and because the host's next `ENEMY` row is the absolute truth the peer converges to.
 `based_on_rev` is 0 (there is no enemy container revision).
 
-**Kind 8** — the peer killed (or saved the partial HP of) an enemy that it was running
+**Kind 8**  Ethe peer killed (or saved the partial HP of) an enemy that it was running
 **itself** because the host had no live copy (players apart: a spawner only activates
 for its own machine's player). The three scalars of
 `StoreEnemySaveState(WorldContext, Key, RespawnTime, RemainingHP)` in 1/100; the host
 applies the record to its save, so the enemy stays dead on the host too. A record for a
-copy the host was driving is never sent — the host wrote it itself.
+copy the host was driving is never sent  Ethe host wrote it itself.
 
-**Kind 9** — the peer opened/activated a placed world object the GUID-keyed lane cannot
-carry (3.20). `key` is the placed-object key, `shape` the class family and `state` 0/1 —
+**Kind 9**  Ethe peer opened/activated a placed world object the GUID-keyed lane cannot
+carry (3.20). `key` is the placed-object key, `shape` the class family and `state` 0/1  E
 the same three fields an `OBJECTS` row carries, so there is one encoding to keep in step.
 `based_on_rev` is the `OBJECTS` revision the peer last applied, and `0` means "no baseline
 yet" (Session 8 R73's rule), not stale. The host applies the state to its own copy and
@@ -531,7 +538,7 @@ is published as *state* and the newer state always wins.
 conversation: `slot` is the sender's slot while it is talking and `0xFF` when it is not,
 on change and again at 1 Hz (a sender silent for 5 s is treated as free, so a crash
 cannot leave an NPC blocked). `npc` is a stable 128-bit id of the placed NPC actor
-(FNV-1a over its object / level / world names — the same cooked package on both
+(FNV-1a over its object / level / world names  Ethe same cooked package on both
 machines); `line` is `CurrentDialogueSequenceIndex`; `entry` is 0 (not read yet). The
 receiver makes that NPC non-interactable for its own player with the game's
 `BlockInteract` / `ReenableInteract`, so the two players cannot run the same talk
@@ -550,7 +557,7 @@ own list order, so the body also carries a name list on the first send:
 
 ```
 u8   has_names
-if has_names { u16 n, n × str level_name }
+if has_names { u16 n, n ÁEstr level_name }
 ```
 
 A receiver keeps the last name list per slot and maps bits through it. This
@@ -559,7 +566,7 @@ negotiated.
 
 **What the module sends.** Names are short level names (`100_GR`, from the streaming
 level's `WorldAsset` package path), and the list is the levels **the local game itself
-wants visible** — never the levels shown only because the partner needs them, or the two
+wants visible**  Enever the levels shown only because the partner needs them, or the two
 lists would hold each other up and the union could never shrink. It always sends
 `has_names = 1` with exactly those names and every bit set, on change and every 2 s
 (~20 short names fit one datagram; a list that does not is truncated and logged).
@@ -572,20 +579,20 @@ Absolute and complete: `n = 0` means empty hands.
 ```
 u32  rev              increments when the held set changes
 u8   n                ≤ 4
-n × {
+n ÁE{
   u8   hand           0 = right, 1 = left
   u8   mesh_kind      1 = static mesh, 2 = skeletal mesh (shown in its reference pose)
   str  mesh_path      "<package>.<object>", e.g. /Game/Items/Weapons/RustedSword/RustySword.RustySword
-  10 × i32 xform      the mesh relative to its weapon root:
-                      location ×100 (1/100 cm), quaternion x,y,z,w ×1e6, scale ×1000
+  10 ÁEi32 xform      the mesh relative to its weapon root:
+                      location ÁE00 (1/100 cm), quaternion x,y,z,w ÁEe6, scale ÁE000
 }
 ```
 
 The sender finds held items as visible `StaticMeshComponent`s and `SkeletalMeshComponent`s of
 `WeaponVisuals_C`-derived actors attached to its pawn (`ScanLocalEquip`). Every hand
-item's visual is one of TWO unrelated Blueprint roots — `WeaponVisuals_C` for the
+item's visual is one of TWO unrelated Blueprint roots  E`WeaponVisuals_C` for the
 weapons and `Dagger_Visuals_Base_C` for every dagger / thrown / off-hand item, neither
-deriving from the other — so the scan accepts both and, for the one-offs, the
+deriving from the other  Eso the scan accepts both and, for the one-offs, the
 `<Item>_Visuals` / `<Item>_InHandVisuals` name the game gives them (pickups and
 inspect-only props excluded). The receiver loads the mesh by path
 (`LoadAsset_Blocking`) and attaches it to the body's `Weapon_R` / `Weapon_L` bone.
@@ -675,7 +682,7 @@ kinds cannot carry:
   `Arms`, so the arc lane cannot see them. The sender watches actors that begin play
   inside a 2.5 s window after its own action byte changes, keeps one only if its
   Owner/Instigator is the local pawn, it is not a projectile, and it owns a Niagara
-  component, and sends that system's path — at most 3 per window.
+  component, and sends that system's path  Eat most 3 per window.
 
 Both are visual only: a system, no actor, no collision, no damage.
 
@@ -754,15 +761,15 @@ package path (`/Game/RuinsLevel/Maps/900_SipehaWorld.900_SipehaWorld`).
 
 The `phase` field is what makes the handshake explicit:
 
-- `0 NONE` — the ordinary in-world announcement, and the 0.5 Hz heartbeat.
-- `1 HARD_BEGIN` — one machine has just crossed a world boundary. The other loads the
+- `0 NONE`  Ethe ordinary in-world announcement, and the 0.5 Hz heartbeat.
+- `1 HARD_BEGIN`  Eone machine has just crossed a world boundary. The other loads the
   same map. A machine that cannot load it refuses once, logs, and never retries that
   map; the session survives.
-- `2 ARRIVED` — each machine sends this once its own `UWorld` is the announced map.
-- `3 RESUME` — the host releases the pair after both `ARRIVED`, and absolute state may
+- `2 ARRIVED`  Eeach machine sends this once its own `UWorld` is the announced map.
+- `3 RESUME`  Ethe host releases the pair after both `ARRIVED`, and absolute state may
   be applied again. Until then both machines hold their absolute bodies (the existing
   `MapBoard` divergence gate).
-- `4 AREA` — one machine has entered a streamed AREA (a sublevel of the persistent world:
+- `4 AREA`  Eone machine has entered a streamed AREA (a sublevel of the persistent world:
   `780_SZ_Depths`, `760_SZ_AUT`, …). **`map` is still the UWorld and `dest` is the area**:
   the divergence board consumes `map` before the phase is read, so an area name there made
   it compare a world against an area and oscillate (measured: `world: partner=780_SZ_Depths`
@@ -787,12 +794,12 @@ measured rather than assumed (`LIVE-TEST-LOG` Session 12):
   NameProperty`, `MapPackage: StrProperty`); its exec thunk marshals those two into the
   body, which only sets `bLoadingMap`, records `CurrentlyLoadingMapPackage` and starts the
   async load. No cooked package names it, and the only native caller of the body is its own
-  thunk — so the game never performs this load and there is no leader-side spawn parameter
+  thunk  Eso the game never performs this load and there is no leader-side spawn parameter
   to carry. A world without a `PlayerStart` therefore spawns the player at the origin, and
   the spawn point for the hard maps is CONTENT in the destination world (one
   `PlayerTeleportTargetPos` in `900_SipehaWorld`, one `B33smentTeleportPoint` in
   `990_B33sment`). Each machine resolves that marker locally from the world it just loaded,
-  or stands beside the partner's streamed position — both machines hold the same world, so
+  or stands beside the partner's streamed position  Eboth machines hold the same world, so
   neither needs to be told. See `qd::travel::ArrivalBoard`.
 - **A refusal, not a datagram.** A hard load of the map a machine is already in tears down
   the current world and faults the GAME (Session 11 R92: a stack with no `WINMM` frame).
@@ -807,7 +814,7 @@ i32  amount_centi    1/100 of the game's damage unit
 u8   flags           bit0 melee, bit1 ranged, bit2 the amount is an estimate
 ```
 
-Host → peer, and it exists for exactly one case: an enemy the **host** runs (the partner
+Host ↁEpeer, and it exists for exactly one case: an enemy the **host** runs (the partner
 is too far for its spawner, or ownership is mid-handoff) attacking the partner across the
 distance. Damage has to be applied by the machine that owns the pawn, through
 `TryApplyDamage` on a `FB_Damageable`; the host has no object for the partner's body, so
@@ -844,7 +851,7 @@ machine applies it.
 ```
 u32  rev
 u16  n               rows in this body (never split across a datagram)
-n × { guid id, i32 x, i32 y, i32 z, i16 yaw, i16 pitch, u8 flags }
+n ÁE{ guid id, i32 x, i32 y, i32 z, i16 yaw, i16 pitch, u8 flags }
 ```
 
 `id` is the stable FNV-1a identity of the placed actor (its object / level / world names),
@@ -870,14 +877,14 @@ the Rust side changed.
 
 One shared drop set. The game's `UFS_ItemDropSystem::RollItemDrop` is keyed by
 `{sourceId, dropIndex}` with **no player dimension**, so a drop is shared by
-construction within one machine — but each machine rolls its own, and the two rolls are
+construction within one machine  Ebut each machine rolls its own, and the two rolls are
 not the same item and not the same centimetre. So the identity is the DEATH that caused
 the drop (Session 22):
 
 ```
 u32  rev
 u16  n
-n × { u32 source_hash, i32 drop_index, u8 taken, u8 flags, i16 yaw,
+n ÁE{ u32 source_hash, i32 drop_index, u8 taken, u8 flags, i16 yaw,
       i32 px, i32 py, i32 pz, str item_path }
 ```
 
@@ -928,7 +935,7 @@ pickup and a gate.
 ```
 u32   rev            bumps once per fully sent body
 u16   n              the WHOLE set size, not this datagram's share
-n ×:
+n ÁE
   u32   key[4]       FNV-1a 128 of the placed actor's "<world>/<level>/<name>" path
   u8    shape        0 none, 1 chest, 2 door, 3 pickup, 4 barricade, 5 activatable
   u8    state        0 closed / not activated, 1 open / activated
@@ -941,7 +948,7 @@ out, so a set larger than one body is a **cursor across ticks**, never a fragmen
 the datagram ends.** This is the same rule §3.7 and §3.8 already stated, and the one
 `OBJECTS` and `ENEMY_ROWS` were missing. Round 3 measured the cost: the relay's decoders
 read `n` rows from every chunk, ran out of data, reported the datagram malformed, and dropped
-it -- 624 `kind 0x2a` and 301 `kind 0x14` in single runs. Every host → peer object row was
+it -- 624 `kind 0x2a` and 301 `kind 0x14` in single runs. Every host ↁEpeer object row was
 destroyed before either peer saw it, so a secret wall, chest or door changed on the host only
 ever reached the peer when the set happened to fit one datagram. A decoder therefore reads
 rows until the body ends, never until `n` is satisfied; `n` is only what the receiver logs and
@@ -965,7 +972,7 @@ and a function, because only its own class knows what exists.
 **Reliable** (`§2`, and `IsReliableKind` on both sides). An interaction is a one-shot
 event: a lost body leaves a chest closed on the wrong machine with nothing to notice it.
 The absolute set is re-sent on change, on join, after a suspend load, and by a 5 s repair
-pass — a peer that missed a body converges without a special case per cause. There is no
+pass  Ea peer that missed a body converges without a special case per cause. There is no
 1 Hz heartbeat, because that would re-send the whole set reliably every second.
 
 **A peer's own change is `INTENT` kind 9** (3.10): `key[4]`, `shape`, `state`. The host
@@ -979,12 +986,47 @@ pickup, `RestoreFromSave` otherwise) and then writes the object's own state prop
 **never** calls the interaction verb: `Interact`, `Grant`, `GrantItemsAndActivate`,
 `InsertKey`, `CheckRequiredItems`, `OpenDoor`, `CloseDoor` and `Open` are on a refusal
 list in `qdobjectstate.h` and are rejected before a call can be built. A `state` of 0 is
-therefore recorded in the ledger but not applied — the game's close/deactivate verbs *are*
+therefore recorded in the ledger but not applied  Ethe game's close/deactivate verbs *are*
 the interaction path, so mirroring a `0` would run the verb the partner did not run; the
 receiver logs `close-ignored`.
 
 The global counters a chest touches (`TotalChestsOpened`) are **not** part of this lane.
 They ride `WORLD_FLAGS` (3.6) exactly as they did before, so nothing is counted twice.
+
+### 3.21 `TRIGGER` (0x2C)
+
+A **volume overlap the game itself already dispatched** on one machine, so the partner can
+replay the same event in its own world (`qdtrigger.h`). The event is the authority: a
+`ComponentBeginOverlap`/`ComponentEndOverlap` the game fired is a fact, and re-deriving it
+from positions on the other machine would fire it at a different moment or not at all.
+
+```
+u32  key[4]           FNV-1a 128 of the placed trigger's path, its own seed ('QDTR')
+u8   event            1 = begin overlap, 2 = end overlap
+u8   volume           0 box, 1 sphere, 2 spawner trap-on, 3 spawner trap-off
+u8   flags            bit0 = a target is a Boss spawner (the receiver pulls its player in)
+f32  px, py, pz       the sender's body when it entered (cm, raw float)
+str  name             the trigger's instance name, for the two logs
+```
+
+**The four volumes are the ones the game bills for.** An `ActivationTrigger_C` has a box
+and a sphere (`BoxMode` picks one per instance); an `EnemySpawner_C` has its own trap pair  E
+`TrapActivateTrigger` (a begin event) and `TrapDeactivateTrigger` (an end event)  Ewhich is
+how a proximity boss wakes up (`DisableDamageTillTrapTriggered=1` on WhaleKing, Necronomicon,
+JosamiLord, the Blood Lords and the Queen) and how its arena door closes. A trap volume
+carries exactly one of the pair: a body that pairs it with the other names an event the
+spawner does not have, and is refused.
+
+`key` is the placed-path hash with a seed of its own, so the same path hashed by the object,
+dialogue and enemy lanes yields three unrelated keys. `flags` bit0 is set when a target the
+trigger activates is a spawner whose `EnemyData` says Boss: the receiver then pulls its own
+player to the sender's point (`px,py,pz`) if it is further than 1.5 m away, because a boss
+fight that starts with one player outside the arena is the pair split across a door.
+
+**Reliable** (`§2`, `IsReliableKind` on both sides): an overlap is a one-shot event, and a
+lost body is a door that never closes on the wrong machine. `EchoGuard` remembers
+`(key, event)` for 4 s on both sides, so a replay the receiver's own physics causes is not
+sent back as a new event.
 
 ### 3.22 `DIALOGUE_VIEW` (0x50)
 
@@ -1003,16 +1045,24 @@ the same conversation on **its own** game's dialogue widget. `DIALOGUE` (3.11) a
 | `options` | u16 | how many options the talker may pick from (0 = no option list) |
 | `chosen` | u16 | the option the talker picked, `0xFFFF` = none yet |
 | `asset` | str | the `FS_DialogueData` object's own name, e.g. `Knight_Arjaot_Dialogue_00` |
+| `speaker` | str | the speaker text the talker's own dialogue box is showing ("" = no name) |
+| `line` | str | the line text the talker's own dialogue box is showing ("" = not readable) |
 
-**The lines do not travel.** They live in the cooked `FS_DialogueData` asset (61 of them),
-which both machines loaded from the same package; the asset's *object name* is the identity.
-Sending text would mean re-implementing the localisation lookup (`Game.locres`, nine
-locales) and would make the two machines disagree on the one thing the game already agrees
-on.
+**The cursor identifies the moment; the two text fields are what the talker is reading.**
+They are read out of the talker's own `DialogueScreen` blocks (`DialogueSequenceText` and
+`NPCName`) on the machine that owns the conversation, so they are, byte for byte, what the
+other player must see. Round 1's design said the lines could be re-resolved on the receiver
+from the shared `FS_DialogueData` asset; measured on the rig that is not reachable — the
+widget's own format-key pass (`ApplyFormatKeysToDialogue`) and its `bHideName` rule have no
+reflection surface, so a receiver that resolved the asset itself rendered the widget's
+design-time placeholder instead (the "Bored Knight" box in the user's screenshot while the
+talker read the Spirit of Erma's line). The localisation concern does not apply: the text is
+already resolved, in the sender's own locale, and both machines run one install. It is a few
+hundred bytes, once per line, never per tick.
 
 **The outcomes do not travel either, and they did not before.** The receiver calls only the
-DISPLAY levers — `ShowDialogueWidget`, `ShowDialogueSequenceEntry`, `ShowDialogueOptions`,
-`HideDialogueWidget` — and never `StartDialogue`, `RunAction`, `SaveNamedData` or
+DISPLAY levers  E`ShowDialogueWidget`, `ShowDialogueSequenceEntry`, `ShowDialogueOptions`,
+`HideDialogueWidget`  Eand never `StartDialogue`, `RunAction`, `SaveNamedData` or
 `DialogueSequenceEnded`. A dialogue's `NamedSaveDataValueChanges` and `ActionToRun` are
 gameplay: running them on a second machine is the double-turn-in the `DIALOGUE` lock was
 built to prevent. They ride `WORLD_FLAGS` / `INTENT kind 1` exactly as they always did, so
@@ -1023,10 +1073,40 @@ a beat, and a sender silent for 5 s is treated as not talking, so a crash cannot
 partner's camera hijacked. The receiver remembers the `(slot, seq)` publication it declined
 or hid, so the 1 Hz republish does not re-decide it; a genuine next line is a new `seq`.
 
+### 3.23 `PLATFORM_RIDE` (0x48)
+
+Where a **rider stands on a moving platform**, in that platform's own axes. The companion
+of `MOVERS`: `MOVERS` says where the platform is, this says where the person on it is.
+
+```
+u32  ms               the sender's clock (ordering only)
+u16  n                rows in this body (never split across a datagram)
+n ÁE{ guid id, i32 ox, i32 oy, i32 oz, i16 oyaw, u8 flags }
+```
+
+31 bytes a row, at most 4 rows. `id` is the platform's stable identity  Ethe same key
+`MOVERS` uses, so a receiver resolves **its own copy** of that platform. `ox`/`oy`/`oz` are
+the rider's place in the platform's axes (1/8 cm, as `PLAYER`); `oyaw` is the rider's
+heading *relative* to the platform (1/65536 turn), so a turning platform carries the facing.
+
+`flags` bit0 = on (the sender's player is on this platform), bit1 = the platform is moving.
+A row with bit0 clear means "I stepped off".
+
+**Why the place and not the position.** A rider's "position minus the platform's position"
+is *not* steady: measured 50 E00 cm from one frame to the next, because the pawn and the
+platform are sampled at different moments of the sender's frame. A standing passenger's
+place **in the platform's axes** does not change at all while the platform moves. So the
+sender does not measure it mid-ride (see `qdplatforms.h` for the exact rule, ported from
+dollsMP `docs/sync/36` §9), and the receiver rebuilds the drawn place as
+`its own copy of the platform + axes ÁEplace`. That is what makes a rider sit still on a
+platform that is itself moving.
+
+Latest wins on `ms`: a reordered body cannot put the partner back on a platform they left.
+
 ### 3.24 `RESPAWN_DOWN` (0x54), `RESPAWN_UP` (0x55), `RESPAWN_REST` (0x56)
 
 **A death is per-player, not a world event** (SYNC-DESIGN §2.9, `qdrespawn.h`). In single
-player a death opens the Game Over screen — which pauses that machine's world clock — and
+player a death opens the Game Over screen  Ewhich pauses that machine's world clock  Eand
 its "Continue" reloads the world from the save. In co-op that reload runs under the
 survivor too. This lane replaces it: the pose plays, the Game Over dispatch is refused on
 the machine that owns the dead player, and after ~3.5 s that player is put back at **its
@@ -1049,13 +1129,13 @@ RESPAWN_REST  deaths u8 (=0) | pct u8 (=100) | seq u8 | x i32 | y i32 | z i32
 
 * **Positions are the wire's own 1/8 cm integers** (§3.5), the same encoding `PLAYER` uses:
   one encoding for "where a player is" in the whole protocol.
-* **`pct` must equal `100 − 10·deaths`, floored at 10** — the penalty ladder
+* **`pct` must equal `100 ∁E10·deaths`, floored at 10**  Ethe penalty ladder
   (90 %, 80 %, … , 10 %). A body where the stack and the percentage disagree, a `REST`
   that carries a stack, or an `UP` with `hp > hp_max` is **refused**, not applied: applying
   it would either heal a penalised player or penalise a rested one.
 * **`seq` is a per-lane counter, applied newest-wins** (`SeqGate`): a duplicate `UP` would
   teleport the partner's puppet back to a rest point the player has left, so a repeat is
-  dropped, and the comparison is a **signed** byte — 255 → 0 is newer, not 255 steps older.
+  dropped, and the comparison is a **signed** byte  E255 ↁE0 is newer, not 255 steps older.
 * **Reliable.** A death and a respawn are events. A lost `UP` is not fatal (the 30 Hz
   `PLAYER` rows carry the new position) but the puppet would slide across the map instead of
   teleporting, and the partner's bar would lag until the next `STATUS`.
@@ -1065,10 +1145,10 @@ RESPAWN_REST  deaths u8 (=0) | pct u8 (=100) | seq u8 | x i32 | y i32 | z i32
 
 The receiver does two things and nothing else: on `DOWN` it plays the death pose on the
 puppet and remembers the stack; on `UP` it **teleports** the puppet (interpolation buffer
-reset, one sample, placed in the same frame — no lerp across the map) and updates the
+reset, one sample, placed in the same frame  Eno lerp across the map) and updates the
 partner's bar. Its own enemies, progress, area and world are not touched.
 
-### 3.26 `KILL_XP` (0x40)
+### 3.25 `KILL_XP` (0x40)
 
 One death paid one player's XP; the other player is paid the same amount. Both machines run a
 copy of a death, and the game's award is Blueprint state -- `FS_PlayerChar_C.Player_GiveXP`,
@@ -1096,7 +1176,7 @@ expires after 3 minutes, and a report for a death this machine holds **no copy**
 a 3 s grace window -- so an enemy that exists on one machine only still pays both players -- and
 is logged as not backed by a local measurement.
 
-### 3.27 `SAVE` (0x41)
+### 3.26 `SAVE` (0x41)
 
 "I saved; write your own save now." **The receiver never receives a save file -- only the
 instruction**, and it runs its OWN writer on its OWN slot.
@@ -1143,46 +1223,388 @@ moves; for `route = 2` it is `GI_WriteSuspendSaveImmediately` / `WriteSuspendSav
 a separate file and so do not move that stamp -- the call returning is what that route can
 assert, and it says so.
 
-### Reliable kinds: ack and duplicate suppression
+### 3.27 `AUDIT` (0x58), `AUDIT_REQ` (0x59), `AUDIT_ITEMS` (0x5A)
 
+**The desync auditor.**  Every other lane reports on itself, and a lane that converged
+silently is indistinguishable from a lane that never had anything to do.  Nothing else in
+this protocol can answer the question a finished co-op run leaves open — *did the two games
+ever disagree about the world?*  So both machines digest the synced world state of the
+CURRENT map and compare.
+
+Four design decisions, each forced:
+
+1. **A digest, not the state.**  The state is up to 1024 enemy keys and 256 placed objects
+   against a 1200-byte body cap.  Sending it every ten seconds would be the loudest lane in
+   the session for a question whose answer is almost always "nothing".  The steady state is
+   ONE body of twelve per-category digests, 141 bytes.
+2. **The items travel only on a disagreement**, in answer to `AUDIT_REQ`, and split across
+   ticks (the §3.6 rule — a continuation is a cursor, never a fragment).
+3. **Nothing here is reliable.**  These are periodic state: a lost `AUDIT` costs one pass, and
+   a lost `AUDIT_ITEMS` chunk is re-asked for on the request's own 2 s retry.  Acknowledging
+   the diagnostic lane would make it the second-most expensive thing in the mod.
+4. **Three seconds of grace.**  The two machines are never at the same instant: an object
+   opened 200 ms ago is applied a frame or two later, a streamed level is in the union on one
+   side and not yet on the other.  A mismatch is reported only once it has PERSISTED for 3 s,
+   and a category that heals inside that window is never mentioned at all.  A real desync does
+   not heal — which is what makes the window free.
+
+```
+AUDIT       seq u32 | map_hash u32 | n u8 | n x { cat u8, digest u64, count u16 }
+AUDIT_REQ   seq u32 | cat u8
+AUDIT_ITEMS seq u32 | cat u8 | total u16 | first u16 | { str key, u64 value } ...  to the end
+```
+
+`map_hash` is FNV-1a of the sender's own map short name, and `0` means "not known yet".  A
+difference SUPPRESSES the data categories: two machines in different worlds disagree about
+everything, and the split is the one fact worth reporting.
+
+`digest` is an **order-independent sum** of the category's item hashes.  Insertion order is a
+scan artefact on both machines (the entity table's order is its own), so an order-dependent
+digest would disagree on two machines holding identical state.  Keys are unique inside a set,
+so a sum has no multiplicity to lose.
+
+`total` in `AUDIT_ITEMS` is the WHOLE set size and `first` is the index of this chunk's first
+row — the same no-produced-count rule §3.6 and §3.20 already state, and a decoder reads rows
+until the body ends, never until `total` is satisfied.
+
+**The twelve categories**, in wire order (the byte IS the identity; do not reorder without a
+version bump).  Each is a set of `(key, value)` items, and the key is always something both
+machines compute from the cooked content or from a lane that has already converged:
+
+| cat | category | key | value |
+|---|---|---|---|
+| 1 | `flags` | the NamedSaveData flag's own name | its int32 |
+| 2 | `actors` | a `SavableActorStates` GUID as 32 hex | its int32 |
+| 3 | `objects` | the placed-object key as 32 hex | `state \| shape<<8` — **reserved, not currently sent**: the placed-object set is host-owned and the peer keeps no mirror of it, so a symmetric comparison does not exist (`features/desync-audit.md` §5a) |
+| 4 | `quest` | the item's soft path | its count |
+| 5 | `enemy` | the enemy key as 32 hex | 0 dead, 1 alive |
+| 6 | `boss` | the boss key as 32 hex | the phase ordinal — no HP bucket, which a live run measured to be a coincidence rather than a shared fact (§5b) |
+| 7 | `movers` | `<mover id hex>:<x\|y\|z\|yaw>` | bucketed 1/8 cm or 1/65536 turn |
+| 8 | `levels` | the level's short name | 1 |
+| 9 | `map` | the map's short name | 1 |
+| 10 | `cutscene` | `s<slot>:<state\|name>` | 0/1, or a name hash while playing (§5c) |
+| 11 | `dialogue` | `d<slot>:<talking\|npc>` | 0/1 or an NPC-id hash |
+| 12 | `deaths` | `host` / `peer` | the death-penalty stack |
+
+Buckets exist so a value that legitimately lags by a frame is not a disagreement: positions
+to 8 cm (64 wire units), angles to 1/64 turn.
+
+**Categories that are legitimately LOCAL and are therefore not digested at all** — each is a
+thing two machines are supposed to differ about, so including it would turn a correct session
+into a wall of false desyncs:
+
+- Normal inventory (potion / ammo / tool counts).  Each player picks their own up; only
+  `Items/KeyItems/` crosses (§3.26 and `qdprogression.h`), which is exactly cat 4.
+- The partner's position, velocity, facing and animation — 30 Hz SAMPLES of two different
+  players, different by construction.
+- Per-player status effects, HP and the HUD; each machine draws its own.
+- XP totals: `KILL_XP` pays one specific award to both, but a player can gain XP another way.
+- The puppet's equipment transform and the visual-effect lanes (projectiles, arcs, cast VFX).
+- The shared loot set's spawn points and per-death drop ordinal: the ordinal inside one death
+  is assigned by the machine that ran the death, so a raw set diff compares ordinals.
+- Which enemies THIS machine is running (ownership follows the nearer player by design).
+
+**A category a machine does not collect is not a desync.**  Collecting is gated on that
+lane's own switch, so two machines with different ini files report `category X is enabled on
+one side only` once and never compare it.
+
+**The report.**  A mismatch past the grace window logs `audit: DESYNC <category> <key>
+host=<v> peer=<v> age=<ms>` per differing item (`-1` = absent on that side), and a clean state
+logs `audit: OK n categories, m items` once a minute.  Both machines print the SAME line for
+the same disagreement, because the two values are mapped to `host`/`peer` by role rather than
+to `local`/`peer`.
+
+### Reliable kinds: ack and duplicate suppression
 A receiver acks every copy of a reliable kind (`ACK` with the envelope `seq`) and
 delivers only the first; it remembers the last 64 reliable seqs and forgets them if a
 seq arrives more than 4096 below the highest seen (the sender restarted). Before this
 existed, nothing acked: a reliable body was resent until the sender gave up and every
 copy was applied (measured: one Fireball spawned six times).
 
-### 3.23 `PLATFORM_RIDE` (0x48)
+### 3.28 `BOSS_PHASE` (0x5C) — the boss's state machine, owner-authoritative
 
-Where a **rider stands on a moving platform**, in that platform's own axes. The companion
-of `MOVERS`: `MOVERS` says where the platform is, this says where the person on it is.
+**This supersedes the "phases are not expressible" note on `BOSS` (§3.9b).** That claim was
+measured against three NAME strings (`Phase`, `bBoss`, `OnSubStateChanged`) and is true of
+those names; it is false of the mechanism. The shipped build carries a generic state
+machine on the **native** base class `FS_EnemyCharacterBase` (`/Script/QueensDomain`), and
+it is readable and callable through the ordinary reflection this mod already uses:
+
+| member | kind | param |
+|---|---|---|
+| `CurrentStateIndex` | `int32` property | readable **and** writable |
+| `CurrentSubState` | `int32` property | readable **and** writable |
+| `SetCurrentStateIndex` | native `UFunction` | `NewState : int32` |
+| `SetCurrentSubState` | native `UFunction` | `NewState : int32` |
+| `OnStateIndexChanged` | Blueprint event | `NewState : int32` |
+| `OnSubStateChanged` | Blueprint event | `NewState : int32` |
+
+`Queen_BP` (161 exports) additionally declares `DoStateTransition`, `OnPhaseChanged`,
+`DoOrbAnimation`, `OrbAttack`, `SetUpPlayerForOrbCutscene`, `SetUpBossForOrbCutscene`,
+`OrbProjectileHitPlayer`, `KillOrbs`, `UnlockFromOrbStuff`, `SipehaTransitionEnded`,
+`Ending1Complete`, `Ending2CutsceneEnded`, and imports `Queen_Nude_Data`,
+`Queen_P1_P2_Transition_Montage` and all three ending/Sipeha cutscene managers.
 
 ```
-u32  ms               the sender's clock (ordering only)
-u16  n                rows in this body (never split across a datagram)
-n × { guid id, i32 ox, i32 oy, i32 oz, i16 oyaw, u8 flags }
+guid(16) | rev(u32) | state(i32) | sub(i32) | flags(u8)            -- 29 bytes
 ```
 
-31 bytes a row, at most 4 rows. `id` is the platform's stable identity — the same key
-`MOVERS` uses, so a receiver resolves **its own copy** of that platform. `ox`/`oy`/`oz` are
-the rider's place in the platform's axes (1/8 cm, as `PLAYER`); `oyaw` is the rider's
-heading *relative* to the platform (1/65536 turn), so a turning platform carries the facing.
+`flags`: bit0 `AUTHORITY` (the sender runs this boss), bit1 `TRANSITION` (the boss itself
+started a change; an event, not a steady sample), bit2 `ANIMATING` (`DoingPhaseAnim` was set
+— diagnostic only).
 
-`flags` bit0 = on (the sender's player is on this platform), bit1 = the platform is moving.
-A row with bit0 clear means "I stepped off".
+**Authority** is the machine that RUNS the boss: `enemyown::OwnerSet::State(key) !=
+O_FROZEN`, and not a constructed mirror. That is the same authority `BOSS` already uses; a
+second, different authority would be a second bug. With no owner row the follower does not
+guess, and after `6 s` of owner silence the survivor takes the phase authority as well as
+the body — otherwise a partner who died and respawned leaves a frozen statue with nobody
+driving it.
 
-**Why the place and not the position.** A rider's "position minus the platform's position"
-is *not* steady: measured 50–900 cm from one frame to the next, because the pawn and the
-platform are sampled at different moments of the sender's frame. A standing passenger's
-place **in the platform's axes** does not change at all while the platform moves. So the
-sender does not measure it mid-ride (see `qdplatforms.h` for the exact rule, ported from
-dollsMP `docs/sync/36` §9), and the receiver rebuilds the drawn place as
-`its own copy of the platform + axes × place`. That is what makes a rider sit still on a
-platform that is itself moving.
+**The follower does not run a phase script.** It writes `CurrentStateIndex` (and
+`CurrentSubState`) on its own copy and then dispatches `OnStateIndexChanged`, so **its own
+Blueprint graph** performs the transition — the montage, the model swap, the cutscene
+manager, the ending write. The order is the contract: the property first so the graph's own
+reads see the new index, then the event.
 
-Latest wins on `ms`: a reordered body cannot put the partner back on a platform they left.
+**`rev` is what orders samples.** The Queen's own chain is `0 -> 1 -> 2 -> 0` (the last step
+is the ending), so a "keep the highest state" rule silently drops the ending. A strictly
+older `rev` is stale whatever its values say; the **same** `rev` with different values is
+the owner restating its authority and is applied (that is how a copy that missed a
+transition heals); a newer `rev` is applied. `rev = 0` never means revision zero.
+
+`-1` in `state`/`sub` is the legitimate "unreadable on the sender" value and is **not**
+state 0 — reading it as 0 would re-run phase 1. Any value outside `-1..=255` is refused on
+both encode and decode rather than driven into a Blueprint graph.
+
+Reliable because a lost transition is a permanently stuck boss: Session 29 run 15 measured
+the Queen waiting in `DoStateTransition` at **minus 200 HP for 45 s**.
+
+### 3.29 `BOSS_ARENA` (0x5D) — the fight's phase and who is inside it
+
+```
+guid(16) | rev(u32) | arena(u8) | present(u8)                        -- 22 bytes
+```
+
+`arena`: `0` idle, `1` open (begun, barrier not yet shut), `2` closed (the fight is
+running), `3` done. `present`: bit0 host's player, bit1 peer's player.
+
+The fight's `guid` is the boss the ONE shared bar names (§3.9b) — already the agreed "which
+fight is this" answer. The host is the only publisher. Both machines apply the same rule
+from this one fact, so a barrier cannot shut on one screen and stay open on the other, which
+is what makes a co-op boss fight unplayable: one player locked in, the other locked out.
+
+**THE RULE: a fight that is running CONTINUES when a player is absent.** It is never
+cancelled, never restarted, and the absent player is never pulled in by force. This is the
+ordinary case now: `DeathRespawn=1` returns a dead player to their last rest **without a
+world reload**, so the world — and the fight — keeps running for the survivor. The
+respawned player walks back in through the same gate, whose open/closed state the door lane
+(`ACTOR_STATES` / `OBJECTS`, §3.20) already keeps in step on both machines. A missing
+player changes exactly one thing: a fight does not *start* until somebody is inside it.
+
+This lane does **not** drive the barrier. A barrier is a `Door_Base_C` / `SavableActor_C`
+and the door lane owns it; what this body adds is that the *reason* it is shut is agreed
+(`BarrierFor`: `OPEN`+alive asks the door lane to close, `DONE`/dead asks it to open,
+`CLOSED` asks for nothing).
+
+### 3.30 `BOSS_END` (0x5E) — which of the four endings, and who chose it
+
+```
+guid(16) | rev(u32) | ending(u8) | who(u8)                          -- 22 bytes
+```
+
+`ending`: `1` `Ending1Complete`, `2` `Ending2Complete`, `3` `Ending3Complete`,
+`4` `Ending4Complete` (the four independent writes the content makes).
+`who`: `1` the host's player, `2` the peer's player.
+
+**The choice is made by whichever player makes it; the other FOLLOWS.** The receiver does
+not invent a choice — it runs the same ending entry on its own copy, and its own game writes
+its own `EndingNComplete` / `EndingSeen`, which is exactly what the measured behaviour shows
+(each machine writes its own flags, Session 29 runs 12-14).
+
+**The branch must match the boss.** A `Queen` ending body reaching a machine whose boss is
+`Sipeha_NPC_C` (or the reverse) is a decode of the wrong thing and is refused rather than
+driving the wrong cutscene manager on one machine only.
+
+### 3.31 `WORLD_SET` (0x60) — the save-side unlock sets, as a union
+
+`FS_SaveSlot_C` carries three `Array<Object>` sets that ARE the fast-travel and rest network.
+Only their counters crossed before, so a teleporter one player unlocked did not exist in the
+other player's menu and the pair had to walk everywhere together.
+
+```
+set(u8) | rev(u32) | n(u16) | n x { key: str }                       -- 7 bytes + keys
+```
+
+`set`: `1` `UnlockedTeleporters`, `2` `SavePointsVisited`, `3` `ShopTeleporterDestinations`
+(a wire value; the order must not change without a version bump).
+`n` is the sender's whole container size, not this datagram's share: a set that does not fit
+one 1200-byte body continues with the next key on the next tick (`§3.6`'s rule — a cursor,
+never a fragment).
+`key` is the element's asset **short name** (`GR_Camp_Save`, `Teleporter_400_AUT`), refused
+unless it is printable ASCII with no `/`, `\`, `.` or `:` — a truncated or path-shaped name
+resolves to a different asset.
+
+**Monotone union, host-authoritative.** A key is added and never removed: an unlock is a fact
+the game does not take back. The receiver merges what arrives and appends the missing elements
+to its own save. `TeleporterUnlockCount` / `CheckpointUnlockCount` are DERIVED from the set
+size on each machine, never summed — two players unlocking the same destination is one
+destination.
+
+**`LastTouchedCheckpoint` is deliberately NOT on this lane**, and neither are `SavePointID`,
+`SaveLocation`, `SaveLevel`, `SavedArea` or `CurrentPlayerHealth`: a respawn point is the
+player's own, and the death lane (`§3.24`) owns it. Mirroring it would move the partner's
+respawn because they walked past a checkpoint.
+
+### 3.32 `REST_WORLD` (0x61) — a rest is a world event
+
+`Checkpoint_C` imports `ClearAllEnemySaveStates` (`0x00E27460`, `TMap::Reset` on
+`save+0x270`), so a rest respawns **every** enemy on the machine that rested. With per-player
+death and respawn (`§3.24`) one player's rest would leave the two machines holding different
+kill sets from that moment, and a boss whose death is only a record could come back on one.
+
+```
+seq(u32) | flags(u8) | px(i32) | py(i32) | pz(i32) | name: str        -- 19 bytes + name
+```
+
+`flags`: bit `0x01` = this is the host's ORDER; bit `0x02` = the sender's own player rested.
+The position and the name are **evidence for the log**, never behaviour: no machine is moved
+by this body.
+
+**The host is the authority.** A peer's rest is a REQUEST; the host applies the same reset on
+its own machine and re-broadcasts the episode as an ORDER, and the peer applies on that.
+`seq` is monotone, so a retransmission or an older episode never resets the world again.
+Each machine snapshots the keys it owes a death to, runs the game's own clear, then writes the
+boss / one-time / flag-gated deaths back with `StoreEnemySaveState(guid, -1, 0)` — so a rest
+can never revive a boss on either side.
+
+### 3.33 `PUZZLE` (0x62) — the intermediate state of a multi-step puzzle
+
+The 287 `Lib_Book_00..04_BP_C` placements decode to a `StaticMeshActor` subclass with **no
+state property and no function of its own**: a book's progress is its rotation. The other
+puzzle actors descend from `SavableActor`/`Activatable`/`Door_Base` and are already carried by
+`ACTOR_STATES`/`OBJECTS`/the interact lane; this kind is for the props whose only intermediate
+state is a transform.
+
+```
+rev(u32) | n(u8) | n x { key(16) | yaw(i16) | pitch(i16) | state(u8) | pad(u8) | seq(u32) }
+```
+
+26 bytes a row, 46 rows in one body; a larger set continues on the next tick.
+`key` is the placed actor's `<world>/<level>/<name>` hashed with `'QDWS'` (`§0`'s PLACED rule,
+own seed). `yaw`/`pitch` are `QuantizeAngle` units.
+
+**Last-writer-wins per key** (`seq`), not owner-authoritative: the pair stands in the same room
+turning the same books, so either player's turn must apply. The machine that APPLIED a row does
+not publish it back — that would be the echo that ping-pongs a book. A change below one
+quantiser unit is not news (a book's rotation is read every observation pass).
+
+### 3.34a `HAZARD` (0x64) — an enemy/boss-SPAWNED hazard's geometry
+
+An enemy or a boss spawns its damaging fields at RUNTIME — `DemonBoss_FightController_C`'s
+magma puddles, the Queen's and the Witch's `*_AOE` volumes, the dragons' fire / poison /
+sticky-binding puddles (`qdhazard.h`). Those exist only on the machine that spawned them.
+*Placed* hazards (`DamagingCollision_C`, `*_TrapDecoy_C`) are in the level on both machines
+and never travel here.
+
+```
+rev u32, n u16,
+n x { key 16, px i32, py i32, pz i32, radius_cm u16, tick_ms u16, amount_centi i32, flags u8 }
+```
+
+37 bytes a row, at most 24 rows in one body (the mod sends at most 8). `px/py/pz` are the
+same 1/8 cm quantisation as every other lane; `radius_cm` is the hazard's own extent (`0` is
+"unknown" and the receiver refuses to use it); `tick_ms` is how often it may hurt ONE
+player; `amount_centi` is 1/100 of the game's damage unit. `flags`: bit0 `GUESSED` (the
+amount and/or radius did not resolve on the sender, so it is the stated fallback), bit1
+`ONCE` (a projectile: one application, then spent).
+
+Sent at 5 Hz while the state changes and as a keepalive otherwise. A receiver that has heard
+nothing for 2 s (ten rows) forgets the key: silence is a despawn.
+
+**THE RULE — the damage does not travel as an instruction.** A player's HP is owned by
+exactly one machine, so the damage a hazard does to a player is applied by **that player's
+machine**:
+
+* the machine that spawned the hazard lets its own game hurt its own player;
+* the OTHER machine draws a collision-less, tickless copy of the class and applies
+  `amount_centi` to **its own** player while that player stands inside `radius_cm`;
+* nothing else ever applies it, so a hazard cannot burn one player twice, and the copy
+  cannot hurt anyone through the receiving game's own code.
+
+### 3.34b `HAZARD_INFO` (0x65) — the one-off description of a hazard key
+
+```
+kind u8, key 16, px i32, py i32, pz i32, amount_centi i32, radius_cm u16, tick_ms u16,
+flags u8, cls str(<=200)
+```
+
+`kind = 1` `HI_FIELD` — this key exists and is a `<class>` (the receiver loads the class to
+draw it). `kind = 2` `HI_FIELD_END` — the key is gone (hide the copy). `kind = 3`
+`HI_CLASS_DMG` — a **projectile class** hits for `amount_centi`, keyed by the class path's
+hash; the receiver uses it for every copy of that class its `EFFECT` lane draws, so a
+projectile costs one datagram per CLASS rather than one per shot.
+
+Reliable, and one-shot per key: a lost description is a pool of lava that is never drawn and
+never felt. `HI_FIELD` also carries the starting geometry so the very first frame after a
+spawn is already correct.
+
+**Two hazards at the same place are one hazard.** A spawner commonly produces a volume and a
+coincident decorative actor for the same effect; the receiver treats two records within
+100 cm horizontally as the same hazard, so a decorative copy is not a second burn.
+
+### 3.35 `JOIN_REQ` (0x68) / `JOIN_STATE` (0x69) / `JOIN_END` (0x6A) / `JOIN_ACK` (0x6B) — the session-establishment reconcile
+
+On every establishment — a first connect AND a reconnect after a drop — the **peer** adopts
+the **host's** world/progression state exactly, including reverting what the peer's save
+holds and the host's does not. That revert is the lane's reason: every other lane here is
+monotone (the flag bank never lowers, the object lane never closes), so their converged state
+is a *union*, and a peer whose save is ahead keeps that advantage for the whole session.
+
+```
+JOIN_REQ    seq u32 | cat u8                            (0 = every category)
+JOIN_STATE  seq u32 | cat u8 | sub u8 | total u16 | first u16 | rows...
+JOIN_END    seq u32 | mask u8                           (bit cat-1 = sent)
+JOIN_ACK    seq u32 | result u8                         (0 in sync, 1 reconciled,
+                                                         2 deferred, 3 backup failed)
+```
+
+Categories, in wire order (`cat`), with `sub` used only by `WORLDSET` (the set id):
+
+| cat | name | rows |
+|---|---|---|
+| 1 | `flags` | `str name, i32 value` |
+| 2 | `actors` | `guid 16, i32 value` |
+| 3 | `objects` | `key 16, u8 shape, u8 state` |
+| 4 | `enemy` | `guid 16` (the host's DEAD keys) |
+| 5 | `quest` | `str path, i32 count` (key items only) |
+| 6 | `worldset` | `str key` (`sub` = 1 teleporters / 2 savepoints / 3 shop pads) |
+| 7 | `puzzle` | `key 16, i16 yaw, i16 pitch, u8 state, u32 seq` |
+| 8 | `map` | `str world, str area, i32 px, i32 py, i32 pz` |
+
+`first` is a **cursor across ticks**, never a fragment (the rule §3.6 states), and `total` is
+that category's size on the sender. An EMPTY category is still announced with a header-only
+body: the peer's completeness test is per category, and silence would read as "not sent".
+`JOIN_END` names the mask of categories the host actually carried, and the peer applies only
+when every one of them arrived complete — a truncated absolute state would look like a
+deletion.
+
+Reliability: `JOIN_REQ`, `JOIN_END` and `JOIN_ACK` are **reliable** (one-shot facts). The
+`JOIN_STATE` chunks are **unreliable and repeated**: the host re-sends the whole state every
+800 ms until the ack (bounded), because a 150 KB state must not occupy a reliable slot and a
+lost chunk costs one pass. Both machines' `qdcoop.ini` must agree on `JoinReconcile`;
+otherwise the category is one-sided and simply not compared, exactly like the auditor's
+one-sided categories.
+
+What is EXCLUDED on purpose: shop stock keys (`ShopPurchasedKey/*`, `ShopPurchases`,
+`ShopSales`, `NewItemsInShop`), per-player collection counters (`TotalAchievement*`,
+`CompletedChallenges`, `FullEnergyCellsCount`, `TiniScytheHammerAP`, `IntroMusicState` — the
+peer may be raised to a host that is ahead, never lowered), and the per-player progression
+the brief keeps local (level/XP, normal inventory/equipment/currency, `LastTouchedCheckpoint`
+and the save-identity fields, settings). `TotalChestsOpened` / `TotalSecretDoorsOpened` /
+`ShopAmountSpent` are a SUM of two machines' acts: the peer hands the host its excess as an
+additive `INTENT kind 1` and then adopts the result, so neither player's chests are lost.
+See `mod/doc/features/join-sync.md`.
 
 ## 4. Lane discipline
-
 - `PLAYER` and `ENEMY` are **unreliable and absolute**. Losing one costs a
   sample; interpolation hides it; the next one repairs it.
 - `WORLD_FLAGS` / `ACTOR_STATES` / `INVENTORY` are **unreliable and absolute**.
@@ -1200,13 +1622,18 @@ Latest wins on `ms`: a reordered body cannot put the partner back on a platform 
   until the 0.5 Hz / 1 Hz heartbeat, and the handshake is short enough that a lost phase
   is a stuck transition.
 - `OBJECTS` is **reliable and absolute**. It is re-sent on change, on join, after a
-  suspend load, and by a 5 s repair pass — not at 1 Hz, because a reliable re-send every
+  suspend load, and by a 5 s repair pass  Enot at 1 Hz, because a reliable re-send every
   second is a retransmission budget spent on nothing. The counterpart intent (kind 9) is
   on `INTENT`, so it inherits the reliable, deduplicated lane.
 - Nothing anywhere carries `x += d`. Every effect is a set insertion, an
   absolute assignment, or a transition guarded by a monotonic counter
   (E2). This is the rule that makes a lost or duplicated datagram change
   nothing.
+- `AUDIT` / `AUDIT_REQ` / `AUDIT_ITEMS` (§3.27) are the diagnostic lane and they are
+  deliberately **not** reliable. They are periodic state: a lost digest costs one pass, and a
+  lost item chunk is re-asked for on the request's own 2 s retry. Nothing in the session
+  depends on the auditor, so it must never compete for the reliable retransmission budget
+  that `INTENT`, `TRAVEL`, `DAMAGE` and a partner's save need.
 
 ## 5. MTU and timing
 
@@ -1219,7 +1646,7 @@ Latest wins on `ms`: a reordered body cannot put the partner back on a platform 
   This is the lane's bound: it is the one that bursts when a fight is busiest, and it
   yields to `INTENT`, `TRAVEL` and `DAMAGE` because those must not.
 - `BOSS` is on change only and cheap (20 B), so it is not rate-limited beyond that.
-- Render delay 100 ms, extrapolation cap 250 ms — see `qdmotion.h`.
+- Render delay 100 ms, extrapolation cap 250 ms  Esee `qdmotion.h`.
 
 ## 6. Open items this document does not settle
 

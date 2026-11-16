@@ -67,7 +67,7 @@ Three gaps the co-op mode still had, all on the boundary between "shared world f
 | `mod/native/src/qdconfig.h` | `quest_item_sync`, `kill_xp_sync`, `partner_save_sync` |
 | `mod/native/qdcoop.ini` (if present) | the three keys |
 | `mod/rust/qd-core/src/protocol.rs` | the two kinds, byte-compatible |
-| `mod/doc/WIRE.md` | §3.26 `KILL_XP`, §3.27 `SAVE` (3.24/3.25 were taken by other lanes while this ran) |
+| `mod/doc/WIRE.md` | §3.25 `KILL_XP`, §3.26 `SAVE` (renumbered in the final-soak pass: 3.21/3.23/3.25 are now contiguous) |
 
 ### proxy.cpp hooks (all marked `// [progression]`)
 
@@ -430,7 +430,7 @@ So the player's progress reaches disk through the suspend route, and a partner t
 with a main-slot write would have saved a DIFFERENT FILE than the one its own game resumes
 from. The request therefore carries a **route** byte (`ROUTE_SUSPEND` / `ROUTE_SLOT`) and the
 receiver runs its OWN matching writer on its OWN slot. **No save file ever crosses; only the
-instruction.** `WIRE.md` §3.27 documents the extra byte; a 5-byte body from an older sender
+instruction.** `WIRE.md` §3.26 documents the extra byte; a 5-byte body from an older sender
 is accepted as the main slot rather than refused.
 
 ```

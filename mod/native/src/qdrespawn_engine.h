@@ -951,9 +951,28 @@ static void DoRespawn(uint32_t now)
 
     // 2. THE DEATH STATE.  `bDead`/`IsDead` off, no knockdown, walking, input back.  Each is
     //    reported, because "the player is alive" is a claim about the game's own flags.
+    //
+    //    BOTH DEAD FLAGS, NOT ONLY ONE.  MEASURED (final soak, 16 Nov): this cleared `bDead`
+    //    and left `IsDead` set, and `IsDead` is the byte EVERY other lane reads --
+    //    `PawnDead()` here, the dialogue spectator's veto, the save lane's "the local player
+    //    is dead" deferral and the STATUS row's dead bit.  So one respawn left the player
+    //    permanently "dead" to every reader while it stood there fighting: the log repeated
+    //    `dialogue view: not hijacking the local player: the local player is dead` for four
+    //    minutes, the partner's save was refused with `blocked: the local player is dead`,
+    //    and the weapons/attack levers stopped answering.  `FS_PlayerChar_C` carries both
+    //    properties, so both are written.
     uint8_t was = 0;
-    bool hadDead = BytePropC(pawn, "bDead", &was);
-    if (hadDead) WriteBytePropC(pawn, "bDead", 0);
+    bool hadBDead = BytePropC(pawn, "bDead", &was);
+    if (hadBDead) WriteBytePropC(pawn, "bDead", 0);
+    uint8_t wasIsDead = 0;
+    bool hadIsDead = BytePropC(pawn, "IsDead", &wasIsDead);
+    if (hadIsDead) WriteBytePropC(pawn, "IsDead", 0);
+    // Read both BACK, so the respawn line states what the game now says rather than what this
+    // code wrote.  A cleared flag that the engine re-sets is the failure this catches.
+    uint8_t backB = 0, backI = 0;
+    bool readB = BytePropC(pawn, "bDead", &backB);
+    bool readI = BytePropC(pawn, "IsDead", &backI);
+    bool stillDead = (readB && backB != 0) || (readI && backI != 0);
     bool hadKnock = BytePropC(pawn, "KnockedDown", &was);
     if (hadKnock) WriteBytePropC(pawn, "KnockedDown", 0);
     // EACH LEVER IS DISPATCHED WHERE IT IS DECLARED (see Fns for the measurement):
@@ -1009,7 +1028,13 @@ static void DoRespawn(uint32_t now)
           " input=", dec(inputOn ? 1 : 0), " walking=", dec(walkOn ? 1 : 0),
           " ignoreInputCleared=", dec((g_fn.fIgnoreMove || g_fn.fIgnoreLook) ? 1 : 0),
           " hpWrite=", dec(hpOk ? 1 : 0),
-          (hadDead ? " bDead->0" : ""), (hadKnock ? " KnockedDown->0" : ""));
+          (hadBDead ? " bDead->0" : ""), (hadIsDead ? " IsDead->0" : ""),
+          (hadKnock ? " KnockedDown->0" : ""),
+          // The READ-BACK, so this line states what the game says now.  `alive=0` here means
+          // an engine flag survived the write, which is the state that made every other lane
+          // treat a standing player as a corpse (see the note above step 2).
+          " deadFlags=", dec(stillDead ? 0 : 1),
+          (stillDead ? " STILL SET (bDead/IsDead read back non-zero)" : ""));
     if (restDist >= 0.0f && restDist > 1.0f) {
         QDLOG(LOG_INFO, "respawn: the body fell ", flt(restDist, 0), " cm from the rest point");
     }

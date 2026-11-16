@@ -21,6 +21,9 @@
 #include <stdlib.h>
 
 #include "qdwire.h"
+// The death lane's bodies live beside their rules, not in qdwire.h: `qdrespawn.h` owns
+// EncodeDown/Up/Rest and the stack/percentage cross-check this test pins.
+#include "qdrespawn.h"
 
 static int g_pass = 0;
 static int g_fail = 0;
@@ -32,10 +35,14 @@ static int g_missing = 0;
         else { ++g_fail; printf("FAIL %s  (%s:%d)\n", name, __FILE__, __LINE__); } \
     } while (0)
 
+using namespace qd;
 using namespace qd::wire;
 
 // ---- the file -------------------------------------------------------------
-static char  g_lines[64][512];
+// 1024 bytes per line, not 512: `dialogue_view` carries the talker's real speaker and line
+// (view-fix2), and at three characters per byte a 512-byte buffer silently truncated it --
+// the failure read "body length 166, vector says 164", which looks like an encoder bug.
+static char  g_lines[64][1024];
 static int   g_lineCount = 0;
 static const char* g_pathUsed = "";
 
@@ -113,9 +120,14 @@ static void Compare(const char* name, const uint8_t* got, int gotLen)
     uint8_t kind = want[0];
     bool kindKnown = (kind >= 0x01 && kind <= 0x04) ||
                      (kind >= 0x10 && kind <= 0x19) ||
-                     (kind >= 0x20 && kind <= 0x2B) ||
+                     (kind >= 0x20 && kind <= 0x2C) ||   // includes 0x2C TRIGGER
+                     (kind == 0x30) ||
+                     (kind == 0x40) ||                   // KILL_XP
+                     (kind == 0x41) ||                   // SAVE
+                     (kind >= 0x48 && kind <= 0x4B) ||   // reserved platform block
                      (kind >= 0x50 && kind <= 0x53) ||   // reserved dialogue block
-                     (kind == 0x30);
+                     (kind >= 0x54 && kind <= 0x57) ||   // reserved death-respawn block
+                     (kind >= 0x58 && kind <= 0x5B);     // reserved desync-audit block
     if (!kindKnown) {
         ++g_fail;
         printf("FAIL %s  unknown kind byte 0x%02X\n", name, kind);
@@ -407,7 +419,8 @@ static void TestAll()
         Compare("dialogue_state", buf, w.len);
     }
 
-    // dialogue_view: seq, npc, slot, flags, sequence, entry, options, chosen, asset name
+    // dialogue_view: seq, npc, slot, flags, sequence, entry, options, chosen, asset name,
+    //                the speaker text and the line text the talker's box is showing
     {
         DialogueViewBody d;
         memset(&d, 0, sizeof(d));
@@ -421,6 +434,8 @@ static void TestAll()
         d.options = 3;
         d.chosen = 1;
         strcpy(d.asset, "Knight_Arjaot_Dialogue_00");
+        strcpy(d.speaker, "Spirit of Erma, Matron of the Deep");
+        strcpy(d.line, "For all my scrying and divination, I did not foresee this betrayal yes.");
         Writer w(buf, sizeof(buf));
         WriteDialogueView(w, d);
         Compare("dialogue_view", buf, w.len);
@@ -432,6 +447,8 @@ static void TestAll()
               got.entry == 1 && got.options == 3 && got.chosen == 1,
               "dialogue_view fields round-trip");
         CHECK(strcmp(got.asset, d.asset) == 0, "dialogue_view asset round-trips");
+        CHECK(strcmp(got.speaker, d.speaker) == 0, "dialogue_view speaker round-trips");
+        CHECK(strcmp(got.line, d.line) == 0, "dialogue_view line round-trips");
         CHECK(r.pos == r.len, "dialogue_view body fully consumed");
     }
 
@@ -579,6 +596,203 @@ static void TestAll()
         Writer w(buf, sizeof(buf));
         w.Bytes("hello from host", 15);
         Compare("log", buf, w.len);
+    }
+
+    // kill_xp: guid, seq, xp
+    {
+        uint32_t g[4];
+        for (int i = 0; i < 4; ++i) g[i] = 0x03020100u + (uint32_t)i * 0x04040404u;
+        Writer w(buf, sizeof(buf));
+        WriteKillXp(w, g, 2, 250);
+        Compare("kill_xp", buf, w.len);
+
+        Reader r(buf, w.len);
+        KillXpBody got;
+        CHECK(ReadKillXp(r, &got), "kill_xp reads back");
+        CHECK(got.seq == 2 && got.xp == 250, "kill_xp fields round-trip");
+        CHECK(r.pos == r.len, "kill_xp body fully consumed");
+    }
+
+    // save: seq, role, route
+    {
+        Writer w(buf, sizeof(buf));
+        WriteSave(w, 7, 2, 2);
+        Compare("save", buf, w.len);
+
+        Reader r(buf, w.len);
+        SaveBody got;
+        CHECK(ReadSave(r, &got), "save reads back");
+        CHECK(got.seq == 7 && got.role == 2 && got.route == 2, "save fields round-trip");
+        CHECK(r.pos == r.len, "save body fully consumed");
+    }
+
+    // platform_ride: ms, n, one 31-byte row (id, ox, oy, oz, oyaw, flags)
+    {
+        PlatformRideBody p;
+        memset(&p, 0, sizeof(p));
+        p.ms = 1234;
+        p.n = 1;
+        p.row[0].id[0] = 0x03020100u; p.row[0].id[1] = 0x07060504u;
+        p.row[0].id[2] = 0x0b0a0908u; p.row[0].id[3] = 0x0f0e0d0cu;
+        p.row[0].ox = 100;
+        p.row[0].oy = -200;
+        p.row[0].oz = 50;
+        p.row[0].oyaw = 16384;
+        p.row[0].flags = kRideOn | kRideMoving;
+        Writer w(buf, sizeof(buf));
+        WritePlatformRide(w, p);
+        Compare("platform_ride", buf, w.len);
+
+        Reader r(buf, w.len);
+        PlatformRideBody got;
+        CHECK(ReadPlatformRide(r, &got), "platform_ride reads back");
+        CHECK(got.ms == 1234 && got.n == 1, "platform_ride header round-trips");
+        CHECK(got.row[0].ox == 100 && got.row[0].oy == -200 && got.row[0].oz == 50 &&
+              got.row[0].oyaw == 16384 && got.row[0].flags == (kRideOn | kRideMoving),
+              "platform_ride row round-trips");
+        CHECK(r.pos == r.len, "platform_ride body fully consumed");
+    }
+
+    // respawn_down: deaths, pct, seq, x, y, z
+    {
+        respawn::DownBody d;
+        memset(&d, 0, sizeof(d));
+        d.deaths = 1;
+        d.pct = (uint8_t)respawn::PctFor(1);
+        d.seq = 2;
+        d.px = 125.0f; d.py = -250.0f; d.pz = 37.5f;   // -> wire 1000 / -2000 / 300
+        Writer w(buf, sizeof(buf));
+        CHECK(respawn::EncodeDown(w, d), "respawn_down encodes");
+        Compare("respawn_down", buf, w.len);
+
+        Reader r(buf, w.len);
+        respawn::DownBody got;
+        CHECK(respawn::DecodeDown(r, &got), "respawn_down reads back");
+        CHECK(got.deaths == 1 && got.pct == d.pct && got.seq == 2,
+              "respawn_down fields round-trip");
+        CHECK(got.px == 125.0f && got.py == -250.0f && got.pz == 37.5f,
+              "respawn_down position round-trips");
+        CHECK(r.pos == r.len, "respawn_down body fully consumed");
+    }
+
+    // respawn_up: deaths, pct, seq, x, y, z, yaw, hp, hp_max, name
+    {
+        respawn::UpBody u;
+        memset(&u, 0, sizeof(u));
+        u.deaths = 1;
+        u.pct = (uint8_t)respawn::PctFor(1);
+        u.seq = 3;
+        u.px = 125.0f; u.py = -250.0f; u.pz = 37.5f;   // -> wire 1000 / -2000 / 300
+        u.yaw = 45.0f;
+        u.hp = 90; u.hp_max = 100;
+        strcpy(u.name, "Checkpoint7");
+        Writer w(buf, sizeof(buf));
+        CHECK(respawn::EncodeUp(w, u), "respawn_up encodes");
+        Compare("respawn_up", buf, w.len);
+
+        Reader r(buf, w.len);
+        respawn::UpBody got;
+        CHECK(respawn::DecodeUp(r, &got), "respawn_up reads back");
+        CHECK(got.deaths == 1 && got.pct == u.pct && got.seq == 3 && got.hp == 90 &&
+              got.hp_max == 100, "respawn_up fields round-trip");
+        CHECK(got.yaw == 45.0f, "respawn_up yaw round-trips");
+        CHECK(strcmp(got.name, u.name) == 0, "respawn_up name round-trips");
+        CHECK(r.pos == r.len, "respawn_up body fully consumed");
+    }
+
+    // respawn_rest: deaths, pct, seq, x, y, z, name
+    {
+        respawn::RestBody s;
+        memset(&s, 0, sizeof(s));
+        s.deaths = 0;
+        s.pct = (uint8_t)respawn::PctFor(0);
+        s.seq = 4;
+        s.px = 125.0f; s.py = -250.0f; s.pz = 37.5f;   // -> wire 1000 / -2000 / 300
+        strcpy(s.name, "Checkpoint7");
+        Writer w(buf, sizeof(buf));
+        CHECK(respawn::EncodeRest(w, s), "respawn_rest encodes");
+        Compare("respawn_rest", buf, w.len);
+
+        Reader r(buf, w.len);
+        respawn::RestBody got;
+        CHECK(respawn::DecodeRest(r, &got), "respawn_rest reads back");
+        CHECK(got.deaths == 0 && got.pct == 100 && got.seq == 4,
+              "respawn_rest fields round-trip");
+        CHECK(strcmp(got.name, s.name) == 0, "respawn_rest name round-trips");
+        CHECK(r.pos == r.len, "respawn_rest body fully consumed");
+    }
+
+    // [desync-audit] audit: seq, map_hash, n, then {cat, digest u64, count u16} per category.
+    {
+        Writer w(buf, sizeof(buf));
+        WriteAuditHeader(w, 0x01020304u, 0xAABBCCDDu, 2);
+        WriteAuditCat(w, 1, 0x1122334455667788ull, 11);
+        WriteAuditCat(w, 12, 0xDEADBEEF0BADF00Dull, 2);
+        Compare("audit", buf, w.len);
+
+        Reader r(buf, w.len);
+        AuditBody got;
+        CHECK(ReadAudit(r, &got), "audit reads back");
+        CHECK(got.seq == 0x01020304u && got.map_hash == 0xAABBCCDDu, "audit header round-trips");
+        CHECK(got.n == 2, "audit category count round-trips");
+        CHECK(got.cat[0].cat == 1 && got.cat[0].digest == 0x1122334455667788ull &&
+              got.cat[0].count == 11, "audit first category round-trips");
+        CHECK(got.cat[1].cat == 12 && got.cat[1].digest == 0xDEADBEEF0BADF00Dull &&
+              got.cat[1].count == 2, "audit second category round-trips");
+        CHECK(r.pos == r.len, "audit body fully consumed");
+
+        // A category byte this build cannot interpret is refused rather than compared
+        // against the wrong thing: the byte IS the identity on the wire.
+        uint8_t bad[64];
+        memcpy(bad, buf, (size_t)w.len);
+        bad[9] = 99;                // seq(4) + map_hash(4) + n(1), then the first cat byte
+        Reader rb(bad, w.len);
+        AuditBody gotBad;
+        CHECK(!ReadAudit(rb, &gotBad), "audit refuses an unknown category");
+    }
+
+    // audit_req: seq, cat.
+    {
+        Writer w(buf, sizeof(buf));
+        WriteAuditReq(w, 7, 3);
+        Compare("audit_req", buf, w.len);
+
+        Reader r(buf, w.len);
+        uint32_t seq = 0;
+        uint8_t cat = 0;
+        CHECK(ReadAuditReq(r, &seq, &cat), "audit_req reads back");
+        CHECK(seq == 7 && cat == 3, "audit_req fields round-trip");
+        CHECK(r.pos == r.len, "audit_req body fully consumed");
+    }
+
+    // audit_items: seq, cat, total, first, then {str key, u64 value} rows to the end.
+    {
+        AuditItem items[2];
+        memset(items, 0, sizeof(items));
+        strcpy(items[0].key, kItemKey);
+        items[0].value = 1;
+        strcpy(items[1].key, "BrokeBarricade");
+        items[1].value = 0;
+
+        Writer w(buf, sizeof(buf));
+        WriteAuditItemsHeader(w, 9, 4, 3, 0);
+        int next = WriteAuditItemsChunk(w, items, 2, 0);
+        CHECK(next == 2, "audit_items wrote both rows");
+        Compare("audit_items", buf, w.len);
+
+        Reader r(buf, w.len);
+        uint32_t seq = 0;
+        uint8_t cat = 0;
+        uint16_t total = 0, first = 0;
+        CHECK(ReadAuditItemsHeader(r, &seq, &cat, &total, &first), "audit_items header reads");
+        CHECK(seq == 9 && cat == 4 && total == 3 && first == 0, "audit_items header round-trips");
+        AuditItem got;
+        CHECK(ReadAuditItem(r, &got) && strcmp(got.key, kItemKey) == 0 && got.value == 1,
+              "audit_items first row round-trips");
+        CHECK(ReadAuditItem(r, &got) && strcmp(got.key, "BrokeBarricade") == 0 && got.value == 0,
+              "audit_items second row round-trips");
+        CHECK(!ReadAuditItem(r, &got), "audit_items stops at the end of the body");
+        CHECK(r.pos == r.len, "audit_items body fully consumed");
     }
 }
 

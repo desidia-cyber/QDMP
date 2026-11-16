@@ -43,6 +43,7 @@ struct Config {
     int  player_body;      // ... as the game's own player class (B7 / G4 / G5)
     int  dialogue_sync;    // lock + first-answer-decides
     int  dialogue_view;    // drive the partner's own dialogue widget in spectator mode (0x50)
+    int  view_camera;      // [view-fix] the spectator camera at the TALKER's eye (qdview.h)
     int  stream_union;     // level-streaming union guard
     int  travel_sync;      // G6 map/world announcement, follow and hard handshake
     int  cutscene_sync;    // play/hold a partner's cutscene, resume together
@@ -62,6 +63,42 @@ struct Config {
     int  partner_save_sync; // the partner's save writes this machine's own slot
     int  combat_vfx;       // every player projectile copied, plus its impact and cast VFX (EFFECT kind 5)
     int  death_respawn;    // a death is per player: back at the owner's rest point, penalised (qdrespawn.h)
+    // [gap-world] qdworldset.h / qdrest.h / qdpuzzle.h.  Two switches because they are two
+    // separate write risks: one edits the game's own save arrays and two achievement
+    // counters, the other rotates placed actors.  Both default OFF until a live run shows
+    // the `worldset:` / `rest:` / `puzzle:` lines.
+    int  world_set_sync;   // the UNION of UnlockedTeleporters/SavePointsVisited/ShopTeleporter-
+                           // Destinations + a rest as a world event (K_WORLD_SET 0x60, K_REST_WORLD 0x61)
+    int  puzzle_sync;      // the rotation of a placed puzzle prop (K_PUZZLE 0x62)
+    // [gap-boss] qdbossphase.h. One switch for the phase authority, because the arena rule
+    // and the ending choice are the same fact seen at three moments: "the machine that RUNS
+    // this boss decides what phase it is in, the other machine drives its own copy through
+    // the game's own setters".  OFF until a live run has shown the Queen's transition play
+    // on both screens (`boss phase: ... driven here`).
+    int  boss_phase_sync;  // owner-authoritative boss phase + arena rule + ending choice
+    // [play-p3] qdending.h.  The FOUR endings as a shared fact: the machine whose own game runs
+    // an ending entry publishes it, and the partner runs the same entry on its own copy (so its
+    // own cutscene plays and its own player wakes up).  It also gates the mod's level forcing
+    // while a wake-up is pending -- the game's own wake-up waits on level management.
+    int  ending_sync;      // the choice crosses, and the wake-up is not starved by the mod
+    // [desync-audit] qdaudit.h.  READ-ONLY and cheap: it digests the containers the other
+    // lanes already maintain and compares them, so it costs no game state and writes
+    // nothing.  ON by default once proven -- a playthrough must be able to PROVE the two
+    // machines agree, and a diagnostic that is off by default proves nothing.
+    int  desync_audit;     // periodically digests + compares the synced world state (K_AUDIT)
+    int  audit_ms;         // how often the digest pass runs (default 10000 = 10 s)
+    // [join-sync] qdjoin.h.  On every session establishment the PEER adopts the HOST's
+    // world/progression state exactly, INCLUDING reverting what the peer holds and the host
+    // does not (the flag bank and the object lane are monotone and can never lower a
+    // value).  OFF until the live proof shows the `join: reconciled to host -- ...` line,
+    // `audit: OK`, and the backup directory; it WRITES the peer's save containers and
+    // persists its slot, so it is a write path like every other one.
+    int  join_reconcile;   // peer adopts the host's world/progression at every establish
+    // [gap-combat] qdhazard.h.  Two switches because they are two risks: the first makes
+    // the local player take damage from a MIRRORED hazard, the second lets a peer-run
+    // enemy hurt the host (which was a silent no-op before: K_DAMAGE was host -> peer).
+    int  hazard_sync;      // mirror spawned hazards; each machine hurts its own player
+    int  damage_both_ways; // K_DAMAGE describes a hit on the OTHER machine's player
 
     // behaviour
     int  host_authoritative;   // 1 = only the host writes world facts
@@ -133,6 +170,10 @@ inline void ConfigDefaults()
     // hijack a player's camera; the shipped `qdcoop.ini` turns it on.  The lane calls
     // DISPLAY functions only -- the dialogue's outcomes still ride the flag lane.
     c.dialogue_view    = 0;
+    // [view-fix] OFF by default like every other engine write; the shipped `qdcoop.ini`
+    // turns it on.  It spawns a temporary CameraActor and forces the talker's level
+    // visible on this machine, so a missing ini falls back to the old behaviour.
+    c.view_camera      = 0;
     c.stream_union     = 0;
     // Travel is independent of the streaming union on purpose: a hard map switch is a
     // world change, not a sublevel load, and it must still be followed with
@@ -150,6 +191,20 @@ inline void ConfigDefaults()
     // writes its health.  Enable it after a run has shown the `respawn:` lines
     // (mod/doc/features/death-respawn.md).
     c.death_respawn    = 0;
+    // [gap-world] OFF like every other write path.  `world_set_sync` appends to the game's own
+    // `Array<Object>` members and raises `TeleporterUnlockCount`/`CheckpointUnlockCount`, and
+    // it turns a rest into a world event (which CLEARS the local enemy table through the
+    // game's own `ClearAllEnemySaveStates`).  `puzzle_sync` rotates placed actors.  Enable
+    // each after a run has shown its `worldset:` / `rest:` / `puzzle:` lines
+    // (mod/doc/features/gap-world.md).
+    c.world_set_sync   = 0;
+    c.puzzle_sync      = 0;
+    // OFF until proven live, for the same reason: it CALLS the game's own state setters on
+    // another machine's boss copy, which runs that copy's transition body.
+    c.boss_phase_sync  = 0;
+    // [play-p3] OFF until a live run shows the chooser's `boss end: sent` and the follower's
+    // `boss end: driven here` -- it is a write path on the partner's own boss copy.
+    c.ending_sync      = 0;
 
     // OFF until proven live, like every other write path.  `quest_item_sync` also
     // NARROWS two proven lanes (the inventory mirror and the shared drop set), so it is
@@ -158,6 +213,24 @@ inline void ConfigDefaults()
     c.quest_item_sync = 0;
     c.kill_xp_sync = 0;
     c.partner_save_sync = 0;
+
+    // [desync-audit] ON, and it is the one switch here that reads nothing but state the
+    // other lanes already hold.  Proven live: a clean session logs `audit: OK ...` every
+    // minute, and a deliberately de-synced item is reported by name and value.
+    c.desync_audit = 1;
+    c.audit_ms = 10000;
+    // [join-sync] OFF, like every other write path.  It writes the peer's flag bank, its
+    // `SavableActorStates`, its `EnemySaveStates`, its key items and its save arrays, then
+    // persists the slot -- enable it after a live run has shown the
+    // `join: reconciled to host -- ...` line and `audit: OK` (mod/doc/features/join-sync.md).
+    c.join_reconcile = 0;
+
+    // [gap-combat] OFF until a live run has shown the `hazard:` lines (a copy drawn on the
+    // machine that did not spawn it, and damage applied by that machine to ITS OWN player).
+    // `damage_both_ways` is the smaller of the two and the one to flip second: it only
+    // widens an existing, proven receiver to the other direction.
+    c.hazard_sync = 0;
+    c.damage_both_ways = 0;
 
     c.host_authoritative = 1;
     c.allow_plaintext_internet = 0;
@@ -230,25 +303,12 @@ inline bool ConfigPath(char* out, int cap)
     return true;
 }
 
-// Load the ini.  A missing file is normal and means "defaults": the DLL must be
-// installable without one.  A malformed line is logged and skipped, never fatal.
-inline int ConfigLoad()
+// Parse an ini's TEXT into `Cfg()`.  Split out of ConfigLoad so the file-reading half and
+// the parsing half can be tested separately -- which is the specific test that would have
+// caught the 8192-byte truncation (a parser fed a truncated string looks perfectly correct;
+// only "did the file's LAST switch arrive" catches it).  Returns the line count.
+inline int ConfigParseText(char* buf)
 {
-    ConfigDefaults();
-
-    char path[MAX_PATH];
-    if (!ConfigPath(path, MAX_PATH)) return 0;
-
-    HANDLE h = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, nullptr,
-                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (h == INVALID_HANDLE_VALUE) return 0;
-
-    char buf[8192];
-    DWORD got = 0;
-    (void)ReadFile(h, buf, sizeof(buf) - 1, &got, nullptr);
-    CloseHandle(h);
-    buf[got] = 0;
-
     Config& c = Cfg();
     char section[32] = "";
     char* p = buf;
@@ -294,12 +354,16 @@ inline int ConfigLoad()
         else if (detail::StrEq(k, "KillXPSync"))    c.kill_xp_sync = detail::ParseInt(v, c.kill_xp_sync);
         else if (detail::StrEq(k, "PartnerSaveSync")) c.partner_save_sync = detail::ParseInt(v, c.partner_save_sync);
     else if (detail::StrEq(k, "CombatVfx"))     c.combat_vfx = detail::ParseInt(v, c.combat_vfx);
+        else if (detail::StrEq(k, "DesyncAudit"))  c.desync_audit = detail::ParseInt(v, c.desync_audit);
+        else if (detail::StrEq(k, "AuditMs"))      c.audit_ms = detail::ParseInt(v, c.audit_ms);
+        else if (detail::StrEq(k, "JoinReconcile")) c.join_reconcile = detail::ParseInt(v, c.join_reconcile);
         else if (detail::StrEq(k, "EnemySync"))     c.enemy_sync = detail::ParseInt(v, c.enemy_sync);
         else if (detail::StrEq(k, "MirrorSpawn"))   c.mirror_spawn = detail::ParseInt(v, c.mirror_spawn);
         else if (detail::StrEq(k, "PuppetSync"))    c.puppet_sync = detail::ParseInt(v, c.puppet_sync);
         else if (detail::StrEq(k, "PlayerBody"))    c.player_body = detail::ParseInt(v, c.player_body);
         else if (detail::StrEq(k, "DialogueSync"))  c.dialogue_sync = detail::ParseInt(v, c.dialogue_sync);
         else if (detail::StrEq(k, "DialogueView"))  c.dialogue_view = detail::ParseInt(v, c.dialogue_view);
+        else if (detail::StrEq(k, "ViewCamera"))    c.view_camera = detail::ParseInt(v, c.view_camera);
         else if (detail::StrEq(k, "StreamUnion"))   c.stream_union = detail::ParseInt(v, c.stream_union);
         else if (detail::StrEq(k, "TravelSync"))    c.travel_sync = detail::ParseInt(v, c.travel_sync);
         else if (detail::StrEq(k, "CutsceneSync"))  c.cutscene_sync = detail::ParseInt(v, c.cutscene_sync);
@@ -310,6 +374,16 @@ inline int ConfigLoad()
         else if (detail::StrEq(k, "SuppressMenuPause")) c.suppress_pause = detail::ParseInt(v, c.suppress_pause);
         else if (detail::StrEq(k, "ObjectScan"))   c.object_scan = detail::ParseInt(v, c.object_scan);
         else if (detail::StrEq(k, "DeathRespawn"))  c.death_respawn = detail::ParseInt(v, c.death_respawn);
+        else if (detail::StrEq(k, "BossPhaseSync")) c.boss_phase_sync = detail::ParseInt(v, c.boss_phase_sync);
+        else if (detail::StrEq(k, "EndingSync"))    c.ending_sync = detail::ParseInt(v, c.ending_sync);
+        else if (detail::StrEq(k, "WorldSetSync")) c.world_set_sync = detail::ParseInt(v, c.world_set_sync);
+        else if (detail::StrEq(k, "PuzzleSync"))    c.puzzle_sync = detail::ParseInt(v, c.puzzle_sync);
+        // [gap-combat] qdhazard.h.  HazardSync mirrors an enemy/boss-spawned hazard so both
+        // machines see it and each hurts only its own player; DamageBothWays lets a
+        // peer-run enemy describe a hit on the HOST's player, which K_DAMAGE could not
+        // express before (host -> peer only).
+        else if (detail::StrEq(k, "HazardSync"))    c.hazard_sync = detail::ParseInt(v, c.hazard_sync);
+        else if (detail::StrEq(k, "DamageBothWays")) c.damage_both_ways = detail::ParseInt(v, c.damage_both_ways);
         else if (detail::StrEq(k, "HostAuthoritative")) c.host_authoritative = detail::ParseInt(v, c.host_authoritative);
         else if (detail::StrEq(k, "AllowPlaintextInternet")) c.allow_plaintext_internet = detail::ParseInt(v, c.allow_plaintext_internet);
         else if (detail::StrEq(k, "SpawnAttemptsMax")) c.spawn_attempts_max = detail::ParseInt(v, c.spawn_attempts_max);
@@ -321,7 +395,53 @@ inline int ConfigLoad()
 
     if (c.enemy_rows_per_tick > 20) c.enemy_rows_per_tick = 20;
     if (c.player_hz != 30 && c.player_hz != 60) c.player_hz = 30;
+    // A zero or negative interval would run the digest every frame; a sub-second one would
+    // ask a slow lane to keep up with a fast pass.  Clamp rather than accept.
+    if (c.audit_ms < 1000) c.audit_ms = 1000;
+    if (c.audit_ms > 120000) c.audit_ms = 120000;
     return line;
+}
+
+// Load the ini.  A missing file is normal and means "defaults": the DLL must be
+// installable without one.  A malformed line is logged and skipped, never fatal.
+inline int ConfigLoad()
+{
+    ConfigDefaults();
+
+    char path[MAX_PATH];
+    if (!ConfigPath(path, MAX_PATH)) return 0;
+
+    HANDLE h = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, nullptr,
+                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return 0;
+
+    // THE WHOLE FILE, NOT A PREFIX.  This used to read a fixed 8192 bytes in ONE
+    // ReadFile, which silently truncated the shipped `qdcoop.ini` the moment it grew
+    // past that: MEASURED (final soak) the shipped file is 21265 bytes, so every
+    // switch declared after byte 8191 -- PlayerBody, DialogueView, StreamUnion,
+    // MoverSync, PlatformRide, LootSync, SuspendGuard, SuppressMenuPause, CombatVfx,
+    // DeathRespawn, QuestItemSync, KillXPSync, PartnerSaveSync -- took its COMPILED
+    // DEFAULT and stayed 0.  The boot line said so and nothing else did:
+    //   switches: ... playerBody=0 dialogueView=0 stream=0 travel=0 cutscene=0
+    //             movers=0 loot=0 suspend=0 pause=0 ...
+    // A shipped-on switch that is off is worse than one that is off on purpose: the
+    // file is the product's promise, and the player has no way to see the difference.
+    //
+    // Read to EOF in a loop, and refuse a file that is implausibly large rather than
+    // grow without bound -- an ini is a configuration, not a dataset.
+    static const DWORD kIniMax = 256 * 1024;
+    static char s_buf[kIniMax + 1];
+    DWORD got = 0;
+    for (;;) {
+        if (got >= kIniMax) break;
+        DWORD chunk = 0;
+        if (!ReadFile(h, s_buf + got, kIniMax - got, &chunk, nullptr)) break;
+        if (chunk == 0) break;
+        got += chunk;
+    }
+    CloseHandle(h);
+    s_buf[got] = 0;
+    return ConfigParseText(s_buf);
 }
 
 } // namespace qd

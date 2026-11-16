@@ -5964,3 +5964,118 @@ the castle), kill sets diff 0, the world drawn on both screens during the fight.
   mod's fallback stops the held fade at 25 s and the world is drawn (run 46 post-ending shot: the
   beach at night facing a rock, mean 4-6, so the brightness check cannot tell it from black).
   The main-menu skip on the rig is the remaining suspect.
+
+---
+
+## 16 November 2026 -- the combined soak (every shipped switch, one pair): three seam bugs
+
+Detail and the full results table: **[mod/doc/features/final-soak.md](features/final-soak.md)**.
+Rig: `mod/tools/session-finalsoak.ps1`, one boot, one pair, the SHIPPED `mod/qdcoop.ini`
+verbatim (only `RelayHost` and `LogLevel` rewritten).
+
+This pass existed to answer a question no per-lane run can: what happens when **all** the
+switches are on at once. It found three defects that each live in the seam between a lane and
+the configuration, and none of them was visible from a single-lane session.
+
+- **The shipped ini was silently truncated at 8192 bytes** (`qdconfig.h ConfigLoad` read a
+  fixed 8192-byte prefix; the file had grown to 21265). Thirteen shipped-on switches --
+  `PlayerBody`, `DialogueView`, `StreamUnion`, `MoverSync`, `PlatformRide`, `LootSync`,
+  `SuspendGuard`, `SuppressMenuPause`, `CombatVfx`, `DeathRespawn`, `QuestItemSync`,
+  `KillXPSync`, `PartnerSaveSync` -- ran at their compiled default of `0`. The boot line
+  printed the truth and nothing acted on it. Fixed by reading to EOF; the parse loop is now
+  `ConfigParseText()` so it is testable, and `test_config.cpp` (new, 42 assertions) reads the
+  repository's real ini and asserts the LAST switch arrives -- plus that the first 8192 bytes
+  alone do NOT contain it, which is the assertion that pins the bug.
+- **A respawn cleared `bDead` but left `IsDead` set** (`qdrespawn_engine.h`), and `IsDead` is
+  what every other lane reads. Measured: the host respawned at `1:32:59` and then, for four
+  minutes while it stood there fighting, logged
+  `dialogue view: not hijacking the local player: the local player is dead` 16 times and
+  `save: the partner's save could not be mirrored within 20 s (blocked: the local player is dead)`.
+  Both flags are now written, read back, and reported on the respawn line.
+- **The relay dropped the whole enemy lane above 20 live enemies** (`protocol.rs`
+  `Kind::EnemyRows`): the header's `n` is the LEDGER size, but a guard compared it against the
+  per-datagram writer cap, so a 23-enemy world produced
+  `malformed datagram ... (kind 0x14): enemy rows per datagram exceeds limit: 23 > 20`
+  **1163 times in one run** and neither peer saw a single enemy row. Fixed to the same
+  chunked-container rule `OBJECTS` already uses; the encoder keeps the cap.
+
+Also in this pass: six bodies that had no shared wire vector (`KILL_XP`, `SAVE`,
+`PLATFORM_RIDE`, `RESPAWN_DOWN/UP/REST`) got one in all three places, byte-identical between
+native and Rust (80 vectors matched, 0 failed, 0 missing); and `WIRE.md` section 3 was made
+contiguous -- **§3.21 `TRIGGER` had no section at all** and is now written, `§3.23
+PLATFORM_RIDE` was moved back inside section 3 (it had been sitting after the "Reliable
+kinds" block), and `3.26/3.27` renumbered to `3.25/3.26` with every cross-reference updated.
+
+Live-proven in the combined run: door open **and** close with the door's own animation; a pot
+broken on one machine and broken on the other with NO drop spawned on the receiver; a secret
+wall opened through the object lane; keys granted and then USED to zero with the peer's copy
+removed by the tombstone; a kill paying both players; a rest mirrored by the partner's own
+writer with the echo bracketed; a death that stacks to 90 %, respawns at the rest point with
+`input=1 walking=1`, and holds the cap; three weapon families equipped, drawn by the partner
+and attacked; and a lift ridden with the place carried while it moves.
+
+Not proven: the crossbow's projectile (it equipped and fired, but the game answered
+`montage none => none` -- the pawn was in the previous weapon's recovery), and the 300 s idle
+soak, which a concurrent delegate's live session contaminated (both sessions wrote the same
+`qdcoop-qd1.log`; the harness now refuses to run without the LIVE lock).
+
+## Session 30 - 2026-11-16 (boss phases: the state machine that was said not to exist)
+
+Harness: `mod/tools/session-bossphase.ps1 -Phase bphase [-Only <bosses>]`, a `bphase` phase
+added to the Session 26 rig and run through `mod/tools/run-gapboss.ps1` (which holds the LIVE
+lock for the whole session and releases it). Play set, 27 switches, with `BossPhaseSync=1`.
+
+**The measurement that unblocked GAP rank 1 and rank 2.** `SYNC-GAPS` and `WIRE.md` both said
+boss phases were inexpressible because `Phase`, `bBoss` and `OnSubStateChanged` appear "only in
+the exe name block and in zero cooked packages". That is true of those NAMES and false of the
+mechanism. The cooked `Queen_BP` package (1194 names, 161 exports) imports the NATIVE base class
+`FS_EnemyCharacterBase`, which carries a generic state machine -- `CurrentStateIndex` and
+`CurrentSubState` (int32, readable and writable), the setters `SetCurrentStateIndex`/
+`SetCurrentSubState`, and the events `OnStateIndexChanged`/`OnSubStateChanged` -- and
+`Queen_BP` itself exports `DoStateTransition`, `OnPhaseChanged`, `DoOrbAnimation`, `OrbAttack`,
+`SetUpPlayerForOrbCutscene`, `SetUpBossForOrbCutscene`, `OrbProjectileHitPlayer`, `KillOrbs`,
+`UnlockFromOrbStuff`, `SipehaTransitionEnded`, `Ending1Complete`, `Ending2CutsceneEnded`, and
+imports `Queen_Nude_Data`, `Queen_P1_P2_Transition_Montage` and all three ending/Sipeha
+cutscene managers.
+
+| Item | Result | Proof |
+|---|---|---|
+| The state machine resolves | **closed** | `enemy sync: FS_EnemyCharacterBase found` on both machines |
+| The Queen's state is READABLE | **closed** | `rig: boss phase lever -- Queen_BP_C guid=C88FFC0C CurrentStateIndex=0 CurrentSubState=0` |
+| The owner publishes a TRANSITION | **closed** | `boss phase: sent guid=C88FFC0C state=1 sub=0 rev=4 (TRANSITION)` (4:04:28.186) |
+| The follower drives its OWN copy through the game's setter+event | **closed** | peer `boss phase: C88FFC0C driven here state=1 sub=0 (state written, OnStateIndexChanged ran)` (4:04:30.929) |
+| A repeated state does not re-run the transition | **closed** | driving state 1 again produced no second `driven here` line |
+| The arena rule for an absent player | **closed (stated + logged)** | `boss arena: fight guid=C88FFC0C CLOSED present=2 (the fight CONTINUES with the player who is here; the absent one may walk back in)` |
+| Both machines agreed through it | **closed** | `host=Ruins_Level_00 peer=Ruins_Level_00 agree=1`, `area='600_Castle'` both, `WORLD DIVERGENCE 0`, kill sets `diff=0` |
+| Nothing crashed | **closed** | `faults=0 err=0` both, no dump, both alive at the end |
+
+Run 1 was 28 PASS / 7 FAIL, and **all 7 FAILs are harness framing**, each verified in the
+transcript: the class-resolve check windowed 40 s from the phase's own mark while the lane
+resolves the class once at boot; the `return0` step drove state 0 onto a copy already at 0
+(no change, so a correct lane published nothing); and the shared-HP gate was armed for the
+whole phase, so the end-of-run comparison had `compared=0` -- a check that prevented its own
+measurement. All three are fixed in the harness.
+
+### Changes
+
+1. `qdbossphase.h`: the rules -- revision ordering (strictly older is stale, the SAME revision
+   with different values heals, a newer one applies), `Decide`/`BarrierFor` for the arena,
+   `IsAuthority` (the machine that runs the boss; the survivor takes over after 6 s of owner
+   silence), `ShouldPublish`/`NextRev`, `EndingFlag`/`EndingMatchesBoss`, `PhaseTrack`/`TrackSet`.
+2. `K_BOSS_PHASE` 0x5C / `K_BOSS_ARENA` 0x5D / `K_BOSS_END` 0x5E, reliable; bodies 29/22/22
+   bytes; native and Rust byte-identical (`test_vectors`: 100 matched, 0 failed, 0 missing).
+3. The engine half (`bossphase_lane` in `proxy.cpp`): read the int32 property with its SIZE
+   checked; drive with the property FIRST and the event SECOND (the order is the contract);
+   refuse any ordinal outside `-1..=255` rather than writing it into a Blueprint graph.
+4. A rig lever `qd.bphase <Class>[=<state>[,<sub>]]#nonce` that reads with no `=` and drives
+   through the SAME call the follower uses, so the run measures the lane rather than the lever.
+
+### Open
+
+- The Queen's transition was driven by the rig, not by playing the fight to HP 0: the harness
+  cannot reliably reach the phase threshold. What that leaves unmeasured is the trigger, not
+  the crossing -- `DoStateTransition` itself is not called directly (the lane writes the
+  property and dispatches the graph's own `OnStateIndexChanged`).
+- Arena post-process (`Queen_BossArena_PPC` et al.) and per-cue boss music remain unsynced;
+  see `mod/doc/features/gap-boss.md` §5 for why each needs a decision first.
+- The ending's own wake-up is unchanged and remains a rig question (one solo control run).

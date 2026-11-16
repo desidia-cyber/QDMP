@@ -51,10 +51,26 @@ enum Kind {
     K_OBJECTS     = 0x2A,
     K_ENEMY_SPAWN = 0x2B,
     K_TRIGGER     = 0x2C,   // a partner's body entered/left a placed event volume (qdtrigger.h)
+    // [gap-world] The save-side OBJECT SETS that decide where the pair may travel
+    // (qdworldset.h).  `UnlockedTeleporters`, `SavePointsVisited` and
+    // `ShopTeleporterDestinations` are `Array<Object>`, and only their counters crossed
+    // before, so a destination one player unlocked did not exist in the other's menu and the
+    // pair had to walk everywhere together.  A set is a monotone UNION, chunked across ticks
+    // like every other container here.  WIRE.md 3.31.
+    K_WORLD_SET   = 0x60,
+    // [gap-world] A rest is a WORLD event: `Checkpoint_C` calls `ClearAllEnemySaveStates`, so
+    // a rest on one machine respawns every enemy THERE and nowhere else.  This body makes the
+    // same reset happen on both machines and keeps boss/one-time deaths dead (qdrest.h).
+    // WIRE.md 3.32.
+    K_REST_WORLD  = 0x61,
+    // [gap-world] The intermediate state of a multi-step puzzle, for the props that keep it in
+    // their TRANSFORM and nowhere else: the 287 `Lib_Book_*` placements declare no state
+    // property at all (qdpuzzle.h).  Last-writer-wins per placed key.  WIRE.md 3.33.
+    K_PUZZLE      = 0x62,
     // [progression] One death paid one player's XP; the other pays its own the same amount.
-    // WIRE.md 3.26.
+    // WIRE.md 3.25.
     K_KILL_XP     = 0x40,
-    // [progression] "I saved; write your own slot now."  WIRE.md 3.27.
+    // [progression] "I saved; write your own slot now."  WIRE.md 3.26.
     K_SAVE        = 0x41,
     // [platforms] where a RIDER stands, in the platform's own axes (qdplatforms.h).  The
     // companion of K_MOVERS: MOVERS says where the platform is, this says where the person
@@ -67,6 +83,49 @@ enum Kind {
     K_RESPAWN_DOWN = 0x54,
     K_RESPAWN_UP   = 0x55,
     K_RESPAWN_REST = 0x56,
+    // [desync-audit] The two machines digest the synced world state of the CURRENT map
+    // and report every item that differs (qdaudit.h).  Three kinds, because the steady
+    // state must be cheap: `K_AUDIT` is 12 per-category digests (~141 B) every ten
+    // seconds, and the per-item sets travel only when a digest disagrees.  All three are
+    // UNRELIABLE on purpose -- they are periodic state, and the 2 s request retry is the
+    // repair (a lost digest costs nothing; a lost item chunk is re-asked for).
+    K_AUDIT        = 0x58,   // per-category digests, absolute, latest wins
+    K_AUDIT_REQ    = 0x59,   // "send me your item set for this category"
+    K_AUDIT_ITEMS  = 0x5A,   // one category's items, a cursor across ticks
+    // [gap-boss] The boss PHASE authority (qdbossphase.h).  The shipped build DOES expose
+    // a state machine -- `FS_EnemyCharacterBase.CurrentStateIndex`/`CurrentSubState`, with
+    // the native setters `SetCurrentStateIndex`/`SetCurrentSubState` and the
+    // `OnStateIndexChanged`/`OnSubStateChanged` events -- so a phase is a value the owner
+    // reports and the follower drives through the game's own setters, never a script the
+    // follower re-runs.  Reliable: Session 29 run 15 measured the cost of a lost
+    // transition (the Queen stuck in `DoStateTransition` at minus 200 HP for 45 s).
+    K_BOSS_PHASE   = 0x5C,   // owner -> follower: (rev, state, sub) on change + 2 s repair
+    K_BOSS_ARENA   = 0x5D,   // either -> either: the fight's phase + which players are in
+    K_BOSS_END     = 0x5E,   // either -> either: which of the four endings was chosen
+    // [gap-combat] An enemy/boss-SPAWNED hazard: a magma puddle, an AoE volume, a trap, an
+    // enemy projectile class (qdhazard.h).  Two kinds because a hazard's geometry is STATE
+    // and its class is a FACT: K_HAZARD carries position/radius/cadence and is superseded by
+    // the next row, K_HAZARD_INFO carries the one-off description of a key (its class, so
+    // the receiver can draw it) or of a projectile CLASS's damage.  The damage itself does
+    // not travel here: the machine that owns a player's HP applies it from the mirrored
+    // geometry, so a hazard cannot burn anyone twice.
+    K_HAZARD       = 0x64,   // hazard rows, unreliable, 5 Hz
+    K_HAZARD_INFO  = 0x65,   // "this key exists and is a <class>" / "this class hits for N"
+    // [join-sync] The session-establishment reconcile (qdjoin.h, WIRE.md 3.35).  On every
+    // establishment -- a first connect AND a reconnect after a drop -- the peer asks the
+    // host for its world/progression state and adopts it EXACTLY, including the reverts no
+    // other lane can perform (the flag bank never lowers and the object lane never closes).
+    //   JOIN_REQ    peer -> host  seq u32 | cat u8              (0 = every category)
+    //   JOIN_STATE  host -> peer  seq u32 | cat u8 | sub u8 | total u16 | first u16 | rows
+    //   JOIN_END    host -> peer  seq u32 | mask u8             (bit cat-1 = sent)
+    //   JOIN_ACK    peer -> host  seq u32 | result u8
+    // REQ/END/ACK are one-shot facts (reliable).  STATE is periodic state repeated until the
+    // ack, so it stays unreliable: a lost chunk costs one retry pass, and a 150 KB state
+    // never occupies a reliable slot.
+    K_JOIN_REQ     = 0x68,
+    K_JOIN_STATE   = 0x69,
+    K_JOIN_END     = 0x6A,
+    K_JOIN_ACK     = 0x6B,
     K_LOG         = 0x30,
 };
 
@@ -97,6 +156,19 @@ inline bool IsReliableKind(uint8_t kind)
     // that adds a kind, so an append there is one more place this lane could silently
     // lose its ack and retransmission.
     if (kind == K_KILL_XP || kind == K_SAVE) return true;
+    // [gap-world] Its own line for the same reason: all three are one-shot world facts (an
+    // unlock, a rest, a prop turned once), and a lost one is a destination or a book that
+    // stays wrong on one screen with no way to notice.
+    if (kind == K_WORLD_SET || kind == K_REST_WORLD || kind == K_PUZZLE) return true;
+    // [gap-combat] The DESCRIPTION of a hazard is reliable (it names the class the receiver
+    // must load, and a lost one is a lava pool that is never drawn or felt); the ROWS are
+    // not, because the next one supersedes them.
+    if (kind == K_HAZARD_INFO) return true;
+    // [join-sync] The request, the end-of-state and the ack are one-shot facts (a lost
+    // request is a peer that never reconciles, a lost END is a state that never applies, a
+    // lost ACK makes the host repeat the whole state every 800 ms).  The STATE chunks are
+    // periodic state and stay unreliable.
+    if (kind == K_JOIN_REQ || kind == K_JOIN_END || kind == K_JOIN_ACK) return true;
     return kind == K_HELLO || kind == K_WELCOME || kind == K_INTENT ||
            kind == K_EFFECT || kind == K_ENEMY_DETAIL || kind == K_TRAVEL ||
            kind == K_DAMAGE || kind == K_SUSPEND || kind == K_BOSS ||
@@ -163,6 +235,7 @@ struct Reader {
     uint8_t  U8()  { if (!Room(1)) { ok = false; return 0; } return p[pos++]; }
     uint16_t U16() { uint16_t v = 0; if (!Room(2)) { ok = false; return 0; } memcpy(&v, p + pos, 2); pos += 2; return v; }
     uint32_t U32() { uint32_t v = 0; if (!Room(4)) { ok = false; return 0; } memcpy(&v, p + pos, 4); pos += 4; return v; }
+    uint64_t U64() { uint64_t v = 0; if (!Room(8)) { ok = false; return 0; } memcpy(&v, p + pos, 8); pos += 8; return v; }
     int32_t  I32() { return (int32_t)U32(); }
     int16_t  I16() { return (int16_t)U16(); }
 
@@ -669,6 +742,136 @@ inline bool ReadBoss(Reader& r, BossBody* b)
     return r.ok;
 }
 
+// ---- boss PHASE / ARENA / ENDING (WIRE.md 3.28-3.30, `qdbossphase.h`) ---------
+// THE 3.9b NOTE ABOVE IS SUPERSEDED FOR PHASES.  It said a phase was unexpressible
+// because `Phase`/`bBoss`/`OnSubStateChanged` appear only in the exe and in no cooked
+// package.  That is true of those NAMES and false of the mechanism: the shipped build
+// carries a generic state machine on the NATIVE base class, and it is readable and
+// callable through ordinary reflection:
+//
+//   FS_EnemyCharacterBase.CurrentStateIndex    int32    <- the cursor (read/write)
+//   FS_EnemyCharacterBase.CurrentSubState      int32    <- the sub-state (read/write)
+//   FS_EnemyCharacterBase.SetCurrentStateIndex native   <- callable (int32 NewState)
+//   FS_EnemyCharacterBase.SetCurrentSubState   native   <- callable (int32 NewState)
+//   FS_EnemyCharacterBase.OnStateIndexChanged  event    <- the graph's own transition body
+//
+// `ENEMY_DETAIL.boss` stays as it is (a one-byte observed ordinal, cosmetic, in the
+// unreliable detail sample).  THIS body is the authoritative one: it is reliable, it
+// carries a revision, and it is addressed to a key.
+//
+// Body: guid(16) | rev(u32) | state(i32) | sub(i32) | flags(u8).  See
+// qdwire.h kBossPhase* for the flag meanings and WIRE.md 3.28 for the rule.
+static const uint8_t kBossPhaseAuthority  = 0x01;   // the sender runs the boss
+static const uint8_t kBossPhaseTransition = 0x02;   // a transition the boss itself started
+static const uint8_t kBossPhaseAnimating  = 0x04;   // DoingPhaseAnim was set (diagnostic)
+
+struct BossPhaseBody {
+    uint32_t guid[4];
+    uint32_t rev;
+    int32_t  state;
+    int32_t  sub;
+    uint8_t  flags;
+};
+
+inline void WriteBossPhase(Writer& w, const BossPhaseBody& b)
+{
+    w.Guid(b.guid);
+    w.U32(b.rev);
+    w.I32(b.state);
+    w.I32(b.sub);
+    w.U8(b.flags);
+}
+
+inline bool ReadBossPhase(Reader& r, BossPhaseBody* b)
+{
+    r.Guid(b->guid);
+    b->rev = r.U32();
+    b->state = r.I32();
+    b->sub = r.I32();
+    b->flags = r.U8();
+    return r.ok;
+}
+
+// The fight's own phase, as both machines must agree on it, plus which players are inside.
+// Deliberately NOT the barrier's open/closed bool: "not started" and "over" both mean an
+// open gate but only one of them means "do not release the partner yet".
+static const uint8_t kBossArenaIdle   = 0;
+static const uint8_t kBossArenaOpen   = 1;
+static const uint8_t kBossArenaClosed = 2;
+static const uint8_t kBossArenaDone   = 3;
+static const uint8_t kBossPlayerHost  = 0x01;
+static const uint8_t kBossPlayerPeer  = 0x02;
+
+// Body: guid(16) | rev(u32) | arena(u8) | present(u8).
+// WIRE.md 3.29.  The RULE it carries: a fight that is running CONTINUES when a player is
+// absent -- it is never cancelled and the absent player is never pulled in by force.  A
+// player who died and respawned (`DeathRespawn=1` returns them to their last rest without
+// a world reload) walks back in through the gate, which the door lane already keeps in
+// step on both machines.
+struct BossArenaBody {
+    uint32_t guid[4];
+    uint32_t rev;
+    uint8_t  arena;
+    uint8_t  present;
+};
+
+inline void WriteBossArena(Writer& w, const BossArenaBody& b)
+{
+    w.Guid(b.guid);
+    w.U32(b.rev);
+    w.U8(b.arena);
+    w.U8(b.present);
+}
+
+inline bool ReadBossArena(Reader& r, BossArenaBody* b)
+{
+    r.Guid(b->guid);
+    b->rev = r.U32();
+    b->arena = r.U8();
+    b->present = r.U8();
+    return r.ok;
+}
+
+// Which of the four endings was chosen, and by whom.  WIRE.md 3.30.
+// The choice is made by whichever player makes it; the other FOLLOWS -- the receiver runs
+// the same ending entry on its own copy, so each machine's own game writes its own
+// `EndingNComplete` and `EndingSeen`.  Nothing is invented on the receiving side.
+static const uint8_t kBossEndQueen1  = 1;   // Ending1Complete
+static const uint8_t kBossEndQueen2  = 2;   // Ending2Complete
+static const uint8_t kBossEndSipeha1 = 3;   // Ending3Complete
+static const uint8_t kBossEndSipeha2 = 4;   // Ending4Complete
+
+// Body: guid(16) | rev(u32) | ending(u8) | who(u8).
+struct BossEndBody {
+    uint32_t guid[4];
+    uint32_t rev;
+    uint8_t  ending;
+    uint8_t  who;        // kBossPlayerHost / kBossPlayerPeer
+};
+
+inline void WriteBossEnd(Writer& w, const BossEndBody& b)
+{
+    w.Guid(b.guid);
+    w.U32(b.rev);
+    w.U8(b.ending);
+    w.U8(b.who);
+}
+
+inline bool ReadBossEnd(Reader& r, BossEndBody* b)
+{
+    r.Guid(b->guid);
+    b->rev = r.U32();
+    b->ending = r.U8();
+    b->who = r.U8();
+    return r.ok;
+}
+
+// A trimmed copy is not a smaller body: it is a desynchronised stream.  Every one of the
+// three bodies above must therefore agree with its documented size exactly.
+static const int kBossPhaseBytes = 16 + 4 + 4 + 4 + 1;   // 29
+static const int kBossArenaBytes = 16 + 4 + 1 + 1;       // 22
+static const int kBossEndBytes   = 16 + 4 + 1 + 1;       // 22
+
 // ---- enemy spawn: the CLASS for a key the receiver holds no actor for (WIRE.md 3.9c) --
 // THE GAP THIS CLOSES (Session 16)
 // --------------------------------
@@ -825,12 +1028,14 @@ inline bool ReadDialogue(Reader& r, DialogueBody* d)
 
 // ---- dialogue spectator view (K_DIALOGUE_VIEW 0x50, qddialogue2.h) --------
 // The cursor the talking machine's DialogueManager is showing, so the partner can display
-// the same conversation on its OWN game's dialogue widget.  The lines are NOT in the body:
-// they live in the cooked `FS_DialogueData` asset, identified by its OBJECT NAME, which
-// both machines load from the same package.  What travels is the cursor plus the number of
-// options the talker is offered and the one it picked -- never the dialogue's outcomes,
-// which ride the flag lane as they always did.  Unreliable and latest-wins: a lost sample
-// costs a beat, the next one repairs it.
+// the same conversation on its OWN game's dialogue widget.  The cursor is what identifies the
+// moment; the two TEXT fields are the already-rendered speaker and line the talking machine's
+// own box is showing (WIRE.md 3.22, `mod/doc/features/view-fix2.md`).  Why the text travels:
+// resolving `FS_DialogueData` -> `Greetings[i]` -> `Entries[j]` -> FText on the receiver needs
+// two cooked struct layouts and still would not reproduce the game's format-key pass
+// (`ApplyFormatKeysToDialogue`), while the rendered line is a few hundred bytes once per line
+// and is by definition exactly what the talker is reading.  NEVER the dialogue's outcomes:
+// those ride the flag lane as they always did.
 struct DialogueViewBody {
     uint32_t seq;
     uint32_t npc[4];      // qddialogue.h StableId of the NPC actor
@@ -841,6 +1046,8 @@ struct DialogueViewBody {
     uint16_t options;     // every option the talker can pick from (0 = none on screen)
     uint16_t chosen;      // 0xFFFF = none yet
     char     asset[96];   // the FS_DialogueData object's own name
+    char     speaker[96]; // the speaker text the talker's box shows ("" = none)
+    char     line[512];   // the line text the talker's box shows ("" = not readable)
 };
 
 static const uint16_t kDialogueViewNoOption = 0xFFFF;
@@ -856,6 +1063,8 @@ inline void WriteDialogueView(Writer& w, const DialogueViewBody& d)
     w.U16(d.options);
     w.U16(d.chosen);
     w.Str(d.asset);
+    w.Str(d.speaker);
+    w.Str(d.line);
 }
 
 inline bool ReadDialogueView(Reader& r, DialogueViewBody* d)
@@ -869,6 +1078,8 @@ inline bool ReadDialogueView(Reader& r, DialogueViewBody* d)
     d->options  = r.U16();
     d->chosen   = r.U16();
     if (r.Str(d->asset, sizeof(d->asset)) < 0) return false;
+    if (r.Str(d->speaker, sizeof(d->speaker)) < 0) return false;
+    if (r.Str(d->line, sizeof(d->line)) < 0) return false;
     return r.ok;
 }
 
@@ -1048,6 +1259,106 @@ inline bool ReadDamage(Reader& r, DamageBody* d)
     r.Guid(d->guid);
     d->amount_centi = r.I32();
     d->flags = r.U8();
+    return r.ok;
+}
+
+// ---- enemy/boss-spawned hazards (WIRE.md 3.28a/3.28b) ----------------------
+// K_HAZARD: rev(u32), n(u16), n x { key(16), i32 px,py,pz, u16 radius_cm, u16 tick_ms,
+//            i32 amount_centi, u8 flags }.  Row = 16+12+2+2+4+1 = 37 bytes.
+// K_HAZARD_INFO: kind(u8), key(16), i32 px,py,pz, i32 amount_centi, u16 radius_cm,
+//            u16 tick_ms, u8 flags, str cls(<=200).
+//
+// The rule the receiver obeys (qdhazard.h): a player's HP is owned by exactly one machine,
+// so the hazard's damage to a player is applied by THAT PLAYER'S machine from this
+// geometry.  The amount is therefore a description, never an instruction -- a receiver that
+// cannot apply it drops it rather than inventing one.
+enum HazardInfoKind {
+    HI_FIELD     = 1,   // a hazard key exists: its class + starting geometry
+    HI_FIELD_END = 2,   // the key is gone
+    HI_CLASS_DMG = 3,   // a projectile CLASS's damage (key = the class path's hash)
+};
+
+static const int kHazardRowsMax = 24;
+
+struct HazardRow {
+    uint32_t key[4];
+    int32_t  px, py, pz;      // 1/8 cm, the same quantisation as every other lane
+    uint16_t radius_cm;
+    uint16_t tick_ms;
+    int32_t  amount_centi;
+    uint8_t  flags;
+};
+
+struct HazardInfoBody {
+    uint8_t  kind;
+    uint32_t key[4];
+    int32_t  px, py, pz;
+    int32_t  amount_centi;
+    uint16_t radius_cm;
+    uint16_t tick_ms;
+    uint8_t  flags;
+    char     cls[200];
+};
+
+inline void WriteHazards(Writer& w, const HazardRow* rows, int n)
+{
+    if (n < 0) n = 0;
+    if (n > kHazardRowsMax) n = kHazardRowsMax;
+    w.U32(1);                       // rev: the format's own version
+    w.U16((uint16_t)n);
+    for (int i = 0; i < n; ++i) {
+        w.Guid(rows[i].key);
+        w.I32(rows[i].px); w.I32(rows[i].py); w.I32(rows[i].pz);
+        w.U16(rows[i].radius_cm);
+        w.U16(rows[i].tick_ms);
+        w.I32(rows[i].amount_centi);
+        w.U8(rows[i].flags);
+    }
+}
+
+inline bool ReadHazards(Reader& r, HazardRow* rows, uint16_t* n)
+{
+    *n = 0;
+    uint32_t rev = r.U32();
+    if (!r.ok || rev != 1) return false;
+    uint16_t count = r.U16();
+    if (!r.ok || count > kHazardRowsMax) return false;
+    for (int i = 0; i < (int)count; ++i) {
+        r.Guid(rows[i].key);
+        rows[i].px = r.I32(); rows[i].py = r.I32(); rows[i].pz = r.I32();
+        rows[i].radius_cm = r.U16();
+        rows[i].tick_ms = r.U16();
+        rows[i].amount_centi = r.I32();
+        rows[i].flags = r.U8();
+        if (!r.ok) return false;
+    }
+    *n = count;
+    return r.ok;
+}
+
+inline void WriteHazardInfo(Writer& w, const HazardInfoBody& b)
+{
+    w.U8(b.kind);
+    w.Guid(b.key);
+    w.I32(b.px); w.I32(b.py); w.I32(b.pz);
+    w.I32(b.amount_centi);
+    w.U16(b.radius_cm);
+    w.U16(b.tick_ms);
+    w.U8(b.flags);
+    w.Str(b.cls);
+}
+
+inline bool ReadHazardInfo(Reader& r, HazardInfoBody* b)
+{
+    b->kind = r.U8();
+    if (!r.ok || b->kind < HI_FIELD || b->kind > HI_CLASS_DMG) return false;
+    r.Guid(b->key);
+    b->px = r.I32(); b->py = r.I32(); b->pz = r.I32();
+    b->amount_centi = r.I32();
+    b->radius_cm = r.U16();
+    b->tick_ms = r.U16();
+    b->flags = r.U8();
+    if (r.Str(b->cls, sizeof(b->cls)) >= (int)sizeof(b->cls)) return false;
     return r.ok;
 }
 
@@ -1344,7 +1655,7 @@ inline bool ReadSuspend(Reader& r, SuspendBody* s)
 }
 
 
-// ---- kill XP (WIRE.md 3.26) -------------------------------------------------
+// ---- kill XP (WIRE.md 3.25) -------------------------------------------------
 // One death paid one machine's player `xp`; the other machine pays its own player the same
 // amount IF its own game did not.  `xp` is what the sender MEASURED -- never a value derived
 // from the enemy's data, because this build exposes no enemy XP field and the award is
@@ -1380,7 +1691,7 @@ inline bool ReadKillXp(Reader& r, KillXpBody* b)
     return true;
 }
 
-// ---- save (WIRE.md 3.27) ----------------------------------------------------
+// ---- save (WIRE.md 3.26) ----------------------------------------------------
 // "I saved; write your own slot now."  The detector is the game's own save DISPATCH
 // (`SaveFunctions_C.SaveGameToDisk` and the instance's `GI_SaveGameToDisk`), so a rest
 // point, the game's autosave, a menu save and a scripted save all arrive on this one body.
@@ -1389,7 +1700,7 @@ inline bool ReadKillXp(Reader& r, KillXpBody* b)
 //
 // Body: seq(u32, the sender's own save counter -- monotone, so a retransmit is one
 //       request), role(u8, 1 host / 2 peer, diagnostics only),
-//       route(u8, 1 main slot / 2 the game's own suspend writer -- WIRE.md 3.27).
+//       route(u8, 1 main slot / 2 the game's own suspend writer -- WIRE.md 3.26).
 //
 // A mirrored save is never announced again: the receiver's own dispatch is the echo of the
 // save it ran for the partner, and qdprogression.h's SaveBoard brackets exactly that.
@@ -1537,6 +1848,161 @@ inline bool ReadIntent(Reader& r, IntentBody* b)
     default:
         return false;
     }
+    return r.ok;
+}
+
+// ---- desync audit (WIRE.md 3.27, qdaudit.h) --------------------------------
+// THE QUESTION.  Every other lane reports on itself; nothing can answer "did the two
+// games ever disagree about the world?".  Both machines therefore digest the synced
+// world state of the CURRENT map -- the flag bank, the savable-actor container, the
+// placed-object set, the key-item set, the enemy alive/dead set and boss state, mover
+// and platform positions, the streamed-level union, the map itself, the cutscene and
+// dialogue state, and both players' death-penalty stacks -- and compare.
+//
+// THE SHAPE, AND WHY IT IS TWO STEPS.  The state is up to 1024 enemy keys and 256 placed
+// objects; the body cap is 1200 bytes.  Sending it every ten seconds would be the
+// loudest lane in the session for a question whose answer is almost always "nothing".
+// So the steady state is ONE small body of per-category digests (12 categories, 141
+// bytes), and the per-item sets travel only when a digest disagrees, in answer to a
+// request, split across ticks like every other container here (WIRE.md 3.6's rule: a
+// continuation is a CURSOR ACROSS TICKS, never a fragment).
+//
+// All three kinds are UNRELIABLE and there is no ack: they are periodic state, a lost
+// digest costs one pass, and a lost item chunk is re-asked for after 2 s.  Acknowledging
+// the auditor would make the diagnostic the second-most expensive lane in the mod.
+//
+// CATEGORY ORDER IS THE WIRE ORDER (qdaudit.h `enum Cat`) and must not change without a
+// version bump: `cat` is a byte and both machines must agree which byte means what.
+struct AuditCat {
+    uint8_t  cat;
+    uint64_t digest;     // order-independent sum of the category's item hashes
+    uint16_t count;      // the number of items on the sender
+};
+
+// Body: seq(u32, the sender's audit counter), map_hash(u32, FNV-1a of the sender's own
+// map short name; 0 = not known yet), n(u8), then n x {cat(u8), digest(u64), count(u16)}.
+// 11 bytes a row, so the whole set of twelve is 141 bytes.
+struct AuditBody {
+    uint32_t seq;
+    uint32_t map_hash;
+    int      n;                                  // categories actually stored
+    uint16_t n_sent;
+    AuditCat cat[16];
+};
+
+inline void WriteAuditHeader(Writer& w, uint32_t seq, uint32_t mapHash, uint8_t n)
+{
+    w.U32(seq);
+    w.U32(mapHash);
+    w.U8(n);
+}
+
+inline void WriteAuditCat(Writer& w, uint8_t cat, uint64_t digest, uint16_t count)
+{
+    w.U8(cat);
+    w.U64(digest);
+    w.U16(count);
+}
+
+inline bool ReadAudit(Reader& r, AuditBody* b)
+{
+    b->seq      = r.U32();
+    b->map_hash = r.U32();
+    b->n_sent   = r.U8();
+    b->n        = 0;
+    // A body is read until it ENDS, not until `n_sent` is satisfied -- the same rule
+    // every other container here follows (WIRE.md 3.6, 3.20).  `n_sent` is what the
+    // sender claimed; a disagreement is a malformed body, not a reason to trust a count.
+    for (int i = 0; i < (int)b->n_sent && r.ok && r.Room(1); ++i) {
+        uint8_t cat = r.U8();
+        uint64_t d  = r.U64();
+        uint16_t c  = r.U16();
+        if (!r.ok) return false;
+        if (cat < 1 || cat > 12) return false;          // a category this build cannot read
+        if (b->n >= (int)(sizeof(b->cat) / sizeof(b->cat[0]))) return false;
+        b->cat[b->n].cat = cat;
+        b->cat[b->n].digest = d;
+        b->cat[b->n].count = c;
+        ++b->n;
+    }
+    return r.ok;
+}
+
+// K_AUDIT_REQ body: seq(u32, the sender's counter), cat(u8, 1..12).  5 bytes.
+inline void WriteAuditReq(Writer& w, uint32_t seq, uint8_t cat)
+{
+    w.U32(seq);
+    w.U8(cat);
+}
+
+inline bool ReadAuditReq(Reader& r, uint32_t* seq, uint8_t* cat)
+{
+    *seq = r.U32();
+    *cat = r.U8();
+    if (!r.ok) return false;
+    return *cat >= 1 && *cat <= 12;
+}
+
+// K_AUDIT_ITEMS body: seq(u32, echoed so a reply is attributed to its request), cat(u8),
+// total(u16, the WHOLE set size), first(u16, the index of this chunk's first row), then
+// rows {str key, u64 value} read until the body ends.  A key is at most 79 bytes: the
+// longest identity any category produces is a soft object path (a KeyItems path is 48) or a
+// composed flag name (the game builds `<instance><property>`), and a mover appends a
+// 4-byte axis suffix.  Too short a cap would TRUNCATE a key, and a truncated key hashes to
+// a digest that can never match -- a desync the auditor invented.
+static const int kAuditKeyCap = 80;
+
+struct AuditItem {
+    char    key[kAuditKeyCap];
+    int64_t value;
+};
+
+inline void WriteAuditItemsHeader(Writer& w, uint32_t seq, uint8_t cat,
+                                  uint16_t total, uint16_t first)
+{
+    w.U32(seq);
+    w.U8(cat);
+    w.U16(total);
+    w.U16(first);
+}
+
+// Fills as many rows as fit starting at `first`, returns the next index.  Whole rows or
+// none: a row split across two datagrams is a row neither machine can read.
+inline int WriteAuditItemsChunk(Writer& w, const AuditItem* e, int n, int first)
+{
+    int i = first;
+    while (i < n) {
+        int len = 0;
+        while (e[i].key[len]) ++len;
+        int need = 2 + len + 8;
+        if (w.len + need > w.cap) break;
+        w.Str(e[i].key);
+        w.U64((uint64_t)e[i].value);
+        ++i;
+        if (!w.ok) break;
+    }
+    return i;
+}
+
+inline bool ReadAuditItemsHeader(Reader& r, uint32_t* seq, uint8_t* cat,
+                                 uint16_t* total, uint16_t* first)
+{
+    *seq   = r.U32();
+    *cat   = r.U8();
+    *total = r.U16();
+    *first = r.U16();
+    if (!r.ok) return false;
+    return *cat >= 1 && *cat <= 12;
+}
+
+// Reads one row.  Returns false at the end of the body OR on a malformed row; the caller
+// distinguishes them with `r.ok` and `r.pos < r.len`.
+inline bool ReadAuditItem(Reader& r, AuditItem* out)
+{
+    if (!r.ok || r.pos >= r.len) return false;
+    int n = r.Str(out->key, kAuditKeyCap);
+    if (n < 0) return false;
+    out->value = (int64_t)r.U64();
     return r.ok;
 }
 

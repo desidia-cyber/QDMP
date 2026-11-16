@@ -68,6 +68,7 @@
 #include "qdtravel.h"
 #include "qddialogue.h"
 #include "qddialogue2.h"
+#include "qdview.h"           // [view-fix] the spectator camera's placement + cut policy
 #include "qdsequence.h"
 #include "qdmover.h"
 // [platforms] mover class census, follower easing, and the rider lane (K_PLATFORM_RIDE).
@@ -81,6 +82,9 @@
 #include "qdenemyown.h"
 #include "qdenemydmg.h"
 #include "qdplayerbody.h"
+// [gap-combat] An enemy/boss-SPAWNED hazard: what it is, and the rule that the damage it
+// does to a player is applied by THAT PLAYER'S machine from the mirrored geometry.
+#include "qdhazard.h"
 #include "qdenemyid.h"
 #include "qdenemybw.h"
 #include "qdboss.h"
@@ -94,6 +98,13 @@
 #include "qdtrigger.h"
 #include "qdprogression.h"   // [progression] quest/key items only, kill XP, a mirrored save
 #include "qdrespawn.h"          // [death-respawn] the pure death/penalty/rest-point rules
+#include "qdaudit.h"            // [desync-audit] the digest/diff/grace logic (read-only)
+#include "qdbossphase.h"        // [gap-boss] boss phase authority, arena rule, ending choice
+#include "qdending.h"           // [play-p3] the four endings as a driven fact, and the wake-up
+#include "qdworldset.h"         // [gap-world] the mirrored unlock sets + the two flag rules
+#include "qdrest.h"             // [gap-world] a rest is a world event (pure rules)
+#include "qdpuzzle.h"           // [gap-world] puzzle props whose intermediate state is a transform
+#include "qdjoin.h"             // [join-sync] the session-establishment reconcile (pure rules)
 
 // ---------------------------------------------------------------------------
 // Globals
@@ -128,6 +139,48 @@ void RespawnWorldReset(uint32_t now, const char* why);
 }
 bool RespawnPeerDown();
 
+// [gap-world] The unlock sets, a rest as a world event, and the puzzle props whose state is a
+// transform.  The RULES are qdworldset.h / qdrest.h / qdpuzzle.h; the engine half is
+// `qdworld_engine.h`, included late beside qdrespawn_engine.h for the same reason: it needs
+// the save, reflection and enemy helpers declared in between.  These four are called from the
+// packet dispatch and the tick, both earlier in this file.
+namespace worldsync {
+void NoteLocalRest(uint32_t now, const char* point);
+void OnSet(wire::Reader& r, uint32_t now);
+void OnRest(wire::Reader& r, uint32_t now);
+void OnPuzzle(wire::Reader& r, uint32_t now);
+void Tick(uint32_t now);
+void DevPoll(uint32_t now);
+int32_t CounterDeltaFor(const char* name, int32_t value);
+void CounterRollback(const char* name, int32_t delta);
+}
+
+// [desync-audit] The auditor (qdaudit.h).  The LOGIC is that header; the collection and the
+// wire half live at the end of this file, because they read every lane's container
+// (`g_flags`, `g_actorNow`, `g_objNow`, `g_invNow`, `g_en`, `g_movers`, `g_stream`, `g_map`,
+// `g_cutscene`, `g_talk`, `resp::g_self`) and several of those are declared between here and
+// there.  These are called from the tick and from the packet dispatch, both earlier.
+void AuditPump(uint32_t now);
+void OnAudit(wire::Reader& r, uint32_t now);
+void OnAuditReq(wire::Reader& r, uint32_t now);
+void OnAuditItems(wire::Reader& r, uint32_t now);
+void DevAuditLever(uint32_t now);
+
+// [join-sync] The engine half lives at the end of this file (it calls the audit helper
+// above, the save/reflection layer, the enemy table, the inventory writer and the travel
+// entry points).  The tick and the packet dispatch are earlier, so the entry points are
+// declared here.  `JoinBusy()` is the controlled phase's gate: while it is true the lanes
+// that would echo the reconcile's own writes stand down.
+void JoinReconcilePump(uint32_t now);
+bool JoinBusy();
+void AuditForceNow(const char* why);
+namespace joinsync {
+void JoinOnReq(wire::Reader& r, uint32_t now);
+void JoinOnState(wire::Reader& r, uint32_t now);
+void JoinOnEnd(wire::Reader& r, uint32_t now);
+void JoinOnAck(wire::Reader& r, uint32_t now);
+}
+
 // Session 23: the world-teardown reset.  Defined once, late (every table it drops is
 // declared between here and there), and called from two places: the hard-load path BEFORE
 // it asks the engine for a load, and the tick's world-change block.  `why` is the log line's
@@ -138,6 +191,15 @@ void WorldTeardownReset(uint32_t now, const char* why);
 // Defined late (they are part of the world-teardown block), used by the enemy scan below.
 void HideWorldActor(void* a);
 void ForgetMirror(void* actor);
+
+// [play-p3] qdending.h's engine half (defined after the boss lanes, used EARLIER by the
+// streaming lane's level-management gate and by the ProcessEvent hook):
+//   EndingObserve          -- this machine's own game ran an ending entry: that IS the choice
+//   EndingLevelDriveAllowed-- false while a wake-up is pending (the game owns level management)
+bool RigCallVerb(void* obj, const char* name, void* arg, const char** ranName);
+void EndingObserve(void* self, void* func);
+void EndingApplyLocal(uint8_t ending, uint32_t now);
+bool EndingLevelDriveAllowed(uint32_t now);
 void InstallTestInputHooks();
 // [progression] qdprogression.h's live half.  Declared here because the two death funnels
 // (StoreEnemySaveState and DeathMarkFromRecord) and the ProcessEvent hook all reach them
@@ -202,6 +264,11 @@ FnSaveGameToSlot  g_oSaveGameToSlot = nullptr;
 Net               g_net;
 bool              g_engineReady = false;
 bool              g_sessionLive = false;
+// [join-sync] True only while the reconcile's own `StoreEnemySaveState` restore calls run.
+// `HK_StoreEnemySaveState` lets the game's write land but skips its bookkeeping: those
+// deaths are the HOST's, and ledgering or broadcasting them here would put the peer's old
+// state straight back on the wire.
+bool              g_joinApplying = false;
 uint32_t          g_lastTickMs = 0;
 uint32_t          g_frame = 0;
 
@@ -244,6 +311,14 @@ mover::Board            g_movers;
 loot::Ledger            g_loot;
 suspend::Board          g_suspend;
 uint32_t                g_cutsceneSeq = 0;
+// [desync-audit] What THIS machine last decided its own cutscene state is, in the exact
+// terms `CutscenePump` publishes.  It has to be recorded rather than re-derived: the
+// auditor cannot call `LocalCutscene` itself, because a machine HOLDING the partner's
+// sequence also sees that sequence playing in its own world (the level list is on both)
+// and `CutscenePump` deliberately reports that as "not a local start".  Re-deriving would
+// make the holder audit itself as playing a cutscene it does not own.
+int                     g_cutSelfState = 0;      // 0 none, 1 playing
+char                    g_cutSelfName[96] = {0};
 uint32_t                g_lootRev = 0;
 uint32_t                g_moverRev = 0;
 uint32_t                g_suspendSeq = 0;
@@ -461,6 +536,7 @@ void LogConfig()
           " playerBody=", dec(c.player_body),
           " dialogue=", dec(c.dialogue_sync),
           " dialogueView=", dec(c.dialogue_view),
+          " viewCamera=", dec(c.view_camera),
           " stream=", dec(c.stream_union),
           " travel=", dec(c.travel_sync),
           " cutscene=", dec(c.cutscene_sync),
@@ -471,7 +547,10 @@ void LogConfig()
           " objects=", dec(c.object_sync),
           " interact=", dec(c.interact_sync),
           " trigger=", dec(c.trigger_sync),
-          " pullIn=", dec(c.boss_pull_in));
+          " pullIn=", dec(c.boss_pull_in),
+          " worldSet=", dec(c.world_set_sync),
+          " puzzle=", dec(c.puzzle_sync),
+          " join=", dec(c.join_reconcile));
     // The player body is the one switch whose prerequisites are another switch: without
     // the puppet there is no body to drive, and without the enemy lane there is nowhere
     // for a hit to go.  Say so at load rather than leaving it to be discovered.
@@ -701,6 +780,33 @@ bool QueueFlagIntent(const char* key, int32_t value)
     // sent an intent for every non-zero key in its save the moment it joined.
     if (!g_mirrorBaseline) return true;
 
+    // [gap-world] A counter whose truth is the SUM of both players' acts travels as a DELTA.
+    // See worldset::IsUnionCounter: `TotalChestsOpened` counts distinct chests, the partner's
+    // chest is applied here WITHOUT its payout, so a monotone absolute would converge to
+    // max(a,b) and lose the other player's chests.  The pump sends mode 0 (additive) for these.
+    if (worldset::IsUnionCounter(key)) {
+        int32_t delta = worldsync::CounterDeltaFor(key, value);
+        if (delta <= 0) return true;          // no rise above what has already been reported
+        switch (g_pendingFlags.Observe(key, delta)) {
+        case pending::IntentQueue::kQueued:
+            QDLOG(LOG_INFO, "counter intent queued ", key, " +", dec(delta), " (local ",
+                  dec(value), ")");
+            break;
+        case pending::IntentQueue::kCoalesced:
+            QDLOG(LOG_INFO, "counter intent coalesced ", key, " +", dec(delta));
+            break;
+        case pending::IntentQueue::kEcho:
+        case pending::IntentQueue::kDuplicate:
+            break;
+        case pending::IntentQueue::kOverflow:
+            worldsync::CounterRollback(key, delta);
+            QDLOG(LOG_WARN, "counter intent deferred ", key, " +", dec(delta),
+                  ": pending list full; retried on the next pass");
+            return false;
+        }
+        return true;
+    }
+
     switch (g_pendingFlags.Observe(key, value)) {
     case pending::IntentQueue::kQueued:
         QDLOG(LOG_INFO, "flag intent queued ", key, "=", dec(value));
@@ -726,6 +832,11 @@ bool QueueFlagIntent(const char* key, int32_t value)
 void MirrorVisit(const char* key, int32_t value, void* user)
 {
     (void)user;
+    // [gap-world] A purchase is a local act: its STOCK key never crosses, in either
+    // direction, so buying the last unique item does not empty the partner's shelf
+    // (worldset::IsLocalShopStock).  Not recording it at all is also what keeps the host's
+    // push from carrying it: CollectVisit below only pushes keys the mirror already holds.
+    if (worldset::FlagStaysLocal(key)) return;
     int i = MirrorFind(key);
     if (i >= 0) {
         if (g_mirror[i].last_value != value) {
@@ -734,7 +845,9 @@ void MirrorVisit(const char* key, int32_t value, void* user)
             // A rise only.  The peer's own game never lowers a progression flag, and
             // an intent for a lower value would be refused by the host's monotone
             // rule anyway; acting on one would only add a datagram to the refusal.
-            if (value > g_mirror[i].last_value && !QueueFlagIntent(key, value)) return;
+            // [join-sync] While the reconcile is writing, a rise is ITS write, not the
+            // player's act: the mirror records it but offers no intent.
+            if (value > g_mirror[i].last_value && !JoinBusy() && !QueueFlagIntent(key, value)) return;
             g_mirror[i].last_value = value;
             g_flagsDirty = true;
         }
@@ -744,7 +857,7 @@ void MirrorVisit(const char* key, int32_t value, void* user)
     if (slot >= 0) {
         QDLOG(LOG_INFO, "flag NEW ", key, " = ", dec(value));
         // Not queued: remember it as "not delivered yet" so the next pass is a rise.
-        if (value > 0 && !QueueFlagIntent(key, value)) g_mirror[slot].last_value = 0;
+        if (value > 0 && !JoinBusy() && !QueueFlagIntent(key, value)) g_mirror[slot].last_value = 0;
         g_flagsDirty = true;
     }
 }
@@ -771,7 +884,9 @@ void MirrorObserve(const char* key, int32_t value)
             // A rise only.  The peer's own game never lowers a progression flag, and
             // an intent for a lower value would be refused by the host's monotone
             // rule anyway; acting on one would only add a datagram to the refusal.
-            if (value > g_mirror[i].last_value && !QueueFlagIntent(key, value)) return;
+            // [join-sync] While the reconcile is writing, a rise is ITS write, not the
+            // player's act: the mirror records it but offers no intent.
+            if (value > g_mirror[i].last_value && !JoinBusy() && !QueueFlagIntent(key, value)) return;
             g_mirror[i].last_value = value;
             g_flagsDirty = true;
         }
@@ -781,7 +896,7 @@ void MirrorObserve(const char* key, int32_t value)
     if (slot >= 0) {
         QDLOG(LOG_INFO, "flag ", key, " = ", dec(value));
         // Not queued: remember it as "not delivered yet" so the next pass is a rise.
-        if (value > 0 && !QueueFlagIntent(key, value)) g_mirror[slot].last_value = 0;
+        if (value > 0 && !JoinBusy() && !QueueFlagIntent(key, value)) g_mirror[slot].last_value = 0;
         g_flagsDirty = true;
     }
 }
@@ -1226,6 +1341,9 @@ void PeerApplyFlags(wire::Reader& r)
         int32_t value = 0;
         if (!wire::ReadFlagEntry(r, name, sizeof(name), &value)) break;
         if (!Cfg().flag_sync) continue;
+        // [gap-world] A stock key is the buyer's own, so a host body that carries one (an
+        // older build, or a peer that did not filter) must not write it into this save.
+        if (worldset::FlagStaysLocal(name)) continue;
 
         // The host's body is also its answer to an intent: equal settles it, higher means
         // the authority is already ahead and the value we asked for is implied.  This is
@@ -1277,6 +1395,7 @@ void PeerApplyFlags(wire::Reader& r)
 void PeerFlagIntentPump(uint32_t now)
 {
     if (!Cfg().flag_sync || !g_net.IsPeer() || !g_net.Connected()) return;
+    if (JoinBusy()) return;      // [join-sync] these writes are the reconcile's, not the player's
 
     pending::IntentQueue::Out out[pending::IntentQueue::kMaxPerTick];
     int n = g_pendingFlags.Due(now, out, pending::IntentQueue::kMaxPerTick);
@@ -1286,12 +1405,16 @@ void PeerFlagIntentPump(uint32_t now)
         // kind 1, then str(name) i32(value) u8(mode), which is exactly ReadIntent's
         // I_SET_FLAG layout.  mode 1 is absolute: the mirror observes totals, never
         // deltas, and an additive intent would apply the host's arithmetic twice.
+        // [gap-world] EXCEPT for the keys worldset::IsUnionCounter names, whose value here IS
+        // a delta (QueueFlagIntent converted it) and which must be applied additively -- mode 0
+        // is the flag bank's own additive path, so no new intent kind was needed.
+        const uint8_t mode = worldset::IsUnionCounter(out[i].name) ? 0 : 1;
         uint8_t body[256];
         wire::Writer w(body, sizeof(body));
         wire::WriteIntentHeader(w, wire::I_SET_FLAG, rev);
         w.Str(out[i].name);
         w.I32(out[i].value);
-        w.U8(1);
+        w.U8(mode);
 
         bool sent = w.ok && g_net.SendReliable(wire::K_INTENT, body, w.len);
         if (sent) {
@@ -1325,6 +1448,12 @@ void HostApplyIntent(wire::Reader& r)
 
     if (b.kind == wire::I_SET_FLAG) {
         if (!Cfg().flag_sync) return;
+        // [gap-world] a purchase's stock key is the buyer's own; an intent for one is refused
+        // here so a peer cannot remove an item from the host's shelf either.
+        if (worldset::FlagStaysLocal(b.name)) {
+            QDLOG(LOG_DEBUG, "intent refused (shop stock stays with the buyer): ", b.name);
+            return;
+        }
         // g_flagsRevision is bumped when a body has been FULLY sent, so once anything has
         // gone out it already names the NEXT revision rather than the one on the wire.  A
         // peer can only ever have applied the body's revision, so comparing against the
@@ -4597,6 +4726,8 @@ static bool PartnerIsNear(uint32_t now)
     return isNear;
 }
 
+bool ViewCamEngaged();   // [view-fix] defined with the spectator camera, further down
+
 bool StreamVetoes(const LevelRec* r)
 {
     if (!r || !r->name[0] || !Cfg().stream_union || !g_net.Connected()) return false;
@@ -4612,6 +4743,11 @@ bool StreamVetoes(const LevelRec* r)
     // hide of `050_Ocean` (~20 a second, vetoes 2055 -> 3092), the manager's queue never
     // drained, and what waits on it never ran -- the Queen-intro camera fade on the host
     // (black world, HUD only, the whole fight) and the wake-up after the ending.
+    // [view-fix] THE VIEW IS NOT THE PAWN.  The whole point of the spectator camera is that
+    // it stands at the PARTNER's place; with it engaged, "both players are together" is no
+    // longer the reason the local game would stream this level, so the partner's need is
+    // this machine's need too.
+    if (ViewCamEngaged()) return true;
     return !PartnerIsNear(now);
 }
 
@@ -4857,6 +4993,11 @@ void SendLevelUnion(const char* const* names, int n)
 void StreamPump(uint32_t now)
 {
     if (!Cfg().stream_union) return;
+    // [play-p3] WHILE A WAKE-UP IS PENDING, LEVEL MANAGEMENT IS THE GAME'S.  The ending's own
+    // wake takes a load lock and waits on `FS_WaitForLevelManagement`; every force/re-show this
+    // lane does is another entry in the queue the game is waiting for.  The gate is why the
+    // game's own wake-up can finish (qdending.h, WakeRules::LevelDriveAllowed).
+    if (!EndingLevelDriveAllowed(now)) return;
     static uint32_t lastRefresh = 0, lastApply = 0, lastSend = 0, lastHash = 0;
     if (now - lastRefresh >= 1000) { lastRefresh = now; LevelsRefresh(); }
     if (now - lastApply < 500) return;
@@ -4898,8 +5039,13 @@ void StreamPump(uint32_t now)
     for (int i = 0; i < g_levelN; ++i) {
         LevelRec& r = g_levels[i];
         if (!r.name[0] || !ObjectIsLive(r.ls)) continue;
+        // [view-fix] The spectator camera stands at the partner's place, not at this pawn's,
+        // so "together, the local game streams for both" is the wrong test while it is up:
+        // the view needs the partner's levels shown here even when the two players stand
+        // together (the user's own report was a conversation in the hub).
+        const bool viewElsewhere = ViewCamEngaged();
         bool peer = worldsAgree && g_net.Connected() && g_stream.PeerWants(r.name, now) &&
-                    !PartnerIsNear(now);   // together, the local game streams for both (see StreamVetoes)
+                    (viewElsewhere || !PartnerIsNear(now));   // together, the local game streams for both (see StreamVetoes)
         if (peer) {
             g_force.Need(r.name, now);
             if (r.gameWants != 1 && !LevelVisible(r.ls) && budget > 0) {
@@ -6308,6 +6454,18 @@ struct EnemyRec {
     // machine.  The source decides which deterministic fallback minted the key, and it
     // rides the row's spare flag bits so a hash collision cannot merge two enemies.
     uint8_t  src;
+    // [play-p4b] TRUE when `guid` came from EnemyIdentity's LAST-RESORT fallback -- "this
+    // class at this point", with no spawner and no summoner at all.  That key is computed
+    // from the actor's LIVE transform, so it is a property of THIS machine and of the frame
+    // its scan first met the actor: an AI enemy has walked somewhere by then, and the two
+    // machines meet it at different moments, so the SAME enemy reads a different key on each
+    // side.  MEASURED (R35, 2026-11-16): host held 83 such records and the peer 186, the
+    // difference being exactly the digest difference (580 - 477 = 103); the named items were
+    // `0494fa1e… host=1 peer=-1` and `765eecad… host=-1 peer=1` -- one DragonFly, two keys,
+    // which can never heal because a positional key is never described to the partner.
+    // The audit therefore omits them (AuditCollect, CAT_ENEMY); the record keeps its key for
+    // the local row lane, which is the only thing that key is good for.
+    bool     posKey;
     void*    ownerKeyBy;     // the summoner whose key minted a SRC_SUMMON identity
     float    bossLastHp, bossLastMx;   // the boss's last READABLE HP (a diving fish reads none)
     uint32_t bossLastHpAt;
@@ -6373,6 +6531,9 @@ struct EnemyRec {
     // publish its own rows, and must be destroyed when the owner's row says it is gone.
     bool     mirror;
     bool     mirrorPathSent;   // this key's class path has been published at least once
+    // When it was last published (play-p2b).  A BOSS is re-offered while the boss lane holds no
+    // ACK for it, so this is the interval's clock -- see EnemySpawnPump.
+    uint32_t mirrorPathAt;
     bool     mirrorHidden;     // silence hid the copy; a returning row shows it again
     uint32_t mirrorSpawnAt;
 };
@@ -6414,6 +6575,13 @@ enemyown::OwnerSet g_own;          // who runs each enemy (qdenemyown.h)
 enemydmg::SwingGate g_dmgGate;     // one K_DAMAGE per swing, bounded per second
 enemyid::CoincidentSpawns g_summonOrd;  // coincident spawns per summoner (qdenemyid.h)
 enemybw::Scheduler g_detailBw;     // ENEMY_DETAIL relevance + rate limits
+// [gap-combat] The follower's own scoreboard for the montage lane (COVERAGE-MATRIX GAP 14).
+// Reported once a second by EnemyDetailPump so a live run can state how many enemy
+// animations the COPY actually played, instead of citing one line from one earlier run.
+uint32_t        g_animApplied = 0;      // montages the follower played and read back
+uint32_t        g_animFailed = 0;       // montages Montage_Play could not make stick
+uint32_t        g_animStaleDropped = 0; // details refused because no row backed the key
+uint32_t        g_animReportAt = 0;     // the scoreboard's own clock
 int             g_deadCursor = 0;
 bool            g_inOwnRecord = false;
 bool            g_inRemoteDeath = false;   // a death being applied FROM the other machine
@@ -6682,6 +6850,7 @@ bool EnemyIdentity(EnemyRec& r)
     r.haveGuid = false;
     r.src = enemyid::SRC_SUMMON;
     r.ownerKeyBy = nullptr;
+    r.posKey = false;                        // [play-p4b] only the last-resort fallback sets it
 
     // 1. The authored spawner GUID, the persisted-key path.  It must win where it
     //    exists, and it must not be shared: one spawner owns one managed enemy, so a
@@ -6774,6 +6943,10 @@ bool EnemyIdentity(EnemyRec& r)
             buf[w] = 0;
             enemyid::Hash128(buf, enemyid::kSummonSeed, summonerKey);
             haveSummoner = true;
+            // [play-p4b] This key is "this class, at the point this machine's scan met it".
+            // Marked so the auditor can leave it out: a live-transform key is not an identity
+            // the partner can hold (see EnemyRec::posKey).
+            r.posKey = true;
             QDLOG(LOG_INFO, "enemy id: no summoner for ", (cls[0] ? cls : "?"),
                   "; keyed by class and spawn point");
         }
@@ -8134,10 +8307,17 @@ bool PlayEnemyMontage(EnemyRec& rec, void* mesh, void* montage)
     if (ok) {
         rec.playedOnce = true;
         rec.playFails = 0;
+        // [gap-combat] The lane's own scoreboard (COVERAGE-MATRIX GAP 14).  One verified
+        // playback existed in a log from an earlier session and nothing counted it, so
+        // "enemy attack animations are mirrored" could not be stated for a FIGHT.  These two
+        // counters are reported once a second by EnemyDetailPump, so a run can say how many
+        // montages the follower played rather than "a line appeared somewhere".
+        ++g_animApplied;
         QDLOG(LOG_INFO, "enemy anim: Montage_Play verified by read-back guid=",
               hex32(rec.guid[0]));
     } else if (rec.playFails < 3) {
         ++rec.playFails;
+        ++g_animFailed;      // [gap-combat] counted once per attempt, reported every second
         // The first failure is the interesting one and says which of the two causes it
         // is: nothing playing at all (an AnimBP that plays sequences, not montages), or
         // a different montage (the copy re-selected something of its own).
@@ -8249,10 +8429,18 @@ bool EnemyTargetsProxy(void* actor)
 // machines agree on the map, the partner's interpolated body exists, and that body is
 // inside the attack's own range.  Every one of those is a reason NOT to invent a hit
 // that the game never decided.
+// [gap-combat] THE ARROW POINTS BOTH WAYS NOW.  This used to require `g_net.IsHost()`, and
+// that was the whole of COVERAGE-MATRIX GAP 13: ownership follows the nearer player
+// (`qdenemyown.h`), so an enemy the PEER runs can be the one swinging at the host -- and
+// the host, whose HP only its own machine may write, never heard about it.  The role is not
+// the authority here; "this machine runs the enemy" is, and the gate below already says so.
+// One direction is unchanged and still true: the sender never applies the damage, the
+// receiver's own machine does, so a hit lands exactly once.
 void TrySendEnemyDamage(EnemyRec& r, uint32_t seq, uint8_t anim, uint32_t now)
 {
     if (!Cfg().enemy_sync) return;
-    if (!g_net.IsHost() || !g_net.Connected()) return;
+    if (!g_net.Connected()) return;
+    if (g_net.IsHost() ? false : !Cfg().damage_both_ways) return;
     // The detail caller already filters O_LOCAL, but the gate is repeated because this
     // is the function that decides who may describe a hit; a future caller must not be
     // able to make a frozen follower send one.
@@ -8525,6 +8713,17 @@ void EnemyDetailPump(uint32_t now)
             r.haveGuid = false;
         }
     }
+    // [gap-combat] The follower's montage scoreboard (COVERAGE-MATRIX GAP 14) is reported
+    // BEFORE the early return: `n == 0` means no enemy has a CHANGE this tick, which is the
+    // state a quiet fight spends its time in, and a report that only appears while packets
+    // are being produced cannot answer "did the copy ever animate".
+    if (now - g_animReportAt > 1000) {
+        g_animReportAt = now;
+        if (g_animApplied || g_animFailed || g_animStaleDropped || n > 0)
+            QDLOG(LOG_DEBUG, "enemy anim: applied=", dec((int)g_animApplied),
+                  " failed=", dec((int)g_animFailed), " stale=", dec((int)g_animStaleDropped),
+                  " candidates=", dec(n));
+    }
     if (n == 0) return;
 
     int pick[128];
@@ -8582,7 +8781,11 @@ void EnemyDetailPump(uint32_t now)
         QDLOG(LOG_DEBUG, "enemy detail: candidates=", dec(n), " sent=", dec(got),
               " budgetDrops=", dec((int)g_detailBw.BudgetDrops()),
               " farSkips=", dec((int)g_detailBw.FarSkips()),
-              " overflows=", dec((int)g_detailBw.Overflows()));
+              " overflows=", dec((int)g_detailBw.Overflows()),
+              // [gap-combat] The follower's montage scoreboard (GAP 14): what the COPY has
+              // actually played this session, and what could not be made to stick.
+              " animApplied=", dec((int)g_animApplied), " animFailed=", dec((int)g_animFailed),
+              " animStale=", dec((int)g_animStaleDropped));
     }
 }
 
@@ -8606,10 +8809,20 @@ void OnEnemyDetail(wire::Reader& r, uint32_t now)
     // be played on a same-GUID enemy here.
     const enemy::HostRow* row = g_hostView.Get(d.guid);
     uint32_t age = (row && now > row->rx_ms) ? now - row->rx_ms : 0xFFFFFFFFu;
-    if (!row || age > enemy::HostView::kFreshMs) {
+    // [gap-combat] THE AGE GATE IS NOT THE ANIMATION'S BUSINESS (COVERAGE-MATRIX GAP 14).
+    // A row is required because it is the only evidence that this key is in the SAME world
+    // here and there.  Its age is what made the montage lane look dead in a real fight: rows
+    // are a 16-row rotation over every enemy the owner runs, so in the castle (~600 records)
+    // a given enemy's row is ~2 s old BY DESIGN, and the old `kFreshMs` (1 s) gate threw away
+    // exactly the attack montages this lane exists to mirror.  The staleness bound is the
+    // lane's own dead-row bound instead, and a refusal is counted and explained.
+    if (!row || age > enemy::HostView::kDeadStaleMs) {
+        ++g_animStaleDropped;
         static int stale = 0;
         if (stale++ < 5)
-            QDLOG(LOG_WARN, "enemy detail dropped: no fresh row for guid=", hex32(d.guid[0]));
+            QDLOG(LOG_WARN, "enemy detail dropped: ",
+                  (row ? "the row for guid=" : "no row at all for guid="), hex32(d.guid[0]),
+                  (row ? "" : ""), " age=", dec((int)(age == 0xFFFFFFFFu ? 0 : (int)age)), "ms");
         return;
     }
 
@@ -9011,6 +9224,30 @@ static bool TryConstructMirrorBody(const wire::EnemySpawnBody& s, uint32_t now)
 // from, and small enough that a fight is a handful of keys.
 static const float kMirrorRelevanceCm = 2500.0f;
 
+// A BOSS IS NOT AN AUDIENCE QUESTION (play-p2b).  The 25 m radius above is right for the
+// ordinary roster: it keeps a fight a handful of keys and stops the receiver's queue filling
+// with bodies nobody can see.  A boss is the one enemy for which the two players are
+// GUARANTEED to end up in the same room -- the trigger lane pulls the partner in
+// (`BossPullIn`, 1500 cm), the arena gate closes on both machines, and one bar must be shown
+// on both screens.  So a boss's class description must not depend on where the partner
+// happens to be standing when the fight starts.  MEASURED (2026-11-16, play-p2 run 6): the
+// host spawned the Necronomicon (`enemy id: spawner E6CBFA0B`) and the Demon Spider/Hellbat
+// (`enemy id: spawner 30CACF5B`, `C84B01FE`), but the peer was 30 m away because the rig's
+// `near:<name>` places each machine beside ITS OWN copy of the actor, so the radius test
+// failed for the whole fight: no `enemy spawn: described` line, `boss phase: … this machine
+// holds no live copy`, and `audit: DESYNC boss … [absent on the peer]`.  The class body is
+// small (one path + a pose) and there are only a handful of bosses, so the guarantee costs
+// nothing.
+//
+// WHY THE ROOT CAUSE WAS HARD TO SEE: every refusal in the loop below was a bare `continue`.
+// The reasons are now logged once per key (rate-limited), so "the mod never asked" and "the
+// engine refused" can never again look the same as "the audience was too far".
+static const uint32_t kBossRedescribeMs = 2500;
+
+// The boss lane's ACK table is declared further down (it belongs with the bar selection);
+// `EnemySpawnPump` only needs the one fact "the partner confirmed a live body for this key".
+namespace bosslane { bool PeerAcked(const uint32_t key[4]); }
+
 void EnemySpawnPump(uint32_t now)
 {
     static uint32_t last = 0;
@@ -9026,26 +9263,47 @@ void EnemySpawnPump(uint32_t now)
     for (int i = 0; i < g_enN && sent < 2; ++i) {
         EnemyRec& r = g_en[i];
         __try {
-        if (!r.haveGuid || r.mirror || r.mirrorPathSent) continue;
+        if (!r.haveGuid || r.mirror) continue;
+        // A boss is re-offered while the boss lane holds no ACK for it: the ACK is the one
+        // fact that says the partner really has a body.  A non-boss is offered once, as before.
+        bool bossRedescribe = false;
+        if (r.mirrorPathSent) {
+            if (!r.isBoss || bosslane::PeerAcked(r.guid)) continue;
+            if ((uint32_t)(now - r.mirrorPathAt) < kBossRedescribeMs) continue;
+            bossRedescribe = true;
+        }
         if (!ObjectIsLive(r.actor) || EnemyDead(r.actor)) continue;
         if (!g_own.Running(r.guid)) continue;      // only the machine that simulates it
         ActorXform x;
         if (!ReadActorXform(r.actor, &x)) continue;
-        // NO AUDIENCE, NO BODY.  Measured in Session 20's second boss run: the peer's
-        // drawn position was not known yet, the relevance test was skipped, and the host
-        // described the Green Dragon 177 m away -- marking `mirrorPathSent` forever.  By
-        // the time the peer stood next to the dragon it had no copy, the boss lane NACKed,
-        // and nothing re-sent the class.  The kill still worked (the host owns it), but
-        // the peer's bar could not be raised.  An unknown audience is not "everyone".
-        if (!havePeer) continue;
-        {
+        // NO AUDIENCE, NO BODY -- for an ordinary enemy.  Measured in Session 20's second boss
+        // run: the peer's drawn position was not known yet, the relevance test was skipped, and
+        // the host described the Green Dragon 177 m away -- marking `mirrorPathSent` forever.  By
+        // the time the peer stood next to the dragon it had no copy, the boss lane NACKed, and
+        // nothing re-sent the class.  The kill still worked (the host owns it), but the peer's
+        // bar could not be raised.  An unknown audience is not "everyone".  A BOSS is the
+        // exception (see kBossRedescribeMs above), and its re-describe loop is what makes the
+        // old failure unreachable even there.
+        if (!r.isBoss) {
+            if (!havePeer) continue;
             float dx = x.px - peer[0], dy = x.py - peer[1], dz = x.pz - peer[2];
             if (dx * dx + dy * dy + dz * dz > kMirrorRelevanceCm * kMirrorRelevanceCm) continue;
         }
         float hp = 0, mx = 0;
         if (!EnemyHp(r.actor, &hp, &mx) || hp <= 0.0f) continue;
         char path[wire::kSpawnPathCap];
-        if (avatar::AssetPath(ObjClass(r.actor), path, sizeof(path)) <= 0 || !path[0]) continue;
+        if (avatar::AssetPath(ObjClass(r.actor), path, sizeof(path)) <= 0 || !path[0]) {
+            static uint32_t lastNoPath[4] = {0, 0, 0, 0};
+            static uint32_t lastNoPathAt = 0;
+            bool same = boss::SameKey(lastNoPath, r.guid);
+            if (!same || (uint32_t)(now - lastNoPathAt) > 5000) {
+                memcpy(lastNoPath, r.guid, 16);
+                lastNoPathAt = now;
+                QDLOG(LOG_WARN, "enemy spawn: guid=", hex32(r.guid[0]),
+                      " has no class asset path on this machine; its body cannot be described");
+            }
+            continue;
+        }
         wire::EnemySpawnBody s;
         memset(&s, 0, sizeof(s));
         memcpy(s.guid, r.guid, 16);
@@ -9059,8 +9317,10 @@ void EnemySpawnPump(uint32_t now)
         wire::WriteEnemySpawn(w, s);
         if (w.ok && g_net.SendReliable(wire::K_ENEMY_SPAWN, body, w.len)) {
             r.mirrorPathSent = true;
+            r.mirrorPathAt = now;
             ++sent;
-            QDLOG(LOG_INFO, "enemy spawn: described guid=", hex32(r.guid[0]), " class=", path);
+            QDLOG(LOG_INFO, "enemy spawn: described guid=", hex32(r.guid[0]), " class=", path,
+                  (bossRedescribe ? " (a boss the partner has not acknowledged; re-offered)" : ""));
         }
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             r.actor = nullptr;
@@ -9668,6 +9928,11 @@ static uint32_t g_bossSampleAt = 0;
 static uint32_t g_bossBoundAt = 0;
 
 bool BossKeyIs(const uint32_t g[4]) { return enemy::SameGuid(g_bossKey, g); }
+
+// [play-p2b] The one fact EnemySpawnPump needs: the partner said it HOLDS a live copy of this
+// key.  An ACK is only ever set by the peer's own answer, so a boss the peer never
+// acknowledged keeps being re-offered instead of being described exactly once into the void.
+namespace bosslane { bool PeerAcked(const uint32_t key[4]) { return g_bossAck.Acked(key); } }
 void BossKeyClear(uint32_t now)
 {
     if (g_bossKeyOn) g_bossAck.Clear(g_bossKey);
@@ -9799,9 +10064,10 @@ void BossPump(uint32_t now)
     //    copy may be mid-respawn; only the machine that runs the enemy may say it is dead.
     static bool  alive[kEnemyRecMax];
     static float frac[kEnemyRecMax];
+    static float nearCm[kEnemyRecMax];
     for (int i = 0; i < g_enN; ++i) {
         EnemyRec& r = g_en[i];
-        alive[i] = false; frac[i] = 2.0f;
+        alive[i] = false; frac[i] = 2.0f; nearCm[i] = 0.0f;
         if (!r.haveGuid || !ObjectIsLive(r.actor)) { r.isBoss = false; continue; }
         bool boss = EnemyIsBoss(r.actor, r.spawner);
         if (boss != r.isBoss) {
@@ -9880,6 +10146,23 @@ void BossPump(uint32_t now)
                 }
             }
             if (!engaged || !ActorLevelVisible(r.actor)) alive[i] = false;
+            // HOW CLOSE THE FIGHT IS, for the tie-break below (play-p2b).  Zero when this
+            // machine cannot read either position -- "unknown" must not win a comparison.
+            if (alive[i]) {
+                ActorXform bx = {}, me = {};
+                if (ReadActorXform(r.actor, &bx)) {
+                    if (g_localPawn && ReadActorXform(g_localPawn, &me)) {
+                        float dx = bx.px - me.px, dy = bx.py - me.py, dz = bx.pz - me.pz;
+                        nearCm[i] = sqrtf(dx * dx + dy * dy + dz * dz);
+                    }
+                    motion::MoveOut m = g_peerInterp.Sample(now);
+                    if (m.valid) {
+                        float dx = bx.px - m.px, dy = bx.py - m.py, dz = bx.pz - m.pz;
+                        float d = sqrtf(dx * dx + dy * dy + dz * dz);
+                        if (nearCm[i] <= 0.0f || d < nearCm[i]) nearCm[i] = d;
+                    }
+                }
+            }
         }
     }
 
@@ -9922,16 +10205,31 @@ void BossPump(uint32_t now)
                 if (!g_en[i].haveGuid || !alive[i]) continue;
                 if (g_bossAck.Refused(g_en[i].guid, now)) continue;
                 if (best < 0) { best = i; continue; }
-                // The bar follows the FIGHT: the most-damaged live boss, ties by key (the
-                // rule Session 19 measured as correct -- the host switched to the dragon
-                // the moment it was damaged).  An earlier "keep the key already bound"
-                // preference was wrong in a measured way: it held `17E153F4` (an untouched
-                // boss 8 km away) for the whole run while the dragon was being killed, so
-                // neither bar reached 0.  A tie by key is stable; a preference for the
-                // bound key is not the same thing.
+                // The bar follows the FIGHT: the most-damaged live boss (the rule Session 19
+                // measured as correct -- the host switched to the dragon the moment it was
+                // damaged).  An earlier "keep the key already bound" preference was wrong in a
+                // measured way: it held `17E153F4` (an untouched boss 8 km away) for the whole
+                // run while the dragon was being killed, so neither bar reached 0.
+                //
+                // THE TIE-BREAK IS DISTANCE, NOT THE KEY (play-p2b, measured 2026-11-16).  At
+                // equal HP the old rule compared the LOW 32 BITS OF THE KEY, which is an
+                // arbitrary number: in `300_LIB` an untouched `Boner_ExecutionerMiniboss_BP_C`
+                // (`14FE95EF`) beat the Necronomicon (`E6CBFA0B`) that the players were actually
+                // fighting, and it then kept the bar for the whole fight (`boss: bar key=14FE95EF`
+                // every 3 s while `boss: guid=E6CBFA0B is a boss` had been seen) -- so the one
+                // shared bar showed a bystander on both screens and the encounter boss was never
+                // even asked about.  Distance from the nearest player is the fact that says which
+                // boss IS the fight.  The 500 cm band stops two bosses at a similar range from
+                // swapping the bar every tick; the key order stays as the final deterministic tie
+                // so two machines still agree.
                 float a = frac[i], b = frac[best];
                 if (a < b - 1e-4f) { best = i; continue; }
                 if (a > b + 1e-4f) continue;
+                const float kTieBandCm = 500.0f;
+                if (nearCm[i] > 0.0f && nearCm[best] > 0.0f &&
+                    nearCm[i] + kTieBandCm < nearCm[best]) { best = i; continue; }
+                if (nearCm[i] > 0.0f && nearCm[best] > 0.0f &&
+                    nearCm[best] + kTieBandCm < nearCm[i]) continue;
                 for (int k = 0; k < 4; ++k) {
                     if (g_en[i].guid[k] < g_en[best].guid[k]) { best = i; break; }
                     if (g_en[i].guid[k] > g_en[best].guid[k]) break;
@@ -10532,6 +10830,724 @@ void OnBoss(wire::Reader& r, uint32_t now)
                   " hp=", dec((int)b.hp), " phase=", dec((int)b.phase));
     }
 }
+// ===========================================================================
+// [gap-boss] BOSS PHASE AUTHORITY, THE ARENA RULE, AND THE ENDING CHOICE
+// ===========================================================================
+// qdbossphase.h carries the rules; this is the engine half.
+//
+// THE MEASURED FAILURE this answers (Session 29 run 15, `600_Castle`): the Queen reached
+// HP 0 in phase 1, entered `DoStateTransition` and WAITED at minus 200 HP for 45 s --
+// `CurrentStateIndex=0`, `DoingPhaseAnim=0`, `bDead` disagreeing between two reads.
+// Nobody has ever seen her second phase in co-op (COVERAGE-MATRIX D10, GAP rank 2).
+//
+// WHAT MAKES IT EXPRESSIBLE (measured in the cooked packages, not guessed):
+//   `FS_EnemyCharacterBase` is a NATIVE base class carrying a generic state machine --
+//   `CurrentStateIndex` and `CurrentSubState` (int32 properties), the native setters
+//   `SetCurrentStateIndex`/`SetCurrentSubState`, and the `OnStateIndexChanged` /
+//   `OnSubStateChanged` events a Blueprint graph overrides.  `Queen_BP` (161 exports) adds
+//   `DoStateTransition`, `OnPhaseChanged`, `DoOrbAnimation`, `OrbAttack`,
+//   `SetUpPlayerForOrbCutscene`, `SetUpBossForOrbCutscene`, `OrbProjectileHitPlayer`,
+//   `KillOrbs`, `UnlockFromOrbStuff`, `SipehaTransitionEnded`, `Ending1Complete`,
+//   `Ending2CutsceneEnded`, and imports `Queen_Nude_Data`, `Queen_P1_P2_Transition_Montage`
+//   and all three ending/Sipeha cutscene managers.
+//
+// THE AUTHORITY: the machine that RUNS the boss (the ownership lane's answer, minus a
+// constructed mirror) reads the pair and publishes it with a revision.  The other machine
+// does NOT run a phase script of its own -- it calls the same setter + event on its own
+// copy, so ITS OWN Blueprint graph performs the transition (montage, model swap, cutscene
+// manager, ending write).  That is what makes the two screens identical without the mod
+// ever re-implementing a phase.
+namespace bossphase_lane {
+
+using namespace qd::bossphase;
+
+// Read one int32 property.  The SIZE is checked: a 1-byte property read as 4 bytes would
+// take three neighbouring fields with it, and a boss state cursor must not be confused
+// with the enemy's HP fields.
+static bool ReadStateProp(void* obj, const char* name, int32_t* out)
+{
+    if (!obj || !ObjectIsLive(obj)) return false;
+    int size = 0;
+    int off = FindPropertyOffsetIn(ObjClass(obj), name, &size);
+    if (off < 0) return false;
+    if (size == 1) { *out = (int32_t)*((uint8_t*)obj + off); return true; }
+    if (size != 4) return false;
+    __try { *out = *(int32_t*)((uint8_t*)obj + off); }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    return true;
+}
+
+// Write the same property, read back before reporting success -- a silent failed write is
+// how a boss stays stuck while the log says the lane ran.
+static bool WriteStateProp(void* obj, const char* name, int32_t v)
+{
+    if (!obj || !ObjectIsLive(obj)) return false;
+    int size = 0;
+    int off = FindPropertyOffsetIn(ObjClass(obj), name, &size);
+    if (off < 0 || size != 4) return false;
+    __try { *(int32_t*)((uint8_t*)obj + off) = v; }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    int32_t back = 0;
+    return ReadStateProp(obj, name, &back) && back == v;
+}
+
+static TrackSet g_tracks;
+static uint32_t g_arenaRev = 0;
+static uint8_t  g_lastArena = kArenaIdle;
+static uint8_t  g_lastPresent = 0;
+static uint32_t g_sentPhase = 0, g_appliedPhase = 0, g_failedPhase = 0;
+
+// The class that CARRIES the state machine.  Resolved by NAME once: `FS_EnemyCharacterBase`
+// is a native class (`/Script/QueensDomain`), so it is loaded from boot and its name is
+// stable -- unlike a Blueprint package that streams with a level.
+static void* StateBaseClass()
+{
+    static void* cls = nullptr;
+    static uint32_t lastTry = 0;
+    if (cls && ObjectIsLive(cls)) return cls;
+    uint32_t now = Net::Now();
+    if (lastTry && now - lastTry < 5000) return nullptr;
+    lastTry = now;
+    cls = FindClassByName("FS_EnemyCharacterBase");
+    if (!cls || !ObjectIsLive(cls)) { cls = nullptr; return nullptr; }
+    QDLOG(LOG_INFO, "boss phase: FS_EnemyCharacterBase resolved -- the native state machine "
+                    "(CurrentStateIndex/CurrentSubState) is readable and callable");
+    return cls;
+}
+
+// Is this actor's state readable at all?  -1 in either slot means "unreadable", which the
+// follower must never treat as state 0 (that would re-run phase 1).
+bool ReadState(EnemyRec& r, int32_t* st, int32_t* sub)
+{
+    *st = -1; *sub = -1;
+    if (!r.actor || !ObjectIsLive(r.actor)) return false;
+    bool a = ReadStateProp(r.actor, kPropState, st);
+    bool b = ReadStateProp(r.actor, kPropSub, sub);
+    return a || b;
+}
+
+// Drive the LOCAL copy to a state.  ORDER IS THE CONTRACT: the property first (so the
+// graph's own reads see the new index), then the event (so the graph's transition body
+// runs).  Calling the event alone would run a transition for the OLD state.
+bool DriveLocal(EnemyRec& r, int32_t state, int32_t sub, bool transition, uint32_t now)
+{
+    void* a = r.actor;
+    if (!a || !ObjectIsLive(a)) return false;
+    bool wroteState = WriteStateProp(a, kPropState, state);
+    bool wroteSub = (sub >= 0) ? WriteStateProp(a, kPropSub, sub) : true;
+
+    static Fn fState = {}, fSub = {};
+    static void* missState = nullptr, *missSub = nullptr;
+    bool ranEvent = false;
+    if (transition) {
+        __try {
+            if (ResolvePerClass(fState, &missState, a, "OnStateIndexChanged")) {
+                Call c(fState);
+                if (fState.Off("NewState") >= 0) c.I32("NewState", state);
+                ranEvent = c.Run(a);
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) { ranEvent = false; }
+        // The sub-state event only when the sub actually changed: an unnecessary dispatch
+        // would replay a graft of the graph the owner did not run.
+        if (sub >= 0 && wroteSub) {
+            __try {
+                if (ResolvePerClass(fSub, &missSub, a, "OnSubStateChanged")) {
+                    Call c(fSub);
+                    if (fSub.Off("NewState") >= 0) c.I32("NewState", sub);
+                    c.Run(a);
+                }
+            } __except (EXCEPTION_EXECUTE_HANDLER) {}
+        }
+    }
+    (void)now;
+    if (!wroteState) return false;
+    // The write IS the authority (the graph reads the property), so a transition whose event
+    // did not resolve is still a state this copy is in -- and the log says which half ran.
+    QDLOG(ranEvent || !transition ? LOG_INFO : LOG_WARN, "boss phase: ",
+          hex32(r.guid[0]), " driven here state=", dec((int)state), " sub=", dec((int)sub),
+          " (", (wroteState ? "state written" : "STATE WRITE FAILED"),
+          wroteSub ? "" : ", sub write failed",
+          transition ? (ranEvent ? ", OnStateIndexChanged ran" : ", OnStateIndexChanged DID NOT RUN")
+                     : ", steady", ")");
+    return true;
+}
+
+// R (0x5C): the owner announces, or the follower applies.
+void OnPhase(wire::Reader& r, uint32_t now)
+{
+    wire::BossPhaseBody b;
+    if (!wire::ReadBossPhase(r, &b)) return;
+    if (!ValidPhase(b)) {
+        QDLOG(LOG_WARN, "boss phase: refused a body with state=", dec((int)b.state),
+              " sub=", dec((int)b.sub));
+        return;
+    }
+    bool transition = (b.flags & kPhaseTransition) != 0;
+
+    EnemyRec* er = EnemyByGuid(b.guid);
+    bool have = er && er->haveGuid && ObjectIsLive(er->actor);
+    int32_t lst = -1, lsub = -1;
+    if (have) ReadState(*er, &lst, &lsub);
+
+    PhaseTrack* t = g_tracks.Touch(b.guid);
+    if (!t) return;
+    t->lastLocalAt = now;
+
+    PhaseVerdict v = Judge(b, have, t->appliedRev, lst, lsub);
+    if (v == kNoCopy) {
+        static uint32_t saidAt = 0;
+        static uint32_t saidKey = 0;
+        if (saidKey != b.guid[0] || (uint32_t)(now - saidAt) > 10000) {
+            saidKey = b.guid[0];
+            saidAt = now;
+            QDLOG(LOG_WARN, "boss phase: the partner says boss ", hex32(b.guid[0]), " is at state ",
+                  dec((int)b.state), " but this machine holds no live copy -- nothing to drive");
+        }
+        return;
+    }
+    if (v == kIgnoreStale) return;
+
+    if (!DriveLocal(*er, b.state, b.sub, transition, now)) {
+        ++g_failedPhase;
+        QDLOG(LOG_WARN, "boss phase: guid=", hex32(b.guid[0]), " could not be driven to state ",
+              dec((int)b.state));
+        return;
+    }
+    t->appliedRev = b.rev;
+    t->state = b.state;
+    t->sub = b.sub;
+    if (transition) t->transitionAt = now;
+    ++g_appliedPhase;
+    // A transition is the moment a fight CHANGES, so it is logged at INFO even when the
+    // steady samples are quiet: this is the line that proves phase 2 ran on both screens.
+    QDLOG(LOG_INFO, "boss phase: guid=", hex32(b.guid[0]), " -> state=", dec((int)b.state),
+          " sub=", dec((int)b.sub), " rev=", dec((int)b.rev),
+          transition ? " (a TRANSITION: the partner's copy started it)" : " (steady sample)",
+          " applied=", dec((int)g_appliedPhase));
+}
+
+// The owner's half: read the pair, decide whether it is news, publish it.
+static void PhaseOwnerPump(EnemyRec& r, uint32_t now)
+{
+    int32_t st = -1, sub = -1;
+    if (!ReadState(r, &st, &sub)) return;
+    if (st < 0) return;                    // the property is absent on this class
+    PhaseTrack* t = g_tracks.Touch(r.guid);
+    if (!t) return;
+
+    bool known = (t->state >= 0);
+    bool changed = (st != t->state) || (sub != t->sub);
+    bool transition = changed && known;     // the first read is a baseline, not a transition
+    if (!ShouldPublish(*t, st, sub, transition, now)) return;
+
+    uint32_t rev = NextRev(*t);
+    wire::BossPhaseBody b;
+    memset(&b, 0, sizeof(b));
+    memcpy(b.guid, r.guid, 16);
+    b.rev = rev;
+    b.state = st;
+    b.sub = sub;
+    b.flags = kPhaseAuthority | (transition ? kPhaseTransition : 0);
+    uint8_t body[64];
+    wire::Writer w(body, sizeof(body));
+    wire::WriteBossPhase(w, b);
+    if (!(w.ok && g_net.SendReliable(wire::K_BOSS_PHASE, body, w.len))) return;
+
+    bool wasRepair = (t->lastSendAt != 0);
+    t->rev = rev;
+    t->state = st;
+    t->sub = sub;
+    t->lastSendAt = now;
+    if (transition) t->transitionAt = now;
+    ++g_sentPhase;
+    QDLOG(LOG_INFO, "boss phase: sent guid=", hex32(r.guid[0]), " state=", dec((int)st),
+          " sub=", dec((int)sub), " rev=", dec((int)rev),
+          transition ? " (TRANSITION)" : (wasRepair ? " (repair)" : " (baseline)"));
+}
+
+// The arena half (0x5D).  Both machines compute the same numbers from the same rule, so
+// the body states a fact rather than giving an instruction.  It exists because a barrier
+// closing on one screen only makes a co-op fight unplayable: one player locked in, the
+// other locked out.
+static void ArenaPump(uint32_t now)
+{
+    // The fight's key is the boss the ONE shared bar names (qdboss.h): that is already the
+    // agreed "which fight is this" answer, and a second one would be a second bug.
+    if (!g_bossKeyOn || !g_net.Connected()) {
+        if (g_lastArena != kArenaIdle) { g_lastArena = kArenaIdle; g_lastPresent = 0; }
+        return;
+    }
+    EnemyRec* br = EnemyByGuid(g_bossKey);
+    float hp = 0, mx = 0;
+    bool alive = br && br->haveGuid && ObjectIsLive(br->actor) &&
+                 EnemyHp(br->actor, &hp, &mx) && mx > 0.0f && hp > 0.0f &&
+                 !EnemyDead(br->actor) && !KillLogHas(g_bossKey);
+
+    uint8_t present = 0;
+    ActorXform bx = {};
+    bool haveB = br && ReadActorXform(br->actor, &bx);
+    auto insideOf = [&](float x, float y, float z) {
+        if (!haveB) return false;
+        float dx = bx.px - x, dy = bx.py - y, dz = bx.pz - z;
+        // An arena is the boss's own room: 60 m is the same radius the bar uses for "in the
+        // fight", so the two lanes cannot disagree about who is fighting.
+        return dx * dx + dy * dy + dz * dz < 6000.0f * 6000.0f;
+    };
+    ActorXform me = {};
+    if (g_localPawn && IsGameplayPawn(g_localPawn) && ReadActorXform(g_localPawn, &me) &&
+        insideOf(me.px, me.py, me.pz))
+        present |= g_net.IsHost() ? kPlayerHost : kPlayerPeer;
+    motion::MoveOut m = g_peerInterp.Sample(now);
+    if (m.valid && !m.frozen && insideOf(m.px, m.py, m.pz))
+        present |= g_net.IsHost() ? kPlayerPeer : kPlayerHost;
+
+    uint8_t phase = alive ? (present ? kArenaClosed : kArenaOpen) : kArenaDone;
+    if (phase == g_lastArena && present == g_lastPresent) return;
+    // Only the HOST states it, so the two machines cannot announce two arena states -- the
+    // same single-publisher rule the bar already uses.
+    if (!g_net.IsHost()) { g_lastArena = phase; g_lastPresent = present; return; }
+
+    wire::BossArenaBody b;
+    memset(&b, 0, sizeof(b));
+    memcpy(b.guid, g_bossKey, 16);
+    b.rev = ++g_arenaRev;
+    b.arena = phase;
+    b.present = present;
+    uint8_t body[64];
+    wire::Writer w(body, sizeof(body));
+    wire::WriteBossArena(w, b);
+    if (!(w.ok && g_net.SendReliable(wire::K_BOSS_ARENA, body, w.len))) return;
+    g_lastArena = phase;
+    g_lastPresent = present;
+
+    // THE RULE, STATED IN THE LOG so a reviewer reads the decision instead of inferring it,
+    // and so a `DeathRespawn=1` walk-back is visible as the intended behaviour.
+    FightDecision d = Decide(alive, present, phase);
+    const char* why =
+        d == kFightContinueAbsent ? "the fight CONTINUES with the player who is here; the absent one may walk back in"
+      : d == kFightFinished       ? "the boss is dead: the fight is over"
+      : d == kFightHoldForArrival ? "nobody is in the arena yet"
+                                  : "both players are in the fight";
+    QDLOG(LOG_INFO, "boss arena: fight guid=", hex32(b.guid[0]), " ",
+          (phase == kArenaClosed ? "CLOSED" : phase == kArenaDone ? "DONE"
+           : phase == kArenaOpen ? "OPEN" : "IDLE"),
+          " present=", dec((int)present), " (", why, ")");
+    BarrierAction ba = BarrierFor(phase, alive);
+    if (ba == kBarrierClose)
+        QDLOG(LOG_INFO, "boss arena: the barrier stays closed for the fight (the door lane holds it)");
+    else if (ba == kBarrierOpen)
+        QDLOG(LOG_INFO, "boss arena: the barrier may open (the fight is over)");
+}
+
+// The partner's arena statement.  Applied as a FACT, not as an instruction to this
+// machine's door: the door lane owns the door, and this lane only fixes WHY it is shut.
+void OnArena(wire::Reader& r, uint32_t now)
+{
+    wire::BossArenaBody b;
+    if (!wire::ReadBossArena(r, &b)) return;
+    if (!ValidArena(b)) return;
+    if (g_net.IsHost()) return;               // the host is the only publisher
+    static uint32_t lastRev = 0;
+    if (lastRev && (int32_t)(b.rev - lastRev) <= 0) return;   // stale
+    lastRev = b.rev;
+    uint8_t present = b.present | (uint8_t)kPlayerPeer;   // this machine's own player is here
+    g_lastArena = b.arena;
+    g_lastPresent = present;
+    FightDecision d = Decide(true, present, b.arena);
+    QDLOG(LOG_INFO, "boss arena: the partner says fight ", hex32(b.guid[0]), " is ",
+          (b.arena == kArenaClosed ? "CLOSED" : b.arena == kArenaDone ? "DONE"
+           : b.arena == kArenaOpen ? "OPEN" : "IDLE"),
+          " present=", dec((int)b.present), " -- ",
+          d == kFightContinueAbsent
+              ? "this machine's player is the one who is here; the fight goes on"
+              : "both machines agree");
+    (void)now;
+}
+
+// The ending choice (0x5E).  THE CHOICE IS WHICHEVER PLAYER MAKES IT; the other FOLLOWS.
+// The receiver does not invent one -- it runs the same ending entry on its own copy, and
+// its own game writes its own `EndingNComplete`/`EndingSeen`, which is what makes all four
+// paths consistent on both machines (measured: each machine writes its own flags).
+void OnEnd(wire::Reader& r, uint32_t now)
+{
+    wire::BossEndBody b;
+    if (!wire::ReadBossEnd(r, &b)) return;
+    if (!ValidEnd(b)) return;
+    static uint32_t lastRev = 0;
+    if (lastRev && (int32_t)(b.rev - lastRev) <= 0) return;
+    lastRev = b.rev;
+
+    EnemyRec* er = EnemyByGuid(b.guid);
+    char cls[64] = "";
+    if (er && ObjectIsLive(er->actor))
+        FNameToString(ObjNameRaw(ObjClass(er->actor)), cls, sizeof(cls));
+    if (cls[0] && !EndingMatchesBoss(b.ending, cls)) {
+        QDLOG(LOG_WARN, "boss end: the partner chose ending ", dec((int)b.ending),
+              " but this machine's boss is ", cls,
+              " -- refused (the branch must match the boss)");
+        return;
+    }
+    const char* flag = EndingFlag(b.ending);
+    QDLOG(LOG_INFO, "boss end: the ", (b.who == kPlayerHost ? "HOST" : "PEER"),
+          "'s player made the choice -- ending ", dec((int)b.ending), " (", flag,
+          "); this machine follows through the same entry, so its own save writes its own flag");
+    // [play-p3] THE FOLLOW.  The receiver runs the SAME entry on its own copy, so its own graph
+    // spawns its own ending cutscene and its own player's wake-up runs.  This is the half that
+    // was missing: before it, `BOSS_END` was received, logged and dropped, and a machine that
+    // only held the partner's cutscene never woke up.
+    EndingApplyLocal(b.ending, now);
+}
+
+void Reset()
+{
+    g_tracks.Reset();
+    g_arenaRev = 0;
+    g_lastArena = kArenaIdle;
+    g_lastPresent = 0;
+    g_sentPhase = g_appliedPhase = g_failedPhase = 0;
+}
+
+// The per-tick entry.  Called beside BossPump so the two boss lanes run in the same order
+// every tick and neither can starve the other.
+void Pump(uint32_t now)
+{
+    if (!Cfg().enemy_sync || !Cfg().boss_phase_sync) return;
+    static uint32_t last = 0;
+    if (now - last < 250) return;
+    last = now;
+    if (!EnemyRecordsTrustworthy()) return;
+    if (!StateBaseClass()) return;
+
+    for (int i = 0; i < g_enN; ++i) {
+        EnemyRec& r = g_en[i];
+        if (!r.haveGuid || !r.isBoss || !ObjectIsLive(r.actor)) continue;
+        // ONLY THE MACHINE THAT RUNS IT PUBLISHES.  The mirror check comes FIRST: the
+        // ownership lane answers O_LOCAL for a key it has no row for, so a constructed copy
+        // would otherwise be mistaken for the machine that runs the boss.
+        bool runsHere = !r.mirror && !r.driven && g_own.State(r.guid) != enemyown::O_FROZEN;
+        const enemy::HostRow* row = g_hostView.Get(r.guid);
+        uint32_t seenAt = row ? row->rx_ms : 0;
+        if (!IsAuthority(runsHere, r.mirror, seenAt, now)) continue;
+        PhaseOwnerPump(r, now);
+    }
+    ArenaPump(now);
+
+    // One line a minute while the lane is live, so "is it on and is it doing anything" is a
+    // measurement rather than an assumption.
+    static uint32_t saidAt = 0;
+    if (now - saidAt >= 60000) {
+        saidAt = now;
+        QDLOG(LOG_INFO, "boss phase: lane ", (g_net.IsHost() ? "host" : "peer"),
+              " sent=", dec((int)g_sentPhase), " applied=", dec((int)g_appliedPhase),
+              " failed=", dec((int)g_failedPhase), " track=", dec(g_tracks.Used()));
+    }
+}
+
+} // namespace bossphase_lane
+
+// [play-p3] =================================================================================
+// [play-p3] 6c-quater. THE ENDINGS AS A DRIVEN FACT (qdending.h)
+// [play-p3] =================================================================================
+// The measured gap this closes: `BOSS_END` (0x5E) was DEFINED and never published, and the
+// follower never ran an ending of its own (the ending's cutscene manager is spawned at runtime,
+// so the cutscene lane can only HOLD -- and a held machine never calls its player's
+// `EndingWakeOnBeach`, which is why the picture never came back). Both facts are in qdending.h.
+//
+// WHAT CROSSES AND WHO DRIVES IT:
+//   * the CHOICE.  This machine observes its OWN game running an ending entry (`Banish` / `Eat`
+//     on a `Sipeha_NPC`, `Ending1Complete` / `Ending2CutsceneEnded` on a `Queen_BP`), or, as a
+//     fallback, its own bank gaining `EndingNComplete`.  It publishes one body and repairs it.
+//   * the BRANCH.  The receiver runs the SAME verb on ITS OWN copy through ProcessEvent, so its
+//     own graph spawns its own cutscene manager and its own player's wake-up runs.  No cutscene
+//     is launched and no flag is written on its behalf.
+//   * the WAKE-UP.  While a wake is pending the mod stops driving level management (the game's
+//     `FS_WaitForLevelManagement` is waiting on that queue); the game's own chain then plays.
+//     Only if it has not played does the module cancel the load lock (the game's own
+//     `CancelLockInPlaceForLoad`) and run `PostEndingWakeOnBeach`, and the log says which.
+namespace ending_lane {
+
+using namespace qd::ending;
+
+static ChoiceTx  g_tx;
+static WakeRules g_wake;
+static uint32_t  g_flagAt = 0;
+static uint8_t   g_flagEnding = kEndNone;     // this machine's own ending, read from its bank
+static uint32_t  g_sent = 0, g_applied = 0, g_refused = 0;
+
+// The four verbs' FName indices, resolved once.  The ProcessEvent hook runs for EVERY dispatch
+// the game makes, so the per-call test must be integer compares, not a name compare.
+static QdName g_verbName[4];
+static bool   g_verbNamesReady = false;
+
+static void EnsureVerbNames()
+{
+    static uint32_t lastTry = 0;
+    if (g_verbNamesReady) return;
+    uint32_t now = Net::Now();
+    if (lastTry && now - lastTry < 5000) return;
+    lastTry = now;
+    bool ok = true;
+    for (uint8_t e = kEndQueen1; e <= kEndSipeha2; ++e) {
+        memset(&g_verbName[e - 1], 0, sizeof(QdName));
+        if (!FNameFromAnsi(EndingVerb(e), &g_verbName[e - 1])) ok = false;
+    }
+    g_verbNamesReady = ok;
+    if (ok)
+        QDLOG(LOG_INFO, "ending: the four ending entries resolved (", EndingVerb(kEndQueen1), ", ",
+              EndingVerb(kEndQueen2), ", ", EndingVerb(kEndSipeha1), ", ", EndingVerb(kEndSipeha2),
+              ") -- the choice is observed on this machine's own game");
+}
+
+// Which of the four endings this Function IS, by FName index (0 = none).
+static uint8_t VerbOfFunc(void* func)
+{
+    if (!g_verbNamesReady || !func) return kEndNone;
+    QdName n = ObjNameRaw(func);
+    for (unsigned i = 0; i < 4; ++i)
+        if (g_verbName[i].comparison_index && n.comparison_index == g_verbName[i].comparison_index)
+            return (uint8_t)(i + 1);      // kEndQueen1 == 1 ... kEndSipeha2 == 4
+    return kEndNone;
+}
+
+static uint8_t LocalWho()
+{
+    return g_net.IsHost() ? wire::kBossPlayerHost : wire::kBossPlayerPeer;
+}
+
+// THE CHOICE INSTANT.  Called from the ProcessEvent hook: this machine's own game just RAN an
+// ending entry, so this machine is the chooser.  The class test is what keeps a shared verb name
+// (`Eat` is a common Blueprint event) from being read as an ending.
+void Observe(void* self, void* func)
+{
+    if (!Cfg().ending_sync) return;
+    uint8_t e = VerbOfFunc(func);
+    if (e == kEndNone) return;
+    char cls[64] = "";
+    void* c = self ? ObjClass(self) : nullptr;
+    if (!c || FNameToString(ObjNameRaw(c), cls, sizeof(cls)) <= 0) return;
+    if (!ClassInBranch(EndingBranch(e), cls)) return;
+    if (!g_tx.Begin(e, LocalWho(), Net::Now())) return;
+    QDLOG(LOG_INFO, "ending: this machine's own game ran ", EndingVerb(e), " on ", cls,
+          " -- the choice is made HERE (", bossphase::EndingFlag(e), ") and is published");
+}
+
+// A live copy of a branch on THIS machine.  A mirror is not a copy to drive.
+static bool FindCopy(Branch br, EnemyRec** out, char* cls, int cap)
+{
+    *out = nullptr;
+    for (int i = 0; i < g_enN; ++i) {
+        EnemyRec& r = g_en[i];
+        if (!r.haveGuid || r.mirror || !ObjectIsLive(r.actor)) continue;
+        char cn[64] = "";
+        if (FNameToString(ObjNameRaw(ObjClass(r.actor)), cn, sizeof(cn)) <= 0) continue;
+        if (!ClassInBranch(br, cn)) continue;
+        *out = &r;
+        if (cls && cap > 0) lstrcpynA(cls, cn, cap);
+        return true;
+    }
+    if (g_bossKeyOn) {                    // the key the shared bar last named
+        EnemyRec* r = EnemyByGuid(g_bossKey);
+        if (r && ObjectIsLive(r->actor)) {
+            char cn[64] = "";
+            if (FNameToString(ObjNameRaw(ObjClass(r->actor)), cn, sizeof(cn)) > 0 &&
+                ClassInBranch(br, cn)) {
+                *out = r;
+                if (cls && cap > 0) lstrcpynA(cls, cn, cap);
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+static void PublishPump(uint32_t now)
+{
+    if (!Cfg().ending_sync) return;
+    if (!g_net.Connected()) return;
+
+    // THE FALLBACK OBSERVATION: an ending can also be entered by a cutscene manager rather than
+    // by the boss verb, so this machine's own bank is read once a second.  Reading is what makes
+    // "this machine already chose" a measurement instead of an assumption.
+    if (now - g_flagAt >= 1000) {
+        g_flagAt = now;
+        for (uint8_t e = kEndQueen1; e <= kEndSipeha2; ++e) {
+            int32_t v = 0; bool set = false;
+            if (NsdRead(bossphase::EndingFlag(e), &v, &set) && set && v > 0) {
+                g_flagEnding = e;
+                g_tx.Begin(e, LocalWho(), now);
+                break;
+            }
+        }
+    }
+    if (!g_tx.ShouldSend(now)) return;
+
+    // THE ENDING HAS CONCLUDED ON THIS MACHINE (measured, run 1 of this part): the peer's own
+    // game wrote `Ending1Complete` while its cutscene manager was still "playing" for ever,
+    // because it had only ever HELD the partner's ending.  The flag is the content's own "the
+    // ending is over" fact, so it opens the wake rules here -- otherwise a stuck manager means
+    // the wake never starts and the screen stays black.
+    if (g_tx.chosen) g_wake.OnEndingEnded(now);
+
+    EnemyRec* r = nullptr;
+    char cls[64] = "";
+    if (!FindCopy(EndingBranch(g_tx.ending), &r, cls, sizeof(cls)) || !r) {
+        static uint32_t saidAt = 0;
+        if (now - saidAt > 10000) {
+            saidAt = now;
+            QDLOG(LOG_WARN, "boss end: the choice (ending ", dec((int)g_tx.ending), ") is this "
+                  "machine's, but it holds no live boss of that branch to key the body on");
+        }
+        return;
+    }
+    wire::BossEndBody b;
+    memset(&b, 0, sizeof(b));
+    memcpy(b.guid, r->guid, 16);
+    b.rev = g_tx.NextRev();
+    b.ending = g_tx.ending;
+    b.who = g_tx.who;
+    uint8_t body[64];
+    wire::Writer w(body, sizeof(body));
+    wire::WriteBossEnd(w, b);
+    if (!(w.ok && g_net.SendReliable(wire::K_BOSS_END, body, w.len))) return;
+    bool repair = g_tx.Repairing();
+    g_tx.lastSentAt = now;
+    ++g_sent;
+    QDLOG(LOG_INFO, "boss end: sent guid=", hex32(b.guid[0]), " ending=", dec((int)b.ending),
+          " (", bossphase::EndingFlag(b.ending), ") who=", dec((int)b.who),
+          repair ? " (repair)" : " (the choice is made here)");
+}
+
+// THE RECEIVER'S HALF: run the partner's choice on this machine's own copy.
+void ApplyLocal(uint8_t ending, uint32_t now)
+{
+    if (!Cfg().ending_sync) return;
+    int32_t v = 0; bool set = false;
+    bool already = NsdRead(bossphase::EndingFlag(ending), &v, &set) && set && v > 0;
+    EnemyRec* r = nullptr;
+    char cls[64] = "";
+    bool have = FindCopy(EndingBranch(ending), &r, cls, sizeof(cls)) && r;
+    DriveVerdict d = ShouldDriveLocalEnding(already, have);
+    if (d == kDriveSkipChosen) {
+        QDLOG(LOG_INFO, "boss end: this machine already chose ending ", dec((int)ending),
+              " -- nothing to drive (an ending is never run twice)");
+        return;
+    }
+    if (d == kDriveNoCopy) {
+        ++g_refused;
+        QDLOG(LOG_WARN, "boss end: the partner chose ending ", dec((int)ending),
+              " but this machine holds no live ",
+              (EndingBranch(ending) == kBranchSipeha ? "Sipeha" : "Queen"),
+              " copy -- nothing to drive");
+        return;
+    }
+    const char* verb = EndingVerb(ending);
+    const char* ran = nullptr;
+    bool ok = RigCallVerb(r->actor, verb, nullptr, &ran);
+    ++g_applied;
+    QDLOG(ok ? LOG_INFO : LOG_WARN, "boss end: driven here -- ", verb, " on ", cls,
+          " (the partner's player made the choice; this machine runs the SAME entry, so its own "
+          "game writes its own ", bossphase::EndingFlag(ending), ")");
+}
+
+// THE WAKE-UP (qdending.h's rules).  `g_endingEndedAt` is set by CutscenePump when this
+// machine's own ending ends; `g_wakeSeenAt` by the arms-montage observer when the wake plays.
+void WakePump(uint32_t now)
+{
+    if (g_endingEndedAt && !g_wake.open) {
+        bool seen = g_wakeSeenAt && (int32_t)(g_wakeSeenAt - g_endingEndedAt) >= 0;
+        if (!seen) g_wake.OnEndingEnded(g_endingEndedAt);
+    }
+    bool played = g_wakeSeenAt && g_endingEndedAt &&
+                  (int32_t)(g_wakeSeenAt - g_endingEndedAt) >= 0;
+    WakeAction a = g_wake.Step(now, played);
+    void* pawn = g_localPawn;
+    switch (a) {
+    case kWakeSeen:
+        QDLOG(LOG_INFO, "ending wake: the player's wake-up played ",
+              dec((int)(g_wakeSeenAt - g_endingEndedAt)), " ms after the ending (", g_wake.Who(), ")");
+        g_endingEndedAt = 0;
+        g_wakeSeenAt = 0;
+        break;
+    case kWakeCancelLock: {
+        Fn f = {};
+        bool ran = false;
+        // A MACHINE THAT ONLY HELD THE PARTNER'S CUTSCENE KEEPS ITS MANAGER FOR EVER.  Measured
+        // in run 1 of this part: the peer's `Ending1CutsceneManager` was still "playing" 3.5
+        // minutes after its own game had written `Ending1Complete`, so nothing downstream of it
+        // (the wake-up) could run.  The game's own `EndManagerCutscene` is the verb that clears
+        // the player's `CurrentCutsceneManager`; it is the content's, not an imitation.
+        bool endedMgr = false;
+        __try {
+            void* mgr = pawn ? ObjPropC(pawn, "CurrentCutsceneManager") : nullptr;
+            if (mgr) {
+                Fn fe = {};
+                if (fe.Resolve(pawn, "EndManagerCutscene")) { Call ce(fe); endedMgr = ce.Run(pawn); }
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) { endedMgr = false; }
+        __try { if (pawn && f.Resolve(pawn, "CancelLockInPlaceForLoad")) { Call c(f); ran = c.Run(pawn); } }
+        __except (EXCEPTION_EXECUTE_HANDLER) { ran = false; }
+        QDLOG(LOG_WARN, "ending wake: no wake-up ", dec((int)kWakeLockCancelMs), " ms after the "
+              "ending -- the load lock the wake takes is cancelled (",
+              ran ? "CancelLockInPlaceForLoad ran" : "CancelLockInPlaceForLoad DID NOT RUN",
+              "); a stale cutscene manager was ", (endedMgr ? "ended (EndManagerCutscene ran)" : "not present"),
+              "; level management is left to the game");
+        break; }
+    case kWakePostWake: {
+        Fn f = {};
+        bool ran = false;
+        __try { if (pawn && f.Resolve(pawn, "PostEndingWakeOnBeach")) { Call c(f); ran = c.Run(pawn); } }
+        __except (EXCEPTION_EXECUTE_HANDLER) { ran = false; }
+        QDLOG(ran ? LOG_INFO : LOG_WARN, "ending wake: the player's PostEndingWakeOnBeach ",
+              ran ? "ran" : "DID NOT RUN");
+        break; }
+    case kWakeStopFade: {
+        void* pc = LocalController();
+        void* cam = pc ? ObjPropC(pc, "PlayerCameraManager") : nullptr;
+        Fn f = {};
+        bool ran = false;
+        __try { if (cam && f.Resolve(cam, "StopCameraFade")) { Call c(f); ran = c.Run(cam); } }
+        __except (EXCEPTION_EXECUTE_HANDLER) { ran = false; }
+        QDLOG(LOG_WARN, "ending wake: still no wake-up -- the held camera fade is stopped (",
+              ran ? "StopCameraFade ran" : "StopCameraFade DID NOT RUN", ")");
+        break; }
+    default: break;
+    }
+}
+
+// The level-management gate, read by the streaming lane.
+bool LevelDriveAllowed(uint32_t now) { return g_wake.LevelDriveAllowed(now); }
+
+void Pump(uint32_t now)
+{
+    if (!Cfg().ending_sync && !Cfg().stream_union) return;
+    EnsureVerbNames();
+    PublishPump(now);
+    static uint32_t saidAt = 0;
+    if (now - saidAt >= 60000) {
+        saidAt = now;
+        QDLOG(LOG_INFO, "ending: lane ", (g_net.IsHost() ? "host" : "peer"), " sent=",
+              dec((int)g_sent), " applied=", dec((int)g_applied), " refused=", dec((int)g_refused),
+              " wake=", (g_wake.Pending(now) ? "pending" : "idle"));
+    }
+}
+
+void Reset()
+{
+    g_tx.Reset();
+    g_wake.Reset();
+    g_flagAt = 0;
+    g_flagEnding = kEndNone;
+    g_sent = g_applied = g_refused = 0;
+}
+
+} // namespace ending_lane
+
+// [play-p3] The free-function faces the EARLIER code (the streaming lane) and the ProcessEvent
+// hook call.  They exist because a namespace defined at this point cannot be named at line 4956.
+void EndingObserve(void* self, void* func) { ending_lane::Observe(self, func); }
+void EndingApplyLocal(uint8_t ending, uint32_t now) { ending_lane::ApplyLocal(ending, now); }
+bool EndingLevelDriveAllowed(uint32_t now) { return ending_lane::LevelDriveAllowed(now); }
+
 // ---------------------------------------------------------------------------
 // Ownership by proximity (qdenemyown.h), applied to the local records
 // ---------------------------------------------------------------------------
@@ -11105,6 +12121,7 @@ bool AdoptUnknownKey(const wire::EnemyRow& e, uint32_t now)
     found->haveGuid = true;
     found->src = enemyid::SourceOf(e.flags);   // the sender's classification is the truth
     found->adopted = true;
+    found->posKey = false;                     // [play-p4b] a shared key, not a local one
     QDLOG(LOG_INFO, "enemy id: adopted the owner's key ", hex32(e.guid[0]),
           " (local ", hex32(old[0]), " src=", dec((int)oldSrc), "->", dec((int)found->src),
           ")");
@@ -11247,9 +12264,12 @@ void PeerApplyEnemyIntent(wire::Reader& r)
 void OnPlayerDamage(wire::Reader& r, uint32_t now)
 {
     if (!Cfg().enemy_sync) return;
-    // K_DAMAGE is host -> peer.  A host that receives one is looking at a stale or
-    // misdirected packet and must not damage its own player with it.
-    if (!g_net.IsPeer()) return;
+    // [gap-combat] THE RECEIVER IS THE MACHINE THAT OWNS THE VICTIM'S HP -- and each machine
+    // owns exactly one player, its own.  So this lane is addressed to whoever receives it,
+    // whichever role it has: applying it to `g_localPawn` IS "the machine that owns the
+    // player's HP", by construction.  Refusing the host's packets (the old `!IsPeer` guard)
+    // was half of COVERAGE-MATRIX GAP 13 -- a peer-run enemy could not hurt the host.
+    if (!g_net.IsHost() && !Cfg().damage_both_ways) return;
 
     wire::DamageBody d;
     if (!wire::ReadDamage(r, &d)) return;
@@ -11356,6 +12376,10 @@ EnemyRec* EnemyForCauser(void* causer)
     return nullptr;
 }
 
+// [gap-combat] Defined with the hazard lane below; declared here because the body hook asks
+// it whether a hit it just saw came from a spawned hazard rather than from an enemy.
+bool HzIsHazardActor(void* a);
+
 bool PlayerBodyObserve(void* self, void* func, void* parms)
 {
     if (!Cfg().player_body || !Cfg().enemy_sync) return true;
@@ -11423,14 +12447,31 @@ bool PlayerBodyObserve(void* self, void* func, void* parms)
     if (h.applier) memcpy(&applier, (const uint8_t*)parms + h.applier->offset, 8);
 
     EnemyRec* er = EnemyForCauser(applier);
-    if (!g_net.IsHost() || !g_net.Connected() || !er || !er->haveGuid || !(amount > 0.0f)) {
+    // [gap-combat] A HAZARD'S HIT IS NOT FORWARDED.  The body this hook sees is the
+    // PARTNER's; when the thing that hurt it is a spawned hazard (a magma puddle, an AoE
+    // volume) the victim's own machine applies that damage from the mirrored geometry
+    // (qdhazard.h), so forwarding it as well would burn them twice.  Letting the game apply
+    // it to the proxy locally is harmless -- the proxy is not the player.
+    if (HzIsHazardActor(applier)) {
+        static uint32_t lastHz = 0;
+        uint32_t t = Net::Now();
+        if (t - lastHz > 5000) {
+            lastHz = t;
+            QDLOG(LOG_DEBUG, "player body: hazard hit on the proxy is not forwarded (the "
+                  "victim's own machine applies it from the mirrored hazard)");
+        }
+        return true;
+    }
+    if (!g_net.Connected() || !er || !er->haveGuid || !(amount > 0.0f) ||
+        (!g_net.IsHost() && !Cfg().damage_both_ways)) {
         // Not routable.  Let the game apply it to the proxy: the proxy is not the player,
         // so nothing of value is lost, and the reason is logged rather than hidden.
         static uint32_t lastLog = 0;
         uint32_t nowMs = Net::Now();
         if (nowMs - lastLog > 5000) {
             lastLog = nowMs;
-            const char* why = !g_net.IsHost() ? "this machine does not own a player's HP"
+            const char* why = (!g_net.IsHost() && !Cfg().damage_both_ways)
+                                ? "this machine may not describe a hit on the host's player"
                             : !g_net.Connected() ? "no session"
                             : (!er || !er->haveGuid) ? "no enemy to attribute the hit to"
                             : "the amount is not positive";
@@ -11474,6 +12515,639 @@ bool PlayerBodyObserve(void* self, void* func, void* parms)
           ") -> sent to the machine that owns the player; local damage suppressed",
           (answered ? "" : " (the return value could not be written)"));
     return false;
+}
+
+// ---------------------------------------------------------------------------
+// [gap-combat] Hazards an enemy or a boss SPAWNS (qdhazard.h; COVERAGE-MATRIX C11, GAP 5)
+// ---------------------------------------------------------------------------
+// An enemy or a boss spawns its damaging fields AT RUNTIME: `DemonBoss_FightController_C`
+// drops magma puddles along a spline and applies lava damage, the Queen and the Witch drop
+// `*_AOE` volumes, the dragons leave fire / poison / sticky-binding puddles, and the enemy
+// roster fires ~120 projectile classes.  Every one of those exists on the machine that
+// spawned it and on no other, so the partner stood in lava that either burned them or was
+// not there at all, depending on which machine happened to run the boss.
+//
+// THE RULE (qdhazard.h carries the reasoning in full).  A player's HP is owned by exactly
+// one machine, so the damage a hazard does to a player is applied BY THAT PLAYER'S OWN
+// MACHINE:
+//
+//   * the machine that spawned the hazard lets its own game do its job on its own player;
+//   * the OTHER machine receives the hazard -- a collision-less copy for the eye plus its
+//     geometry -- and applies the damage to ITS OWN player while that player stands in it;
+//   * the copy has collision and actor tick turned off, so the receiving game cannot apply
+//     it a second time, and the machine that spawned it never touches the partner's HP.
+//
+// An enemy PROJECTILE is the same shape with a single hit: the receiving machine's copy
+// (the EFFECT lane's, already proven) is tested against its own player, and the damage
+// travels once per CLASS rather than once per shot.
+//
+// Nothing here is invented.  An amount that cannot be resolved is the stated small fallback
+// with `kHazardGuessed` set, and every application logs the number it used.
+struct HzRec {
+    bool      used;
+    bool      ours;              // this machine spawned the actor: it publishes
+    uint32_t  key[4];
+    weak::Ref actor;             // the local actor (ours) or the visual copy (theirs)
+    hazard::FieldState st;       // what this machine believes about it now
+    bool      havePub;           // `pub` is valid (ours)
+    hazard::FieldState pub;
+    uint32_t  pubMs;
+    uint32_t  rowMs;             // last row published (ours) / received (theirs)
+    char      cls[200];
+};
+HzRec    g_hz[hazard::kMaxFields];
+int      g_hzN = 0;
+long     g_hzTail = 0;           // this lane's own cursor over the BeginPlay ring
+weak::Ref g_hzOurs[32];          // actors THIS machine created: never published back
+int      g_hzOursN = 0;
+hazard::HitGate     g_hzGate;
+hazard::ClassDamage g_hzClassDmg;
+uint32_t g_hzRowsSent = 0, g_hzApplied = 0;
+uint32_t g_hzLastReport = 0;
+
+bool HzOursActor(void* a)
+{
+    for (int i = 0; i < g_hzOursN; ++i) if (g_hzOurs[i] == a) return true;
+    return false;
+}
+
+void HzRememberOurs(void* a)
+{
+    if (g_hzOursN < 32) g_hzOurs[g_hzOursN++] = a;
+    else { memmove(g_hzOurs, g_hzOurs + 1, sizeof(void*) * 31); g_hzOurs[31] = a; }
+}
+
+int HzFind(const uint32_t key[4])
+{
+    for (int i = 0; i < g_hzN; ++i)
+        if (g_hz[i].used && g_hz[i].key[0] == key[0] && g_hz[i].key[1] == key[1] &&
+            g_hz[i].key[2] == key[2] && g_hz[i].key[3] == key[3]) return i;
+    return -1;
+}
+
+// A record for this key, or a fresh one.  The table is small and recycles the entry whose
+// rows stopped arriving, so a long boss fight cannot overflow it.
+int HzAlloc(const uint32_t key[4], bool ours, uint32_t now)
+{
+    int i = HzFind(key);
+    if (i >= 0) return i;
+    int victim = -1;
+    uint32_t oldest = 0;
+    for (int k = 0; k < g_hzN; ++k) {
+        uint32_t age = (uint32_t)(now - g_hz[k].rowMs);
+        if (age > oldest) { oldest = age; victim = k; }
+    }
+    if (g_hzN < hazard::kMaxFields) victim = g_hzN++;
+    if (victim < 0) return -1;
+    HzRec& r = g_hz[victim];
+    memset(&r, 0, sizeof(r));
+    r.used = true;
+    r.ours = ours;
+    for (int k = 0; k < 4; ++k) r.key[k] = key[k];
+    r.pubMs = now;
+    r.rowMs = now;
+    return victim;
+}
+
+// The enemy (or boss controller) a spawned actor belongs to, walked through its own Owner
+// and Instigator.  A hazard the LOCAL PLAYER spawned -- a weapon's own fire puddle -- is
+// refused: this lane would otherwise burn the partner with the other player's weapon.
+void* HzEnemyOf(void* a)
+{
+    if (!a) return nullptr;
+    void* cand[8];
+    int n = 0;
+    void* w = ActorObjProp(a, "Owner");
+    void* g = ActorObjProp(a, "Instigator");
+    for (int hop = 0; hop < 3 && n < 6; ++hop) {
+        void* pair[2] = {w, g};
+        for (int k = 0; k < 2; ++k) {
+            void* p = pair[k];
+            if (!p || p == a) continue;
+            if (p == g_localPawn || p == g_puppetActor) return nullptr;   // a player's own
+            bool seen = false;
+            for (int j = 0; j < n; ++j) if (cand[j] == p) { seen = true; break; }
+            if (seen) continue;
+            cand[n++] = p;
+        }
+        void* nw = w ? ActorObjProp(w, "Owner") : nullptr;
+        void* ng = w ? ActorObjProp(w, "Instigator") : nullptr;
+        void* gw = g ? ActorObjProp(g, "Owner") : nullptr;
+        void* gg = g ? ActorObjProp(g, "Instigator") : nullptr;
+        w = nw ? nw : gw;
+        g = ng ? ng : gg;
+    }
+    for (int i = 0; i < n; ++i) {
+        void* c = cand[i];
+        if (!c || !ObjectIsLive(c)) continue;
+        if (EnemyByActor(c)) return c;
+        void* cls = ObjClass(c);
+        if (g_enemyBaseCls && cls && DerivesFrom(cls, g_enemyBaseCls)) return c;
+        char cn[96] = "";
+        if (cls) FNameToString(ObjNameRaw(cls), cn, sizeof(cn));
+        if (hazard::HasCI(cn, "boss") || hazard::HasCI(cn, "fightcontroller") ||
+            hazard::HasCI(cn, "enemy"))
+            return c;
+    }
+    return nullptr;
+}
+
+// A float from the first of `names` the object declares.  A Blueprint's own damage property
+// is spelled one of a handful of ways across these classes; this is the corpus' spellings,
+// not a guess at one of them.
+bool HzFloatAny(void* obj, const char* const* names, int n, float* out)
+{
+    if (!obj) return false;
+    for (int i = 0; i < n; ++i) {
+        float v = 0.0f;
+        if (FloatPropC(obj, names[i], &v) && v > 0.0f) { *out = v; return true; }
+    }
+    return false;
+}
+
+const char* const kHzAmountNames[] = {
+    "DamageAmount", "LavaDamage", "DamagePerTick", "DamagePerSecond", "DPS",
+    "TickDamage", "Damage",
+};
+const char* const kHzRadiusNames[] = {
+    "DamageRadius", "EffectRadius", "AoeRadius", "AOERadius", "InnerRadius",
+    "HazardRadius", "Radius",
+};
+const char* const kHzTickNames[] = {
+    "DamageTickRate", "DamageInterval", "TickInterval", "DamageDelay", "TickRate", "Rate",
+};
+const int kHzAmountN = (int)(sizeof(kHzAmountNames) / sizeof(kHzAmountNames[0]));
+const int kHzRadiusN = (int)(sizeof(kHzRadiusNames) / sizeof(kHzRadiusNames[0]));
+const int kHzTickN   = (int)(sizeof(kHzTickNames) / sizeof(kHzTickNames[0]));
+
+// The volume's own extent.  This content puts the damage volume on a shape COMPONENT
+// (`SphereRadius` on a USphereComponent, `BoxExtent` on a UBoxComponent), not on the actor,
+// so this walks the root's children the same way the Niagara lookup does.
+bool HzShapeRadius(void* actor, float* out)
+{
+    if (!actor || !ObjectIsLive(actor) || !avatar::EnsureApi()) return false;
+    avatar::Api& A = avatar::A();
+    static int rootOff = -2, kidsOff = -2;
+    if (rootOff == -2) {
+        rootOff = A.clsActor ? FindPropertyOffsetIn(A.clsActor, "RootComponent") : -1;
+        kidsOff = A.clsScene ? FindPropertyOffsetIn(A.clsScene, "AttachChildren") : -1;
+    }
+    if (rootOff < 0 || kidsOff < 0) return false;
+    void* root = *(void**)((uint8_t*)actor + rootOff);
+    if (!root) return false;
+    void** ch = *(void***)((uint8_t*)root + kidsOff);
+    int nch = *(int*)((uint8_t*)root + kidsOff + 8);
+    for (int i = 0; ch && i < nch && i < 16; ++i) {
+        __try {
+        void* c = ch[i];
+        if (!c || !ObjectIsLive(c)) continue;
+        float v = 0.0f;
+        if (FloatPropC(c, "SphereRadius", &v) && v > 0.0f) { *out = v; return true; }
+        int bo = FindPropertyOffsetIn(ObjClass(c), "BoxExtent");
+        if (bo >= 0) {
+            float e[3];
+            memcpy(e, (uint8_t*)c + bo, 12);
+            float m = (e[0] > e[1]) ? e[0] : e[1];
+            if (m < 0.0f) m = -m;
+            if (m > 0.0f) { *out = m; return true; }
+        }
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            // A component of a dying actor: skip it, keep looking.
+        }
+    }
+    return false;
+}
+
+// Everything this machine can read about a hazard's damage, with each unresolved fact
+// recorded in `flags` so the receiver's log can say the number was an approximation.
+void HzReadAmounts(void* a, void* enemy, hazard::FieldState* st, uint8_t* flags)
+{
+    float amount = 0.0f, radius = 0.0f, tick = 0.0f;
+    bool haveAmount = HzFloatAny(a, kHzAmountNames, kHzAmountN, &amount);
+    if (!haveAmount && enemy) haveAmount = HzFloatAny(enemy, kHzAmountNames, kHzAmountN, &amount);
+    if (!haveAmount && enemy) {
+        const char* src = "none";
+        float v = 0.0f;
+        if (EnemySwingDamage(enemy, &v, &src) && v > 0.0f) { amount = v; haveAmount = true; }
+    }
+    bool haveRadius = HzFloatAny(a, kHzRadiusNames, kHzRadiusN, &radius);
+    if (!haveRadius) haveRadius = HzShapeRadius(a, &radius);
+    if (!haveRadius && enemy) haveRadius = HzFloatAny(enemy, kHzRadiusNames, kHzRadiusN, &radius);
+    bool haveTick = HzFloatAny(a, kHzTickNames, kHzTickN, &tick);
+    if (!haveTick && enemy) haveTick = HzFloatAny(enemy, kHzTickNames, kHzTickN, &tick);
+    st->radiusCm = (uint16_t)hazard::ClampRadius(haveRadius ? radius : 0.0f);
+    st->amountCenti = hazard::ClampAmount(haveAmount ? amount : 0.0f);
+    st->tickMs = hazard::ClampTick(haveTick ? tick : 0.0f);
+    *flags = (haveAmount && haveRadius) ? 0 : hazard::kHazardGuessed;
+}
+
+void HzPublishInfo(const HzRec& r, uint8_t kind)
+{
+    wire::HazardInfoBody b;
+    memset(&b, 0, sizeof(b));
+    b.kind = kind;
+    for (int i = 0; i < 4; ++i) b.key[i] = r.key[i];
+    lstrcpynA(b.cls, r.cls, sizeof(b.cls));
+    b.px = r.st.px; b.py = r.st.py; b.pz = r.st.pz;
+    b.amount_centi = r.st.amountCenti;
+    b.radius_cm = r.st.radiusCm;
+    b.tick_ms = r.st.tickMs;
+    b.flags = r.st.flags;
+    uint8_t body[wire::kMaxBody];
+    wire::Writer w(body, sizeof(body));
+    wire::WriteHazardInfo(w, b);
+    if (w.ok && g_net.SendReliable(wire::K_HAZARD_INFO, body, w.len)) {
+        QDLOG(LOG_INFO, "hazard: ", (kind == wire::HI_FIELD_END ? "ended" : "published"),
+              " key=", hex32(r.key[0]), " ", r.cls, " at ", flt(wire::DequantizePos(b.px), 0),
+              ",", flt(wire::DequantizePos(b.py), 0), ",", flt(wire::DequantizePos(b.pz), 0),
+              " r=", dec((int)r.st.radiusCm), "cm amount=",
+              flt((float)r.st.amountCenti / 100.0f, 1), " every ", dec((int)r.st.tickMs), "ms",
+              ((r.st.flags & hazard::kHazardGuessed) ? " (ESTIMATED)" : ""));
+    }
+}
+
+// The visual copy the following machine draws.  Collision and actor tick OFF on purpose:
+// the copy must be seen and must never hurt anyone, because the damage is applied by this
+// machine's own pump against its own player.
+void* HzDrawCopy(HzRec& r)
+{
+    if (r.actor && ObjectIsLive(r.actor)) return r.actor;
+    void* cls = avatar::LoadAsset(r.cls);
+    if (!cls) {
+        static int saidLoad = 0;
+        if (saidLoad++ < 6) QDLOG(LOG_WARN, "hazard: could not load ", r.cls);
+        return nullptr;
+    }
+    float x = wire::DequantizePos(r.st.px), y = wire::DequantizePos(r.st.py),
+          z = wire::DequantizePos(r.st.pz);
+    void* a = SpawnActorAt(cls, x, y, z, 0.0f);
+    if (!a) return nullptr;
+    HzRememberOurs(a);                 // the spawn ring must not publish it back
+    avatar::SetActorCollision(a, false);
+    CallActorBool(a, "SetActorTickEnabled", "bEnabled", false);
+    r.actor = a;
+    QDLOG(LOG_INFO, "hazard: copy of ", r.cls, " drawn at ", flt(x, 0), ",", flt(y, 0), ",",
+          flt(z, 0), " r=", dec((int)r.st.radiusCm), "cm (collision off, tick off)");
+    return a;
+}
+
+void HzRowCommit(HzRec& r)
+{
+    r.pub = r.st;
+    r.havePub = true;
+    r.pubMs = Net::Now();
+}
+
+// One row set per pump: every OWNED hazard whose state changed (or whose keepalive is due).
+void HzSendRows(uint32_t now)
+{
+    wire::HazardRow rows[8];
+    int n = 0;
+    for (int i = 0; i < g_hzN && n < 8; ++i) {
+        HzRec& r = g_hz[i];
+        if (!r.used || !r.ours) continue;
+        if (r.st.amountCenti <= 0) continue;      // nothing to be hurt by
+        if (!hazard::RowDue(r.st, r.pub, r.havePub, now, r.pubMs)) continue;
+        wire::HazardRow& w = rows[n++];
+        memset(&w, 0, sizeof(w));
+        for (int k = 0; k < 4; ++k) w.key[k] = r.key[k];
+        w.px = r.st.px; w.py = r.st.py; w.pz = r.st.pz;
+        w.radius_cm = r.st.radiusCm;
+        w.tick_ms = r.st.tickMs;
+        w.amount_centi = r.st.amountCenti;
+        w.flags = r.st.flags;
+        HzRowCommit(r);
+    }
+    if (n == 0) return;
+    uint8_t body[wire::kMaxBody];
+    wire::Writer w(body, sizeof(body));
+    wire::WriteHazards(w, rows, n);
+    if (w.ok && g_net.SendUnreliable(wire::K_HAZARD, body, w.len)) ++g_hzRowsSent;
+}
+
+// One actor that has just begun play.  `ours` is decided by WHO spawned it, never by the
+// receiver: a hazard this machine did not spawn is only ever followed.
+void HzSpotted(void* a, uint32_t now)
+{
+    if (!a || !ObjectIsLive(a) || HzOursActor(a)) return;
+    if (a == g_localPawn || a == g_puppetActor) return;
+    for (int i = 0; i < g_hzN; ++i) if (g_hz[i].used && g_hz[i].actor == a) return;
+    void* cls = ObjClass(a);
+    if (!cls) return;
+    char cn[96] = "";
+    if (FNameToString(ObjNameRaw(cls), cn, sizeof(cn)) <= 0) return;
+    bool movement = ActorObjProp(a, "ProjectileMovement") != nullptr;
+    void* enemy = HzEnemyOf(a);
+    uint8_t kind = hazard::KindOf(cn, movement, enemy != nullptr);
+    if (kind == hazard::HZ_NONE) return;
+    if (!g_net.Connected()) return;
+
+    char path[200] = "";
+    if (avatar::AssetPath(cls, path, sizeof(path)) <= 0) return;
+
+    if (kind == hazard::HZ_PROJ) {
+        // A projectile's damage is a property of its CLASS, described once; the receiver
+        // uses it for every copy of that class the EFFECT lane draws.
+        if (g_hzClassDmg.Get(path, nullptr, nullptr, nullptr)) return;
+        hazard::FieldState st;
+        memset(&st, 0, sizeof(st));
+        uint8_t flags = 0;
+        HzReadAmounts(a, enemy, &st, &flags);
+        st.flags = (uint8_t)(flags | hazard::kHazardOnce);
+        g_hzClassDmg.Put(path, st.amountCenti, st.tickMs, st.flags);
+        HzRec tmp;
+        memset(&tmp, 0, sizeof(tmp));
+        hazard::MakeKey(tmp.key, path, 0, 0, 0, 0);
+        lstrcpynA(tmp.cls, path, sizeof(tmp.cls));
+        tmp.st = st;
+        HzPublishInfo(tmp, wire::HI_CLASS_DMG);
+        QDLOG(LOG_INFO, "hazard: projectile class ", path, " deals ",
+              flt((float)st.amountCenti / 100.0f, 1), " per hit",
+              ((flags & hazard::kHazardGuessed) ? " (ESTIMATED)" : ""));
+        return;
+    }
+
+    // A FIELD.  Its identity is positional (qdhazard.h), so the two machines agree without
+    // negotiating: the same class at the same quantised spawn point is the same hazard.
+    ActorXform xf;
+    if (!ReadActorXform(a, &xf)) return;
+    int32_t qx = wire::QuantizePos(xf.px), qy = wire::QuantizePos(xf.py),
+            qz = wire::QuantizePos(xf.pz);
+    uint32_t key[4];
+    int ord = 0;
+    for (;;) {
+        hazard::MakeKey(key, path, qx, qy, qz, (uint8_t)ord);
+        int i = HzFind(key);
+        if (i < 0) break;
+        if (g_hz[i].actor == a) return;
+        ++ord;
+        if (ord > 8) return;
+    }
+    int slot = HzAlloc(key, true, now);
+    if (slot < 0) {
+        static int saidFull = 0;
+        if (saidFull++ < 3) QDLOG(LOG_WARN, "hazard: table full; ", path, " not published");
+        return;
+    }
+    HzRec& r = g_hz[slot];
+    r.ours = true;
+    r.actor = a;
+    lstrcpynA(r.cls, path, sizeof(r.cls));
+    r.st.px = qx; r.st.py = qy; r.st.pz = qz;
+    uint8_t flags = 0;
+    HzReadAmounts(a, enemy, &r.st, &flags);
+    r.st.flags = flags;
+    HzPublishInfo(r, wire::HI_FIELD);
+    HzRowCommit(r);
+}
+
+// The machine that spawned it keeps its own record's geometry current and says when it is
+// gone: a puddle that follows the player along a spline must follow on the other screen too,
+// and a despawned one must stop drawing (and stop being a place to burn).
+void HzUpdateOurs(uint32_t now)
+{
+    for (int i = 0; i < g_hzN; ++i) {
+        HzRec& r = g_hz[i];
+        if (!r.used || !r.ours) continue;
+        void* a = r.actor;
+        if (!a || !ObjectIsLive(a)) {
+            HzPublishInfo(r, wire::HI_FIELD_END);
+            r.used = false;
+            r.actor = nullptr;
+            continue;
+        }
+        ActorXform xf;
+        if (!ReadActorXform(a, &xf)) continue;
+        // Only the POSITION is refreshed: the radius, amount and cadence are the class's
+        // and do not change while the actor lives.  The key is NOT re-minted -- the record
+        // is the hazard, and a receiver that re-keyed every metre would apply it afresh.
+        r.st.px = wire::QuantizePos(xf.px);
+        r.st.py = wire::QuantizePos(xf.py);
+        r.st.pz = wire::QuantizePos(xf.pz);
+    }
+}
+
+// THE RECEIVER applies the damage to ITS OWN player.  Nothing else does, so a hazard cannot
+// burn one player twice or hit a player on the machine that is not theirs.
+void HzDamagePump(uint32_t now)
+{
+    if (!Cfg().hazard_sync) return;
+    if (!IsGameplayPawn(g_localPawn)) return;
+    ActorXform me;
+    if (!ReadActorXform(g_localPawn, &me)) return;
+    const float p[3] = {me.px, me.py, me.pz};
+
+    // 1. fields this machine did not spawn
+    for (int i = 0; i < g_hzN; ++i) {
+        HzRec& r = g_hz[i];
+        if (!r.used || r.ours) continue;
+        if ((uint32_t)(now - r.rowMs) > hazard::kStaleMs) {
+            if (r.actor && ObjectIsLive(r.actor)) SetActorHidden(r.actor, true);
+            r.used = false;
+            r.actor = nullptr;
+            continue;
+        }
+        if (r.st.amountCenti <= 0) continue;
+        const float c[3] = {wire::DequantizePos(r.st.px), wire::DequantizePos(r.st.py),
+                            wire::DequantizePos(r.st.pz)};
+        if (!hazard::Inside(c, (float)r.st.radiusCm, p)) continue;
+        if (!g_hzGate.Admit(r.key, 0, r.st.tickMs, false, now)) continue;
+        float amount = (float)r.st.amountCenti / 100.0f;
+        float before = 0.0f, after = 0.0f;
+        bool haveHp = false;
+        bool applied = ApplyDamageToActor(g_localPawn, amount, nullptr, true,
+                                          &before, &after, &haveHp);
+        ++g_hzApplied;
+        if (haveHp)
+            QDLOG(LOG_INFO, "hazard: standing in ", r.cls, " key=", hex32(r.key[0]), " r=",
+                  dec((int)r.st.radiusCm), "cm ", flt(amount, 1),
+                  ((r.st.flags & hazard::kHazardGuessed) ? " (ESTIMATED amount)" : ""),
+                  (applied ? " applied" : " NO effect"), " hp ", flt(before, 1), " -> ",
+                  flt(after, 1));
+        else
+            QDLOG(LOG_INFO, "hazard: standing in ", r.cls, " key=", hex32(r.key[0]), " r=",
+                  dec((int)r.st.radiusCm), "cm ", flt(amount, 1),
+                  ((r.st.flags & hazard::kHazardGuessed) ? " (ESTIMATED amount)" : ""),
+                  (applied ? " applied" : " NO effect"), " (Health unreadable)");
+    }
+
+    // 2. the mirrored ENEMY PROJECTILES the effect lane drew: one hit, then spent.  Only
+    // classes the other machine described are in the table, so a player's own projectile
+    // (not in it) can never hurt the partner.
+    if (g_hzClassDmg.Count() > 0) {
+        for (int i = 0; i < 16; ++i) {
+            void* a = g_fxCopies[i].actor;
+            if (!a || !ObjectIsLive(a)) continue;
+            char path[200] = "";
+            if (avatar::AssetPath(ObjClass(a), path, sizeof(path)) <= 0) continue;
+            int32_t centi = 0;
+            uint16_t tick = 0;
+            uint8_t flags = 0;
+            if (!g_hzClassDmg.Get(path, &centi, &tick, &flags)) continue;
+            if (centi <= 0) continue;
+            ActorXform x;
+            if (!ReadActorXform(a, &x)) continue;
+            const float c[3] = {x.px, x.py, x.pz};
+            if (hazard::Dist3(c, p) > hazard::kProjRadiusCm + hazard::kRangePadCm) continue;
+            uint32_t key[4];
+            hazard::MakeKey(key, path, wire::QuantizePos(x.px), wire::QuantizePos(x.py),
+                            wire::QuantizePos(x.pz), (uint8_t)g_fxCopies[i].id);
+            if (!g_hzGate.Admit(key, 1, tick, true, now)) continue;
+            float amount = (float)centi / 100.0f;
+            float before = 0.0f, after = 0.0f;
+            bool haveHp = false;
+            bool applied = ApplyDamageToActor(g_localPawn, amount, nullptr, true,
+                                              &before, &after, &haveHp);
+            ++g_hzApplied;
+            if (haveHp)
+                QDLOG(LOG_INFO, "hazard: projectile ", path, " hit the local player for ",
+                      flt(amount, 1), ((flags & hazard::kHazardGuessed) ? " (ESTIMATED)" : ""),
+                      (applied ? " applied" : " NO effect"), " hp ", flt(before, 1), " -> ",
+                      flt(after, 1));
+            else
+                QDLOG(LOG_INFO, "hazard: projectile ", path, " hit the local player for ",
+                      flt(amount, 1), ((flags & hazard::kHazardGuessed) ? " (ESTIMATED)" : ""),
+                      (applied ? " applied" : " NO effect"), " (Health unreadable)");
+        }
+    }
+}
+
+void HazardPump(uint32_t now)
+{
+    if (!Cfg().hazard_sync) return;
+    // Drain the BeginPlay ring with this lane's own cursor.  FxPump reads the same ring for
+    // its projectiles; two independent cursors over a 64-slot ring is the cheapest way for
+    // two lanes to see every spawn without either consuming it for the other.
+    long head = g_fxHead;
+    if (head - g_hzTail > 64) g_hzTail = head - 64;
+    for (; g_hzTail < head; ++g_hzTail) {
+        void* a = g_fxRing[g_hzTail & 63];
+        if (!a) continue;
+        __try { HzSpotted(a, now); }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+            // A spawn of an actor already being destroyed: skip it, keep the lane alive.
+        }
+    }
+    if (g_net.Connected()) {
+        HzUpdateOurs(now);
+        HzSendRows(now);
+    }
+    HzDamagePump(now);
+
+    if (now - g_hzLastReport > 5000) {
+        g_hzLastReport = now;
+        int mine = 0, theirs = 0;
+        for (int i = 0; i < g_hzN; ++i) if (g_hz[i].used) { if (g_hz[i].ours) ++mine; else ++theirs; }
+        if (mine || theirs || g_hzApplied)
+            QDLOG(LOG_DEBUG, "hazard: fields=", dec(mine), " mirrored=", dec(theirs),
+                  " rows=", dec((int)g_hzRowsSent), " applied=", dec((int)g_hzApplied),
+                  " repeats=", dec((int)g_hzGate.Repeats()), " spent=", dec((int)g_hzGate.Spent()),
+                  " rateDrops=", dec((int)g_hzGate.RateDrops()),
+                  " classDmg=", dec(g_hzClassDmg.Count()));
+    }
+}
+
+// True when this actor (or the thing that spawned it) is one of the hazards this lane
+// mirrors.  `PlayerBodyObserve` asks this so a hazard's hit on the partner's body is NOT
+// forwarded on K_DAMAGE: the victim's own machine applies hazard damage from the mirrored
+// geometry, and forwarding it as well would burn them twice.
+bool HzIsHazardActor(void* a)
+{
+    if (!a || !Cfg().hazard_sync) return false;
+    for (int i = 0; i < g_hzN; ++i) if (g_hz[i].used && g_hz[i].actor == a) return true;
+    void* cls = ObjClassGuarded(a);
+    if (!cls) return false;
+    char cn[96] = "";
+    if (FNameToString(ObjNameRaw(cls), cn, sizeof(cn)) <= 0) return false;
+    if (hazard::FieldName(cn)) return true;
+    // A hazard spawned by a boss is often a plain actor whose class says nothing; the
+    // coincidence test is what identifies that one.
+    ActorXform x;
+    if (!ReadActorXform(a, &x)) return false;
+    const float c[3] = {x.px, x.py, x.pz};
+    for (int i = 0; i < g_hzN; ++i) {
+        if (!g_hz[i].used) continue;
+        const float d[3] = {wire::DequantizePos(g_hz[i].st.px), wire::DequantizePos(g_hz[i].st.py),
+                            wire::DequantizePos(g_hz[i].st.pz)};
+        if (hazard::Coincident(c, d)) return true;
+    }
+    return false;
+}
+
+void OnHazardInfo(wire::Reader& r, uint32_t now)
+{
+    wire::HazardInfoBody b;
+    if (!wire::ReadHazardInfo(r, &b)) return;
+    if (b.kind == wire::HI_CLASS_DMG) {
+        g_hzClassDmg.Put(b.cls, b.amount_centi, b.tick_ms, b.flags);
+        QDLOG(LOG_INFO, "hazard: the partner's ", b.cls, " deals ",
+              flt((float)b.amount_centi / 100.0f, 1), " per hit",
+              ((b.flags & hazard::kHazardGuessed) ? " (ESTIMATED there)" : ""));
+        return;
+    }
+    int i = HzFind(b.key);
+    if (b.kind == wire::HI_FIELD_END) {
+        if (i >= 0) {
+            if (g_hz[i].actor && ObjectIsLive(g_hz[i].actor)) SetActorHidden(g_hz[i].actor, true);
+            QDLOG(LOG_INFO, "hazard: the partner's ", g_hz[i].cls, " key=", hex32(b.key[0]),
+                  " ended");
+            g_hz[i].used = false;
+            g_hz[i].actor = nullptr;
+        }
+        return;
+    }
+    if (i < 0) {
+        // TWO HAZARDS AT THE SAME PLACE ARE ONE HAZARD (qdhazard.h): a spawner commonly
+        // produces a volume and a coincident decorative actor for the same effect, and two
+        // records for one puddle would be two burns per tick.
+        const float c[3] = {wire::DequantizePos(b.px), wire::DequantizePos(b.py),
+                            wire::DequantizePos(b.pz)};
+        for (int k = 0; k < g_hzN; ++k) {
+            if (!g_hz[k].used) continue;
+            const float d[3] = {wire::DequantizePos(g_hz[k].st.px),
+                                wire::DequantizePos(g_hz[k].st.py),
+                                wire::DequantizePos(g_hz[k].st.pz)};
+            if (!hazard::Coincident(c, d)) continue;
+            QDLOG(LOG_DEBUG, "hazard: ", b.cls, " coincides with ", g_hz[k].cls,
+                  "; one hazard, not two");
+            return;
+        }
+        i = HzAlloc(b.key, false, now);
+        if (i < 0) return;
+        g_hz[i].ours = false;
+        lstrcpynA(g_hz[i].cls, b.cls, sizeof(g_hz[i].cls));
+        QDLOG(LOG_INFO, "hazard: the partner spawned ", b.cls, " key=", hex32(b.key[0]),
+              " r=", dec((int)b.radius_cm), "cm amount=",
+              flt((float)b.amount_centi / 100.0f, 1), " every ", dec((int)b.tick_ms), "ms");
+    }
+    HzRec& rec = g_hz[i];
+    rec.st.px = b.px; rec.st.py = b.py; rec.st.pz = b.pz;
+    rec.st.radiusCm = b.radius_cm;
+    rec.st.tickMs = b.tick_ms;
+    rec.st.amountCenti = b.amount_centi;
+    rec.st.flags = b.flags;
+    rec.rowMs = now;
+    HzDrawCopy(rec);
+}
+
+void OnHazards(wire::Reader& r, uint32_t now)
+{
+    wire::HazardRow rows[wire::kHazardRowsMax];
+    uint16_t n = 0;
+    if (!wire::ReadHazards(r, rows, &n)) return;
+    for (int k = 0; k < (int)n; ++k) {
+        const wire::HazardRow& w = rows[k];
+        int i = HzFind(w.key);
+        if (i < 0) i = HzAlloc(w.key, false, now);
+        if (i < 0) continue;
+        HzRec& rec = g_hz[i];
+        rec.st.px = w.px; rec.st.py = w.py; rec.st.pz = w.pz;
+        rec.st.radiusCm = w.radius_cm;
+        rec.st.tickMs = w.tick_ms;
+        rec.st.amountCenti = w.amount_centi;
+        rec.st.flags = w.flags;
+        rec.rowMs = now;
+    }
 }
 
 // A kill this module performs through `TryApplyDamage` does not necessarily reach the
@@ -11675,6 +13349,11 @@ void EnemyPump(uint32_t now)
         for (int i = 0; i < g_enN; ++i) BossBarSet(g_en[i], false, now);
         BossKeyClear(now);
         g_bossAck.Reset();
+        // [gap-boss] A phase belongs to the boss in the world it was read in: a new world
+        // reuses neither a key nor a revision, so the track set and the arena state are
+        // forgotten with the records that named them.
+        bossphase_lane::Reset();
+        ending_lane::Reset();      // [play-p3] the choice and its wake are per-world
         g_enN = 0; g_enCursor = 0;
         g_enWorld = world;          // the records below name THIS world from now on
         g_propCacheN = 0;           // classes reload with the world
@@ -11743,6 +13422,10 @@ void EnemyPump(uint32_t now)
     EnemyTargetPump(now);
     EnemySendPump(now);
     BossPump(now);
+    // [gap-boss] The phase authority, the arena rule and the ending choice.  After
+    // BossPump because it reads the ONE shared bar key that BossPump settles.
+    bossphase_lane::Pump(now);
+    ending_lane::Pump(now);       // [play-p3] the choice crosses, after the phase it follows
     // Last: a mirror whose reason has gone is destroyed before anything else reads it.
     EnemyMirrorPump(now);
 }
@@ -12242,6 +13925,17 @@ void CutsceneAct(sequence::Verdict v)
 // ===========================================================================
 // 6c-ter. Dialogue SPECTATOR view (K_DIALOGUE_VIEW 0x50, qddialogue2.h)
 // ===========================================================================
+// [view-fix2] These two headers are engine glue that calls the helpers defined ABOVE this
+// point (ObjPropC / CallNoArgs / LevelVisible / g_levels ...), so they are included here
+// rather than in the block at the top of the file:
+//   qddlgbox.h -- the TEXT inside the game's own DialogueScreen widget (read + write), which
+//                 is what makes the spectator show the talker's line instead of the widget's
+//                 design-time placeholder;
+//   qdlevexp.h -- a read-only dump of every streamed level's loaded/visible state, for the
+//                 black holes in the ground (`mod/doc/features/view-fix2.md`).
+#include "qddlgbox.h"
+#include "qdlevexp.h"
+
 // [dialogue] The talking machine publishes the CURSOR its own DialogueManager is showing;
 // the partner drives ITS OWN game's dialogue widget with it, blends the camera to the
 // speaker and locks its own movement, then gives all three back.
@@ -12273,6 +13967,24 @@ struct DlgShow {                 // what THIS machine is showing as a spectator
     uint8_t  flags;
     uint32_t lastSaid;
 } g_dvs = {};
+
+// [view-fix2] THE TEXT THE BOX IS SHOWING.  The cursor alone cannot fill the widget: measured
+// on the rig (`_test/sview-fix/shots/view-fix-during-inst1.png`), the spectator's box kept the
+// widget's design-time placeholder ("Bored Knight / The locked chest? ...") while the talker's
+// (inst2) read "Spirit of Erma, Matron of the Deep / For all my scrying and divination ...".
+// So the machine that OWNS the conversation reads the speaker and line out of its own
+// DialogueScreen blocks and publishes them with the cursor they belong to; the spectator writes
+// them into ITS block of the same class.  Equality is then byte equality of what is actually
+// rendered, and no dialogue logic runs twice.
+struct DlgBoxText {
+    uint32_t seq;               // the K_DIALOGUE_VIEW seq this text belongs to
+    char     speaker[96];
+    char     line[512];
+    uint32_t changedAt;         // when the SPECTATOR last wrote these strings
+    int      how;               // 1 = widget SetText, 2 = Text property written, 0 = nothing
+};
+DlgBoxText g_dvpText = {};      // what this machine published last (its own box's text)
+DlgBoxText g_peerText = {};     // what the partner most recently published
 
 // Damage recency, not "an enemy is nearby": the hub always has enemies within 15 m, and a
 // refusal triggered by them would mean the lane never engages anywhere that matters.  A
@@ -12408,6 +14120,630 @@ bool DlgSetViewTarget(void* actor)
     }
     return true;
 }
+// ---------------------------------------------------------------------------
+// [view-fix] The dialogue spectator's TEMPORARY CAMERA
+// ---------------------------------------------------------------------------
+// THE DEFECT, MEASURED (user report + `_test/sdlg-spectator/shots/`).  This lane used to
+// call `SetViewTargetWithBlend(npcActor)`.  An NPC has no camera component, so UE falls
+// back to the actor's own transform and the POV becomes the NPC's ORIGIN -- inside its
+// mesh, at its feet, with the player's control rotation.  The dialogue box stayed
+// readable; the NPC was invisible (a camera inside a mesh sees back faces, and those are
+// culled) and the ground clipped through the near plane.
+//
+// What was asked for is the conversation from the point of view of the one TALKING.  The
+// talker is on the other machine, so the facts here are that player's PLAYER row (the
+// capsule CENTRE + view angles, WIRE.md 3.5) and, when PuppetSync is on, its rendered
+// body.  The camera is built from them: eye = centre + 72 cm, then back and to the side
+// (over the shoulder, so the talker's own body is in frame and the near plane is outside
+// both meshes), aimed at the NPC's head.  qdview.h owns the placement math and the cut
+// policy; `test_view.cpp` pins both to numbers.  This block is the engine part.
+//
+// WHY A NEW ACTOR AND NOT THE NPC: the view target must be something with a camera
+// component.  ACameraActor is the engine's own vanilla answer, and its CameraComponent is
+// what `APlayerCameraManager::UpdateViewTarget` reads through `AActor::CalcCamera`.
+struct ViewCam {
+    weak::Ref      actor;      // the temporary ACameraActor
+    weak::Ref      npc;        // the NPC this conversation is with
+    view::CamState state;      // WAIT -> LIVE -> RESTORE
+    view::CamPose  placed;     // the pose the actor stands at now
+    char           level[64];  // the NPC's ULevel short name -- held visible for the view
+    char           area[64];   // the game's own level LIST that carries that area
+    uint32_t       beganAt;    // when the wait started (the staged force uses it)
+} g_vcam = {};
+
+bool ViewCamEngaged() { return Cfg().view_camera && g_vcam.state.Engaged(); }
+
+// The engine class for the temporary camera.  ACameraActor is a native class, so its name
+// must be ON the UClass object itself; `CineCameraActor` is the fallback because some
+// cooked builds drop the vanilla one.  A build that has neither is reported once, and the
+// lane then leaves the local view alone instead of pointing it at the NPC's origin.
+void* ViewCamClass()
+{
+    static void* cls = nullptr;
+    static bool tried = false;
+    if (!tried) {
+        tried = true;
+        cls = FindClassByName("CameraActor");
+        if (cls) {
+            QDLOG(LOG_INFO, "dialogue view: temporary camera class CameraActor resolved");
+        } else {
+            cls = FindClassByName("CineCameraActor");
+            if (cls) QDLOG(LOG_INFO, "dialogue view: temporary camera class CineCameraActor resolved");
+            else QDLOG(LOG_WARN, "dialogue view: NO CameraActor/CineCameraActor class in this "
+                                 "build; the spectator keeps its own view (the old defect)");
+        }
+    }
+    if (cls && !ObjectIsLive(cls)) cls = nullptr;
+    return cls;
+}
+
+// UE refuses SetActorLocation on a Static-mobility root; a camera that follows the talker
+// has to be Movable.  `Mobility` is a byte enum on USceneComponent (Static 0, Stationary
+// 1, Movable 2).  Read back, because a refused write is indistinguishable from a silent
+// one in a screenshot.
+bool ViewCamMakeMovable(void* actor)
+{
+    void* root = nullptr;
+    __try { root = *(void**)((uint8_t*)actor + g_actor.rootComponent); }
+    __except (EXCEPTION_EXECUTE_HANDLER) { root = nullptr; }
+    if (!root || !LooksLikeUObject(root)) return false;
+    if (!WriteBytePropC(root, "Mobility", 2)) return false;
+    uint8_t back = 0xFF;
+    return BytePropC(root, "Mobility", &back) && back == 2;
+}
+
+// The pose INCLUDING pitch.  `SetActorXform` deliberately writes pitch 0 (a body on the
+// ground has none); a camera needs the angle that points at the NPC's head, so this is the
+// same engine call with the rotator filled in.
+bool ViewCamSetPose(void* actor, const view::CamPose& p)
+{
+    if (!actor || !p.valid || !g_actor.sigSetLocRot.valid) return false;
+    if (!motion::SanePos(p.x, p.y, p.z)) return false;
+    ArgList a;
+    a.AddVector("NewLocation", p.x, p.y, p.z);
+    a.AddRotator("NewRotation", p.pitch, p.yaw, 0.0f);
+    a.AddBool("bSweep", false);
+    a.AddBool("bTeleport", true);
+    char err[128];
+    return Invoke(actor, g_actor.fnSetLocRot, g_actor.sigSetLocRot, a, nullptr, err, sizeof(err));
+}
+
+// Where to look on the NPC: its HEAD.  The actor's origin is not enough -- these are
+// Blueprints whose root is the capsule CENTRE on a character-derived class and the feet on
+// a plain actor, so a fixed guess aims at the floor for one and over the head of the
+// other.  The order of answers is measured, not assumed:
+//   1. a primitive component's engine BOUNDS (FBoxSphereBounds in world space);
+//   2. the capsule's own half height (+ its relative Z, for a capsule that is not the root);
+//   3. a humanoid default that depends on whether the class is a Character.
+// Which one answered is logged once per NPC class: the difference between them is
+// "the camera looks at the face" and "the camera looks at the floor".
+bool ViewNpcAim(void* npc, view::AimPoint* out)
+{
+    out->valid = false;
+    ActorXform x;
+    if (!npc || !ReadActorXform(npc, &x)) return false;
+    float headAbove = 0.0f;
+    bool measured = false;
+    const char* source = "-";
+
+    // 1a. THE ENGINE'S OWN ANSWER, and the one that works on this build: measured live
+    // (session view-fix, run 1) the property walk below found NOTHING on `NPC_Base_C` --
+    // its components are not called Mesh/Capsule -- so the default aimed 90 cm above the
+    // head and the shot was of the canopy.  `UKismetSystemLibrary.GetActorBounds` is a
+    // native BlueprintFunctionLibrary (always loaded) and needs no component names:
+    // Origin = the bounding box's CENTRE, BoxExtent = its half size, both world space.
+    {
+        static void* libCdo = nullptr;
+        static Fn fBounds = {};
+        if (!libCdo || !ObjectIsLive(libCdo)) libCdo = FindCdo("KismetSystemLibrary");
+        if (libCdo && (fBounds.fn || fBounds.Resolve(libCdo, "GetActorBounds"))) {
+            Call c(fBounds);
+            bool haveActor = false;
+            for (int i = 0; i < fBounds.sig.props; ++i) {
+                const PropDesc& d = fBounds.sig.p[i];
+                if (d.flags & (CPF_OutParm | CPF_ReturnParm)) continue;
+                if (NameEquals(d.type, "ObjectProperty")) {
+                    *(void**)(c.buf + d.offset) = npc;
+                    haveActor = true;
+                } else if (NameEquals(d.type, "BoolProperty")) {
+                    // bOnlyCollidingComponents = TRUE.  MEASURED (run 2): with every
+                    // component counted, `Fishwife_Ghost_BP_C` answered a head 1880 cm above
+                    // its origin -- some light/FX/audio component with a huge bound -- and
+                    // the camera aimed at the sky.
+                    *(uint8_t*)(c.buf + d.offset) = 1;
+                }
+            }
+            int oo = fBounds.Off("Origin"), eo = fBounds.Off("BoxExtent");
+            if (haveActor && oo >= 0 && eo >= 0 && oo + 12 <= fBounds.sig.parms_size &&
+                eo + 12 <= fBounds.sig.parms_size && c.Run(libCdo)) {
+                const float* o = (const float*)(c.buf + oo);
+                const float* e = (const float*)(c.buf + eo);
+                float h = (o[2] + e[2] * 0.85f) - x.pz;
+                float bx = o[0] - x.px, by = o[1] - x.py;
+                if (motion::SanePos(o[0], o[1], o[2]) && e[0] > 1.0f && e[0] < 1000.0f &&
+                    e[1] > 1.0f && e[1] < 1000.0f && e[2] > 1.0f && e[2] < 1000.0f &&
+                    // A DIALOGUE NPC IS A PERSON.  A head 20..400 cm above the actor's
+                    // origin covers both a feet-rooted actor (+160) and a capsule-rooted one
+                    // (+76); anything else is a bound from a component that is not this
+                    // body, and it is refused rather than aimed at.
+                    h >= 20.0f && h <= 400.0f &&
+                    bx * bx + by * by < 300.0f * 300.0f) {
+                    headAbove = h;
+                    measured = true;
+                    source = "GetActorBounds";
+                }
+            }
+        }
+    }
+
+    static void* primCls = nullptr;
+    if (!primCls || !ObjectIsLive(primCls)) primCls = FindClassByName("PrimitiveComponent");
+    static const char* kMeshProps[] = {"Mesh", "SkeletalMesh", "CharacterMesh0",
+                                       "SkeletalMeshComponent", "StaticMesh"};
+    for (int i = 0; primCls && i < (int)(sizeof(kMeshProps) / sizeof(kMeshProps[0])) && !measured; ++i) {
+        int po = PropOff(ObjClass(npc), kMeshProps[i]);
+        if (po < 0) continue;
+        void* comp = nullptr;
+        __try { comp = *(void**)((uint8_t*)npc + po); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { comp = nullptr; }
+        if (!comp || !LooksLikeUObject(comp) || !DerivesFrom(ObjClass(comp), primCls)) continue;
+        int bo = PropOff(ObjClass(comp), "Bounds");
+        if (bo < 0) continue;
+        // FBoxSphereBounds { FVector Origin; FVector BoxExtent; float SphereRadius } --
+        // 28 bytes, world space, and only read if every number is a place.
+        float v[7];
+        __try { memcpy(v, (uint8_t*)comp + bo, sizeof(v)); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { continue; }
+        float ox = v[0], oy = v[1], oz = v[2], ex = v[3], ey = v[4], ez = v[5];
+        if (!motion::SanePos(ox, oy, oz)) continue;
+        if (!(ex >= 1.0f && ex <= 1000.0f) || !(ey >= 1.0f && ey <= 1000.0f) ||
+            !(ez >= 1.0f && ez <= 1000.0f)) continue;
+        float dx = ox - x.px, dy = oy - x.py, dz = oz - x.pz;
+        if (dx * dx + dy * dy + dz * dz > 2000.0f * 2000.0f) continue;   // some other actor's
+        headAbove = (oz + ez * 0.85f) - x.pz;
+        measured = true;
+        source = kMeshProps[i];
+    }
+
+    if (!measured) {
+        static const char* kCapProps[] = {"CapsuleComponent", "Capsule", "CollisionCapsule"};
+        for (int i = 0; i < (int)(sizeof(kCapProps) / sizeof(kCapProps[0])) && !measured; ++i) {
+            int po = PropOff(ObjClass(npc), kCapProps[i]);
+            if (po < 0) continue;
+            void* cap = nullptr;
+            __try { cap = *(void**)((uint8_t*)npc + po); }
+            __except (EXCEPTION_EXECUTE_HANDLER) { cap = nullptr; }
+            if (!cap || !LooksLikeUObject(cap)) continue;
+            int ho = PropOff(ObjClass(cap), "CapsuleHalfHeight");
+            if (ho < 0) continue;
+            float hh = 0.0f;
+            __try { hh = *(float*)((uint8_t*)cap + ho); }
+            __except (EXCEPTION_EXECUTE_HANDLER) { hh = 0.0f; }
+            if (!(hh > 20.0f && hh < 300.0f)) continue;
+            // The capsule's own Z inside the actor: the character's capsule IS the root
+            // (relative 0, so the actor's origin is the capsule CENTRE), a placed mesh
+            // actor may hang one above its feet.
+            float relZ = 0.0f;
+            int rlo = PropOff(ObjClass(cap), "RelativeLocation");
+            if (rlo >= 0) {
+                __try { relZ = *(float*)((uint8_t*)cap + rlo + 8); }
+                __except (EXCEPTION_EXECUTE_HANDLER) { relZ = 0.0f; }
+            }
+            if (!(relZ > -300.0f && relZ < 600.0f)) relZ = 0.0f;
+            headAbove = relZ + hh * 0.85f;
+            measured = true;
+            source = kCapProps[i];
+        }
+    }
+
+    if (!measured) {
+        // THE ROOT COMPONENT ANSWERS WHAT THE CLASS CHECK COULD NOT.  MEASURED (run 1):
+        // `NPC_Base_C` did not derive from the `Character` class object this build exposes,
+        // so the default was 160 cm -- and the shot aimed 90 cm over the head because this
+        // NPC's origin is its CAPSULE CENTRE.  A capsule root means the origin is the centre
+        // (+76 for a 90 cm half height); any other root is the feet (+160).
+        void* root = nullptr;
+        int ro = PropOff(ObjClass(npc), "RootComponent");
+        __try { root = ro >= 0 ? *(void**)((uint8_t*)npc + ro) : nullptr; }
+        __except (EXCEPTION_EXECUTE_HANDLER) { root = nullptr; }
+        char rcn[64] = "";
+        bool capsuleRoot = root && LooksLikeUObject(root) &&
+                           FNameToString(ObjNameRaw(ObjClass(root)), rcn, sizeof(rcn)) > 0 &&
+                           enemyown::HasCI(rcn, "capsule");
+        headAbove = capsuleRoot ? 76.0f : 160.0f;
+        source = capsuleRoot ? "capsule root (the origin is the capsule centre)"
+                             : "humanoid default (the origin is at the feet)";
+    }
+
+    out->x = x.px;
+    out->y = x.py;
+    out->z = x.pz + headAbove;
+    out->measured = measured;   // a guessed height is not aimed at (qdview.h Compose)
+    out->valid = true;
+    {
+        static char saidCls[96] = "";
+        char cn[96] = "";
+        FNameToString(ObjNameRaw(ObjClass(npc)), cn, sizeof(cn));
+        if (strcmp(saidCls, cn) != 0) {
+            lstrcpynA(saidCls, cn, sizeof(saidCls));
+            QDLOG(LOG_INFO, "dialogue view: NPC aim for ", cn, " is ", flt(headAbove, 0),
+                  " cm above the actor origin (from ", source, ")");
+        }
+    }
+    return true;
+}
+
+// The talker's place, as this machine can know it: the partner's PLAYER row (capsule
+// CENTRE + view angles).  A FROZEN sample is still the last place that player stood and is
+// used deliberately -- refusing it would leave the spectator with no camera at all.  A row
+// the interpolator cannot place answers false and the caller falls back to the NPC.
+bool ViewTalkerPose(uint32_t now, view::TalkerPose* out)
+{
+    out->valid = false;
+    out->x = out->y = out->z = 0.0f;
+    out->yaw = out->pitch = 0.0f;
+    // THE NEWEST ROW FIRST.  The interpolator deliberately renders ~100 ms in the past --
+    // right for the partner's BODY, wrong for a camera that must anchor a conversation: it
+    // also blends across a teleport, and an out-of-order row at the ring's tail can make it
+    // answer the position from before one (measured, run 2: 3.4 km, camera in the sky).
+    // `g_peerPos` is the most recent row that actually ARRIVED.
+    motion::MoveOut m = g_peerInterp.Sample(now);
+    if (g_peerPosMs != 0 && (uint32_t)(now - g_peerPosMs) <= 500 &&
+        motion::SanePos(g_peerPos[0], g_peerPos[1], g_peerPos[2])) {
+        out->x = g_peerPos[0];
+        out->y = g_peerPos[1];
+        out->z = g_peerPos[2];
+        out->yaw = m.valid ? m.yaw_deg : 0.0f;
+        out->pitch = m.valid ? m.pitch_deg : 0.0f;
+        out->valid = true;
+        return true;
+    }
+    if (!m.valid || !motion::SanePos(m.px, m.py, m.pz)) return false;
+    out->x = m.px;
+    out->y = m.py;
+    out->z = m.pz;
+    out->yaw = m.yaw_deg;
+    out->pitch = m.pitch_deg;
+    out->valid = true;
+    return true;
+}
+
+// The talker's place for THIS conversation (qdview.h AnchorPlausible explains the bound).
+bool ViewAnchorFor(const view::AimPoint& aim, uint32_t now, view::TalkerPose* out)
+{
+    if (!ViewTalkerPose(now, out)) return false;
+    if (!view::AnchorPlausible(*out, aim)) {
+        static uint32_t lastSaid = 0;
+        if ((uint32_t)(now - lastSaid) > 10000) {
+            lastSaid = now;
+            float dx = out->x - aim.x, dy = out->y - aim.y;
+            QDLOG(LOG_WARN, "dialogue view: the talker's reported place is ",
+                  flt(sqrtf(dx * dx + dy * dy), 0), " cm from the NPC -- not this "
+                  "conversation's anchor; the camera frames the conversation instead");
+        }
+        out->valid = false;
+        return false;
+    }
+    return true;
+}
+
+// The NPC's own level, from the engine's object graph (actor -> ULevel -> short name), and
+// the game's `UFS_LevelList` that carries its area (qdstream.h's pak-read map).  Both are
+// what the stream half needs; an unreadable name is reported, never guessed.
+bool ViewNpcLevel(void* npc, char* level, int cap)
+{
+    level[0] = 0;
+    void* lvl = npc ? ActorLevelOf(npc) : nullptr;
+    if (!lvl) return false;
+    if (FNameToString(ObjNameRaw(lvl), level, cap) <= 0) return false;
+    if (!stream::PlausibleLevelName(level)) { level[0] = 0; return false; }
+    return true;
+}
+
+// Is the conversation's place ON SCREEN here?  `ULevel::bIsVisible` is the engine's own
+// bit (+0x1F4 bit 0x20, the one `LevelActuallyVisible` reads off the streaming object): a
+// level that is not visible has no rendered geometry, no collision, and no actors the rig
+// can stand on.  This is the question the cut waits on.
+bool ViewNpcOnScreen(void* npc)
+{
+    return npc && ObjectCallable(npc) && ActorLevelVisible(npc);
+}
+
+// Make the talker's place exist here.  Two levers, STAGED, because they cost different
+// things and the cheap one is usually enough:
+//   1. the level's own residency/visibility on the engine's ULevelStreaming object --
+//      the lever the union already uses for a partner who is somewhere else;
+//   2. the game's own entry, `AddLevelListToStack` with the list that carries the area --
+//      only when (1) has not produced a VISIBLE level after kListAfterMs.  R109 measured
+//      that the flags alone can leave `visible=1 loaded=1` with no actors at all, and the
+//      list is the manager's own "load and show this area" path.  It is staged because a
+//      list is the whole area, and pushing one for a level that was going to appear
+//      anyway is the churn Session 15 measured.
+static const uint32_t kListAfterMs = 1500;
+
+void ViewForceNpcLevel(uint32_t now)
+{
+    if (!g_vcam.level[0]) return;
+    // [play-p3] no level forcing while the ending's wake-up is waiting on level management.
+    if (!EndingLevelDriveAllowed(now)) return;
+    bool visible = false;
+    LevelsRefresh();
+    for (int i = 0; i < g_levelN; ++i) {
+        if (!SameNameText(g_levels[i].name, g_vcam.level)) continue;
+        if (!ObjectIsLive(g_levels[i].ls)) break;
+        visible = LevelVisible(g_levels[i].ls) && LevelActuallyVisible(g_levels[i].ls);
+        g_force.Need(g_vcam.level, now);     // the union must not release it while we show it
+        if (!visible) {
+            static uint32_t lastSaid = 0;
+            bool quiet = (uint32_t)(now - lastSaid) < 2000;
+            if (!quiet) lastSaid = now;
+            ForceLevel(g_levels[i], true, quiet);
+        }
+        break;
+    }
+    if (!visible && now - g_vcam.beganAt > kListAfterMs && !ViewNpcOnScreen(g_vcam.npc)) {
+        static char triedFor[64] = "";
+        if (strcmp(triedFor, g_vcam.level) != 0) {
+            lstrcpynA(triedFor, g_vcam.level, sizeof(triedFor));
+            char err[192] = "";
+            char* used = nullptr;
+            bool pushed = PushAreaLevelList(g_vcam.level, &used, err, sizeof(err));
+            QDLOG(pushed ? LOG_INFO : LOG_WARN,
+                  "dialogue view: the talker's level '", g_vcam.level, "' is still not "
+                  "visible here, so the area is loaded through the game's own path -- ",
+                  (pushed ? "level list '" : "NO list pushed ("),
+                  (pushed ? (used ? used : "?") : err),
+                  (pushed ? "' added to the manager's stack" : ")"));
+        }
+    }
+}
+
+// What the STREAM half needs for this NPC, resolved once per conversation.  A level that no
+// `ULevelStreaming` of this world owns (the persistent level -- most of the hub) has nothing
+// to force: "the NPC's level is not visible" would be a wrong premise there and would make
+// the staged list push fire on a level that has no list.  So the name is dropped and the log
+// says why.  `g_vcam.level[0] == 0` then means "nothing to stream", not "unknown".
+void ViewCamSetNeed(void* npc)
+{
+    g_vcam.level[0] = 0;
+    g_vcam.area[0] = 0;
+    if (!npc) return;
+    char lvl[64] = "";
+    if (!ViewNpcLevel(npc, lvl, sizeof(lvl))) return;
+    LevelsRefresh();
+    bool streamed = false;
+    for (int i = 0; i < g_levelN; ++i) {
+        if (SameNameText(g_levels[i].name, lvl)) { streamed = true; break; }
+    }
+    if (!streamed) {
+        QDLOG(LOG_INFO, "dialogue view: the NPC's level '", lvl, "' is not a streamed level "
+                        "of this world (the persistent level): nothing to stream");
+        return;
+    }
+    lstrcpynA(g_vcam.level, lvl, sizeof(g_vcam.level));
+    const char* list = stream::LevelListForArea(lvl);
+    if (list) lstrcpynA(g_vcam.area, list, sizeof(g_vcam.area));
+}
+
+// Drop the temporary camera WITHOUT caring which world it is in.  Only called when it is
+// not (or no longer) the view target.
+void ViewCamDestroyNow()
+{
+    void* a = g_vcam.actor;
+    if (a) DestroyActor(a);
+    g_vcam.actor = nullptr;
+    g_vcam.npc = nullptr;
+    g_vcam.state.Reset();
+    g_vcam.placed = view::CamPose();
+    g_vcam.level[0] = 0;
+    g_vcam.area[0] = 0;
+    g_vcam.beganAt = 0;
+}
+
+// Spawn the camera (when the NPC is already resolvable) and start the cut wait.  Returns
+// false only when this build cannot spawn a camera at all -- the caller then keeps the
+// local view, which is the honest fallback: the dialogue box is still readable and the
+// player is never left looking at the inside of a mesh.
+bool ViewCamShow(void* npc, uint32_t now)
+{
+    ViewCamDestroyNow();
+    void* cls = ViewCamClass();
+    if (!cls || !EnsureActorApi()) return false;
+
+    g_vcam.npc = npc;
+    ViewCamSetNeed(npc);
+    g_vcam.beganAt = now;
+
+    view::AimPoint aim = {};
+    bool haveAim = npc && ViewNpcAim(npc, &aim);
+    view::TalkerPose t = {};
+    if (haveAim) ViewAnchorFor(aim, now, &t);
+    else ViewTalkerPose(now, &t);
+    view::CamPose pose = {};
+    if (haveAim) {
+        pose = view::Compose(t, aim, CapsuleHalfHeight());
+        if (!t.valid) {
+            ActorXform nx;
+            if (ReadActorXform(npc, &nx)) pose = view::ComposeFacingNpc(aim, nx.yaw);
+        }
+    }
+    if (pose.valid) {
+        void* actor = SpawnActorAt(cls, pose.x, pose.y, pose.z, pose.yaw);
+        if (!actor) {
+            QDLOG(LOG_WARN, "dialogue view: the temporary camera could not be spawned; the "
+                            "spectator keeps its own view (the dialogue box is still shown)");
+            return false;
+        }
+        g_vcam.actor = actor;
+        bool movable = ViewCamMakeMovable(actor);
+        bool posed = ViewCamSetPose(actor, pose);
+        if (posed) g_vcam.placed = pose;
+        QDLOG(LOG_INFO, "dialogue view: temporary camera at ", flt(pose.x, 0), ",",
+              flt(pose.y, 0), ",", flt(pose.z, 0), " pitch=", flt(pose.pitch, 1),
+              " yaw=", flt(pose.yaw, 1), " (movable=", dec(movable ? 1 : 0),
+              " posed=", dec(posed ? 1 : 0), ")");
+    } else {
+        QDLOG(LOG_WARN, "dialogue view: the NPC is NOT on this machine yet (its level is "
+                        "not streamed here); the camera will be placed when it appears");
+    }
+    // GEOMETRY, for the run that has to explain a shot: where the camera is, where the
+    // talker's row puts that player, and where the aim point resolved.  A framing bug is a
+    // number -- a sign, 90 cm, a stale position -- and the log has to carry it.
+    {
+        char nd[96] = "-";
+        if (npc) ObjDescribe(npc, nd, sizeof(nd));
+        float ax = aim.valid ? aim.x - pose.x : 0.0f;
+        float ay = aim.valid ? aim.y - pose.y : 0.0f;
+        float az = aim.valid ? aim.z - pose.z : 0.0f;
+        QDLOG(LOG_INFO, "dialogue view: geometry -- camera (", flt(pose.x, 0), ",",
+              flt(pose.y, 0), ",", flt(pose.z, 0), ") pitch=", flt(pose.pitch, 1), " yaw=",
+              flt(pose.yaw, 1), " talkerRow (", flt(t.x, 0), ",", flt(t.y, 0), ",",
+              flt(t.z, 0), ")", " aim (", flt(aim.x, 0), ",", flt(aim.y, 0), ",",
+              flt(aim.z, 0), ") dist=",
+              flt(sqrtf(ax * ax + ay * ay + az * az), 0), " npc ", nd,
+              " hidden=", dec(ActorHiddenNow(npc) ? 1 : 0));
+    }
+    g_vcam.state.Begin(now);
+    ViewForceNpcLevel(now);
+    QDLOG(LOG_INFO, "dialogue view: cut held until the talker's place is on screen -- level '",
+          (g_vcam.level[0] ? g_vcam.level : "persistent (nothing to stream)"),
+          "' visible=", dec(ViewNpcOnScreen(npc) ? 1 : 0),
+          (g_vcam.area[0] ? ", area list " : ""), (g_vcam.area[0] ? g_vcam.area : ""),
+          (t.valid ? ", talker's row present" : ", no talker row (NPC-anchored)"));
+    return true;
+}
+
+// Called from the dialogue-view pump: holds the cut, then keeps the camera on the talker,
+// then destroys it after the blend back.
+void ViewCamPump(uint32_t now)
+{
+    if (!Cfg().view_camera) return;
+    if (g_vcam.state.Restoring()) {
+        if (g_vcam.state.PollRestore(now) == view::ACT_DESTROY) {
+            void* a = g_vcam.actor;
+            if (a) DestroyActor(a);
+            g_vcam.actor = nullptr;
+            g_vcam.state.Destroyed();
+            g_vcam.placed = view::CamPose();
+            g_vcam.npc = nullptr;
+            g_vcam.level[0] = 0;
+            g_vcam.area[0] = 0;
+            QDLOG(LOG_INFO, "dialogue view: temporary camera destroyed");
+        }
+        return;
+    }
+    if (!g_vcam.state.Engaged()) return;
+
+    // An NPC that did not exist when the line arrived can appear once its level streams
+    // in -- which is exactly what the wait and the area push are for.  Re-resolving is
+    // rate-limited: FindNpcById is a walk of the object array.
+    void* npc = g_vcam.npc;
+    if (!npc) {
+        static uint32_t lastScan = 0;
+        if ((uint32_t)(now - lastScan) >= 1000) {
+            lastScan = now;
+            npc = FindNpcById(g_dvs.npc);
+            if (npc) {
+                g_vcam.npc = npc;
+                ViewCamSetNeed(npc);
+                QDLOG(LOG_INFO, "dialogue view: the NPC appeared here (level '",
+                      (g_vcam.level[0] ? g_vcam.level : "persistent"), "')");
+            }
+        }
+    }
+
+    view::AimPoint aim = {};
+    bool haveAim = npc && ViewNpcAim(npc, &aim);
+    view::TalkerPose t = {};
+    if (haveAim) ViewAnchorFor(aim, now, &t);
+    else ViewTalkerPose(now, &t);
+    view::CamPose want = {};
+    if (haveAim) {
+        want = view::Compose(t, aim, CapsuleHalfHeight());
+        if (!t.valid) {
+            ActorXform nx;
+            if (ReadActorXform(npc, &nx)) want = view::ComposeFacingNpc(aim, nx.yaw);
+        }
+    }
+
+    // The camera may have been impossible to place at SHOW time (no NPC yet).
+    if (!g_vcam.actor && want.valid) {
+        void* cls = ViewCamClass();
+        if (cls) {
+            void* a = SpawnActorAt(cls, want.x, want.y, want.z, want.yaw);
+            if (a) {
+                g_vcam.actor = a;
+                ViewCamMakeMovable(a);
+                if (ViewCamSetPose(a, want)) g_vcam.placed = want;
+                QDLOG(LOG_INFO, "dialogue view: temporary camera spawned once the NPC appeared");
+            }
+        }
+    }
+
+    if (g_vcam.state.Waiting()) {
+        bool ready = haveAim && ViewNpcOnScreen(npc);
+        ViewForceNpcLevel(now);
+        view::Act act = g_vcam.state.Poll(ready, now);
+        if (act == view::ACT_NONE) return;
+        void* cam = g_vcam.actor;
+        if (!cam) {
+            // The wait is over and there is still nothing to look through: do not hijack
+            // the local view.  Logged once by the state transition below.
+            QDLOG(LOG_WARN, "dialogue view: no usable temporary camera after ",
+                  dec((int)g_vcam.state.WaitedMs()), " ms; the spectator keeps its own view");
+            g_vcam.state.Cut(now);
+            return;
+        }
+        if (act == view::ACT_CUT_ANYWAY)
+            QDLOG(LOG_WARN, "dialogue view: the talker's place '",
+                  (g_vcam.level[0] ? g_vcam.level : "persistent"), "' was NOT on screen after ",
+                  dec((int)g_vcam.state.WaitedMs()), " ms; cutting anyway (the view may show "
+                  "a hole instead of the NPC)");
+        else
+            QDLOG(LOG_INFO, "dialogue view: the talker's place '",
+                  (g_vcam.level[0] ? g_vcam.level : "persistent"), "' is on screen after ",
+                  dec((int)g_vcam.state.WaitedMs()), " ms; cutting");
+        if (!DlgSetViewTarget(cam)) {
+            QDLOG(LOG_WARN, "dialogue view: SetViewTargetWithBlend to the temporary camera did "
+                            "not run; retrying next pump");
+            return;
+        }
+        g_vcam.state.Cut(now);
+        g_dvs.camTaken = true;
+        QDLOG(LOG_INFO, "dialogue view: camera -> the talker's eye (", flt(g_vcam.placed.x, 0),
+              ",", flt(g_vcam.placed.y, 0), ",", flt(g_vcam.placed.z, 0), ") pitch=",
+              flt(g_vcam.placed.pitch, 1), " yaw=", flt(g_vcam.placed.yaw, 1),
+              "; npc ", (g_vcam.npc ? "resolved" : "NOT resolved"),
+              " hidden=", dec(ActorHiddenNow(g_vcam.npc) ? 1 : 0));
+        return;
+    }
+
+    if (g_vcam.state.CutDone()) {
+        // Keep the conversation's place resident for as long as the camera is on it.
+        ViewForceNpcLevel(now);
+        if (g_vcam.actor && want.valid && view::Moved(g_vcam.placed, want)) {
+            if (ViewCamSetPose(g_vcam.actor, want)) {
+                QDLOG(LOG_INFO, "dialogue view: camera followed the talker to ",
+                      flt(want.x, 0), ",", flt(want.y, 0), ",", flt(want.z, 0),
+                      " pitch=", flt(want.pitch, 1), " yaw=", flt(want.yaw, 1));
+                g_vcam.placed = want;
+            }
+        }
+    }
+}
+
+// The conversation ended: hand the pawn its view back and let the pump destroy the actor
+// after the blend.  A camera that was never the view target goes at once -- destroying an
+// OUTGOING view target would leave the player camera manager holding a dead actor.
+void ViewCamHide()
+{
+    if (!Cfg().view_camera) return;
+    if (g_vcam.state.CutDone()) {
+        g_vcam.state.BeginRestore(Net::Now());
+        return;
+    }
+    if (g_vcam.actor || g_vcam.state.Waiting()) ViewCamDestroyNow();
+}
 
 bool DlgWriteObjField(void* obj, const char* name, void* v)
 {
@@ -12505,6 +14841,95 @@ void* DlgEnsureWidget()
     return created;
 }
 
+// [view-fix2] Put the TALKER's own speaker and line on THIS machine's dialogue box.
+//
+// The cursor fields alone are not enough.  `DlgShowWidget` used to call
+// `ShowDialogueSequenceEntry` on the MANAGER, where no such UFunction exists (the name in the
+// manager's package is an IMPORT of the widget's), so the spectator's two text blocks were
+// never filled and kept the widget's design-time preview: measured, inst1 showed "Bored
+// Knight / The locked chest? Unfortunately Nu took the key ..." while the talker's own screen
+// (inst2) showed "Spirit of Erma, Matron of the Deep / For all my scrying and divination, I
+// did not foresee this betrayal yes."
+//
+// Two levers, in order, and the log says what each one did:
+//  1. the widget's OWN `ShowDialogueSequenceEntry` -- the graph event that fills the blocks on
+//     the talking machine.  Any int/byte parameter it declares is filled from the published
+//     cursor (first = sequence index, second = entry index).
+//  2. the published TEXT itself, written into the two blocks the widget owns
+//     (`DialogueSequenceText` = the line, `NPCName` = the speaker).  This is exact by
+//     construction: the strings are the ones the talker's box is rendering, including the
+//     game's own format-key substitution and its `bHideName` rule (which blanks the name).
+// The read-back is what makes the log a measurement rather than a claim.
+void DlgApplyBoxText(const dlgview::View& v)
+{
+    const uint32_t now = Net::Now();
+    void* dm = IsGameplayPawn(g_localPawn) ? ObjPropC(g_localPawn, "DialogueManager") : nullptr;
+    void* w = dm ? ObjPropC(dm, "Dialogue Widget") : nullptr;
+    if (!w || !ObjectIsLive(w)) {
+        QDLOG(LOG_WARN, "dialogue view: box: no live dialogue widget on this machine");
+        return;
+    }
+    int self = 0, ints = 0, props = -1;
+    {
+        Fn f = {};
+        if (f.Resolve(w, "ShowDialogueSequenceEntry")) {
+            props = f.sig.props;
+            Call c(f);
+            for (int i = 0; i < f.sig.props; ++i) {
+                const PropDesc& d = f.sig.p[i];
+                if (d.flags & (CPF_OutParm | CPF_ReturnParm)) continue;
+                const int val = (ints == 0) ? (int)v.sequence : (int)v.entry;
+                if (NameEquals(d.type, "IntProperty")) { c.I32(d.name, val); ++ints; }
+                else if (NameEquals(d.type, "ByteProperty")) { c.U8(d.name, (uint8_t)val); ++ints; }
+            }
+            self = c.Run(w) ? 1 : 0;
+        }
+    }
+    // (2) the exact text, but only for the cursor it was published with: a text from the
+    // previous line must never land on the next one.
+    const bool mine = g_peerText.seq == v.seq;
+    const bool hideName = (v.flags & dlgview::F_HIDE_NAME) != 0;
+    int nameHow = 0, lineHow = 0;
+    if (mine && g_peerText.line[0]) {
+        lineHow = dlgbox::SetText(w, dlgbox::kLineBlock, g_peerText.line, now);
+        // The rich-text block prints its line letter by letter; ask the widget's own
+        // "stop printing" so the whole line is on screen the frame it is set.
+        if (lineHow) (void)dlgbox::ShowWholeLine(w, dlgbox::kLineBlock, now);
+    }
+    if (mine) nameHow = dlgbox::SetText(w, dlgbox::kNameBlock, hideName ? "" : g_peerText.speaker, now);
+
+    char sp[128] = "", ln[dlgbox::kMaxText] = "";
+    const int got = dlgbox::ReadBox(w, sp, sizeof(sp), ln, sizeof(ln), now);
+    const bool want = mine && g_peerText.line[0];
+    bool exact = false;
+    if (want) {
+        const bool lineSame = strcmp(ln, g_peerText.line) == 0;
+        const bool nameSame = hideName ? (sp[0] == 0) : (strcmp(sp, g_peerText.speaker) == 0);
+        exact = lineSame && nameSame;
+    }
+    if (want || g_dvs.lastSaid == 0 || now - g_dvs.lastSaid > 1000) {
+        QDLOG(LOG_INFO, "dialogue view: box speaker='", sp, "' line='", ln, "' (exact=",
+              dec(exact ? 1 : 0), " published=", dec(want ? 1 : 0), " seqMatch=",
+              dec(mine ? 1 : 0), " textRead=", dec(got), " widgetPopulate=", dec(self),
+              " widgetPopulateProps=", dec(props), " widgetPopulateInts=", dec(ints),
+              " lineHow=", dec(lineHow), " nameHow=", dec(nameHow), ")");
+    }
+    if (!want) {
+        // Nothing published for this cursor: say so, and name what the box DOES hold, so the
+        // design-time placeholder is reported as a placeholder rather than taken for the
+        // conversation.  Throttled: the pump runs at 10 Hz.
+        static uint32_t lastWarn = 0;
+        if (now - lastWarn > 5000) {
+            lastWarn = now;
+            QDLOG(LOG_WARN, "dialogue view: box: the partner published no text for cursor seq=",
+                  dec((int)v.seq), " (its last was seq=", dec((int)g_peerText.seq),
+                  ", text=", dec(g_peerText.line[0] ? 1 : 0),
+                  "); the box shows what the widget itself produced");
+        }
+    }
+    g_dvs.lastSaid = now;
+}
+
 // Run the DISPLAY path.  Order matters: the widget must EXIST before ShowDialogueWidget can
 // put it on screen, and `RunningDialogue` is the manager's own "a conversation is in
 // progress" bool -- the widget reads it to decide whether to draw.
@@ -12534,6 +14959,10 @@ void DlgShowWidget(const dlgview::View& v)
           " ShowDialogueSequenceEntry=", dec(e ? 1 : 0), " ShowDialogueWidget=", dec(w ? 1 : 0),
           " ShowDialogueOptions=", dec(o ? 1 : 0), " PrepareForDialogue=", dec(prep ? 1 : 0),
           " SetUpForDialogue=", dec(setup ? 1 : 0), ")");
+    // [view-fix2] The three calls above are on the MANAGER and only `ShowDialogueWidget` exists
+    // there; the two that fill the text are the WIDGET's own graph events.  This is the step
+    // that makes the box show the conversation instead of the widget's placeholder.
+    DlgApplyBoxText(v);
 }
 
 bool DlgBlockInput(bool block)
@@ -12574,7 +15003,6 @@ bool DlgBlockInput(bool block)
 
 bool DlgSpectatorShow(const dlgview::View& v, uint32_t now)
 {
-    (void)now;
     dlgview::Board::Copy(g_dvs.asset, sizeof(g_dvs.asset), v.asset);
     memcpy(g_dvs.npc, v.npc, 16);
     g_dvs.sequence = v.sequence; g_dvs.entry = v.entry;
@@ -12596,8 +15024,22 @@ bool DlgSpectatorShow(const dlgview::View& v, uint32_t now)
           " entry=", dec((cur & 8) ? 1 : 0), ")");
     DlgShowWidget(v);
 
-    g_dvs.camTaken = npcActor && DlgSetViewTarget(npcActor);
-    QDLOG(LOG_INFO, "dialogue view: camera -> ", npcn, " (ran=", dec(g_dvs.camTaken ? 1 : 0), ")");
+    // [view-fix] THE CAMERA GOES TO THE TALKER'S EYE, NOT TO THE NPC ACTOR.  Pointing the
+    // view target at an actor with no camera component puts the POV at that actor's ORIGIN
+    // -- inside the NPC's mesh, which is the reported defect (the box readable, the NPC
+    // invisible, the ground clipping).  `ViewCamShow` spawns a temporary CameraActor there
+    // and HOLDS the cut until the talker's place is on screen; `ViewCamPump` takes it.
+    g_dvs.camTaken = false;
+    if (Cfg().view_camera) {
+        if (!ViewCamShow(npcActor, now))
+            QDLOG(LOG_WARN, "dialogue view: no temporary camera on this build; the spectator "
+                            "keeps its own view (the dialogue box is still shown)");
+    } else {
+        // ViewCamera=0: the old lever, kept so the defect is reproducible on this build.
+        g_dvs.camTaken = npcActor && DlgSetViewTarget(npcActor);
+        QDLOG(LOG_INFO, "dialogue view: camera -> ", npcn, " (ran=",
+              dec(g_dvs.camTaken ? 1 : 0), "; ViewCamera=0)");
+    }
     g_dvs.inputBlocked = DlgBlockInput(true);
     QDLOG(LOG_INFO, "dialogue view: input locked (ran=", dec(g_dvs.inputBlocked ? 1 : 0), ")");
     g_dvs.engaged = true;
@@ -12645,6 +15087,10 @@ void DlgSpectatorHide(const char* why)
           " dialogue ended=", dec(ended ? 1 : 0), ")");
     QDLOG(LOG_INFO, "dialogue view: camera restored (ran=", dec(cam ? 1 : 0), ")");
     QDLOG(LOG_INFO, "dialogue view: input restored (ran=", dec(inp ? 1 : 0), ")");
+    // [view-fix] The blend back to the pawn has started above, so the temporary camera is
+    // kept for it and destroyed by the pump (destroying an outgoing view target leaves the
+    // player camera manager reading a dead actor).
+    ViewCamHide();
     g_dvs.camTaken = false;
     g_dvs.inputBlocked = false;
     g_dvs.engaged = false;
@@ -12665,24 +15111,38 @@ bool DlgLocalInCombat(uint32_t now)
     return g_dvLastHurtMs != 0 && (now - g_dvLastHurtMs) < 8000;
 }
 
-bool DlgLocalBusy()
+// WHY THIS ANSWERS WITH A REASON RATHER THAN A BOOL.  Measured (final soak, 16 Nov): the
+// spectator refused to engage for sixteen consecutive republishes while the log said only
+// "it is in its own conversation/cutscene" -- one message for FIVE different causes.  The
+// operator cannot tell a legitimately-vetoed peer (it really is talking) from a lane that is
+// stuck on a stale flag, and the soak's whole job is to attribute a failure to a module.
+// So the condition that fired is named, and the caller logs it verbatim.
+const char* DlgLocalBusyReason()
 {
-    if (!IsGameplayPawn(g_localPawn)) return true;
+    if (!IsGameplayPawn(g_localPawn)) return "no gameplay pawn (dead, respawning or loading)";
     uint8_t dead = 0;
-    if (BytePropC(g_localPawn, "IsDead", &dead) && dead) return true;
-    if (g_dlg.talking) return true;              // its OWN conversation
-    // [coordinator] review #4: g_dlg.talking is only written under DialogueSync=1, so read
-    // the manager's own running bool too -- never drive a live local conversation.
+    if (BytePropC(g_localPawn, "IsDead", &dead) && dead) return "the local player is dead";
+    if (g_dlg.talking) return "its OWN conversation (the talk lane says so)";
     {
         uint8_t running = 0;
         void* dm = ObjPropC(g_localPawn, "DialogueManager");
         if (dm && !DlgSpectating() && BytePropC(dm, "RunningDialogue", &running) && running)
-            return true;
+            return "its own DialogueManager is running a conversation";
     }
-    if (g_worldTransition) return true;          // a hard map switch is in flight
-    char name[sequence::kMaxNameLen];
-    if (LocalCutscene(name, sizeof(name))) return true;
-    return false;
+    if (g_worldTransition) return "a hard map switch is in flight";
+    {
+        char name[sequence::kMaxNameLen];
+        if (LocalCutscene(name, sizeof(name))) {
+            QDLOG(LOG_INFO, "dialogue view: the local cutscene that vetoes is '", name, "'");
+            return "a cutscene/sequence is playing locally";
+        }
+    }
+    return nullptr;
+}
+
+bool DlgLocalBusy()
+{
+    return DlgLocalBusyReason() != nullptr;
 }
 
 void DialogueViewPublish(uint32_t now)
@@ -12738,7 +15198,41 @@ void DialogueViewPublish(uint32_t now)
     d.sequence = sequence; d.entry = entry;
     d.options = options; d.chosen = chosen;
     dlgview::Board::Copy(d.asset, sizeof(d.asset), talking ? asset : "");
-    uint8_t body[192];
+    // [view-fix2] THE TEXT THIS MACHINE'S OWN BOX IS SHOWING, published with the cursor it
+    // belongs to.  Read from the widget the game itself filled, so the spectator can render the
+    // same characters without resolving `FS_DialogueData`'s inner structs on its own machine.
+    memset(&g_dvpText, 0, sizeof(g_dvpText));
+    if (talking) {
+        void* dm = ObjPropC(g_localPawn, "DialogueManager");
+        void* w = dm ? ObjPropC(dm, "Dialogue Widget") : nullptr;
+        if (w && ObjectIsLive(w)) {
+            const int got = dlgbox::ReadBox(w, g_dvpText.speaker, sizeof(g_dvpText.speaker),
+                                            g_dvpText.line, sizeof(g_dvpText.line), now);
+            g_dvpText.seq = d.seq;
+            if (!(got & 2) || !g_dvpText.line[0]) {
+                static uint32_t lastSaid = 0;
+                if (now - lastSaid > 5000) {
+                    lastSaid = now;
+                    QDLOG(LOG_WARN, "dialogue view: publish: the local box has no line text "
+                          "(read=", dec(got), " widget=", (w ? "yes" : "no"),
+                          "); the partner will show the cursor only");
+                }
+            }
+        }
+        dlgview::Board::Copy(d.speaker, sizeof(d.speaker), g_dvpText.speaker);
+        dlgview::Board::Copy(d.line, sizeof(d.line), g_dvpText.line);
+        // The ground truth the spectator has to match: what THIS machine's box is showing.
+        // Logged on change only, so a run's log holds one line per line of dialogue.
+        static char prevSpeaker[sizeof(g_dvpText.speaker)] = "";
+        static char prevLine[sizeof(g_dvpText.line)] = "";
+        if (strcmp(prevSpeaker, g_dvpText.speaker) != 0 || strcmp(prevLine, g_dvpText.line) != 0) {
+            lstrcpynA(prevSpeaker, g_dvpText.speaker, sizeof(prevSpeaker));
+            lstrcpynA(prevLine, g_dvpText.line, sizeof(prevLine));
+            QDLOG(LOG_INFO, "dialogue view: publish text speaker='", g_dvpText.speaker,
+                  "' line='", g_dvpText.line, "'");
+        }
+    }
+    uint8_t body[1024];
     wire::Writer w(body, sizeof(body));
     wire::WriteDialogueView(w, d);
     if (w.ok) g_net.SendUnreliable(wire::K_DIALOGUE_VIEW, body, w.len);
@@ -12751,6 +15245,21 @@ void OnDialogueView(wire::Reader& r, uint32_t now)
     uint8_t npc[16];
     memcpy(npc, d.npc, 16);
     bool talking = d.slot != dlgview::kSlotFree;
+    // [view-fix2] The text travels WITH its cursor.  Kept even when the board refuses the
+    // packet (a 1 Hz republish of the same seq is refused on purpose; the text may only have
+    // become readable after the first one), and refused when it is OLDER than what we hold --
+    // UDP can deliver out of order and the box must never jump back a line.
+    if ((int32_t)(d.seq - g_peerText.seq) >= 0) {
+        const bool textChanged = talking &&
+            (strcmp(d.speaker, g_peerText.speaker) != 0 || strcmp(d.line, g_peerText.line) != 0);
+        g_peerText.seq = d.seq;
+        dlgview::Board::Copy(g_peerText.speaker, sizeof(g_peerText.speaker),
+                            talking ? d.speaker : "");
+        dlgview::Board::Copy(g_peerText.line, sizeof(g_peerText.line), talking ? d.line : "");
+        if (talking && textChanged)
+            QDLOG(LOG_INFO, "dialogue view: received the talker's text seq=", dec((int)d.seq),
+                  " speaker='", g_peerText.speaker, "' line='", g_peerText.line, "'");
+    }
     if (g_dv.Accept((uint8_t)RemoteSlot(), d.seq, talking, npc, d.asset, d.sequence, d.entry,
                     d.options, d.chosen, d.flags, now)) {
         if (talking)
@@ -12788,10 +15297,19 @@ void DialogueViewPump(uint32_t now)
     else if (v == dlgview::DV_NONE && !g_dvs.engaged && p && (busy || combat) &&
              now - g_dvDeclineSaidAt > 5000) {
         // The refusal is a decision, and an unrecorded one is indistinguishable from a bug.
+        // The CAUSE is named: five different conditions used to print one sentence.
         g_dvDeclineSaidAt = now;
-        QDLOG(LOG_INFO, "dialogue view: not hijacking the local player: ",
-              (combat ? "it took damage in the last 8 s" : "it is in its own conversation/cutscene"));
+        if (combat) {
+            QDLOG(LOG_INFO, "dialogue view: not hijacking the local player: "
+                  "it took damage in the last 8 s");
+        } else {
+            const char* why = DlgLocalBusyReason();
+            QDLOG(LOG_INFO, "dialogue view: not hijacking the local player: ",
+                  (why ? why : "busy for a reason the lane does not name"));
+        }
     }
+    // [view-fix] Last, so a DV_SHOW raised above has already begun its wait.
+    ViewCamPump(now);
 }
 
 // [dialogue] `qd.dlg` -- a READ-ONLY dump of what the widget path can see.  The first live
@@ -12848,6 +15366,13 @@ void DevDialogueDump(const char* tag)
     if (dw && ObjectIsLive(dw)) {
         LogPropertiesOf(ObjClass(dw), "dw", 50);
         LogFunctionsOf(dw, "dw", 60);
+        // [view-fix2] The two text blocks and what they hold right now.  A `box` line with the
+        // widget's design-time speaker is the placeholder defect; a `box` line with the
+        // partner's line is the fix working, and the dump names which widget is which.
+        char sp[128] = "", ln[dlgbox::kMaxText] = "";
+        const int got = dlgbox::ReadBox(dw, sp, sizeof(sp), ln, sizeof(ln), Net::Now());
+        QDLOG(LOG_INFO, "  dlg box read=", dec(got), " speaker='", sp, "' line='", ln, "'");
+        dlgbox::Dump(dw, (tag && tag[0] ? tag : "-"), Net::Now());
     }
 }
 
@@ -13154,6 +15679,38 @@ void DevDialogueLever(uint32_t now)
         DlgLogLocalCursor("requested");
         return;
     }
+    if (!strcmp(want, "box")) {
+        // [view-fix2] The widget's text blocks, by name, with what each holds.  This is the
+        // measurement the box fix needs: WHICH blocks the build's DialogueScreen owns and
+        // what the game itself put in them on the talking machine.
+        //
+        // READ-ONLY: it must NOT create a widget.  Run 2 created one here, and the second
+        // `DialogueScreen_C` then drew its design-time text over the real line, which looked
+        // exactly like "the text property is not what renders".
+        void* dm = IsGameplayPawn(g_localPawn) ? ObjPropC(g_localPawn, "DialogueManager") : nullptr;
+        void* w = dm ? ObjPropC(dm, "Dialogue Widget") : nullptr;
+        char wn[96] = "-";
+        if (w) ObjDescribe(w, wn, sizeof(wn));
+        QDLOG(LOG_INFO, "rig: dialogue box dump -- manager widget ", wn,
+              (w ? "" : " (the manager holds no widget right now; not created)"));
+        if (w && ObjectIsLive(w)) {
+            char sp[128] = "", ln[dlgbox::kMaxText] = "";
+            dlgbox::ReadBox(w, sp, sizeof(sp), ln, sizeof(ln), now);
+            QDLOG(LOG_INFO, "  dlg box read speaker='", sp, "' line='", ln, "'");
+            dlgbox::Dump(w, "box", now);
+            // Every block of each role, ranked, so a build with a design-time twin shows both
+            // and the operator can see which one the box actually renders.
+            dlgbox::DumpRole(w, dlgbox::kLineBlock, now);
+            dlgbox::DumpRole(w, dlgbox::kNameBlock, now);
+            dlgbox::Cache& c = dlgbox::Cached(w, now);
+            for (int i = 0; i < c.n && i < 60; ++i)
+                QDLOG(LOG_INFO, "    dlg w ", c.b[i].name, " [", c.b[i].cls, "] outer=",
+                      dec((int)(uintptr_t)ObjOuter(c.b[i].w) == (int)(uintptr_t)w ? 1 : 0),
+                      " text='", c.b[i].text, "'");
+        }
+        DlgLogLocalCursor("box dump");
+        return;
+    }
     if (!strcmp(want, "death-continue")) {
         DeathPressResult r = PressDeathContinue();
         QDLOG(r.found ? LOG_INFO : LOG_WARN, "rig: death Continue pressed -- ", r.what);
@@ -13192,6 +15749,12 @@ void CutscenePump(uint32_t now)
     bool changed = playing != wasPlaying ||
                    (playing && !sequence::CutsceneBoard::Same(name, lastName));
     bool ended = wasPlaying && !playing;
+    // [desync-audit] Record the state this machine is ABOUT to publish, with the same
+    // `playing ? name : lastName` rule the body uses, so the auditor compares what each
+    // machine actually claimed rather than what its world happens to show.
+    g_cutSelfState = playing ? 1 : 0;
+    sequence::CutsceneBoard::Copy(g_cutSelfName, sizeof(g_cutSelfName),
+                                  playing ? name : lastName);
     // What THIS machine just stopped playing (see the restart guard below).
     static char endedLocalName[sequence::kMaxNameLen] = {0};
     bool endedLocal = ended;
@@ -15352,6 +17915,7 @@ void PeerGrantPump(uint32_t now)
 {
     if (!Cfg().inventory_sync) return;
     if (!g_net.IsPeer() || !g_net.Connected()) return;
+    if (JoinBusy()) return;      // [join-sync] the reconcile is writing the inventory itself
 
     inventory::GrantQueue::Out out[inventory::GrantQueue::kMaxPerTick];
     int n = g_invGrants.Due(now, out, inventory::GrantQueue::kMaxPerTick);
@@ -15454,6 +18018,7 @@ void PeerInventoryIntentPump(uint32_t now)
 {
     if (!Cfg().inventory_sync) return;
     if (!g_net.IsPeer() || !g_net.Connected()) return;
+    if (JoinBusy()) return;      // [join-sync] the reconcile's grants are not this player's pickups
     if (!Save().save) return;
     // No complete host set yet: every local item is either pre-existing or one whose
     // host entry is still in a later chunk, and neither is a pickup.  Testing this
@@ -16050,7 +18615,7 @@ void ProgressionPump(uint32_t now)
         }
     }
 
-    if (Cfg().partner_save_sync) {
+    if (Cfg().partner_save_sync && !JoinBusy()) {   // [join-sync] no save mirroring mid-phase
         const progression::SaveGate g = SaveGateNow();
         const char* why = "";
         if (g_saveBoard.TakeSave(now, g, &why)) {
@@ -16365,6 +18930,7 @@ void PeerActorIntentPump(uint32_t now)
 {
     if (!Cfg().actor_state_sync) return;
     if (!g_net.IsPeer() || !g_net.Connected()) return;
+    if (JoinBusy()) return;      // [join-sync] the reconcile's container writes are not the player's
     if (!Save().save) return;
 
     if (now - g_lastActorLocalObserveMs >= actorstate::kObserveMs) {
@@ -16713,6 +19279,39 @@ int ObjectFindByKey(const uint32_t key[4])
 // ~500k slots, so a per-frame budget keeps the cost invisible and still completes in a few
 // seconds.  Only a PLACED actor qualifies (a runtime spawn's name carries this machine's
 // object counter, so its path is not shared), and only a class the survey names.
+// [play-p4b] DOES THE ACTOR-STATE LANE ACTUALLY CARRY THIS ACTOR?
+//
+// `ObjectIsSavableOwned` tests the actor's own `GUIDs` array, and that is NOT the same
+// question.  MEASURED (R35, 2026-11-16) on `SecretZoneDoor_Blue_BP`, the door that is the
+// entry to every secret zone:
+//     dev state: … savable=no guid=- index=-1 … guids=1
+// -- `GUIDs` is non-empty (so the object lane skipped it) while `SavableActorStates` holds no
+// row for it (so ACTOR_STATES had nothing to publish).  The door was carried by NO LANE: the
+// peer opened it with `InsertKey` and the host's door stayed shut, and no lane even tracked
+// the actor.  The carrier is the CONTAINER, so that is what the skip has to test.
+//
+// `BuildActorStateOwners` is the same walk the `dev state:` lever prints `index=` from, cached
+// for a quarter second because this runs inside the per-frame object scan.  A savable that
+// gains a row when the game writes one simply moves to the GUID lane on the next scan, with
+// the value this lane already published.
+static ActorStateOwner* ObjectStateOwners(int* n)
+{
+    static ActorStateOwner owners[actorstate::kMaxEntries];
+    static int count = -1;
+    static uint32_t at = 0;
+    static void* world = nullptr;
+    void* w = GWorldPtr();
+    uint32_t now = Net::Now();
+    if (count < 0 || w != world || (uint32_t)(now - at) > 250) {
+        world = w;
+        at = now;
+        int c = BuildActorStateOwners(owners, actorstate::kMaxEntries);
+        count = (c > 0) ? c : 0;
+    }
+    if (n) *n = count;
+    return owners;
+}
+
 void ObjectsScanStep()
 {
     static void* actorBase = nullptr;
@@ -16752,8 +19351,25 @@ void ObjectsScanStep()
         // so it is published here and applied through the class' own `SetToFinalState`.
         if (ObjectIsSavableOwned(o) &&
             !(Cfg().interact_sync && interact::DirectBoolClass(cn))) {
-            ++g_objSkippedSavable;
-            continue;
+            // [play-p4b] THE SKIP IS THE CONTAINER'S, NOT THE `GUIDs` ARRAY'S.  A savable
+            // with no `SavableActorStates` row has no other lane and is carried here; see
+            // ObjectStateOwners for the measured secret-zone door this fixes.
+            int on = 0;
+            ActorStateOwner* ow = ObjectStateOwners(&on);
+            bool carried = false;
+            for (int i = 0; i < on; ++i) {
+                if (ow[i].actor == o) { carried = true; break; }
+            }
+            if (carried) {
+                ++g_objSkippedSavable;
+                continue;
+            }
+            static int saidUnrowed = 0;
+            if (saidUnrowed < 12) {
+                ++saidUnrowed;
+                QDLOG(LOG_INFO, "object sync: savable ", cn, " holds no actor-state row on "
+                      "this machine; the object lane carries it");
+            }
         }
 
         bool have = false;
@@ -16978,6 +19594,7 @@ void PeerObjectIntentPump(uint32_t now)
 {
     if (!Cfg().object_sync) return;
     if (!g_net.IsPeer() || !g_net.Connected()) return;
+    if (JoinBusy()) return;      // [join-sync] the reconcile's object writes are not the player's
 
     ObjectsScanStep();
 
@@ -17111,6 +19728,15 @@ void DispatchInbound(const InboundPacket& p, uint32_t now)
         if (Cfg().puppet_sync && IsGameplayPawn(g_localPawn)) SpawnEffect(e, 0, 0);
         break;
     }
+    // [gap-combat] A hazard the partner's machine spawned: its geometry (unreliable) and
+    // its class (reliable).  The receiver draws it and applies its damage to ITS OWN player
+    // (qdhazard.h), which is the only machine allowed to write that player's HP.
+    case wire::K_HAZARD:
+        if (Cfg().hazard_sync) OnHazards(r, now);
+        break;
+    case wire::K_HAZARD_INFO:
+        if (Cfg().hazard_sync) OnHazardInfo(r, now);
+        break;
     case wire::K_WORLD_FLAGS:
         if (g_net.IsPeer()) PeerApplyFlags(r);
         break;
@@ -17218,6 +19844,18 @@ void DispatchInbound(const InboundPacket& p, uint32_t now)
         // two local calls each machine makes for itself (its own bar, its own arena exit).
         if (Cfg().enemy_sync) OnBoss(r, now);
         break;
+    // [gap-boss] The owner-authoritative boss PHASE (0x5C), the fight's own arena state
+    // (0x5D) and the ending choice (0x5E).  Reliable, because a lost transition is a
+    // permanently stuck boss -- which is exactly what Session 29 run 15 measured.
+    case wire::K_BOSS_PHASE:
+        if (Cfg().enemy_sync && Cfg().boss_phase_sync) bossphase_lane::OnPhase(r, now);
+        break;
+    case wire::K_BOSS_ARENA:
+        if (Cfg().enemy_sync && Cfg().boss_phase_sync) bossphase_lane::OnArena(r, now);
+        break;
+    case wire::K_BOSS_END:
+        if (Cfg().enemy_sync && Cfg().boss_phase_sync) bossphase_lane::OnEnd(r, now);
+        break;
     case wire::K_TRIGGER:
         // Both directions: whichever player walked in, the other machine replays it.
         OnTrigger(r, now);
@@ -17233,6 +19871,18 @@ void DispatchInbound(const InboundPacket& p, uint32_t now)
         break;
     case wire::K_RESPAWN_REST:
         resp::OnRespawnRest(r, now);
+        break;
+    // [gap-world] The save-side unlock sets, a rest as a world event, and a puzzle prop's
+    // intermediate state.  All three are gated on their own switch inside the handler, so a
+    // body for a lane that is off is parsed and dropped rather than half-applied.
+    case wire::K_WORLD_SET:
+        worldsync::OnSet(r, now);
+        break;
+    case wire::K_REST_WORLD:
+        worldsync::OnRest(r, now);
+        break;
+    case wire::K_PUZZLE:
+        worldsync::OnPuzzle(r, now);
         break;
     case wire::K_KILL_XP: {
         // [progression] The partner's game paid this much for that death.  Whether this
@@ -17265,6 +19915,32 @@ void DispatchInbound(const InboundPacket& p, uint32_t now)
         // it through the class' visual/restore entry and the object's own state bool, and
         // never through the interaction verb (SYNC-GAPS section 5.5).
         if (g_net.IsPeer()) PeerApplyObjects(r, now);
+        break;
+    // [desync-audit] The partner's digests, a request for one of our categories, and the
+    // chunked answer to such a request.  Not gated on the divergence board: the auditor's
+    // own `map` category IS the check, and it reports a split rather than acting on one.
+    case wire::K_AUDIT:
+        OnAudit(r, now);
+        break;
+    case wire::K_AUDIT_REQ:
+        OnAuditReq(r, now);
+        break;
+    case wire::K_AUDIT_ITEMS:
+        OnAuditItems(r, now);
+        break;
+    // [join-sync] The session-establishment reconcile.  Not gated on the divergence board:
+    // the peer asks, the host serialises what it already holds, the peer diffs and applies.
+    case wire::K_JOIN_REQ:
+        joinsync::JoinOnReq(r, now);
+        break;
+    case wire::K_JOIN_STATE:
+        joinsync::JoinOnState(r, now);
+        break;
+    case wire::K_JOIN_END:
+        joinsync::JoinOnEnd(r, now);
+        break;
+    case wire::K_JOIN_ACK:
+        joinsync::JoinOnAck(r, now);
         break;
     default:
         break;
@@ -18608,38 +21284,12 @@ uint32_t g_wakeSeenAt = 0;
 uint32_t g_endingEndedAt = 0;
 static void EndingWakePump(uint32_t now)
 {
-    static int stage = 0;
-    if (!g_endingEndedAt) { stage = 0; return; }
-    bool woke = g_wakeSeenAt && (int32_t)(g_wakeSeenAt - g_endingEndedAt) >= 0;
-    int32_t age = (int32_t)(now - g_endingEndedAt);
-    if (woke) {
-        QDLOG(LOG_INFO, "ending wake: the player's wake-up played ", dec((int)(g_wakeSeenAt - g_endingEndedAt)),
-              " ms after the ending", (stage ? " (after this module ran PostEndingWakeOnBeach)" : " (the game's own)"));
-        g_endingEndedAt = 0; stage = 0;
-        return;
-    }
-    void* pawn = g_localPawn;
-    if (!pawn || !IsGameplayPawn(pawn)) return;
-    if (stage == 0 && age >= 15000) {
-        stage = 1;
-        Fn f = {};
-        bool ran = false;
-        __try { if (f.Resolve(pawn, "PostEndingWakeOnBeach")) { Call c(f); ran = c.Run(pawn); } }
-        __except (EXCEPTION_EXECUTE_HANDLER) { ran = false; }
-        QDLOG(ran ? LOG_INFO : LOG_WARN, "ending wake: no wake-up 15 s after the ending -- the player's PostEndingWakeOnBeach ",
-              (ran ? "ran" : "DID NOT RUN"));
-    } else if (stage == 1 && age >= 25000) {
-        stage = 2;
-        void* pc = LocalController();
-        void* cam = pc ? ObjPropC(pc, "PlayerCameraManager") : nullptr;
-        Fn f = {};
-        bool ran = false;
-        __try { if (cam && f.Resolve(cam, "StopCameraFade")) { Call c(f); ran = c.Run(cam); } }
-        __except (EXCEPTION_EXECUTE_HANDLER) { ran = false; }
-        QDLOG(LOG_WARN, "ending wake: still no wake-up 25 s after the ending -- the held camera fade is stopped (",
-              (ran ? "StopCameraFade ran" : "StopCameraFade DID NOT RUN"), ")");
-        g_endingEndedAt = 0; stage = 0;
-    }
+    // [play-p3] THE STAGED RULES LIVE IN qdending.h (WakeRules), so the order is a unit test
+    // rather than a comment.  The GATE is the fix -- while a wake is pending the streaming lane
+    // stops driving level management (EndingLevelDriveAllowed) -- and the stages below are the
+    // rescue, each one named in the log so the report never credits the module with the game's
+    // own wake-up.
+    ending_lane::WakePump(now);
 }
 
 void GrabAftermathPump(uint32_t now)
@@ -19999,6 +22649,13 @@ void DevInteract(uint32_t now)
         QDLOG(LOG_INFO, "dev widgets: ", dec(shown), " widget(s) on the viewport");
         return;
     }
+    // `levels` (view-fix2): the streaming table the union acts on, at the moment a hole is on
+    // screen.  A level that is loaded but NOT visible punches exactly the black hole this is
+    // investigating (`qdlevexp.h`).
+    if (!strcmp(buf, "levels")) {
+        levexp::Dump("rig requested");
+        return;
+    }
     // `!<Verb>` (after Session 26): call THAT verb on the resolved object, with the player as
     // its object argument, instead of the press.  The shop door (`Shop_Door_00_BP_C`) is a
     // ONE-SIDED door (`OneSided`, `FrontSideInteract`, `FlipOpenableSide` in its class): a
@@ -20453,7 +23110,7 @@ void DevHitGuidLever(uint32_t now)
         QDLOG(LOG_INFO, "rig: hitguid -> key=", hex32(key), " LOCAL hit amount=", flt(amount, 1),
               " ran=", dec(ok ? 1 : 0),
               " hp ", (haveHp ? flt(before, 1) : flt(-1.0f, 1)), " -> ",
-              (haveHp ? flt(after, 1) : flt(-1.0f, 1)), " (this machine's player)");
+              (haveHp ? flt(after, 1) : flt(-1.0f, 1)), " (local-run: this machine owns this key)");
         return;
     }
 
@@ -21348,6 +24005,102 @@ void DevFlagDump(uint32_t now)
 // instruction without the harness having to invent different names.
 char     g_devSeqApplied[64] = "";
 uint32_t g_devSeqPoll = 0;
+
+
+// [gap-boss] THE RIG-ONLY PHASE LEVER (`qd.bphase <class>=<state>[,<sub>][#nonce]`).
+//
+// WHY THIS EXISTS: the lane's whole claim is that a transition announced by the owner runs on
+// the follower's copy through the game's own setter+event.  A boss's phase 2 is reached by
+// playing the fight, which the harness cannot do reliably (it kills with staged damage), so the
+// RIG drives the transition the way the game would and the lane carries it.  This lever is the
+// same shape as `qd.mover`/`qd.act`: a control file, a `#nonce` to re-arm, and a log line
+// naming what it did.
+//
+// It sets the state on THIS machine's copy only; the lane is what makes the partner's copy
+// follow.  That separation is what makes the run a measurement of the LANE rather than of the
+// lever.
+char     g_devBPhaseApplied[64] = "";
+uint32_t g_devBPhasePoll = 0;
+
+void DevBossPhaseLever(uint32_t now)
+{
+    static char path[MAX_PATH];
+    static int on = -1;
+    if (on < 0) {
+        DevRigPath("QDCOOP_TEST_BPHASE", "qd.bphase", path, sizeof(path));
+        on = path[0] != 0;
+        if (on) QDLOG(LOG_INFO, "rig: boss phase control '", path, "' enabled exists=",
+                      (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES ? "yes" : "no"));
+    }
+    if (!on) return;
+    if (now - g_devBPhasePoll < 500) return;
+    g_devBPhasePoll = now;
+    char raw[64];
+    if (!DevRigText("QDCOOP_TEST_BPHASE", "qd.bphase", raw, sizeof(raw))) return;
+    if (!raw[0] || strcmp(raw, g_devBPhaseApplied) == 0) return;
+    lstrcpynA(g_devBPhaseApplied, raw, sizeof(g_devBPhaseApplied));
+
+    // `<Class>[=<state>[,<sub>]]`.  No `=` means "read the state and print it", which is the
+    // question the rig asks first ("is the property even there on this class?").
+    char spec[64];
+    lstrcpynA(spec, raw, sizeof(spec));
+    int state = -999, sub = -999;
+    bool set = false;
+    for (int i = 0; spec[i]; ++i) {
+        if (spec[i] == '#') { spec[i] = 0; break; }
+    }
+    for (int i = 0; spec[i]; ++i) {
+        if (spec[i] != '=') continue;
+        spec[i] = 0;
+        state = atoi(spec + i + 1);
+        set = true;
+        for (int j = i + 1; spec[j]; ++j)
+            if (spec[j] == ',') { sub = atoi(spec + j + 1); break; }
+        break;
+    }
+    if (!spec[0]) return;
+
+    // Find the boss by class name, nearest first, among the tracked boss records.
+    EnemyRec* pick = nullptr;
+    float bestD = 1.0e30f;
+    ActorXform me = {};
+    bool haveMe = g_localPawn && ReadActorXform(g_localPawn, &me);
+    for (int i = 0; i < g_enN; ++i) {
+        EnemyRec& r = g_en[i];
+        if (!r.haveGuid || !ObjectIsLive(r.actor)) continue;
+        char cn[96] = "";
+        FNameToString(ObjNameRaw(ObjClass(r.actor)), cn, sizeof(cn));
+        if (!enemyown::HasCI(cn, spec)) continue;
+        float d = 0.0f;
+        ActorXform x = {};
+        if (haveMe && ReadActorXform(r.actor, &x)) {
+            float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
+            d = dx * dx + dy * dy + dz * dz;
+        }
+        if (!pick || d < bestD) { pick = &r; bestD = d; }
+    }
+    if (!pick) {
+        QDLOG(LOG_WARN, "rig: boss phase lever -- no live tracked enemy matches '", spec, "'");
+        return;
+    }
+    char cn[96] = "";
+    FNameToString(ObjNameRaw(ObjClass(pick->actor)), cn, sizeof(cn));
+
+    int32_t cur = -1, curSub = -1;
+    bossphase_lane::ReadState(*pick, &cur, &curSub);
+    if (!set) {
+        QDLOG(LOG_INFO, "rig: boss phase lever -- ", cn, " guid=", hex32(pick->guid[0]),
+              " CurrentStateIndex=", dec((int)cur), " CurrentSubState=", dec((int)curSub),
+              " (read only; add =<state> to drive it)");
+        return;
+    }
+    // THE SAME DRIVE THE FOLLOWER USES, so the lever proves nothing the lane would not do.
+    bool ok = bossphase_lane::DriveLocal(*pick, state, sub >= -1 ? sub : -1, true, now);
+    QDLOG(ok ? LOG_INFO : LOG_WARN, "rig: boss phase lever -> ", cn, " guid=", hex32(pick->guid[0]),
+          " state ", dec((int)cur), " -> ", dec(state), " sub=", dec(sub),
+          (ok ? " (driven: property + OnStateIndexChanged; the partner's copy follows)"
+              : " DID NOT DRIVE"));
+}
 
 void DevSequenceLever(uint32_t now)
 {
@@ -23013,6 +25766,71 @@ void DevSpawnProjectile(uint32_t now)
     // the BeginPlay record, so leave it to the game's own lifetime.
 }
 
+// [gap-combat] `qd.hazard <asset path>` -- spawn a REAL hazard class ON the local player
+// with a REAL enemy as its Owner, which is the shape a boss produces when it drops a puddle
+// (`DemonBoss_FightController_C.SpawnMagmaPuddle`).  The rig cannot make a boss spawn on
+// demand in every map and the mechanism under test is the LANE, not the trigger; the class,
+// the spawn path and the ownership are all the game's own.
+//
+// What the lever must produce on the OTHER machine: `hazard: the partner spawned <class>`,
+// `hazard: copy of <class> drawn`, and on whichever machine's player stands in it
+// `hazard: standing in <class> ... hp a -> b` -- applied by that machine, never by the one
+// that spawned it.
+void DevSpawnHazard(uint32_t now)
+{
+    static char path[MAX_PATH];
+    static int on = -1;
+    static char applied[96] = "";
+    static uint32_t poll = 0;
+    if (on < 0) { DevRigPath("QDCOOP_TEST_HAZARD", "qd.hazard", path, sizeof(path)); on = path[0] != 0; }
+    if (!on || now - poll < 500) return;
+    poll = now;
+    if (!IsGameplayPawn(g_localPawn)) return;
+    char spec[192];
+    if (!DevRigText("QDCOOP_TEST_HAZARD", "qd.hazard", spec, sizeof(spec)) || !spec[0]) return;
+    if (!strcmp(spec, applied)) return;
+    lstrcpynA(applied, spec, sizeof(applied));
+    for (int i = 0; spec[i]; ++i) if (spec[i] == '#') { spec[i] = 0; break; }
+    void* cls = avatar::LoadAsset(spec);
+    if (!cls) { QDLOG(LOG_WARN, "rig: hazard -- cannot load ", spec); return; }
+
+    // The nearest live enemy is the Owner: that is what makes the classification accept it
+    // as an ENEMY hazard, and it is the same attribution a boss controller produces.
+    void* owner = nullptr;
+    float best = -1.0f;
+    ActorXform me;
+    if (!ReadActorXform(g_localPawn, &me)) return;
+    for (int i = 0; i < g_enN; ++i) {
+        EnemyRec& r = g_en[i];
+        if (!r.haveGuid || !ObjectIsLive(r.actor) || EnemyDead(r.actor)) continue;
+        ActorXform x;
+        if (!ReadActorXform(r.actor, &x)) continue;
+        float dx = x.px - me.px, dy = x.py - me.py, dz = x.pz - me.pz;
+        float d = sqrtf(dx * dx + dy * dy + dz * dz);
+        if (best >= 0.0f && d >= best) continue;
+        best = d;
+        owner = r.actor;
+    }
+    if (!owner) { QDLOG(LOG_WARN, "rig: hazard -- no live enemy to attribute it to"); return; }
+
+    void* a = SpawnActorAt(cls, me.px, me.py, me.pz - 20.0f, me.yaw);
+    if (!a) { QDLOG(LOG_WARN, "rig: hazard -- spawn failed for ", spec); return; }
+    bool ownOk = false;
+    {
+        __try {
+            int o = FindPropertyOffsetIn(ObjClass(a), "Owner");
+            if (o >= 0) { *(void**)((uint8_t*)a + o) = owner; ownOk = true; }
+            int n = FindPropertyOffsetIn(ObjClass(a), "Instigator");
+            if (n >= 0) *(void**)((uint8_t*)a + n) = owner;
+        } __except (EXCEPTION_EXECUTE_HANDLER) { ownOk = false; }
+    }
+    char cn[96] = "?";
+    FNameToString(ObjNameRaw(ObjClass(a)), cn, sizeof(cn));
+    QDLOG(LOG_INFO, "rig: hazard spawned ", cn, " on the local player (owner=",
+          (owner ? "an enemy" : "none"), (ownOk ? "" : " OWNER WRITE FAILED"),
+          ", enemy ", flt(best, 0), "cm away)");
+}
+
 void DevGive(uint32_t now)
 {
     static char list[1024];
@@ -23656,6 +26474,19 @@ void WorldTeardownReset(uint32_t now, const char* why)
     g_dvs.inputBlocked = false;
     g_dvs.asset[0] = 0;
     memset(g_dvs.npc, 0, sizeof(g_dvs.npc));
+    // [view-fix2] The published/received box text names a conversation in the OLD world.
+    memset(&g_dvpText, 0, sizeof(g_dvpText));
+    memset(&g_peerText, 0, sizeof(g_peerText));
+    // [view-fix] The temporary camera belonged to the OLD world.  The engine destroyed the
+    // actor with that world, so the handle is dropped WITHOUT being read, and the level the
+    // view was forcing is forgotten.
+    g_vcam.actor = nullptr;
+    g_vcam.npc = nullptr;
+    g_vcam.state.Reset();
+    g_vcam.placed = view::CamPose();
+    g_vcam.level[0] = 0;
+    g_vcam.area[0] = 0;
+    g_vcam.beganAt = 0;
     g_dvHavePrevHp = false;
     g_dvLastHurtMs = 0;
 
@@ -23800,10 +26631,12 @@ bool HK_Tick(void* engineLoop)
     DevEquipLevers(now);         // [combat-vfx] EquipItem(slot) / WeaponSystem verb
     DevAttackLever(now);         // [combat-grip] the game's own attack input (InpActEvt_*)
     DevSpawnProjectile(now);     // [combat-grip] spawn a real projectile class for the lane
+    DevSpawnHazard(now);         // [gap-combat] spawn a real hazard class, owned by an enemy
     DevSelfHpLever(now);
     PuppetPump(now);
     FxPump(now);
     ActionVfxPump(now);          // [combat-vfx] casts, charge glows, muzzle flashes
+    HazardPump(now);             // [gap-combat] spawned hazards, after FxPump's copies exist
     ArcObservePump(now);
     StatusPump(now);
     resp::RespawnPump(now);      // [death-respawn] the pose, the respawn, the sidecar
@@ -23831,6 +26664,7 @@ bool HK_Tick(void* engineLoop)
     DevLevelLever(now);
     DevListLever(now);
     DevSequenceLever(now);
+    DevBossPhaseLever(now);
     DevMenuLever(now);
     DevEFuncLever(now);
     DevTakeLever(now);
@@ -23839,6 +26673,7 @@ bool HK_Tick(void* engineLoop)
     DevUseLever(now);
     DevDropProbe(now);
     DevDialogueLever(now);
+    DevAuditLever(now);          // [desync-audit] `qd.audit`: dump/compare on demand
     TravelPump(now);
     // TravelPump may have just opened the world-transition gate for the game's own travel;
     // nothing below may pick a world handle back up in the same frame.
@@ -23860,7 +26695,18 @@ bool HK_Tick(void* engineLoop)
     // both read the local player's counter and the active save, which every pump above
     // may have just changed.
     ProgressionPump(now);
+    // [desync-audit] Last of the pumps: it digests what every lane above has just settled,
+    // so a pass never compares a container mid-update.
+    AuditPump(now);
+    // [join-sync] The session-establishment reconcile.  After the auditor (so the peer's
+    // state diff sees every container the lanes above have settled) and BEFORE the
+    // gap-world tick, which is gated off while the controlled phase runs.
+    JoinReconcilePump(now);
     MenuDilationPump(now);
+    // [gap-world] the unlock sets, a rest as a world event, the puzzle props, and the rig's
+    // `qd.world` lever.  One entry point, gated on its own switches inside.
+    if (!JoinBusy()) worldsync::Tick(now);   // [join-sync] the reconcile writes these arrays
+    worldsync::DevPoll(now);
 
     if (tracing) QDLOG(LOG_DEBUG, "  frame ", dec(g_frame), " end");
     g_lastTickMs = now;
@@ -23897,6 +26743,10 @@ void HK_StoreEnemySaveState(void* self, const QdGuid* guid, float respawn, float
     // actor in that world (Session 23: this hook is the one the death funnel reaches, and it
     // reads `EnemyByGuid(...)->actor`).
     if (g_worldTransition) return;
+    // [join-sync] The reconcile's own restore calls write the HOST's dead set into this
+    // save.  The game's write above already landed; ledgering or broadcasting it here would
+    // hand the peer's pre-reconcile deaths straight back to the host.
+    if (g_joinApplying) return;
 
     // [progression] KILL XP.  Placed BEFORE the enemy_sync gate on purpose: this hook is
     // the funnel every death the GAME records reaches (the owner's real kill and the
@@ -23977,6 +26827,20 @@ void RestObserve(void* self, void* func)
     static void* fnRest = nullptr;
     static void* other[256];
     static int nOther = 0;
+    // [gap-world] A rest is a WORLD event, not only an enemy-sync detail: `Checkpoint_C` calls
+    // `ClearAllEnemySaveStates`, so THIS machine's enemy table is about to be cleared and the
+    // partner's must be cleared too, or the two machines hold different kill sets from that
+    // moment and a boss can come back on one of them.  Handled before the enemy-lane guards so
+    // it runs whether or not EnemySync is on -- this lane has its own switch.
+    if (Cfg().world_set_sync && self && self == g_localPawn && func) {
+        static void* fnRested = nullptr;
+        if (!fnRested) {
+            char fn[64];
+            if (FNameToString(ObjNameRaw(func), fn, sizeof(fn)) > 0 &&
+                strcmp(fn, "PlayerRested") == 0) fnRested = func;
+        }
+        if (func == fnRested) worldsync::NoteLocalRest(Net::Now(), nullptr);
+    }
     if (!self || self != g_localPawn || !func || !Cfg().enemy_sync) return;
     if (func != fnRest) {
         if (fnRest) return;
@@ -25144,6 +28008,10 @@ static void VitalsDraw(void* hud, void* parms)
 // `OutParm`, the puppet's interpolation buffer), and it defines the observations that
 // `HK_ProcessEvent` -- the next function -- makes.  See qdrespawn_engine.h.
 #include "qdrespawn_engine.h"
+// [gap-world] the engine half of the unlock sets / rest / puzzle lane.  Included here for the
+// same reason as the header above: it needs `Save()`, the reflection helpers, the enemy table
+// and `resp::g_self`, none of which exist at the top of this file.
+#include "qdworld_engine.h"
 
 void HK_ProcessEvent(void* self, void* func, void* parms)
 {
@@ -25176,6 +28044,10 @@ void HK_ProcessEvent(void* self, void* func, void* parms)
     // [progression] The save detector.  The VERB decides, so a rest point, the game's own
     // autosave, a menu save and a scripted save all arrive here.
     SaveVerbObserve(self, func);
+    // [play-p3] THE CHOICE INSTANT.  This machine's own game running `Banish` / `Eat` /
+    // `Ending1Complete` / `Ending2CutsceneEnded` IS the player making the choice; the lane
+    // publishes it so the partner runs the same entry on its own copy.
+    EndingObserve(self, func);
     // [death-respawn] A death must not run the flow that reloads BOTH players' world: the
     // Game Over dispatch is refused before it is forwarded (and logged).  Everything else the
     // death does -- the pose, the montage, the game's bookkeeping -- still runs.
@@ -25361,6 +28233,822 @@ DWORD WINAPI BootstrapThread(LPVOID)
     QDLOG(LOG_INFO, "frame pump armed; substrate check and API probe run on the game thread");
     return 0;
 }
+
+// ===========================================================================
+// 6x. [desync-audit] The desync auditor (qdaudit.h, WIRE.md 3.27)
+// ===========================================================================
+// Everything below is READ-ONLY: it reads the containers the other lanes already keep and
+// never writes a property, spawns, or teleports.  That is the whole reason it can stay
+// switched on for a full playthrough.
+//
+// Why it exists: every other lane reports on itself, and a lane that converged silently is
+// indistinguishable from one that had nothing to do.  Nothing else in the mod can answer
+// "did the two games ever disagree about the world?", which is the only question a finished
+// co-op run actually leaves open.
+namespace auditl {
+
+audit::Board board;
+// `mine` is rebuilt for whatever is being digested (the pass, or one category's diff), so a
+// single buffer serves both and neither can see the other's leftovers.
+audit::Set   mine;
+audit::Set   theirs;      // the partner's item dump, being accumulated
+audit::Set   serve;       // the dump WE are sending, answering a request
+
+uint32_t seq = 0;
+uint32_t lastPassMs = 0;
+uint32_t lastSummaryMs = 0;
+uint32_t mapHash = 0;
+
+wire::AuditCat cats[audit::kMaxCats];
+int      nCats = 0;
+int      itemsLast = 0;   // items in the last category the pass built (for the cost line)
+
+// The dump we asked for: which category, and whether the last chunk completed it.
+uint8_t  wantCat = 0;
+bool     diffPending = false;
+
+// The dump we are sending: a CURSOR across ticks, never a fragment (WIRE.md 3.6).
+bool     serveActive = false;
+uint8_t  serveCat = 0;
+uint16_t serveNext = 0;
+uint32_t serveSeq = 0;
+uint16_t serveTotal = 0;
+
+// Forced passes: a map change, a death-penalty change (a death or a rest) and the boss bar
+// going off (a boss death).  The brief asks for exactly those three plus the interval.
+char     lastMap[64] = {0};
+int      lastDeaths = -1;
+bool     lastBossOn = false;
+bool     gearDirty = false;
+
+// The summary is once a minute, and it must not be the line that fills the log.
+static const uint32_t kSummaryMs = 60000;
+
+// THE FORK -- a TEST LEVER, and the only way to produce a NON-HEALING divergence on
+// purpose.  Every real lane in this mod repairs itself by design (that is what the whole
+// tree is for), so a write to any real container is broadcast and applied within a second
+// and the auditor correctly reports it as healed.  To prove the DETECTION path end to end
+// the rig therefore needs a divergence that does not heal: one flag value that only THIS
+// machine's auditor sees.  It is an overlay on `AuditCollect(CAT_FLAGS)` and nothing else --
+// no game state is written, no lane is touched, and the log line says so.
+//   qd.auditfork = <flag name>=<value>     inject (or replace) the one overlay entry
+//   qd.auditfork = clear                   remove it, so the next pass heals
+struct Fork {
+    bool    used;
+    char    name[64];
+    int64_t value;
+} fork = { false, {0}, 0 };
+
+} // namespace auditl
+
+// THE BOSS ITEM CARRIES THE PHASE ONLY, and that is a measurement rather than a
+// simplification.
+//
+// The first live audit run digested `phase | hp_bucket<<8` and reported three boss records
+// with IDENTICAL keys and IDENTICAL counts (`host=3 peer=3`) on BOTH machines -- i.e. only the
+// HP half disagreed.  The owner reads HP from its own actor and the follower from the fraction
+// in the owner's 20 Hz row, and those two are sampled at different moments of a moving bar, so
+// a bucket they share is a coincidence rather than a fact.  A report of "the boss HP
+// disagrees" on a correct session is exactly the noise this module exists not to produce, so
+// the bucket is gone.  Phase is a published, on-change value (WIRE.md 3.9a) and it is what
+// actually has to agree.
+
+// The flag bank, read from THE SAME SOURCE THE PUBLISHER READS.
+//
+// `g_flags` is the APPLY cache: it is what a PEER fills from the host's bodies.  The host
+// publishes straight out of the game's own `NamedSaveData` (`HostPushFlags` -> `NsdEnumerate`),
+// so on the host `g_flags` is empty.  MEASURED in the first live audit run: the host digested
+// 0 flags and the peer 11, and the audit reported the entire bank as a desync -- a fault in
+// the instrument, not in the session.
+struct AuditNsdCtx { audit::Set* set; };
+
+static void AuditNsdVisit(const char* key, int32_t value, void* user)
+{
+    AuditNsdCtx* c = (AuditNsdCtx*)user;
+    if (!c || !c->set || !key || !key[0]) return;
+    c->set->Add(key, value);
+}
+
+// Fills `out` with this machine's set for one category.  Returns FALSE when the category's
+// lane is switched off here, which is how "legitimately absent" is expressed: the category
+// is then simply not in the digest body, and the partner reports a one-sided category
+// rather than a desync (two machines with different ini files have not desynced).
+static bool AuditCollect(uint8_t cat, audit::Set* out, uint32_t now)
+{
+    out->Reset(cat);
+    char k[audit::kKeyCap];
+
+    switch (cat) {
+    case audit::CAT_FLAGS: {
+        if (!Cfg().flag_sync) return false;
+        AuditNsdCtx ctx;
+        ctx.set = out;
+        // -1 is "the save is not enumerable yet" (no active save, or it was replaced under
+        // us).  That is not an empty bank: the category is reported absent rather than
+        // claiming zero flags, which would read as a desync against a partner holding 11.
+        if (NsdEnumerate(&AuditNsdVisit, &ctx) < 0) return false;
+        // The fork, if the rig injected one (see `auditl::fork`).  Applied AFTER the bank so
+        // it wins locally; `Add` replaces, so the key keeps its identity and only the value
+        // differs -- which is exactly the shape of the report the proof looks for.
+        if (auditl::fork.used) out->Add(auditl::fork.name, auditl::fork.value);
+        return true;
+    }
+
+    case audit::CAT_ACTORS:
+        if (!Cfg().actor_state_sync) return false;
+        for (int i = 0; i < g_actorNow.Count(); ++i) {
+            const actorstate::Row* r = g_actorNow.At(i);
+            if (!r) continue;
+            audit::KeyHex(k, sizeof(k), r->guid);
+            out->Add(k, r->value);
+        }
+        return true;
+
+    case audit::CAT_OBJECTS:
+        // NOT COMPARED, and the reason is measured rather than assumed.
+        //
+        // The placed-object set is HOST-OWNED: `g_objActors` is filled by `ObjectsScanStep`
+        // inside `HostPushObjects`, which returns immediately on a peer, so on the peer both
+        // the scanned table and `g_objNow` are empty while the host holds 95.  The peer
+        // applies the host's rows into its own game and keeps no mirror set, so there is
+        // nothing symmetric to digest -- every run would report `objects host=95 peer=0`,
+        // which is a fact about the instrument's two different INPUTS, not about the world.
+        // The lane's own oracle is its `object apply: ... confirmed=1` echo.  Reported absent
+        // so the partner logs ONE `enabled on one side only` line instead of a false desync.
+        return false;
+
+    case audit::CAT_QUEST: {
+        // KEY ITEMS ONLY.  A normal pickup is per-player by design (qdprogression.h), so
+        // including it would report a desync on every potion either player drinks.
+        if (!Cfg().quest_item_sync && !Cfg().inventory_sync) return false;
+        // [play-p4b] EACH MACHINE DIGESTS ITS OWN CONTAINER, NOT THE HOST'S CACHE.
+        // MEASURED (R35, 2026-11-16): `g_invNow` is filled by `ObserveHostInventory`, whose
+        // only caller returns on `!IsHost()`, so the PEER's set was empty for the whole run
+        // -- `audit: the partner asked for quest (0 items)` on every pass, and
+        // `DESYNC quest …SkullKeyRelic_Data host=1 peer=-1` for the relic the PEER itself had
+        // picked up and applied (`inventory body rev=118 n=1 applied=1`).  A key-item digest
+        // that only one machine can fill reports a false desync on every key pickup, which is
+        // exactly the "auditor nobody can trust" the module exists to avoid.  This is the
+        // same fault -- and the same shape of fix -- as CAT_OBJECTS above.
+        //
+        // The walk is the one the peer's own pickup lane already runs (`InventoryEnumerate`,
+        // qdsave.h), so it is the container the game actually holds, not a mirror of it: a
+        // peer whose apply really failed still shows up here as a difference.
+        if (!Save().save) return false;      // no active save: absent, not "an empty inventory"
+        static inventory::Snapshot questSnap;   // game thread only, like g_invNow
+        questSnap.Clear();
+        InvCollect qc = { &questSnap, 0, nullptr };   // no publisher: no tombstone second pass
+        if (InventoryEnumerate(&CollectInventoryItem, &qc) < 0) return false;
+        for (int i = 0; i < questSnap.Count(); ++i) {
+            const inventory::Entry* e = questSnap.At(i);
+            if (!e || e->count <= 0) continue;
+            if (!progression::IsQuestItemPath(e->path)) continue;
+            out->Add(e->path, e->count);
+        }
+        return true;
+    }
+
+    case audit::CAT_ENEMY: {
+        if (!Cfg().enemy_sync) return false;
+        // A record table from the previous world names actors that no longer exist, so the
+        // set would be pure noise for a second either side of a load.
+        if (!EnemyRecordsTrustworthy()) return false;
+        // [play-p4b] ONLY IDENTITIES THE TWO MACHINES CAN BOTH HOLD.  An enemy that fell to
+        // EnemyIdentity's last-resort "class at this point" key carries a key that is a
+        // property of ONE machine (see EnemyRec::posKey) and is never described to the
+        // partner, so comparing it reports a divergence no lane can ever heal: MEASURED
+        // (R35) host=477 peer=580 with 179 differing items, and the 103-record difference was
+        // exactly the two sides' counts of these position-keyed records (83 vs 186).  The
+        // shared identities alone digested 394 on BOTH machines.  The count is logged so the
+        // exclusion can never be mistaken for full coverage.
+        int posKeys = 0;
+        for (int i = 0; i < g_enN; ++i) {
+            const EnemyRec& r = g_en[i];
+            if (!r.haveGuid) continue;
+            if ((r.guid[0] | r.guid[1] | r.guid[2] | r.guid[3]) == 0) continue;
+            if (r.posKey) { ++posKeys; continue; }
+            audit::KeyHex(k, sizeof(k), r.guid);
+            out->Add(k, 1);                     // alive unless a ledger says otherwise
+        }
+        if (posKeys) {
+            static uint32_t saidAt = 0;
+            if (now - saidAt > 60000) {
+                saidAt = now;
+                QDLOG(LOG_INFO, "audit: enemy leaves out ", dec(posKeys),
+                      " machine-local 'class at this point' identit",
+                      (posKeys == 1 ? "y" : "ies"),
+                      " (no spawner GUID, no summoner); they cannot be compared");
+            }
+        }
+        // The DEAD set is symmetric by construction: this machine's own kill log plus the
+        // partner's is the same union on both sides (A holds its kills + B's deaths, B holds
+        // its kills + A's deaths).  Adding it second also covers a key with no record here.
+        // A key whose record is a local position key is left out for the same reason above:
+        // its death is a fact about this machine's own spawn, not about a shared enemy.
+        for (int i = 0; i < g_killLog.Count(); ++i) {
+            const uint32_t* g = g_killLog.At(i);
+            if (!g) continue;
+            if (EnemyByGuid(g) && EnemyByGuid(g)->posKey) continue;
+            audit::KeyHex(k, sizeof(k), g);
+            out->Add(k, 0);
+        }
+        for (int i = 0; i < g_remoteDead.Count(now); ++i) {
+            const uint32_t* g = g_remoteDead.At(i, now);
+            if (!g) continue;
+            audit::KeyHex(k, sizeof(k), g);
+            out->Add(k, 0);
+        }
+        return true;
+    }
+
+    case audit::CAT_BOSS: {
+        if (!Cfg().enemy_sync) return false;
+        if (!EnemyRecordsTrustworthy()) return false;
+        for (int i = 0; i < g_enN; ++i) {
+            const EnemyRec& r = g_en[i];
+            if (!r.isBoss || !r.haveGuid) continue;
+            if ((r.guid[0] | r.guid[1] | r.guid[2] | r.guid[3]) == 0) continue;
+            audit::KeyHex(k, sizeof(k), r.guid);
+            out->Add(k, (int64_t)r.bossPhase);
+        }
+        return true;
+    }
+
+    case audit::CAT_MOVERS: {
+        if (!Cfg().mover_sync) return false;
+        for (int i = 0;; ++i) {
+            uint8_t id[mover::kIdLen];
+            mover::Sample s;
+            if (!g_movers.PeekLocal(i, id, &s)) break;
+            char base[audit::kKeyCap];
+            // The mover id is 16 opaque bytes, not a GUID: hex it so both logs print the
+            // same identity the MOVERS lane uses.
+            {
+                static const char* H = "0123456789abcdef";
+                int w = 0;
+                for (int j = 0; j < mover::kIdLen && w < (int)sizeof(base) - 2; ++j) {
+                    base[w++] = H[(id[j] >> 4) & 0xF];
+                    base[w++] = H[id[j] & 0xF];
+                }
+                base[w] = 0;
+            }
+            audit::KeySuffix(k, sizeof(k), base, "x");
+            out->Add(k, audit::Bucket(s.x, audit::kPosStep));
+            audit::KeySuffix(k, sizeof(k), base, "y");
+            out->Add(k, audit::Bucket(s.y, audit::kPosStep));
+            audit::KeySuffix(k, sizeof(k), base, "z");
+            out->Add(k, audit::Bucket(s.z, audit::kPosStep));
+            audit::KeySuffix(k, sizeof(k), base, "yaw");
+            out->Add(k, audit::Bucket(s.yaw, audit::kAngStep));
+        }
+        return true;
+    }
+
+    case audit::CAT_LEVELS: {
+        // The UNION, not this machine's own wish list: each machine streams what its own
+        // player needs, and the union is the shared fact both apply (qdstream.h).  Names,
+        // never indices -- each machine's list order is its own.
+        if (!Cfg().stream_union) return false;
+        stream::LevelSet set = g_stream.Wanted(now);
+        for (int i = 0; i < set.n; ++i) {
+            if (!set.name[i] || !set.name[i][0]) continue;
+            out->Add(set.name[i], 1);
+        }
+        return true;
+    }
+
+    case audit::CAT_MAP: {
+        if (!Cfg().travel_sync && !Cfg().stream_union) return false;
+        const char* m = g_map.Local();
+        if (!m || !m[0]) return false;
+        // The map's own NAME is the key, so a split prints both worlds rather than two
+        // opaque numbers.
+        out->Add(m, 1);
+        return true;
+    }
+
+    case audit::CAT_CUTSCENE: {
+        if (!Cfg().cutscene_sync) return false;
+        int mySlot = LocalSlot();
+        int otherSlot = RemoteSlot();
+        char buf[32];
+        char nm[96];
+        // This machine's own published state, recorded by CutscenePump (it cannot be
+        // re-derived here: a machine HOLDING the partner's sequence sees it playing in its
+        // own world too).
+        audit::KeySuffix(buf, sizeof(buf), "s", mySlot == 0 ? "0" : "1");
+        audit::KeySuffix(k, sizeof(k), buf, "state");
+        out->Add(k, g_cutSelfState);
+        audit::KeySuffix(k, sizeof(k), buf, "name");
+        // The NAME is a fact only while the sequence is playing.  `g_cutSelfName` holds the
+        // LAST name when idle (it mirrors the CS_ENDED body, which is a log aid), and the
+        // first live run reported `s:0:name` differing on two machines that were both playing
+        // nothing.  Idle is name 0 on both sides.
+        out->Add(k, g_cutSelfState ? (int64_t)(audit::HashText(g_cutSelfName) & 0x7FFFFFFFull) : 0);
+        // The partner's, as it published it.
+        bool peerPlaying = g_cutscene.PeerPlaying(now, nm, sizeof(nm));
+        audit::KeySuffix(buf, sizeof(buf), "s", otherSlot == 0 ? "0" : "1");
+        audit::KeySuffix(k, sizeof(k), buf, "state");
+        out->Add(k, peerPlaying ? 1 : 0);
+        audit::KeySuffix(k, sizeof(k), buf, "name");
+        out->Add(k, peerPlaying ? (int64_t)(audit::HashText(nm) & 0x7FFFFFFFull) : 0);
+        return true;
+    }
+
+    case audit::CAT_DIALOGUE: {
+        if (!Cfg().dialogue_sync) return false;
+        int mySlot = LocalSlot();
+        int otherSlot = RemoteSlot();
+        char buf[32];
+        audit::KeySuffix(buf, sizeof(buf), "d", mySlot == 0 ? "0" : "1");
+        audit::KeySuffix(k, sizeof(k), buf, "talking");
+        out->Add(k, g_dlg.talking ? 1 : 0);
+        audit::KeySuffix(k, sizeof(k), buf, "npc");
+        out->Add(k, g_dlg.talking
+                        ? (int64_t)(audit::Fnv64(g_dlg.npc, 16) & 0x7FFFFFFFull) : 0);
+        uint8_t npc[16];
+        bool peerTalking = g_talk.RemoteNpc((uint8_t)otherSlot, npc, now);
+        audit::KeySuffix(buf, sizeof(buf), "d", otherSlot == 0 ? "0" : "1");
+        audit::KeySuffix(k, sizeof(k), buf, "talking");
+        out->Add(k, peerTalking ? 1 : 0);
+        audit::KeySuffix(k, sizeof(k), buf, "npc");
+        out->Add(k, peerTalking ? (int64_t)(audit::Fnv64(npc, 16) & 0x7FFFFFFFull) : 0);
+        return true;
+    }
+
+    case audit::CAT_DEATHS: {
+        if (!Cfg().death_respawn) return false;
+        // Keyed by the PLAYER, not by this process: the host's stack is "host" on both
+        // machines, so the two digests are comparable.
+        int self = resp::g_self.Deaths();
+        int peer = resp::g_peerDeaths;
+        out->Add("host", g_net.IsHost() ? self : peer);
+        out->Add("peer", g_net.IsHost() ? peer : self);
+        return true;
+    }
+
+    default:
+        return false;
+    }
+}
+
+// One pass: build every enabled category's digest, hand it to the board, and send it.
+static void AuditSendPass(uint32_t now)
+{
+    auditl::board.BeginPass();
+    auditl::nCats = 0;
+    auditl::itemsLast = 0;
+    for (uint8_t cat = audit::CAT_FLAGS; cat <= audit::CAT_DEATHS; ++cat) {
+        if (!AuditCollect(cat, &auditl::mine, now)) continue;
+        audit::Digest d = audit::DigestOf(auditl::mine);
+        auditl::itemsLast += d.count;
+        auditl::board.SetLocal(cat, d.sum, d.count);
+        if (auditl::nCats < audit::kMaxCats) {
+            wire::AuditCat& c = auditl::cats[auditl::nCats++];
+            c.cat = cat;
+            c.digest = d.sum;
+            c.count = d.count;
+        }
+    }
+
+    if (!g_net.Connected()) return;
+    uint8_t body[256];
+    wire::Writer w(body, sizeof(body));
+    wire::WriteAuditHeader(w, ++auditl::seq, auditl::mapHash, (uint8_t)auditl::nCats);
+    for (int i = 0; i < auditl::nCats; ++i) {
+        wire::WriteAuditCat(w, auditl::cats[i].cat, auditl::cats[i].digest, auditl::cats[i].count);
+    }
+    // 9 + 12*11 = 141 bytes: the whole steady state of the lane fits one datagram with the
+    // body cap left almost untouched.
+    if (w.ok) g_net.SendUnreliable(wire::K_AUDIT, body, w.len);
+}
+
+static void AuditLogEvents(const audit::Event* ev, int n, uint32_t now)
+{
+    for (int i = 0; i < n; ++i) {
+        const audit::Event& e = ev[i];
+        switch (e.kind) {
+        case audit::EV_MAP_SPLIT:
+            QDLOG(LOG_WARN, "audit: DESYNC map <local>=", g_map.Local(), " <partner>=",
+                  g_map.Peer(), " age=0 -- the two machines are in different worlds; "
+                  "the data categories are not compared until they agree");
+            break;
+        case audit::EV_ONE_SIDED:
+            QDLOG(LOG_INFO, "audit: category ", audit::CatName(e.cat),
+                  " is enabled on one side only; not compared");
+            break;
+        case audit::EV_HEALED:
+            QDLOG(LOG_INFO, "audit: ", audit::CatName(e.cat), " healed (", dec(e.local_count),
+                  " items; it had been disagreeing)");
+            break;
+        case audit::EV_DESYNC: {
+            uint32_t age = auditl::board.Age(e.cat, now);
+            // host/peer by ROLE, not local/peer: both machines print the same line for the
+            // same disagreement.
+            uint16_t hc = g_net.IsHost() ? e.local_count : e.peer_count;
+            uint16_t pc = g_net.IsHost() ? e.peer_count : e.local_count;
+            QDLOG(LOG_WARN, "audit: DESYNC ", audit::CatName(e.cat), " <whole set> host=",
+                  dec(hc), " peer=", dec(pc), " age=", dec(age),
+                  " -- asking for the item set to name the differing items");
+            break;
+        }
+        default:
+            break;
+        }
+    }
+}
+
+// The per-item diff, once the partner's dump for that category is complete.  This is the
+// line a reader acts on:
+//   audit: DESYNC <category> <key> host=<v> peer=<v> age=<ms>
+static void AuditDiffPending(uint32_t now)
+{
+    if (!auditl::diffPending || auditl::wantCat == 0) return;
+    auditl::diffPending = false;
+    if (!auditl::board.ItemsReady(auditl::wantCat, now)) return;
+    if (!AuditCollect(auditl::wantCat, &auditl::mine, now)) return;
+
+    static audit::DiffRow rows[audit::kMaxDiffRows];
+    int total = 0;
+    int n = audit::DiffSets(auditl::mine, auditl::theirs, rows, audit::kMaxDiffRows, &total);
+    uint32_t age = auditl::board.Age(auditl::wantCat, now);
+    bool host = g_net.IsHost();
+    for (int i = 0; i < n; ++i) {
+        const audit::DiffRow& r = rows[i];
+        // host/peer, not local/peer: the two machines print the SAME line for the same
+        // disagreement, so the two logs can be diffed against each other directly.
+        bool hHave = host ? r.have_local : r.have_peer;
+        bool pHave = host ? r.have_peer : r.have_local;
+        int64_t hv = host ? r.local : r.peer;
+        int64_t pv = host ? r.peer : r.local;
+        QDLOG(LOG_WARN, "audit: DESYNC ", audit::CatName(auditl::wantCat), " ", r.key,
+              " host=", dec(hHave ? hv : -1), " peer=", dec(pHave ? pv : -1),
+              " age=", dec(age),
+              (hHave ? "" : " [absent on the host]"),
+              (pHave ? "" : " [absent on the peer]"));
+    }
+    if (total > n) {
+        QDLOG(LOG_WARN, "audit: ", audit::CatName(auditl::wantCat), " has ", dec(total),
+              " differing items; ", dec(n), " printed");
+    }
+    if (total == 0) {
+        // The digests disagreed but every item matches: a count-only difference, which
+        // happens when a key is added and removed between the two passes.  Saying so is the
+        // honest answer, and it is not something a player can see.
+        QDLOG(LOG_INFO, "audit: ", audit::CatName(auditl::wantCat),
+              " digest differed but every item matches (", dec(auditl::mine.n), " vs ",
+              dec(auditl::theirs.n), " items)");
+    }
+    // The episode has been reported in full.  The next dump for this category waits for the
+    // 30 s repeat clock instead of the 2 s request retry: the first live run re-printed every
+    // item every two seconds (1843 lines in four minutes).
+    auditl::board.MarkDiffed(auditl::wantCat, now);
+}
+
+void AuditPump(uint32_t now)
+{
+    if (!Cfg().desync_audit) return;
+
+    // ---- the map hash the body carries ------------------------------------
+    const char* mp = g_map.Local();
+    auditl::mapHash = (mp && mp[0]) ? (uint32_t)(audit::HashText(mp) & 0xFFFFFFFFull) : 0u;
+
+    // ---- forced passes ----------------------------------------------------
+    // A map change, a death-penalty change (a death or a rest) and the boss bar going off
+    // (a boss death) are the three moments the world changes under the auditor, so waiting
+    // out the interval there would measure the wrong instant.
+    bool force = false;
+    {
+        const char* m = mp ? mp : "";
+        int i = 0;
+        for (; auditl::lastMap[i] || m[i]; ++i) {
+            if (auditl::lastMap[i] != m[i]) { force = true; break; }
+        }
+        if (force) {
+            // A new world is a new comparison: an open desync about the old world's keys is
+            // not a fact about this one, so the board starts clean.
+            sequence::CutsceneBoard::Copy(auditl::lastMap, sizeof(auditl::lastMap), m);
+            auditl::board.Reset();
+            auditl::theirs.Reset();
+            auditl::wantCat = 0;
+            auditl::diffPending = false;
+            auditl::lastPassMs = 0;
+            QDLOG(LOG_INFO, "audit: world changed to ", (m[0] ? m : "(none)"),
+                  "; the comparison restarts");
+        }
+    }
+    int deaths = resp::g_self.Deaths() + resp::g_peerDeaths;
+    if (auditl::lastDeaths < 0) auditl::lastDeaths = deaths;
+    else if (deaths != auditl::lastDeaths) { force = true; auditl::lastDeaths = deaths; }
+    if (g_bossKeyOn != auditl::lastBossOn) {
+        if (!g_bossKeyOn && auditl::lastBossOn) force = true;   // the bar went off: a boss died
+        auditl::lastBossOn = g_bossKeyOn;
+    }
+    if (auditl::gearDirty) { force = true; auditl::gearDirty = false; }
+
+    // ---- the partner's dump, or the request for one ------------------------
+    AuditDiffPending(now);
+
+    if (g_net.Connected()) {
+        uint8_t want = auditl::board.NextRequest(now);
+        if (want != 0xFF && want != auditl::wantCat) {
+            auditl::theirs.Reset(want);
+            auditl::wantCat = want;
+            uint8_t body[8];
+            wire::Writer w(body, sizeof(body));
+            wire::WriteAuditReq(w, ++auditl::seq, want);
+            if (w.ok) g_net.SendUnreliable(wire::K_AUDIT_REQ, body, w.len);
+        }
+    }
+
+    // ---- answering the partner's request, a cursor across ticks -----------
+    if (auditl::serveActive) {
+        uint8_t body[wire::kMaxBody];
+        wire::Writer w(body, sizeof(body));
+        wire::WriteAuditItemsHeader(w, auditl::serveSeq, auditl::serveCat,
+                                    auditl::serveTotal, auditl::serveNext);
+        int next = wire::WriteAuditItemsChunk(w, (const wire::AuditItem*)auditl::serve.it,
+                                              auditl::serve.n, auditl::serveNext);
+        if (next > auditl::serveNext && w.ok) {
+            g_net.SendUnreliable(wire::K_AUDIT_ITEMS, body, w.len);
+            auditl::serveNext = (uint16_t)next;
+        }
+        if (auditl::serveNext >= auditl::serve.n) auditl::serveActive = false;
+    }
+
+    // ---- the pass ---------------------------------------------------------
+    uint32_t interval = (uint32_t)Cfg().audit_ms;
+    if (interval < 1000) interval = 1000;
+    bool due = (auditl::lastPassMs == 0) || ((uint32_t)(now - auditl::lastPassMs) >= interval);
+    if (due || force) {
+        auditl::lastPassMs = now;
+        // The pass is the only part of this module whose cost scales with the world, so it is
+        // MEASURED rather than estimated: the "cheap" claim in the doc is this number.
+        LARGE_INTEGER q0, q1, qf;
+        QueryPerformanceFrequency(&qf);
+        QueryPerformanceCounter(&q0);
+        AuditSendPass(now);
+        QueryPerformanceCounter(&q1);
+        uint64_t us = 0;
+        if (qf.QuadPart > 0) {
+            us = (uint64_t)((q1.QuadPart - q0.QuadPart) * 1000000ll / qf.QuadPart);
+        }
+        // A forced pass is a rig action and says so at INFO; the periodic one is DEBUG so a
+        // ten-minute soak does not print sixty lines about a diagnostic.
+        if (force) {
+            QDLOG(LOG_INFO, "audit: pass ", dec((int64_t)us), " us over ", dec(auditl::nCats),
+                  " categories, ", dec(auditl::itemsLast), " items");
+        } else {
+            QDLOG(LOG_DEBUG, "audit: pass ", dec((int64_t)us), " us over ", dec(auditl::nCats),
+                  " categories");
+        }
+    }
+
+    // ---- comparison + transitions ----------------------------------------
+    audit::Event ev[16];
+    int n = auditl::board.Update(now, ev, 16);
+    if (n > 0) AuditLogEvents(ev, n, now);
+
+    // ---- the once-a-minute summary ---------------------------------------
+    if (auditl::lastSummaryMs == 0) auditl::lastSummaryMs = now;
+    if ((uint32_t)(now - auditl::lastSummaryMs) >= auditl::kSummaryMs) {
+        auditl::lastSummaryMs = now;
+        int openCats = 0;
+        if (auditl::board.OpenCount(&openCats, now)) {
+            uint8_t list[audit::kMaxCats];
+            int k = auditl::board.OpenList(list, audit::kMaxCats, now);
+            char line[192];
+            char* p = line;
+            const char* pe = line + sizeof(line) - 1;
+            p = detail::Cat(p, pe, "audit: DESYNC OPEN ");
+            p = detail::CatDec(p, pe, k);
+            p = detail::Cat(p, pe, " of ");
+            p = detail::CatDec(p, pe, auditl::nCats);
+            p = detail::Cat(p, pe, " categories:");
+            for (int i = 0; i < k && p < pe; ++i) {
+                p = detail::Cat(p, pe, " ");
+                p = detail::Cat(p, pe, audit::CatName(list[i]));
+            }
+            *p = 0;
+            QDLOG(LOG_WARN, line);
+        } else if (!g_net.Connected() || !auditl::board.HavePeer()) {
+            QDLOG(LOG_INFO, "audit: idle (no partner packet yet)");
+        } else {
+            QDLOG(LOG_INFO, "audit: OK ", dec(auditl::board.CatsCompared()),
+                  " categories, ", dec(auditl::board.ItemsCompared()), " items");
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// [join-sync] The forced audit, so the pair can see `audit: OK` right after a reconcile
+// ---------------------------------------------------------------------------
+// The periodic summary is once a minute, and the reconcile must be provable in the second
+// after it ran.  This runs one digest pass NOW, folds the comparison, and prints the same
+// `audit: OK` / `audit: DESYNC OPEN` line the minute summary prints -- with the reason.
+void AuditForceNow(const char* why)
+{
+    if (!Cfg().desync_audit) return;
+    uint32_t now = Net::Now();
+    const char* mp = g_map.Local();
+    auditl::mapHash = (mp && mp[0]) ? (uint32_t)(audit::HashText(mp) & 0xFFFFFFFFull) : 0u;
+    AuditSendPass(now);
+    auditl::lastPassMs = now;
+    audit::Event ev[16];
+    int n = auditl::board.Update(now, ev, 16);
+    if (n > 0) AuditLogEvents(ev, n, now);
+
+    int openCats = 0;
+    if (auditl::board.OpenCount(&openCats, now)) {
+        uint8_t list[audit::kMaxCats];
+        int k = auditl::board.OpenList(list, audit::kMaxCats, now);
+        QDLOG(LOG_WARN, "audit: DESYNC OPEN ", dec(k), " of ", dec(auditl::nCats),
+              " categories (forced: ", why, ")");
+        for (int i = 0; i < k; ++i) {
+            QDLOG(LOG_WARN, "audit: open category ", audit::CatName(list[i]));
+        }
+    } else if (!g_net.Connected() || !auditl::board.HavePeer()) {
+        QDLOG(LOG_INFO, "audit: forced (", why, "); still waiting for the partner's digest");
+    } else {
+        QDLOG(LOG_INFO, "audit: OK ", dec(auditl::board.CatsCompared()), " categories, ",
+              dec(auditl::board.ItemsCompared()), " items (forced: ", why, ")");
+    }
+    auditl::lastSummaryMs = now;     // do not also print the minute summary this frame
+}
+
+// ---------------------------------------------------------------------------
+// Receiving
+// ---------------------------------------------------------------------------
+void OnAudit(wire::Reader& r, uint32_t now)
+{
+    if (!Cfg().desync_audit) return;
+    wire::AuditBody b;
+    if (!wire::ReadAudit(r, &b)) {
+        QDLOG(LOG_WARN, "audit: malformed digest body (", dec(r.len), " bytes)");
+        return;
+    }
+    // The peer's map hash is compared against OURS read live, not against the last body we
+    // sent: the local map is a fact about now, not about ten seconds ago.
+    const char* mp = g_map.Local();
+    uint32_t mineHash = (mp && mp[0]) ? (uint32_t)(audit::HashText(mp) & 0xFFFFFFFFull) : 0u;
+    audit::CatIn in[16];
+    int n = b.n < 16 ? b.n : 16;
+    for (int i = 0; i < n; ++i) {
+        in[i].cat = b.cat[i].cat;
+        in[i].digest = b.cat[i].digest;
+        in[i].count = b.cat[i].count;
+    }
+    audit::Event ev[16];
+    int k = auditl::board.OnPeer(b.seq, b.map_hash, mineHash, in, n, now, ev, 16);
+    if (k > 0) AuditLogEvents(ev, k, now);
+}
+
+void OnAuditReq(wire::Reader& r, uint32_t now)
+{
+    if (!Cfg().desync_audit) return;
+    uint32_t s = 0;
+    uint8_t cat = 0;
+    if (!wire::ReadAuditReq(r, &s, &cat)) return;
+    if (!AuditCollect(cat, &auditl::serve, now)) return;   // this machine does not carry it
+    auditl::serveActive = true;
+    auditl::serveCat = cat;
+    auditl::serveNext = 0;
+    auditl::serveSeq = s;
+    auditl::serveTotal = (uint16_t)auditl::serve.n;
+    QDLOG(LOG_INFO, "audit: the partner asked for ", audit::CatName(cat), " (",
+          dec(auditl::serve.n), " items)");
+    // The first chunk goes out on this frame rather than on the next pump, so a one-chunk
+    // set is answered within the tick it was asked for.
+    uint8_t body[wire::kMaxBody];
+    wire::Writer w(body, sizeof(body));
+    wire::WriteAuditItemsHeader(w, auditl::serveSeq, auditl::serveCat,
+                                auditl::serveTotal, auditl::serveNext);
+    int next = wire::WriteAuditItemsChunk(w, (const wire::AuditItem*)auditl::serve.it,
+                                          auditl::serve.n, auditl::serveNext);
+    if (next > auditl::serveNext && w.ok) {
+        g_net.SendUnreliable(wire::K_AUDIT_ITEMS, body, w.len);
+        auditl::serveNext = (uint16_t)next;
+    }
+    if (auditl::serveNext >= auditl::serve.n) auditl::serveActive = false;
+}
+
+void OnAuditItems(wire::Reader& r, uint32_t now)
+{
+    if (!Cfg().desync_audit) return;
+    uint32_t s = 0;
+    uint8_t cat = 0;
+    uint16_t total = 0, first = 0;
+    if (!wire::ReadAuditItemsHeader(r, &s, &cat, &total, &first)) return;
+    // A dump for a category we did not ask for is stale (a retried request answered twice):
+    // ignore it rather than merging two sets into one.
+    (void)s;
+    if (cat != auditl::wantCat) return;
+    if (first == 0) {
+        auditl::theirs.Reset(cat);
+        auditl::diffPending = false;
+    }
+    wire::AuditItem it;
+    while (wire::ReadAuditItem(r, &it)) {
+        auditl::theirs.Add(it.key, it.value);
+    }
+    auditl::board.OnItems(cat, total, (uint16_t)auditl::theirs.n, now);
+    if (auditl::theirs.n >= (int)total) auditl::diffPending = true;
+}
+
+// ---------------------------------------------------------------------------
+// `qd.audit` -- the dev lever (and the second half of the live proof)
+// ---------------------------------------------------------------------------
+// A file in the instance's UserDir, like every other lever here.  Content:
+//   any non-empty text   force a digest pass and restart the comparison
+// The `#nonce` convention re-arms an unchanged instruction, exactly as qd.tp / qd.hard do.
+void DevAuditLever(uint32_t now)
+{
+    (void)now;
+    static int on = -1;
+    if (on < 0) {
+        char path[MAX_PATH];
+        DevRigPath("QDCOOP_TEST_AUDIT", "qd.audit", path, sizeof(path));
+        int a = path[0] != 0;
+        DevRigPath("QDCOOP_TEST_AUDITFORK", "qd.auditfork", path, sizeof(path));
+        int f = path[0] != 0;
+        on = (a || f) ? 1 : 0;
+        if (a) QDLOG(LOG_INFO, "rig: desync-audit lever enabled (qd.audit)");
+        if (f) QDLOG(LOG_INFO, "rig: desync-audit FORK lever enabled (qd.auditfork)");
+    }
+    if (!on) return;
+
+    // `qd.auditfork` -- the synthetic divergence.  Read first, so a rig that writes both
+    // files in one step has the fork in place before the forced pass that follows.
+    {
+        char spec[96];
+        if (DevRigText("QDCOOP_TEST_AUDITFORK", "qd.auditfork", spec, sizeof(spec)) && spec[0]) {
+            static char last[96] = {0};
+            if (strcmp(last, spec) != 0) {
+                sequence::CutsceneBoard::Copy(last, sizeof(last), spec);
+                if (strcmp(spec, "clear") == 0) {
+                    auditl::fork.used = false;
+                    auditl::fork.name[0] = 0;
+                    auditl::fork.value = 0;
+                    QDLOG(LOG_INFO, "audit: FORK cleared; the next pass should heal");
+                } else {
+                    int eq = -1;
+                    for (int i = 0; spec[i]; ++i) { if (spec[i] == '=') { eq = i; break; } }
+                    if (eq <= 0) {
+                        QDLOG(LOG_WARN, "rig: qd.auditfork wants <flag name>=<value>, got ", spec);
+                    } else {
+                        int64_t v = 0;
+                        bool neg = false;
+                        int i = eq + 1;
+                        if (spec[i] == '-') { neg = true; ++i; }
+                        bool num = spec[i] != 0;
+                        for (; spec[i]; ++i) {
+                            if (spec[i] < '0' || spec[i] > '9') { num = false; break; }
+                            v = v * 10 + (spec[i] - '0');
+                        }
+                        if (!num) {
+                            QDLOG(LOG_WARN, "rig: qd.auditfork value is not a number: ", spec);
+                        } else {
+                            auditl::fork.used = true;
+                            int w = 0;
+                            for (; eq > w && w < (int)sizeof(auditl::fork.name) - 1; ++w)
+                                auditl::fork.name[w] = spec[w];
+                            auditl::fork.name[w] = 0;
+                            auditl::fork.value = neg ? -v : v;
+                            // No game state is written: this is an overlay on the auditor's
+                            // OWN view of the flag bank, so the divergence cannot heal on its
+                            // own and the detection path can be measured.
+                            QDLOG(LOG_INFO, "audit: FORK (test lever) flags ", auditl::fork.name,
+                                  "=", dec(auditl::fork.value),
+                                  " on THIS machine's view only; no lane was written");
+                        }
+                    }
+                }
+                auditl::lastPassMs = 0;
+            }
+        }
+    }
+
+    char spec[64];
+    if (!DevRigText("QDCOOP_TEST_AUDIT", "qd.audit", spec, sizeof(spec)) || !spec[0]) return;
+    static char last[64] = {0};
+    if (strcmp(last, spec) == 0) return;
+    sequence::CutsceneBoard::Copy(last, sizeof(last), spec);
+
+    auditl::lastPassMs = 0;             // force a pass now
+    auditl::board.Reset();              // and re-open every comparison
+    auditl::theirs.Reset();
+    auditl::wantCat = 0;
+    auditl::diffPending = false;
+    QDLOG(LOG_INFO, "audit: forced by qd.audit=", spec,
+          "; both machines digest now and report any item that differs for more than ",
+          dec((int)audit::kGraceMs), " ms");
+}
+
+// [join-sync] The engine half of the session-establishment reconcile.  Included HERE, after
+// the audit block, because it calls `AuditForceNow`, the save/reflection layer, the enemy
+// table, the inventory writer and the travel entry points -- none of which exist at the top
+// of this file.  Its pure rules are in qdjoin.h.
+#include "qdjoin_engine.h"
 
 } // namespace
 

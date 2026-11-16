@@ -34,6 +34,11 @@ pub const HEADER_LEN: usize = 16;
 pub const MAX_BODY: usize = 1200;
 /// At most 20 enemy rows per datagram at N=2 (WIRE.md §3.9 row budget).
 pub const MAX_ENEMY_ROWS: usize = 20;
+/// At most 24 hazard rows per datagram (WIRE.md §3.34a): 37 B a row, so 24 fits inside the
+/// 1200 B body with the header. The mod sends at most 8, so this is the receiver's guard.
+pub const MAX_HAZARD_ROWS: usize = 24;
+/// A hazard class path is a cook path; the native body caps it at 200 bytes.
+pub const MAX_HAZARD_CLASS: usize = 200;
 /// `DIALOGUE.slot` value meaning "no player holds the conversation".
 pub const DIALOGUE_SLOT_FREE: u8 = 0xFF;
 
@@ -123,10 +128,55 @@ pub enum Kind {
     RespawnUp = 0x55,
     RespawnRest = 0x56,
     /// One death paid one player's XP; the other pays its own the same amount
-    /// (WIRE.md §3.26).
+    /// (WIRE.md §3.25).
     KillXp = 0x40,
-    /// "I saved; write your own slot now" (WIRE.md §3.27).
+    /// "I saved; write your own slot now" (WIRE.md §3.26).
     Save = 0x41,
+    /// The desync auditor (WIRE.md §3.27): per-category digests of the synced world state of
+    /// the CURRENT map. Unreliable and latest-wins — a lost digest costs one pass, and the
+    /// per-item sets only travel when one of these disagrees.
+    Audit = 0x58,
+    /// "Send me your item set for this category" (the diff half of the auditor).
+    AuditReq = 0x59,
+    /// One category's items, a cursor across ticks.
+    AuditItems = 0x5A,
+    /// The boss PHASE authority (WIRE.md §3.28, `qdbossphase.h`): the machine that runs a
+    /// boss reports `CurrentStateIndex`/`CurrentSubState` with a revision, and the follower
+    /// drives the same values through the game's own setters.
+    BossPhase = 0x5C,
+    /// The fight's own phase and which players are inside it (WIRE.md §3.29).
+    BossArena = 0x5D,
+    /// Which of the four endings was chosen, and by whom (WIRE.md §3.30).
+    BossEnd = 0x5E,
+    /// The save-side OBJECT SETS that decide where the pair may travel (WIRE.md §3.31,
+    /// `qdworldset.h`): `UnlockedTeleporters`, `SavePointsVisited` and
+    /// `ShopTeleporterDestinations`, mirrored as a monotone UNION so a destination either
+    /// player reached exists for both. `LastTouchedCheckpoint` is deliberately NOT mirrored.
+    WorldSet = 0x60,
+    /// A rest as a WORLD event (WIRE.md §3.32, `qdrest.h`): `Checkpoint_C` calls
+    /// `ClearAllEnemySaveStates`, so the same enemy reset must happen on both machines, with
+    /// boss and one-time deaths written back dead after the clear.
+    RestWorld = 0x61,
+    /// The intermediate state of a multi-step puzzle, for the props that keep it in their
+    /// TRANSFORM and nowhere else (WIRE.md §3.33, `qdpuzzle.h`): the 287 `Lib_Book_*`
+    /// placements declare no state property at all.
+    Puzzle = 0x62,
+    /// An enemy/boss-SPAWNED hazard's geometry: a magma puddle, an AoE volume, a trap
+    /// (WIRE.md §3.34a, `qdhazard.h`). Unreliable and superseded by the next row: a lost one
+    /// costs 200 ms of position, and the 2 s staleness window is ten of them.
+    Hazard = 0x64,
+    /// The one-off DESCRIPTION of a hazard key (its class, so the receiver can draw it) or of
+    /// a projectile CLASS's damage (WIRE.md §3.34b). Reliable: a lost description is a pool
+    /// of lava that is never drawn and never felt.
+    HazardInfo = 0x65,
+    /// [join-sync] The session-establishment reconcile (WIRE.md §3.35, `qdjoin.h`). On every
+    /// establishment the PEER adopts the HOST's world/progression state exactly, including
+    /// REVERTING what it holds and the host does not. `JoinState` continues across ticks
+    /// with a `first` cursor and is repeated until the ack; the other three are one-shot.
+    JoinReq = 0x68,
+    JoinState = 0x69,
+    JoinEnd = 0x6A,
+    JoinAck = 0x6B,
     Log = 0x30,
 }
 
@@ -168,6 +218,21 @@ impl Kind {
             0x56 => RespawnRest,
             0x40 => KillXp,
             0x41 => Save,
+            0x58 => Audit,
+            0x59 => AuditReq,
+            0x5A => AuditItems,
+            0x5C => BossPhase,
+            0x5D => BossArena,
+            0x5E => BossEnd,
+            0x60 => WorldSet,
+            0x61 => RestWorld,
+            0x62 => Puzzle,
+            0x64 => Hazard,
+            0x65 => HazardInfo,
+            0x68 => JoinReq,
+            0x69 => JoinState,
+            0x6A => JoinEnd,
+            0x6B => JoinAck,
             0x30 => Log,
             other => return Err(Error::UnknownKind(other)),
         })
@@ -214,6 +279,21 @@ impl Kind {
             RespawnRest => "respawn_rest",
             KillXp => "kill_xp",
             Save => "save",
+            Audit => "audit",
+            AuditReq => "audit_req",
+            AuditItems => "audit_items",
+            BossPhase => "boss_phase",
+            BossArena => "boss_arena",
+            BossEnd => "boss_end",
+            WorldSet => "world_set",
+            RestWorld => "rest_world",
+            Puzzle => "puzzle",
+            Hazard => "hazard",
+            HazardInfo => "hazard_info",
+            JoinReq => "join_req",
+            JoinState => "join_state",
+            JoinEnd => "join_end",
+            JoinAck => "join_ack",
             Log => "log",
         }
     }
@@ -239,6 +319,18 @@ impl Kind {
                 | Kind::RespawnDown
                 | Kind::RespawnUp
                 | Kind::RespawnRest
+                | Kind::BossPhase
+                | Kind::BossArena
+                | Kind::BossEnd
+                | Kind::HazardInfo
+                // [gap-world] one-shot world facts: an unlock, a rest, a prop turned once.
+                | Kind::WorldSet
+                | Kind::RestWorld
+                | Kind::Puzzle
+                // [join-sync] the request, the end-of-state and the ack are one-shot facts.
+                | Kind::JoinReq
+                | Kind::JoinEnd
+                | Kind::JoinAck
         )
     }
 
@@ -264,6 +356,8 @@ impl Kind {
                 | Kind::Loot
                 | Kind::PlatformRide
                 | Kind::DialogueView
+                | Kind::Audit
+                | Kind::Hazard
         )
     }
 }
@@ -769,9 +863,11 @@ pub struct DialogueState {
 /// `DIALOGUE_VIEW` body (WIRE.md §3.22).
 ///
 /// The cursor the talking machine's `DialogueManager` is showing, so the partner can drive
-/// its OWN game's dialogue widget with it.  The lines are not here: they live in the cooked
-/// `FS_DialogueData` asset, identified by its object name, which both machines load from
-/// the same package.
+/// its OWN game's dialogue widget with it.  The cursor identifies the moment; `speaker` and
+/// `line` are the text the talker's own box is ALREADY rendering (see
+/// `mod/doc/features/view-fix2.md`): the spectator cannot reproduce it from the asset alone
+/// because the widget's own format-key pass (`ApplyFormatKeysToDialogue`) is not reachable
+/// from reflection, and the rendered line is a few hundred bytes once per line.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DialogueView {
     /// Increments per state change; a lower `seq` is discarded.
@@ -792,6 +888,10 @@ pub struct DialogueView {
     pub chosen: u16,
     /// The `FS_DialogueData` object's own name.
     pub asset: String,
+    /// The speaker text the talker's own dialogue box is showing ("" = no name).
+    pub speaker: String,
+    /// The line text the talker's own dialogue box is showing ("" = not readable).
+    pub line: String,
 }
 
 /// `DIALOGUE_VIEW.flags` (WIRE.md §3.22).
@@ -1089,6 +1189,166 @@ pub mod boss_flags {
     pub const ARENA_EXIT: u8 = 1 << 2;
 }
 
+/// `BOSS_PHASE` body (WIRE.md §3.28, `qdbossphase.h`).
+///
+/// Supersedes the note on [`Boss`] for phases. The shipped build *does* expose a state
+/// machine, on the NATIVE base class `FS_EnemyCharacterBase`: `CurrentStateIndex` and
+/// `CurrentSubState` (int32, readable and writable), the native setters
+/// `SetCurrentStateIndex`/`SetCurrentSubState`, and the `OnStateIndexChanged`/
+/// `OnSubStateChanged` events a Blueprint graph overrides. So a phase is a value the
+/// machine that RUNS the boss reports, and the follower drives it through the game's own
+/// setters — the follower never re-runs a phase script of its own.
+///
+/// `rev` is what orders the samples: the Queen's own chain is 0 -> 1 -> 2 -> 0 (the last
+/// step is the ending), so comparing state numbers alone would drop the ending.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct BossPhase {
+    /// The boss enemy's key.
+    pub id: Guid,
+    /// Monotone per (boss, session). 0 never means "revision 0".
+    pub rev: u32,
+    /// `CurrentStateIndex`. -1 = unreadable on the sender.
+    pub state: i32,
+    /// `CurrentSubState`. -1 = unreadable on the sender.
+    pub sub: i32,
+    /// See [`boss_phase_flags`].
+    pub flags: u8,
+}
+
+/// `BOSS_PHASE.flags` bits (WIRE.md §3.28).
+pub mod boss_phase_flags {
+    /// The sender is the AUTHORITY: it runs this boss.
+    pub const AUTHORITY: u8 = 1 << 0;
+    /// A transition the boss itself started (an event, not a steady sample).
+    pub const TRANSITION: u8 = 1 << 1;
+    /// `DoingPhaseAnim` was set on the sender (diagnostic only).
+    pub const ANIMATING: u8 = 1 << 2;
+}
+
+/// `BOSS_ARENA` body (WIRE.md §3.29).
+///
+/// The fight's own phase plus which players are inside it, so both machines apply the same
+/// rule. THE RULE: a fight that is running CONTINUES when a player is absent. It is never
+/// cancelled, and the absent player is never pulled in by force — a player who died and
+/// respawned (`DeathRespawn=1` returns them to their last rest without a world reload)
+/// walks back in through the gate, which the door lane already keeps in step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct BossArena {
+    pub id: Guid,
+    pub rev: u32,
+    /// See [`boss_arena_phase`].
+    pub arena: u8,
+    /// See [`boss_present`].
+    pub present: u8,
+}
+
+/// `BOSS_ARENA.arena` values (WIRE.md §3.29).
+pub mod boss_arena_phase {
+    pub const IDLE: u8 = 0;
+    pub const OPEN: u8 = 1;
+    pub const CLOSED: u8 = 2;
+    pub const DONE: u8 = 3;
+}
+
+/// `BOSS_ARENA.present` bits (WIRE.md §3.29).
+pub mod boss_present {
+    pub const HOST: u8 = 0x01;
+    pub const PEER: u8 = 0x02;
+    pub const BOTH: u8 = 0x03;
+}
+
+/// `BOSS_END` body (WIRE.md §3.30).
+///
+/// Which of the four endings was chosen and by whom. The choice is made by whichever
+/// player makes it; the other FOLLOWS by running the same ending entry on its own copy, so
+/// each machine's own game writes its own `EndingNComplete`/`EndingSeen`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct BossEnd {
+    pub id: Guid,
+    pub rev: u32,
+    /// See [`boss_ending`].
+    pub ending: u8,
+    /// [`boss_present::HOST`] or [`boss_present::PEER`]: who made the choice.
+    pub who: u8,
+}
+
+/// `BOSS_END.ending` values (WIRE.md §3.30).
+pub mod boss_ending {
+    pub const NONE: u8 = 0;
+    pub const QUEEN1: u8 = 1;   // Ending1Complete
+    pub const QUEEN2: u8 = 2;   // Ending2Complete
+    pub const SIPEHA1: u8 = 3;  // Ending3Complete
+    pub const SIPEHA2: u8 = 4;  // Ending4Complete
+}
+
+/// One `HAZARD` row (WIRE.md §3.34a). 37 bytes on the wire.
+///
+/// A hazard an enemy or a boss SPAWNED at runtime — a magma puddle, an AoE volume, a trap
+/// (`qdhazard.h`). `key` is a hash of the class and the quantised spawn point, so the two
+/// machines derive it independently; the position/radius/cadence never decide anything on
+/// the sender, they are what the OTHER machine needs to hurt ITS OWN player.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct HazardRow {
+    pub key: Guid,
+    /// 1/8 cm, the same quantisation as every other lane.
+    pub px: i32,
+    pub py: i32,
+    pub pz: i32,
+    /// The hazard's own extent, cm. `0` is "unknown" and the receiver refuses to use it.
+    pub radius_cm: u16,
+    /// How often the hazard may hurt one player, ms.
+    pub tick_ms: u16,
+    /// 1/100 of the game's damage unit.
+    pub amount_centi: i32,
+    /// See [`hazard_flags`].
+    pub flags: u8,
+}
+
+/// `HAZARD.flags` bits (WIRE.md §3.34a).
+pub mod hazard_flags {
+    /// The amount and/or the radius did not resolve on the sender, so the value is the
+    /// stated small fallback rather than a measurement.
+    pub const GUESSED: u8 = 1 << 0;
+    /// A projectile: one application, then spent.
+    pub const ONCE: u8 = 1 << 1;
+}
+
+/// `HAZARD` body (WIRE.md §3.34a): `rev(u32)`, `n(u16)`, then `n` rows.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Hazards {
+    pub rev: u32,
+    pub rows: Vec<HazardRow>,
+}
+
+/// `HAZARD_INFO` body (WIRE.md §3.34b).
+///
+/// One hazard key's class (so the following machine can draw it and know it exists), the
+/// end of one, or one projectile CLASS's damage. The amount is a DESCRIPTION, never an
+/// instruction: the machine that owns a player's HP applies it from the mirrored geometry,
+/// which is what makes a hazard unable to burn anyone twice.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct HazardInfo {
+    /// See [`hazard_info_kind`].
+    pub kind: u8,
+    pub key: Guid,
+    pub px: i32,
+    pub py: i32,
+    pub pz: i32,
+    pub amount_centi: i32,
+    pub radius_cm: u16,
+    pub tick_ms: u16,
+    pub flags: u8,
+    /// The hazard's (or projectile's) class path.
+    pub cls: String,
+}
+
+/// `HAZARD_INFO.kind` values (WIRE.md §3.34b).
+pub mod hazard_info_kind {
+    pub const FIELD: u8 = 1;
+    pub const FIELD_END: u8 = 2;
+    pub const CLASS_DMG: u8 = 3;
+}
+
 /// One `OBJECTS` row (WIRE.md §3.20). 18 bytes on the wire.
 ///
 /// The lane for interactables that are NOT `SavableActorStates` entries — the chest
@@ -1281,7 +1541,7 @@ pub mod respawn_penalty {
     }
 }
 
-/// `KILL_XP` body (WIRE.md §3.26). One death paid one machine's player `xp`; the other
+/// `KILL_XP` body (WIRE.md §3.25). One death paid one machine's player `xp`; the other
 /// machine pays its own player the same amount if its own game did not. `xp` is what the
 /// sender MEASURED, never a value derived from the enemy's data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -1294,7 +1554,7 @@ pub struct KillXp {
     pub xp: u32,
 }
 
-/// `SAVE` body (WIRE.md §3.27). "I saved; write your own slot now."
+/// `SAVE` body (WIRE.md §3.26). "I saved; write your own slot now."
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Save {
     /// The sender's own save counter — monotone, so a retransmit is one request.
@@ -1308,19 +1568,88 @@ pub struct Save {
     pub route: u8,
 }
 
-/// `SAVE.role` (WIRE.md §3.27).
+/// `SAVE.role` (WIRE.md §3.26).
 pub mod save_role {
     pub const HOST: u8 = 1;
     pub const PEER: u8 = 2;
 }
 
-/// `SAVE.route` (WIRE.md §3.27). 0 is accepted as "unspecified" and means `SLOT`, so a
+/// `SAVE.route` (WIRE.md §3.26). 0 is accepted as "unspecified" and means `SLOT`, so a
 /// 5-byte body from a sender that predates this field still mirrors.
 pub mod save_route {
     pub const UNSPECIFIED: u8 = 0;
     pub const SLOT: u8 = 1;
     pub const SUSPEND: u8 = 2;
 }
+
+/// `AUDIT` body (WIRE.md §3.27). The steady state of the desync auditor: one digest per
+/// CATEGORY of synced world state, 141 bytes for all twelve.
+///
+/// The per-item sets are deliberately NOT here. The state is up to 1024 enemy keys and 256
+/// placed objects against a 1200-byte body cap, so sending it every ten seconds would be
+/// the loudest lane in the session for a question whose answer is almost always "nothing".
+/// A digest that disagrees is what causes [`AuditReq`] to be sent.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Audit {
+    /// The sender's audit counter (monotone; diagnostics and episode identity).
+    pub seq: u32,
+    /// FNV-1a of the sender's own map short name. `0` means "not known yet". A difference
+    /// here SUPPRESSES the data categories: two machines in different worlds disagree about
+    /// everything, and the split is the one fact worth reporting.
+    pub map_hash: u32,
+    pub cats: Vec<AuditCat>,
+}
+
+/// One category's digest. `digest` is an ORDER-INDEPENDENT sum of the category's item
+/// hashes: insertion order is a scan artefact on both machines, so an order-dependent digest
+/// would disagree on two machines holding identical state. `count` is the number of items
+/// on the sender.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct AuditCat {
+    /// 1 = flags, 2 = actors, 3 = objects, 4 = quest, 5 = enemy, 6 = boss, 7 = movers,
+    /// 8 = levels, 9 = map, 10 = cutscene, 11 = dialogue, 12 = deaths (qdaudit.h `Cat`).
+    pub cat: u8,
+    pub digest: u64,
+    pub count: u16,
+}
+
+/// Most categories one `AUDIT` body may carry (qdaudit.h's `kMaxCats`).
+pub const MAX_AUDIT_CATS: usize = 12;
+
+/// `AUDIT_REQ` body (WIRE.md §3.27): "send me your item set for this category".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct AuditReq {
+    /// The requester's counter, echoed by the reply so a body is attributed to its ask.
+    pub seq: u32,
+    pub cat: u8,
+}
+
+/// One row of an `AUDIT_ITEMS` body: the canonical key and the value both machines compute.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct AuditItemRow {
+    /// At most 47 bytes: a 32-char GUID hex plus a short suffix, or a soft object path.
+    pub key: String,
+    pub value: i64,
+}
+
+/// `AUDIT_ITEMS` body (WIRE.md §3.27): one category's whole set, split across ticks like
+/// every other container here.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct AuditItems {
+    pub seq: u32,
+    pub cat: u8,
+    /// The WHOLE set size, not this datagram's share.
+    pub total: u16,
+    /// Index of the first row in this chunk.
+    pub first: u16,
+    pub items: Vec<AuditItemRow>,
+}
+
+/// The longest audit key (qdaudit.h `kKeyCap` = 80, so 79 visible bytes). The longest
+/// identity any category produces is a soft object path (a KeyItems path is 48 bytes) or a
+/// composed flag name; a mover appends a 4-byte axis suffix. Too short a cap would TRUNCATE
+/// a key, and a truncated key hashes to a digest that can never match.
+pub const MAX_AUDIT_KEY: usize = 79;
 
 /// A decoded body, tagged by its kind.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1359,6 +1688,14 @@ pub enum Body {
     RespawnRest(RespawnRest),
     KillXp(KillXp),
     Save(Save),
+    Audit(Audit),
+    AuditReq(AuditReq),
+    AuditItems(AuditItems),
+    BossPhase(BossPhase),
+    BossArena(BossArena),
+    BossEnd(BossEnd),
+    Hazard(Hazards),
+    HazardInfo(HazardInfo),
     Log(Log),
 }
 
@@ -1399,6 +1736,14 @@ impl Body {
             Body::RespawnRest(_) => Kind::RespawnRest,
             Body::KillXp(_) => Kind::KillXp,
             Body::Save(_) => Kind::Save,
+            Body::Audit(_) => Kind::Audit,
+            Body::AuditReq(_) => Kind::AuditReq,
+            Body::AuditItems(_) => Kind::AuditItems,
+            Body::BossPhase(_) => Kind::BossPhase,
+            Body::BossArena(_) => Kind::BossArena,
+            Body::BossEnd(_) => Kind::BossEnd,
+            Body::Hazard(_) => Kind::Hazard,
+            Body::HazardInfo(_) => Kind::HazardInfo,
             Body::Log(_) => Kind::Log,
         }
     }
@@ -1588,6 +1933,12 @@ fn read_guid(r: &mut BitReader<'_>) -> Result<Guid> {
     let mut out = [0u8; 16];
     out.copy_from_slice(bytes);
     Ok(Guid(out))
+}
+
+/// A zero GUID is not an identity: every lane that keys on one treats it as "no subject".
+/// Spelled once here so a new body cannot accidentally accept it.
+fn is_zero_guid(g: &Guid) -> bool {
+    g.0.iter().all(|b| *b == 0)
 }
 
 /// Encode a body into its wire bytes (no envelope).
@@ -1879,6 +2230,97 @@ pub fn encode_body(body: &Body) -> Result<Vec<u8>> {
             w.write_u8(b.phase)?;
             w.write_u16(b.hp)?;
         }
+        Body::BossPhase(p) => {
+            // A Blueprint state cursor is a small ordinal; anything else is a decode of the
+            // wrong object, and driving a boss graph with it would run the wrong branch.
+            if !(-1..=255).contains(&p.state) {
+                return Err(Error::OutOfRange { what: "boss phase state", value: i64::from(p.state) });
+            }
+            if !(-1..=255).contains(&p.sub) {
+                return Err(Error::OutOfRange { what: "boss phase sub", value: i64::from(p.sub) });
+            }
+            if is_zero_guid(&p.id) {
+                return Err(Error::OutOfRange { what: "boss phase key", value: 0 });
+            }
+            write_guid(&mut w, &p.id)?;
+            w.write_u32(p.rev)?;
+            w.write_i32(p.state)?;
+            w.write_i32(p.sub)?;
+            w.write_u8(p.flags)?;
+        }
+        Body::BossArena(a) => {
+            if a.arena > boss_arena_phase::DONE {
+                return Err(Error::OutOfRange { what: "boss arena phase", value: i64::from(a.arena) });
+            }
+            if a.present & !boss_present::BOTH != 0 {
+                return Err(Error::OutOfRange { what: "boss arena present", value: i64::from(a.present) });
+            }
+            if is_zero_guid(&a.id) {
+                return Err(Error::OutOfRange { what: "boss arena key", value: 0 });
+            }
+            write_guid(&mut w, &a.id)?;
+            w.write_u32(a.rev)?;
+            w.write_u8(a.arena)?;
+            w.write_u8(a.present)?;
+        }
+        Body::BossEnd(e) => {
+            if e.ending < boss_ending::QUEEN1 || e.ending > boss_ending::SIPEHA2 {
+                return Err(Error::OutOfRange { what: "boss ending", value: i64::from(e.ending) });
+            }
+            if e.who != boss_present::HOST && e.who != boss_present::PEER {
+                return Err(Error::OutOfRange { what: "boss ending who", value: i64::from(e.who) });
+            }
+            if is_zero_guid(&e.id) {
+                return Err(Error::OutOfRange { what: "boss ending key", value: 0 });
+            }
+            write_guid(&mut w, &e.id)?;
+            w.write_u32(e.rev)?;
+            w.write_u8(e.ending)?;
+            w.write_u8(e.who)?;
+        }
+        Body::Hazard(h) => {
+            if h.rows.len() > MAX_HAZARD_ROWS {
+                return Err(Error::LimitExceeded {
+                    what: "hazard rows per datagram",
+                    limit: MAX_HAZARD_ROWS,
+                    got: h.rows.len(),
+                });
+            }
+            w.write_u32(h.rev)?;
+            w.write_u16(h.rows.len() as u16)?;
+            for row in &h.rows {
+                write_guid(&mut w, &row.key)?;
+                w.write_i32(row.px)?;
+                w.write_i32(row.py)?;
+                w.write_i32(row.pz)?;
+                w.write_u16(row.radius_cm)?;
+                w.write_u16(row.tick_ms)?;
+                w.write_i32(row.amount_centi)?;
+                w.write_u8(row.flags)?;
+            }
+        }
+        Body::HazardInfo(i) => {
+            if i.kind < hazard_info_kind::FIELD || i.kind > hazard_info_kind::CLASS_DMG {
+                return Err(Error::OutOfRange { what: "hazard info kind", value: i64::from(i.kind) });
+            }
+            if i.cls.len() > MAX_HAZARD_CLASS {
+                return Err(Error::LimitExceeded {
+                    what: "hazard class path",
+                    limit: MAX_HAZARD_CLASS,
+                    got: i.cls.len(),
+                });
+            }
+            w.write_u8(i.kind)?;
+            write_guid(&mut w, &i.key)?;
+            w.write_i32(i.px)?;
+            w.write_i32(i.py)?;
+            w.write_i32(i.pz)?;
+            w.write_i32(i.amount_centi)?;
+            w.write_u16(i.radius_cm)?;
+            w.write_u16(i.tick_ms)?;
+            w.write_u8(i.flags)?;
+            write_str(&mut w, &i.cls)?;
+        }
         Body::Objects(o) => {
             if o.entries.len() > MAX_OBJECT_ROWS {
                 return Err(Error::LimitExceeded {
@@ -1925,6 +2367,8 @@ pub fn encode_body(body: &Body) -> Result<Vec<u8>> {
             w.write_u16(d.options)?;
             w.write_u16(d.chosen)?;
             write_str(&mut w, &d.asset)?;
+            write_str(&mut w, &d.speaker)?;
+            write_str(&mut w, &d.line)?;
         }
         Body::RespawnDown(b) => {
             check_respawn_stack(b.deaths, b.pct)?;
@@ -1980,6 +2424,54 @@ pub fn encode_body(body: &Body) -> Result<Vec<u8>> {
             w.write_u8(s.role)?;
             w.write_u8(s.route)?;
         }
+        Body::Audit(a) => {
+            if a.cats.len() > MAX_AUDIT_CATS {
+                return Err(Error::LimitExceeded {
+                    what: "audit categories",
+                    limit: MAX_AUDIT_CATS,
+                    got: a.cats.len(),
+                });
+            }
+            w.write_u32(a.seq)?;
+            w.write_u32(a.map_hash)?;
+            w.write_u8(a.cats.len() as u8)?;
+            for c in &a.cats {
+                check_audit_cat(c.cat)?;
+                w.write_u8(c.cat)?;
+                w.write_u64(c.digest)?;
+                w.write_u16(c.count)?;
+            }
+        }
+        Body::AuditReq(q) => {
+            check_audit_cat(q.cat)?;
+            w.write_u32(q.seq)?;
+            w.write_u8(q.cat)?;
+        }
+        Body::AuditItems(i) => {
+            check_audit_cat(i.cat)?;
+            for row in &i.items {
+                if row.key.len() > MAX_AUDIT_KEY {
+                    return Err(Error::OutOfRange {
+                        what: "audit key",
+                        value: row.key.len() as i64,
+                    });
+                }
+            }
+            if (i.first as usize) + i.items.len() > i.total as usize {
+                return Err(Error::OutOfRange {
+                    what: "audit items first",
+                    value: i64::from(i.first),
+                });
+            }
+            w.write_u32(i.seq)?;
+            w.write_u8(i.cat)?;
+            w.write_u16(i.total)?;
+            w.write_u16(i.first)?;
+            for row in &i.items {
+                write_str(&mut w, &row.key)?;
+                w.write_u64(row.value as u64)?;
+            }
+        }
     }
 
     if !w.is_byte_aligned() {
@@ -1989,6 +2481,15 @@ pub fn encode_body(body: &Body) -> Result<Vec<u8>> {
         return Err(Error::UnalignedWrite { bit_pos: w.bit_len() });
     }
     Ok(w.finish())
+}
+
+/// The auditor's category byte is 1..=12 and BOTH machines must agree which byte means
+/// what (qdaudit.h `Cat`). Shared by the encoder and the decoder so the two cannot drift.
+fn check_audit_cat(cat: u8) -> Result<()> {
+    if cat < 1 || cat > MAX_AUDIT_CATS as u8 {
+        return Err(Error::OutOfRange { what: "audit category", value: i64::from(cat) });
+    }
+    Ok(())
 }
 
 fn write_count(w: &mut BitWriter, n: usize) -> Result<()> {
@@ -2017,6 +2518,17 @@ pub fn decode_body(kind: Kind, bytes: &[u8]) -> Result<Body> {
     // `LOG` has no declared layout (WIRE.md defines none), so the whole body is
     // the message and there is nothing to leave over.
     if kind == Kind::Log {
+        return Ok(Body::Log(Log { bytes: bytes.to_vec() }));
+    }
+    // [gap-world] The three gap-world kinds are carried OPAQUELY by this crate.  The relay
+    // forwards by kind byte and must NEVER drop a datagram it does not model -- that is the
+    // measured OBJECTS failure recorded below (624 `malformed datagram ... needed 128 bits,
+    // 0 available` in one run, and the host -> peer object leg never crossed).  Their layouts
+    // are WIRE.md 3.31-3.33 and the native encoder is their only implementation.
+    if kind == Kind::WorldSet || kind == Kind::RestWorld || kind == Kind::Puzzle
+        || kind == Kind::JoinReq || kind == Kind::JoinState
+        || kind == Kind::JoinEnd || kind == Kind::JoinAck
+    {
         return Ok(Body::Log(Log { bytes: bytes.to_vec() }));
     }
     let mut r = BitReader::new(bytes);
@@ -2132,21 +2644,22 @@ pub fn decode_body(kind: Kind, bytes: &[u8]) -> Result<Body> {
         }
         Kind::EnemyRows => {
             let n = r.read_u16()? as usize;
-            if n > MAX_ENEMY_ROWS {
-                return Err(Error::LimitExceeded {
-                    what: "enemy rows per datagram",
-                    limit: MAX_ENEMY_ROWS,
-                    got: n,
-                });
-            }
-            let mut rows = Vec::new();
+            // `n` IS THE WHOLE SET SIZE, NOT THIS DATAGRAM'S SHARE (WIRE.md §3.9, the same
+            // rule §3.6/§3.20 state).  MEASURED (final soak, 16 Nov): the native publisher
+            // sends `n = <every live enemy>` in the header while each datagram carries at
+            // most `WriteEnemyChunk`'s 20 rows, so a 23-enemy world produced
+            //   malformed datagram ... (kind 0x14): enemy rows per datagram exceeds limit: 23 > 20
+            // for EVERY row body -- 1163 of them in one run -- and the RELAY dropped the
+            // whole enemy lane before either peer saw it.  The `MAX_ENEMY_ROWS` cap belongs
+            // to the WRITER (it is what keeps a datagram inside the state-application
+            // ceiling) and to the ENCODER below; it is not a bound on what a header may
+            // declare, because the header declares the LEDGER.  The loop stops when the body
+            // ends, exactly like OBJECTS, LOOT and the other absolute containers.
+            let mut rows = Vec::with_capacity(n.min(MAX_ENEMY_ROWS));
             for _ in 0..n {
-                // [live-ip2] Same rule as OBJECTS below: a sender whose set has more rows
-                // than one datagram holds caps the body at `MAX_ENEMY_ROWS` (qdwire.h
-                // `WriteEnemyChunk`) while the header still says how big the set is, so a
-                // chunk carries fewer rows than `n`.  Without this stop the RELAY rejected
-                // those datagrams and neither peer saw them (measured: 301 `malformed
-                // datagram ... (kind 0x14)` in one run).
+                // A sender whose set has more rows than one datagram holds caps the body at
+                // `MAX_ENEMY_ROWS` (qdwire.h `WriteEnemyChunk`) while the header still says
+                // how big the set is, so a chunk carries fewer rows than `n`.
                 if r.is_empty() {
                     break;
                 }
@@ -2414,6 +2927,104 @@ pub fn decode_body(kind: Kind, bytes: &[u8]) -> Result<Body> {
             phase: r.read_u8()?,
             hp: r.read_u16()?,
         }),
+        Kind::BossPhase => {
+            let id = read_guid(&mut r)?;
+            let rev = r.read_u32()?;
+            let state = r.read_i32()?;
+            let sub = r.read_i32()?;
+            let flags = r.read_u8()?;
+            if is_zero_guid(&id) {
+                return Err(Error::OutOfRange { what: "boss phase key", value: 0 });
+            }
+            if !(-1..=255).contains(&state) {
+                return Err(Error::OutOfRange { what: "boss phase state", value: i64::from(state) });
+            }
+            if !(-1..=255).contains(&sub) {
+                return Err(Error::OutOfRange { what: "boss phase sub", value: i64::from(sub) });
+            }
+            Body::BossPhase(BossPhase { id, rev, state, sub, flags })
+        }
+        Kind::BossArena => {
+            let id = read_guid(&mut r)?;
+            let rev = r.read_u32()?;
+            let arena = r.read_u8()?;
+            let present = r.read_u8()?;
+            if is_zero_guid(&id) {
+                return Err(Error::OutOfRange { what: "boss arena key", value: 0 });
+            }
+            if arena > boss_arena_phase::DONE {
+                return Err(Error::OutOfRange { what: "boss arena phase", value: i64::from(arena) });
+            }
+            if present & !boss_present::BOTH != 0 {
+                return Err(Error::OutOfRange { what: "boss arena present", value: i64::from(present) });
+            }
+            Body::BossArena(BossArena { id, rev, arena, present })
+        }
+        Kind::BossEnd => {
+            let id = read_guid(&mut r)?;
+            let rev = r.read_u32()?;
+            let ending = r.read_u8()?;
+            let who = r.read_u8()?;
+            if is_zero_guid(&id) {
+                return Err(Error::OutOfRange { what: "boss ending key", value: 0 });
+            }
+            if ending < boss_ending::QUEEN1 || ending > boss_ending::SIPEHA2 {
+                return Err(Error::OutOfRange { what: "boss ending", value: i64::from(ending) });
+            }
+            if who != boss_present::HOST && who != boss_present::PEER {
+                return Err(Error::OutOfRange { what: "boss ending who", value: i64::from(who) });
+            }
+            Body::BossEnd(BossEnd { id, rev, ending, who })
+        }
+        Kind::Hazard => {
+            let rev = r.read_u32()?;
+            let n = r.read_u16()? as usize;
+            if n > MAX_HAZARD_ROWS {
+                return Err(Error::LimitExceeded {
+                    what: "hazard rows per datagram",
+                    limit: MAX_HAZARD_ROWS,
+                    got: n,
+                });
+            }
+            let mut rows = Vec::with_capacity(n);
+            for _ in 0..n {
+                let key = read_guid(&mut r)?;
+                let px = r.read_i32()?;
+                let py = r.read_i32()?;
+                let pz = r.read_i32()?;
+                let radius_cm = r.read_u16()?;
+                let tick_ms = r.read_u16()?;
+                let amount_centi = r.read_i32()?;
+                let flags = r.read_u8()?;
+                rows.push(HazardRow { key, px, py, pz, radius_cm, tick_ms, amount_centi, flags });
+            }
+            Body::Hazard(Hazards { rev, rows })
+        }
+        Kind::HazardInfo => {
+            let kind = r.read_u8()?;
+            if kind < hazard_info_kind::FIELD || kind > hazard_info_kind::CLASS_DMG {
+                return Err(Error::OutOfRange { what: "hazard info kind", value: i64::from(kind) });
+            }
+            let key = read_guid(&mut r)?;
+            let px = r.read_i32()?;
+            let py = r.read_i32()?;
+            let pz = r.read_i32()?;
+            let amount_centi = r.read_i32()?;
+            let radius_cm = r.read_u16()?;
+            let tick_ms = r.read_u16()?;
+            let flags = r.read_u8()?;
+            let cls = read_str(&mut r)?;
+            if cls.len() > MAX_HAZARD_CLASS {
+                return Err(Error::LimitExceeded {
+                    what: "hazard class path",
+                    limit: MAX_HAZARD_CLASS,
+                    got: cls.len(),
+                });
+            }
+            Body::HazardInfo(HazardInfo {
+                kind, key, px, py, pz, amount_centi, radius_cm, tick_ms, flags, cls,
+            })
+        }
         Kind::Objects => {
             let rev = r.read_u32()?;
             let n = r.read_u16()? as usize;
@@ -2520,6 +3131,8 @@ pub fn decode_body(kind: Kind, bytes: &[u8]) -> Result<Body> {
                 options: r.read_u16()?,
                 chosen: r.read_u16()?,
                 asset: read_str(&mut r)?,
+                speaker: read_str(&mut r)?,
+                line: read_str(&mut r)?,
             })
         }
         Kind::RespawnDown => {
@@ -2599,6 +3212,73 @@ pub fn decode_body(kind: Kind, bytes: &[u8]) -> Result<Body> {
                 return Err(Error::OutOfRange { what: "save route", value: i64::from(route) });
             }
             Body::Save(Save { seq, role, route })
+        }
+        Kind::Audit => {
+            let seq = r.read_u32()?;
+            let map_hash = r.read_u32()?;
+            let n = r.read_u8()? as usize;
+            if n > MAX_AUDIT_CATS {
+                return Err(Error::LimitExceeded {
+                    what: "audit categories",
+                    limit: MAX_AUDIT_CATS,
+                    got: n,
+                });
+            }
+            let mut cats = Vec::with_capacity(n);
+            for _ in 0..n {
+                // Read rows until the BODY ends, not until `n` is satisfied: `n` is the
+                // sender's container size and a body is a prefix of it (WIRE.md §3.6).
+                if r.is_empty() {
+                    break;
+                }
+                let cat = r.read_u8()?;
+                check_audit_cat(cat)?;
+                let digest = r.read_u64()?;
+                let count = r.read_u16()?;
+                cats.push(AuditCat { cat, digest, count });
+            }
+            Body::Audit(Audit { seq, map_hash, cats })
+        }
+        Kind::AuditReq => {
+            let seq = r.read_u32()?;
+            let cat = r.read_u8()?;
+            check_audit_cat(cat)?;
+            Body::AuditReq(AuditReq { seq, cat })
+        }
+        Kind::AuditItems => {
+            let seq = r.read_u32()?;
+            let cat = r.read_u8()?;
+            check_audit_cat(cat)?;
+            let total = r.read_u16()?;
+            let first = r.read_u16()?;
+            let mut items = Vec::new();
+            while !r.is_empty() {
+                let key = read_str(&mut r)?;
+                if key.len() > MAX_AUDIT_KEY {
+                    return Err(Error::OutOfRange {
+                        what: "audit key",
+                        value: key.len() as i64,
+                    });
+                }
+                let value = r.read_u64()? as i64;
+                items.push(AuditItemRow { key, value });
+            }
+            if (first as usize) + items.len() > total as usize {
+                return Err(Error::OutOfRange {
+                    what: "audit items first",
+                    value: i64::from(first),
+                });
+            }
+            Body::AuditItems(AuditItems { seq, cat, total, first, items })
+        }
+        // [gap-world] Unreachable (the early return above handles them); kept so the match
+        // stays exhaustive if that early return is ever folded away.  Same shape as LOG.
+        Kind::WorldSet | Kind::RestWorld | Kind::Puzzle => {
+            Body::Log(Log { bytes: bytes.to_vec() })
+        }
+        // [join-sync] Native-only lane (WIRE.md §3.35); the relay forwards it by kind byte.
+        Kind::JoinReq | Kind::JoinState | Kind::JoinEnd | Kind::JoinAck => {
+            Body::Log(Log { bytes: bytes.to_vec() })
         }
         Kind::Log => {
             // The whole body is the message; nothing to parse.
@@ -3170,6 +3850,55 @@ mod tests {
         assert!(decode_body(Kind::ActorStates, &truncated).is_err());
     }
 
+    /// `ENEMY_ROWS` is a chunked container TOO, and its header's `n` is the whole LEDGER.
+    ///
+    /// MEASURED (final soak, 16 Nov): the relay rejected every enemy row body from a world
+    /// with 23 live enemies -- `enemy rows per datagram exceeds limit: 23 > 20`, 1163 times
+    /// in one run -- because a guard compared the header's `n` against the per-DATAGRAM row
+    /// cap.  `MAX_ENEMY_ROWS` bounds what a WRITER puts in one body (it is the
+    /// state-application ceiling, not a wire limit) and the encoder enforces it; a header
+    /// may still declare a larger ledger, and the decoder must read the rows the datagram
+    /// actually carries.  This test is the shape of the failure: `n` far past the cap, two
+    /// rows present.
+    #[test]
+    fn a_chunked_enemy_body_reads_the_rows_it_carries_even_when_n_exceeds_the_cap() {
+        let mut b: Vec<u8> = Vec::new();
+        // n = 23 -- MORE than MAX_ENEMY_ROWS, which is the measured release value.
+        b.extend_from_slice(&23u16.to_le_bytes());
+        for i in 0..2u32 {
+            b.extend_from_slice(sample_guid().as_bytes());
+            b.extend_from_slice(&(i as i32).to_le_bytes());   // x
+            b.extend_from_slice(&(i as i32 + 1).to_le_bytes()); // y
+            b.extend_from_slice(&(i as i32 + 2).to_le_bytes()); // z
+            b.extend_from_slice(&0i16.to_le_bytes());          // yaw
+            b.extend_from_slice(&100u16.to_le_bytes());        // hp
+            b.push(0x01);                                      // flags
+        }
+        let body = decode_body(Kind::EnemyRows, &b)
+            .expect("a chunk whose n exceeds the cap must still decode");
+        match body {
+            Body::EnemyRows(e) => {
+                assert_eq!(e.rows.len(), 2, "the datagram's own rows, not `n`");
+                assert_eq!(e.rows[1].x, 1);
+                assert_eq!(e.rows[1].hp, 100);
+            }
+            other => panic!("expected enemy rows, got {other:?}"),
+        }
+
+        // A body cut INSIDE a row is still a framing error, so the fix did not make the
+        // decoder accept garbage.
+        let mut truncated = b;
+        truncated.truncate(truncated.len() - 5);
+        assert!(decode_body(Kind::EnemyRows, &truncated).is_err());
+
+        // And the ENCODER still refuses to put more than the ceiling in one body: that is
+        // where the cap belongs.
+        let rows: Vec<EnemyRow> = (0..(MAX_ENEMY_ROWS + 1))
+            .map(|_| EnemyRow { id: sample_guid(), x: 0, y: 0, z: 0, yaw: 0, hp: 1, flags: 0 })
+            .collect();
+        assert!(encode_body(&Body::EnemyRows(EnemyRows { rows })).is_err());
+    }
+
     #[test]
     fn keepalive_must_be_empty() {
         assert_eq!(encode_body(&Body::Keepalive).unwrap(), Vec::<u8>::new());
@@ -3180,14 +3909,44 @@ mod tests {
     }
 
     #[test]
-    fn enemy_rows_over_the_budget_are_rejected_on_decode() {
+    fn enemy_rows_body_is_bounded_by_its_bytes_not_by_the_header_n() {
+        // THE PREVIOUS VERSION OF THIS TEST ASSERTED THE BUG.  It built a header with
+        // `n = 21` and 21 rows and demanded `LimitExceeded` -- which is exactly what made
+        // the relay drop EVERY enemy body from a world with more than 20 live enemies
+        // (measured: `enemy rows per datagram exceeds limit: 23 > 20`, 1163 times in one
+        // final soak, the whole enemy lane dead before either peer saw it).  `n` is the
+        // LEDGER size (WIRE.md §3.9, the same chunked-container rule as §3.6 and §3.20);
+        // the per-datagram cap is the WRITER's, enforced by the encoder.
+        //
+        // What must still be true: the decoder cannot be made to read past the body.
         let mut bytes = vec![0u8; 2];
         bytes[0..2].copy_from_slice(&21u16.to_le_bytes());
         bytes.extend(std::iter::repeat(0u8).take(21 * 33));
-        assert!(matches!(
-            decode_body(Kind::EnemyRows, &bytes),
-            Err(Error::LimitExceeded { .. })
-        ));
+        match decode_body(Kind::EnemyRows, &bytes) {
+            Ok(Body::EnemyRows(e)) => assert_eq!(e.rows.len(), 21),
+            other => panic!("a body carrying 21 real rows must decode, got {other:?}"),
+        }
+
+        // A header claiming 21 rows with NO row bytes is an EMPTY chunk -- not an error,
+        // and not an allocation of 21 rows.
+        let header_only = 21u16.to_le_bytes();
+        match decode_body(Kind::EnemyRows, &header_only) {
+            Ok(Body::EnemyRows(e)) => assert_eq!(e.rows.len(), 0),
+            other => panic!("a header-only chunk is an empty prefix, got {other:?}"),
+        }
+
+        // A header claiming a huge ledger does not make the decoder read past the body.
+        let mut huge = 60000u16.to_le_bytes().to_vec();
+        huge.extend(std::iter::repeat(0u8).take(33));
+        match decode_body(Kind::EnemyRows, &huge) {
+            Ok(Body::EnemyRows(e)) => assert_eq!(e.rows.len(), 1),
+            other => panic!("a huge ledger with one row must decode one row, got {other:?}"),
+        }
+
+        // And a body cut INSIDE a row is still a framing error.
+        let mut cut = 21u16.to_le_bytes().to_vec();
+        cut.extend(std::iter::repeat(0u8).take(10));
+        assert!(decode_body(Kind::EnemyRows, &cut).is_err());
     }
 
     #[test]
@@ -3695,5 +4454,127 @@ mod tests {
         // hp above hp_max is refused.
         let bad_up = RespawnUp { hp: 400, hp_max: 320, ..Default::default() };
         assert!(encode_body(&Body::RespawnUp(bad_up)).is_err());
+    }
+
+    /// The boss phase lane (WIRE.md §3.28-3.30): three bodies, their exact sizes, and the
+    /// values each refuses.
+    #[test]
+    fn boss_phase_arena_and_ending_bodies() {
+        let id = Guid([
+            0xC8, 0x8F, 0xFC, 0x0C, 0x4A, 0x90, 0xA8, 0x7A,
+            0xF3, 0x0B, 0xA1, 0x98, 0x5A, 0x3A, 0x28, 0x63,
+        ]);
+
+        // ---- BOSS_PHASE: guid(16) rev(4) state(4) sub(4) flags(1) = 29 bytes ----
+        let p = BossPhase {
+            id,
+            rev: 12,
+            state: 2,
+            sub: 1,
+            flags: boss_phase_flags::AUTHORITY | boss_phase_flags::TRANSITION,
+        };
+        let bytes = encode_body(&Body::BossPhase(p)).unwrap();
+        assert_eq!(bytes.len(), 29, "the phase body is 29 bytes");
+        assert_eq!(&bytes[0..16], &id.0, "the key leads");
+        assert_eq!(&bytes[16..20], &12u32.to_le_bytes(), "rev follows the key");
+        assert_eq!(&bytes[20..24], &2i32.to_le_bytes(), "state is a signed i32");
+        assert_eq!(&bytes[24..28], &1i32.to_le_bytes(), "sub is a signed i32");
+        assert_eq!(bytes[28], 3, "the flags byte is last");
+        assert_eq!(decode_body(Kind::BossPhase, &bytes).unwrap(), Body::BossPhase(p));
+
+        // -1 is the legitimate "unreadable on the sender" value (a follower must not treat
+        // it as state 0, which would re-run phase 1).
+        let unknown = BossPhase { state: -1, sub: -1, ..p };
+        let bytes = encode_body(&Body::BossPhase(unknown)).unwrap();
+        assert_eq!(decode_body(Kind::BossPhase, &bytes).unwrap(), Body::BossPhase(unknown));
+
+        // A state the Blueprint graph cannot hold is refused on BOTH sides.
+        let bad = BossPhase { state: 9999, ..p };
+        assert!(encode_body(&Body::BossPhase(bad)).is_err());
+        let mut wire = encode_body(&Body::BossPhase(p)).unwrap();
+        wire[20..24].copy_from_slice(&9999i32.to_le_bytes());
+        assert!(decode_body(Kind::BossPhase, &wire).is_err());
+        // A zero key names no boss.
+        let nokey = BossPhase { id: Guid::default(), ..p };
+        assert!(encode_body(&Body::BossPhase(nokey)).is_err());
+        // A truncated body is a desynchronised stream, not a smaller one.
+        let wire = encode_body(&Body::BossPhase(p)).unwrap();
+        assert!(decode_body(Kind::BossPhase, &wire[..28]).is_err());
+
+        // ---- BOSS_ARENA: guid(16) rev(4) arena(1) present(1) = 22 bytes ----
+        let a = BossArena {
+            id,
+            rev: 3,
+            arena: boss_arena_phase::CLOSED,
+            present: boss_present::HOST,
+        };
+        let bytes = encode_body(&Body::BossArena(a)).unwrap();
+        assert_eq!(bytes.len(), 22, "the arena body is 22 bytes");
+        assert_eq!(bytes[20], boss_arena_phase::CLOSED);
+        assert_eq!(bytes[21], boss_present::HOST);
+        assert_eq!(decode_body(Kind::BossArena, &bytes).unwrap(), Body::BossArena(a));
+
+        // The rule the body exists for: one player absent is a legal state, not an error.
+        let absent = BossArena { present: boss_present::PEER, ..a };
+        let bytes = encode_body(&Body::BossArena(absent)).unwrap();
+        assert_eq!(decode_body(Kind::BossArena, &bytes).unwrap(), Body::BossArena(absent));
+        // ... and NOBODY present is legal too: an empty arena with a live boss holds.
+        let empty = BossArena { present: 0, arena: boss_arena_phase::IDLE, ..a };
+        assert!(encode_body(&Body::BossArena(empty)).is_ok());
+
+        // An unknown phase, an unknown player bit and a zero key are all refused.
+        let bad = BossArena { arena: 9, ..a };
+        assert!(encode_body(&Body::BossArena(bad)).is_err());
+        let bad = BossArena { present: 0x80, ..a };
+        assert!(encode_body(&Body::BossArena(bad)).is_err());
+        let bad = BossArena { id: Guid::default(), ..a };
+        assert!(encode_body(&Body::BossArena(bad)).is_err());
+        let mut wire = encode_body(&Body::BossArena(a)).unwrap();
+        wire[20] = 9;
+        assert!(decode_body(Kind::BossArena, &wire).is_err());
+
+        // ---- BOSS_END: guid(16) rev(4) ending(1) who(1) = 22 bytes ----
+        let e = BossEnd { id, rev: 1, ending: boss_ending::QUEEN1, who: boss_present::PEER };
+        let bytes = encode_body(&Body::BossEnd(e)).unwrap();
+        assert_eq!(bytes.len(), 22, "the ending body is 22 bytes");
+        assert_eq!(bytes[20], boss_ending::QUEEN1);
+        assert_eq!(bytes[21], boss_present::PEER);
+        assert_eq!(decode_body(Kind::BossEnd, &bytes).unwrap(), Body::BossEnd(e));
+
+        // All four endings are expressible: the choice is whichever player's, and the four
+        // are independent writes in the content.
+        for ending in [
+            boss_ending::QUEEN1,
+            boss_ending::QUEEN2,
+            boss_ending::SIPEHA1,
+            boss_ending::SIPEHA2,
+        ] {
+            let b = BossEnd { ending, ..e };
+            let bytes = encode_body(&Body::BossEnd(b)).unwrap();
+            assert_eq!(decode_body(Kind::BossEnd, &bytes).unwrap(), Body::BossEnd(b));
+        }
+        // "no ending" is not a choice, and a maker who is neither player is not a maker.
+        let bad = BossEnd { ending: boss_ending::NONE, ..e };
+        assert!(encode_body(&Body::BossEnd(bad)).is_err());
+        let bad = BossEnd { who: 7, ..e };
+        assert!(encode_body(&Body::BossEnd(bad)).is_err());
+        let bad = BossEnd { id: Guid::default(), ..e };
+        assert!(encode_body(&Body::BossEnd(bad)).is_err());
+
+        // ---- the kinds themselves ----
+        assert_eq!(Kind::BossPhase.as_u8(), 0x5C);
+        assert_eq!(Kind::BossArena.as_u8(), 0x5D);
+        assert_eq!(Kind::BossEnd.as_u8(), 0x5E);
+        assert_eq!(Kind::from_u8(0x5C).unwrap(), Kind::BossPhase);
+        assert_eq!(Kind::from_u8(0x5D).unwrap(), Kind::BossArena);
+        assert_eq!(Kind::from_u8(0x5E).unwrap(), Kind::BossEnd);
+        // A lost transition is a permanently stuck boss, so all three are reliable.
+        assert!(Kind::BossPhase.is_reliable());
+        assert!(Kind::BossArena.is_reliable());
+        assert!(Kind::BossEnd.is_reliable());
+        assert!(!Kind::BossPhase.is_latest_wins());
+        assert_eq!(Kind::BossPhase.name(), "boss_phase");
+        assert_eq!(Kind::BossArena.name(), "boss_arena");
+        assert_eq!(Kind::BossEnd.name(), "boss_end");
     }
 }

@@ -571,7 +571,7 @@ static const uint32_t kSaveDedupMs   = 1500;   // the partner repeating the same
 static const uint32_t kSaveDeferMs   = 20000;  // how long a blocked save may wait
 static const uint32_t kSaveEchoMs    = 800;    // a deferred echo lands inside this
 
-// WHICH ROUTE the partner must mirror (WIRE.md §3.27's `route` byte).
+// WHICH ROUTE the partner must mirror (WIRE.md §3.26's `route` byte).
 // MEASURED (round 3): this build's player-facing save is the checkpoint REST, and a rest
 // writes `World0_Suspend_N.sav`, not the main slot.  A partner that answered a rest with a
 // main-slot write would have saved a DIFFERENT file than the one its own game resumes

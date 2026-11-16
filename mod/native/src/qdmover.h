@@ -174,13 +174,31 @@ public:
         return n;
     }
 
+    // Read-only enumeration for the desync auditor (qdaudit.h).  It exposes what THIS
+    // machine's game shows (`local`) rather than the owner's row: the follower APPLIES the
+    // owner's transform, so its own game reads back the same value -- which is the fact
+    // worth comparing.  `flags` is deliberately not exposed: who owns a mover differs by
+    // design, so a flag comparison would report a desync on a correct session.
+    bool PeekLocal(int index, uint8_t outId[kIdLen], Sample* out) const
+    {
+        if (index < 0) return false;
+        int seen = 0;
+        for (int k = 0; k < kMaxMovers; ++k) {
+            if (!rec_[k].used || !rec_[k].haveLocal) continue;
+            if (seen != index) { ++seen; continue; }
+            for (int j = 0; j < kIdLen; ++j) outId[j] = rec_[k].id[j];
+            if (out) *out = rec_[k].local;
+            return true;
+        }
+        return false;
+    }
+
     // ---- helpers ----------------------------------------------------------
     static bool SameId(const uint8_t* a, const uint8_t* b)
     {
         for (int i = 0; i < kIdLen; ++i) if (a[i] != b[i]) return false;
         return true;
     }
-
     // FNV-1a over the actor's path, two lanes -- the same stable identity the dialogue
     // lane uses, so a placed mover is the same object on both machines.
     static void IdFromPath(const char* path, uint8_t out[kIdLen])

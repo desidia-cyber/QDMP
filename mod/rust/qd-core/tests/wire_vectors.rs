@@ -317,8 +317,11 @@ fn vectors() -> Vec<Vector> {
                 options: 3,
                 chosen: 1,
                 asset: "Knight_Arjaot_Dialogue_00".to_owned(),
+                speaker: "Spirit of Erma, Matron of the Deep".to_owned(),
+                line: "For all my scrying and divination, I did not foresee this betrayal yes."
+                    .to_owned(),
             }),
-            expected: "50 04 00 00 00 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 01 03 02 00 01 00 03 00 01 00 19 00 4b 6e 69 67 68 74 5f 41 72 6a 61 6f 74 5f 44 69 61 6c 6f 67 75 65 5f 30 30",
+            expected: "50 04 00 00 00 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 01 03 02 00 01 00 03 00 01 00 19 00 4b 6e 69 67 68 74 5f 41 72 6a 61 6f 74 5f 44 69 61 6c 6f 67 75 65 5f 30 30 22 00 53 70 69 72 69 74 20 6f 66 20 45 72 6d 61 2c 20 4d 61 74 72 6f 6e 20 6f 66 20 74 68 65 20 44 65 65 70 47 00 46 6f 72 20 61 6c 6c 20 6d 79 20 73 63 72 79 69 6e 67 20 61 6e 64 20 64 69 76 69 6e 61 74 69 6f 6e 2c 20 49 20 64 69 64 20 6e 6f 74 20 66 6f 72 65 73 65 65 20 74 68 69 73 20 62 65 74 72 61 79 61 6c 20 79 65 73 2e",
         },
         Vector {
             name: "level_union",
@@ -429,6 +432,163 @@ fn vectors() -> Vec<Vector> {
             name: "log",
             body: Body::Log(Log { bytes: b"hello from host".to_vec() }),
             expected: "30 68 65 6c 6c 6f 20 66 72 6f 6d 20 68 6f 73 74",
+        },
+        Vector {
+            name: "kill_xp",
+            body: Body::KillXp(KillXp { id: sample_guid(), seq: 2, xp: 250 }),
+            // kind, guid, seq, xp.
+            expected: "40 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 02 00 fa 00 00 00",
+        },
+        Vector {
+            name: "save",
+            body: Body::Save(Save { seq: 7, role: save_role::PEER, route: save_route::SUSPEND }),
+            // kind, seq, role, route.
+            expected: "41 07 00 00 00 02 02",
+        },
+        Vector {
+            name: "platform_ride",
+            body: Body::PlatformRide(PlatformRide {
+                ms: 1234,
+                rows: vec![PlatformRideRow {
+                    id: sample_guid(),
+                    ox: 100,
+                    oy: -200,
+                    oz: 50,
+                    oyaw: 16384,
+                    flags: platform_ride_flags::ON | platform_ride_flags::MOVING,
+                }],
+            }),
+            // kind, ms, n, guid, ox, oy, oz, oyaw, flags.
+            expected: "48 d2 04 00 00 01 00 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 64 00 00 00 38 ff ff ff 32 00 00 00 00 40 03",
+        },
+        Vector {
+            name: "respawn_down",
+            body: Body::RespawnDown(RespawnDown {
+                deaths: 1,
+                pct: respawn_penalty::pct_for(1),
+                seq: 2,
+                px: 1000,
+                py: -2000,
+                pz: 300,
+            }),
+            // kind, deaths, pct, seq, x, y, z.
+            expected: "54 01 5a 02 e8 03 00 00 30 f8 ff ff 2c 01 00 00",
+        },
+        Vector {
+            name: "respawn_up",
+            body: Body::RespawnUp(RespawnUp {
+                deaths: 1,
+                pct: respawn_penalty::pct_for(1),
+                seq: 3,
+                px: 1000,
+                py: -2000,
+                pz: 300,
+                yaw: 8192,
+                hp: 90,
+                hp_max: 100,
+                name: "Checkpoint7".to_owned(),
+            }),
+            // kind, deaths, pct, seq, x, y, z, yaw, hp, hp_max, name.
+            expected: "55 01 5a 03 e8 03 00 00 30 f8 ff ff 2c 01 00 00 00 20 5a 00 64 00 0b 00 43 68 65 63 6b 70 6f 69 6e 74 37",
+        },
+        Vector {
+            name: "respawn_rest",
+            body: Body::RespawnRest(RespawnRest {
+                deaths: 0,
+                pct: respawn_penalty::pct_for(0),
+                seq: 4,
+                px: 1000,
+                py: -2000,
+                pz: 300,
+                name: "Checkpoint7".to_owned(),
+            }),
+            // kind, deaths, pct, seq, x, y, z, name.
+            expected: "56 00 64 04 e8 03 00 00 30 f8 ff ff 2c 01 00 00 0b 00 43 68 65 63 6b 70 6f 69 6e 74 37",
+        },
+        // [desync-audit] The steady state of the auditor: kind, seq, map_hash, n, then
+        // {cat, digest u64, count u16} per category. Two categories here (flags, deaths).
+        Vector {
+            name: "audit",
+            body: Body::Audit(Audit {
+                seq: 0x0102_0304,
+                map_hash: 0xAABB_CCDD,
+                cats: vec![
+                    AuditCat { cat: 1, digest: 0x1122_3344_5566_7788, count: 11 },
+                    AuditCat { cat: 12, digest: 0xDEAD_BEEF_0BAD_F00D, count: 2 },
+                ],
+            }),
+            expected: "58 04 03 02 01 dd cc bb aa 02 01 88 77 66 55 44 33 22 11 0b 00 0c 0d f0 ad 0b ef be ad de 02 00",
+        },
+        // kind, seq, cat.
+        Vector {
+            name: "audit_req",
+            body: Body::AuditReq(AuditReq { seq: 7, cat: 3 }),
+            expected: "59 07 00 00 00 03",
+        },
+        // kind, seq, cat, total, first, then {str key, u64 value} rows read to the end.
+        Vector {
+            name: "audit_items",
+            body: Body::AuditItems(AuditItems {
+                seq: 9,
+                cat: 4,
+                total: 3,
+                first: 0,
+                items: vec![
+                    AuditItemRow {
+                        key: "/Game/Items/KeyItems/AquaDoorKey_2.AquaDoorKey_2".to_owned(),
+                        value: 1,
+                    },
+                    AuditItemRow { key: "BrokeBarricade".to_owned(), value: 0 },
+                ],
+            }),
+            expected: "5a 09 00 00 00 04 03 00 00 00 30 00 2f 47 61 6d 65 2f 49 74 65 6d 73 2f 4b 65 79 49 74 65 6d 73 2f 41 71 75 61 44 6f 6f 72 4b 65 79 5f 32 2e 41 71 75 61 44 6f 6f 72 4b 65 79 5f 32 01 00 00 00 00 00 00 00 0e 00 42 72 6f 6b 65 42 61 72 72 69 63 61 64 65 00 00 00 00 00 00 00 00",
+        },
+        // [gap-boss] The boss phase lane (WIRE.md §3.28). The Queen's key, revision 12, the
+        // state she transitions to (1 = the phase-1 -> phase-2 step she got stuck in), sub 0,
+        // and AUTHORITY|TRANSITION. kind, guid16, rev u32, state i32, sub i32, flags u8.
+        Vector {
+            name: "boss_phase",
+            body: Body::BossPhase(BossPhase {
+                id: Guid([
+                    0xC8, 0x8F, 0xFC, 0x0C, 0x4A, 0x90, 0xA8, 0x7A,
+                    0xF3, 0x0B, 0xA1, 0x98, 0x5A, 0x3A, 0x28, 0x63,
+                ]),
+                rev: 12,
+                state: 2,
+                sub: 1,
+                flags: boss_phase_flags::AUTHORITY | boss_phase_flags::TRANSITION,
+            }),
+            expected: "5c c8 8f fc 0c 4a 90 a8 7a f3 0b a1 98 5a 3a 28 63 0c 00 00 00 02 00 00 00 01 00 00 00 03",
+        },
+        // The arena rule (WIRE.md §3.29): the fight is CLOSED and only the HOST's player is
+        // inside. kind, guid16, rev u32, arena u8, present u8.
+        Vector {
+            name: "boss_arena",
+            body: Body::BossArena(BossArena {
+                id: Guid([
+                    0xC8, 0x8F, 0xFC, 0x0C, 0x4A, 0x90, 0xA8, 0x7A,
+                    0xF3, 0x0B, 0xA1, 0x98, 0x5A, 0x3A, 0x28, 0x63,
+                ]),
+                rev: 3,
+                arena: boss_arena_phase::CLOSED,
+                present: boss_present::HOST,
+            }),
+            expected: "5d c8 8f fc 0c 4a 90 a8 7a f3 0b a1 98 5a 3a 28 63 03 00 00 00 02 01",
+        },
+        // The ending choice (WIRE.md §3.30): the PEER's player chose Queen ending 1.
+        // kind, guid16, rev u32, ending u8, who u8.
+        Vector {
+            name: "boss_end",
+            body: Body::BossEnd(BossEnd {
+                id: Guid([
+                    0xC8, 0x8F, 0xFC, 0x0C, 0x4A, 0x90, 0xA8, 0x7A,
+                    0xF3, 0x0B, 0xA1, 0x98, 0x5A, 0x3A, 0x28, 0x63,
+                ]),
+                rev: 1,
+                ending: boss_ending::QUEEN1,
+                who: boss_present::PEER,
+            }),
+            expected: "5e c8 8f fc 0c 4a 90 a8 7a f3 0b a1 98 5a 3a 28 63 01 00 00 00 01 02",
         },
     ]
 }

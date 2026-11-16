@@ -1,0 +1,281 @@
+// [play-p3] =================================================================================
+// [play-p3] 6c-quater. THE ENDINGS AS A DRIVEN FACT (qdending.h)
+// [play-p3] =================================================================================
+// The measured gap this closes: `BOSS_END` (0x5E) was DEFINED and never published, and the
+// follower never ran an ending of its own (the ending's cutscene manager is spawned at runtime,
+// so the cutscene lane can only HOLD -- a held machine never calls its player's
+// `EndingWakeOnBeach`).  Both facts are in qdending.h's header.
+//
+// WHAT CROSSES AND WHO DRIVES IT:
+//   * the CHOICE.  This machine observes its OWN game running an ending entry (`Banish` / `Eat`
+//     on a `Sipeha_NPC`, `Ending1Complete` / `Ending2CutsceneEnded` on a `Queen_BP`), or, as a
+//     fallback, its own bank gaining `EndingNComplete`.  It publishes one body and repairs it.
+//   * the BRANCH.  The receiver runs the SAME verb on ITS OWN copy with the game's own
+//     `ProcessEvent`, so its own graph spawns its own cutscene manager and its own player's
+//     wake-up runs.  No cutscene is launched and no flag is written on its behalf.
+//   * the WAKE-UP.  While a wake is pending the mod stops driving level management (the game's
+//     `FS_WaitForLevelManagement` is waiting on that queue); the game's own chain then plays.
+//     Only if it has not played does the module cancel the load lock (the game's own
+//     `CancelLockInPlaceForLoad`) and run `PostEndingWakeOnBeach`, and the log says which.
+namespace ending_lane {
+
+using namespace qd::ending;
+
+static ChoiceTx  g_tx;
+static WakeRules g_wake;
+static uint32_t  g_flagAt = 0;
+static uint8_t   g_flagEnding = kEndNone;     // this machine's own ending, read from its bank
+static uint32_t  g_sent = 0, g_applied = 0, g_refused = 0;
+
+// The four verbs' FName indices, resolved once.  The ProcessEvent hook runs for EVERY dispatch
+// the game makes, so the per-call test must be integer compares, not a name compare.
+static QdName g_verbName[4];
+static bool   g_verbNamesReady = false;
+
+static void EnsureVerbNames()
+{
+    static uint32_t lastTry = 0;
+    if (g_verbNamesReady) return;
+    uint32_t now = Net::Now();
+    if (lastTry && now - lastTry < 5000) return;
+    lastTry = now;
+    bool ok = true;
+    for (uint8_t e = kEndQueen1; e <= kEndSipeha2; ++e) {
+        memset(&g_verbName[e - 1], 0, sizeof(QdName));
+        if (!FNameFromAnsi(EndingVerb(e), &g_verbName[e - 1])) ok = false;
+    }
+    g_verbNamesReady = ok;
+    if (ok)
+        QDLOG(LOG_INFO, "ending: the four ending entries resolved (", EndingVerb(kEndQueen1), ", ",
+              EndingVerb(kEndQueen2), ", ", EndingVerb(kEndSipeha1), ", ", EndingVerb(kEndSipeha2),
+              ") -- the choice is observed on this machine's own game");
+}
+
+// Which of the four endings this Function IS, by FName index (0 = none).
+static uint8_t VerbOfFunc(void* func)
+{
+    if (!g_verbNamesReady || !func) return kEndNone;
+    QdName n = ObjNameRaw(func);
+    for (unsigned i = 0; i < 4; ++i)
+        if (g_verbName[i].comparison_index && n.comparison_index == g_verbName[i].comparison_index)
+            return (uint8_t)(i + 1);      // kEndQueen1 == 1 ... kEndSipeha2 == 4
+    return kEndNone;
+}
+
+static uint8_t LocalWho()
+{
+    return g_net.IsHost() ? wire::kBossPlayerHost : wire::kBossPlayerPeer;
+}
+
+// THE CHOICE INSTANT.  Called from the ProcessEvent hook: this machine's own game just RAN an
+// ending entry, so this machine is the chooser.  The class test is what keeps a shared verb name
+// (`Eat` is a common Blueprint event) from being read as an ending.
+void Observe(void* self, void* func)
+{
+    if (!Cfg().ending_sync) return;
+    uint8_t e = VerbOfFunc(func);
+    if (e == kEndNone) return;
+    char cls[64] = "";
+    void* c = self ? ObjClass(self) : nullptr;
+    if (!c || FNameToString(ObjNameRaw(c), cls, sizeof(cls)) <= 0) return;
+    if (!ClassInBranch(EndingBranch(e), cls)) return;
+    if (!g_tx.Begin(e, LocalWho(), Net::Now())) return;
+    QDLOG(LOG_INFO, "ending: this machine's own game ran ", EndingVerb(e), " on ", cls,
+          " -- the choice is made HERE (", bossphase::EndingFlag(e), ") and is published");
+}
+
+// A live copy of a branch on THIS machine.  A mirror is not a copy to drive.
+static bool FindCopy(Branch br, EnemyRec** out, char* cls, int cap)
+{
+    *out = nullptr;
+    for (int i = 0; i < g_enN; ++i) {
+        EnemyRec& r = g_en[i];
+        if (!r.haveGuid || r.mirror || !ObjectIsLive(r.actor)) continue;
+        char cn[64] = "";
+        if (FNameToString(ObjNameRaw(ObjClass(r.actor)), cn, sizeof(cn)) <= 0) continue;
+        if (!ClassInBranch(br, cn)) continue;
+        *out = &r;
+        if (cls && cap > 0) lstrcpynA(cls, cn, cap);
+        return true;
+    }
+    if (g_bossKeyOn) {                    // the key the shared bar last named
+        EnemyRec* r = EnemyByGuid(g_bossKey);
+        if (r && ObjectIsLive(r->actor)) {
+            char cn[64] = "";
+            if (FNameToString(ObjNameRaw(ObjClass(r->actor)), cn, sizeof(cn)) > 0 &&
+                ClassInBranch(br, cn)) {
+                *out = r;
+                if (cls && cap > 0) lstrcpynA(cls, cn, cap);
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+static void PublishPump(uint32_t now)
+{
+    if (!Cfg().ending_sync) return;
+    if (!g_net.Connected()) return;
+
+    // THE FALLBACK OBSERVATION: an ending can also be entered by a cutscene manager rather than
+    // by the boss verb, so this machine's own bank is read once a second.  Reading is what makes
+    // "this machine already chose" a measurement instead of an assumption.
+    if (now - g_flagAt >= 1000) {
+        g_flagAt = now;
+        for (uint8_t e = kEndQueen1; e <= kEndSipeha2; ++e) {
+            int32_t v = 0; bool set = false;
+            if (NsdRead(bossphase::EndingFlag(e), &v, &set) && set && v > 0) {
+                g_flagEnding = e;
+                g_tx.Begin(e, LocalWho(), now);
+                break;
+            }
+        }
+    }
+    if (!g_tx.ShouldSend(now)) return;
+
+    EnemyRec* r = nullptr;
+    char cls[64] = "";
+    if (!FindCopy(EndingBranch(g_tx.ending), &r, cls, sizeof(cls)) || !r) {
+        static uint32_t saidAt = 0;
+        if (now - saidAt > 10000) {
+            saidAt = now;
+            QDLOG(LOG_WARN, "boss end: the choice (ending ", dec((int)g_tx.ending), ") is this "
+                  "machine's, but it holds no live boss of that branch to key the body on");
+        }
+        return;
+    }
+    wire::BossEndBody b;
+    memset(&b, 0, sizeof(b));
+    memcpy(b.guid, r->guid, 16);
+    b.rev = g_tx.NextRev();
+    b.ending = g_tx.ending;
+    b.who = g_tx.who;
+    uint8_t body[64];
+    wire::Writer w(body, sizeof(body));
+    wire::WriteBossEnd(w, b);
+    if (!(w.ok && g_net.SendReliable(wire::K_BOSS_END, body, w.len))) return;
+    bool repair = g_tx.Repairing();
+    g_tx.lastSentAt = now;
+    ++g_sent;
+    QDLOG(LOG_INFO, "boss end: sent guid=", hex32(b.guid[0]), " ending=", dec((int)b.ending),
+          " (", bossphase::EndingFlag(b.ending), ") who=", dec((int)b.who),
+          repair ? " (repair)" : " (the choice is made here)");
+}
+
+// THE RECEIVER'S HALF: run the partner's choice on this machine's own copy.
+void ApplyLocal(uint8_t ending, uint32_t now)
+{
+    if (!Cfg().ending_sync) return;
+    int32_t v = 0; bool set = false;
+    bool already = NsdRead(bossphase::EndingFlag(ending), &v, &set) && set && v > 0;
+    EnemyRec* r = nullptr;
+    char cls[64] = "";
+    bool have = FindCopy(EndingBranch(ending), &r, cls, sizeof(cls)) && r;
+    DriveVerdict d = ShouldDriveLocalEnding(already, have);
+    if (d == kDriveSkipChosen) {
+        QDLOG(LOG_INFO, "boss end: this machine already chose ending ", dec((int)ending),
+              " -- nothing to drive (an ending is never run twice)");
+        return;
+    }
+    if (d == kDriveNoCopy) {
+        ++g_refused;
+        QDLOG(LOG_WARN, "boss end: the partner chose ending ", dec((int)ending),
+              " but this machine holds no live ",
+              (EndingBranch(ending) == kBranchSipeha ? "Sipeha" : "Queen"),
+              " copy -- nothing to drive");
+        return;
+    }
+    const char* verb = EndingVerb(ending);
+    const char* ran = nullptr;
+    bool ok = RigCallVerb(r->actor, verb, nullptr, &ran);
+    ++g_applied;
+    QDLOG(ok ? LOG_INFO : LOG_WARN, "boss end: driven here -- ", verb, " on ", cls,
+          " (the partner's player made the choice; this machine runs the SAME entry, so its own "
+          "game writes its own ", bossphase::EndingFlag(ending), ")");
+}
+
+// THE WAKE-UP (qdending.h's rules).  `g_endingEndedAt` is set by CutscenePump when this
+// machine's own ending ends; `g_wakeSeenAt` by the arms-montage observer when the wake plays.
+void WakePump(uint32_t now)
+{
+    if (g_endingEndedAt && !g_wake.open) {
+        bool seen = g_wakeSeenAt && (int32_t)(g_wakeSeenAt - g_endingEndedAt) >= 0;
+        if (!seen) g_wake.OnEndingEnded(g_endingEndedAt);
+    }
+    bool played = g_wakeSeenAt && g_endingEndedAt &&
+                  (int32_t)(g_wakeSeenAt - g_endingEndedAt) >= 0;
+    WakeAction a = g_wake.Step(now, played);
+    void* pawn = g_localPawn;
+    switch (a) {
+    case kWakeSeen:
+        QDLOG(LOG_INFO, "ending wake: the player's wake-up played ",
+              dec((int)(g_wakeSeenAt - g_endingEndedAt)), " ms after the ending (", g_wake.Who(), ")");
+        g_endingEndedAt = 0;
+        g_wakeSeenAt = 0;
+        break;
+    case kWakeCancelLock: {
+        Fn f = {};
+        bool ran = false;
+        __try { if (pawn && f.Resolve(pawn, "CancelLockInPlaceForLoad")) { Call c(f); ran = c.Run(pawn); } }
+        __except (EXCEPTION_EXECUTE_HANDLER) { ran = false; }
+        QDLOG(LOG_WARN, "ending wake: no wake-up ", dec((int)kWakeLockCancelMs), " ms after the "
+              "ending -- the load lock the wake takes is cancelled (",
+              ran ? "CancelLockInPlaceForLoad ran" : "CancelLockInPlaceForLoad DID NOT RUN",
+              "); level management is left to the game");
+        break; }
+    case kWakePostWake: {
+        Fn f = {};
+        bool ran = false;
+        __try { if (pawn && f.Resolve(pawn, "PostEndingWakeOnBeach")) { Call c(f); ran = c.Run(pawn); } }
+        __except (EXCEPTION_EXECUTE_HANDLER) { ran = false; }
+        QDLOG(ran ? LOG_INFO : LOG_WARN, "ending wake: the player's PostEndingWakeOnBeach ",
+              ran ? "ran" : "DID NOT RUN", " (", dec((int)g_wake.posts), " of ",
+              dec(kWakeRetryMax), ")");
+        break; }
+    case kWakeStopFade: {
+        void* pc = LocalController();
+        void* cam = pc ? ObjPropC(pc, "PlayerCameraManager") : nullptr;
+        Fn f = {};
+        bool ran = false;
+        __try { if (cam && f.Resolve(cam, "StopCameraFade")) { Call c(f); ran = c.Run(cam); } }
+        __except (EXCEPTION_EXECUTE_HANDLER) { ran = false; }
+        QDLOG(LOG_WARN, "ending wake: still no wake-up -- the held camera fade is stopped (",
+              ran ? "StopCameraFade ran" : "StopCameraFade DID NOT RUN", ")");
+        break; }
+    default: break;
+    }
+}
+
+// The level-management gate, read by the streaming lane.
+bool LevelDriveAllowed(uint32_t now) { return g_wake.LevelDriveAllowed(now); }
+
+void Pump(uint32_t now)
+{
+    if (!Cfg().ending_sync && !Cfg().stream_union) return;
+    EnsureVerbNames();
+    PublishPump(now);
+    static uint32_t saidAt = 0;
+    if (now - saidAt >= 60000) {
+        saidAt = now;
+        QDLOG(LOG_INFO, "ending: lane ", (g_net.IsHost() ? "host" : "peer"), " sent=",
+              dec((int)g_sent), " applied=", dec((int)g_applied), " refused=", dec((int)g_refused),
+              " wake=", (g_wake.Pending(now) ? "pending" : "idle"));
+    }
+}
+
+void Reset()
+{
+    g_tx.Reset();
+    g_wake.Reset();
+    g_flagAt = 0;
+    g_flagEnding = kEndNone;
+    g_sent = g_applied = g_refused = 0;
+}
+
+} // namespace ending_lane
+
+// [play-p3] The free-function faces the EARLIER code (the streaming lane) and the ProcessEvent
+// hook call.  They exist because a namespace defined at this point cannot be named at line 4956.
+void EndingObserve(void* self, void* func) { ending_lane::Observe(self, func); }
+bool EndingLevelDriveAllowed(uint32_t now) { return ending_lane::LevelDriveAllowed(now); }
