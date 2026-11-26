@@ -21,10 +21,14 @@ what is still a runtime proof.
 The mod is a **vertical slice**. The build verification, the engine substrate, the save
 container read, the wire format and the state machines are all tested offline (209
 native assertions, 146 Rust tests, and a byte-for-byte cross-check between the two wire
-implementations). The write paths are switch-gated and default **off** until their live
-proofs pass. Nothing here has been run against the live game yet — the first run's
-`qdcoop.log` probe block is the next step, and it is designed to answer the remaining
-questions rather than to be decorative.
+implementations).
+
+The mod has been run against the live game. [`mod/doc/LIVE-TEST-LOG.md`](mod/doc/LIVE-TEST-LOG.md)
+records 30 sessions (2026-11-07 to 2026-11-16) on a two-instance test rig: launches and joins,
+the `qdcoop.log` probe block, kill-set and world sync, boss fights (one session reached the
+ending on both machines), and soaks of up to 30 minutes. Each result is marked in that log as
+proven or still open. Write paths that have not passed their live proofs stay switched **off**
+in `qdcoop.ini`.
 
 ## What is not in this repository
 
