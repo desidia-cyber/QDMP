@@ -1,4 +1,6 @@
-# Queen's Domain — co-op mod and the analysis behind it
+# QDMP (Queens Domain co-op mod) — co-op mod and the analysis behind it
+
+Currently ABANDONED because there are already enough coop mods for the game. But if you can find something useful here you can use it. 
 
 Two things live here, and they are meant to be read in this order.
 
